@@ -4,7 +4,7 @@ from .market import fresh, CT
 
 
 STREAMS = {"alpaca_stocks": "equities", "databento_futures": "futures", "option_stream": "equities"}
-COLLECTORS = set(STREAMS) | {"alpaca_history", "option_chain", "tradermatrix"}
+COLLECTORS = set(STREAMS) | {"alpaca_history", "futures_history", "option_chain", "tradermatrix", "tradermatrix_flow"}
 
 
 def clock(value):
@@ -38,22 +38,25 @@ def decorate_health(items, workers, markets, now):
                 h.update(status="waiting", detail="Session open; no source event observed yet. " + h["detail"])
             elif h["age"] > 20 or h["age"] < -1:
                 h.update(status="stale", detail="Session open; source events are not current. " + h["detail"])
-        elif h["name"] in {"option_chain", "tradermatrix", "alpaca_history", "engine"}:
-            limit = {"alpaca_history": 3900, "option_chain": 300, "tradermatrix": 180, "engine": 20}[h["name"]]
+        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine"}:
+            limit = {"alpaca_history": 3900,"futures_history":3900, "option_chain": 300, "tradermatrix": 180,"tradermatrix_flow":180, "engine": 20}[h["name"]]
             if h["check_age"] > limit:
                 h.update(status="stale", detail="Worker is alive but this task has stopped reporting. " + h["detail"])
         result.append(h)
     return result
 
 
-def quote_checks(stocks, futures, quotes, mappings, markets, now):
+def quote_checks(stocks, futures, quotes, mappings, markets, now,selected=None):
     rows = []
     for alias in (*stocks, *futures):
         future = alias in futures
+        target=next((t for t in selected or [] if t["configured_symbol"]==alias),None)
         ids = {m["payload"]["instrument_id"] for m in mappings if m["payload"].get("input") == alias}
         matches = [(symbol, q) for symbol, q in quotes.items()
             if symbol == alias or symbol.startswith(alias + "@") or (future and q.get("instrument_id") in ids)]
-        symbol, quote = max(matches, key=lambda x: x[1].get("ts", 0)) if matches else (alias, None)
+        if target:
+            matches=[(symbol,q) for symbol,q in quotes.items() if symbol.split("@")[0]==target["raw_symbol"]]
+        symbol, quote = max(matches, key=lambda x: x[1].get("ts", 0)) if matches else (target["raw_symbol"] if target else alias, None)
         valid = fresh(quote, now)
         opened = markets["futures" if future else "equities"]
         status = "market_closed" if not opened else "ready" if valid else "missing" if quote is None else "blocked"

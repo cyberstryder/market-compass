@@ -22,6 +22,7 @@ from .alerts import deliver,outbox_status
 from .market import is_open
 from .diagnostics import assistant_error
 from .readiness import decorate_health,quote_checks,clock
+from .futures import futures_session,selection
 
 def create_app(cfg=None):
     cfg=cfg or Config()
@@ -144,7 +145,7 @@ def create_app(cfg=None):
                 if k[6:] in cfg.stocks or "@" in k}
             health=decorate_health(health,workers,markets,now)
             checks=quote_checks(cfg.stocks,cfg.futures,{k[6:]:q for k,q in quotes.items()},
-                db.recent(c,"mapping",limit=100),markets,now)
+                db.recent(c,"mapping",limit=100),markets,now,selection(cfg.futures,now))
             matrix={k:{field:value for field,value in v.items() if field!="data"} for k,v in db.prefix(c,"matrix:").items()}
             for item in matrix.values():
                 stamp=item.get("source_ts")
@@ -157,6 +158,10 @@ def create_app(cfg=None):
             return {"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","markets":markets,
                 "health":health,"workers":workers,"quotes":watch,
                 "quote_checks":checks,"delivery":outbox_status(db,c,now),
+                "futures":{"session":futures_session(now),"selected":selection(cfg.futures,now),
+                    "contracts":list(db.prefix(c,"contract:").values()),
+                    "history":sorted(db.prefix(c,"recovery:futures:").values(),key=lambda p:p.get("at",0),reverse=True)[:3]},
+                "greek_diagnostics":{k[7:]:v for k,v in db.prefix(c,"greeks:").items()},
                 "levels":{k[7:]:v for k,v in db.prefix(c,"levels:").items()},
                 "exposure":{k[9:]:v for k,v in db.prefix(c,"exposure:").items()},
                 "positions":positions,"trades":trades,"alerts":db.recent(c,"alert",limit=60),
@@ -195,6 +200,28 @@ def create_app(cfg=None):
                 "Verify live quote ages and target-chain OI/Greek coverage during an open session.",
                 "Verify nonempty TraderMatrix flow and advancing matrix source timestamps.",
                 "Observe entries, stops and alerts before evaluating strategy performance."]}
+
+    class AlertTest(BaseModel):
+        request_id:uuid.UUID
+
+    @app.post("/api/alerts/test")
+    def test_alert(body:AlertTest):
+        now=time.time()
+        key="test-alert:"+str(body.request_id)
+        with db.tx() as c:
+            existing=db.get(c,key)
+            if existing: return existing
+            status=db.get(c,"health:discord",{}).get("status")
+            if status not in {"connected","delivered","error"}:
+                raise HTTPException(409,"Discord worker has not verified its configuration yet")
+            if not db.lease(c,"discord-test-rate",str(body.request_id),60):
+                raise HTTPException(429,"A delivery test was requested in the last minute")
+            db.append(c,"alert","owner","SYSTEM",now,{"mode":"TEST","status":"notification_test",
+                "reason":"Explicit alert-channel check; no trade or position","request_id":str(body.request_id)},key)
+            event_id=c.execute(select(events.c.id).where(events.c.key==key)).scalar_one()
+            result={"event_id":event_id,"status":"queued","at":now}
+            db.put(c,key,result)
+        return result
 
     class Ask(BaseModel):
         question:str=Field(min_length=1,max_length=2000)

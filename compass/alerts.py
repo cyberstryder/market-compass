@@ -22,12 +22,15 @@ def outbox_status(db,c,now):
     cursor=db.get(c,"outbox:discord",0)
     count,oldest=c.execute(select(func.count(),func.min(events.c.ts)).where(events.c.kind=="alert",events.c.id>cursor)).one()
     return {"pending":count,"oldest_age":round(now-oldest,1) if oldest is not None else None,
-        "last_acknowledged_event":cursor or None,"last_confirmation":db.get(c,"outbox:discord:confirmation")}
+        "last_acknowledged_event":cursor or None,"last_confirmation":db.get(c,"outbox:discord:confirmation"),
+        "last_test_confirmation":db.get(c,"outbox:discord:test_confirmation")}
 
 
 async def dispatch(client,db,webhook,row):
     p=row["payload"]
-    content=f"[SIMULATED] {row['symbol']} | {p.get('status')}\n{p.get('strategy','')} {p.get('side','')}\n{p.get('reason',p.get('exit_reason',''))}"
+    content=("[TEST — NO TRADE] Market Compass delivery check\nThis verifies the alert channel. No position was opened."
+        if p.get("status")=="notification_test" else
+        f"[SIMULATED] {row['symbol']} | {p.get('status')}\n{p.get('strategy','')} {p.get('side','')}\n{p.get('reason',p.get('exit_reason',''))}")
     for label in ["entry","stop","target","qty","exit","pnl"]:
         if label in p: content+=f"\n{label}: {p[label]}"
     content+=f"\nEvent #{row['id']} | "+time.strftime("%Y-%m-%d %H:%M:%S UTC",time.gmtime(row["ts"]))
@@ -48,6 +51,7 @@ async def dispatch(client,db,webhook,row):
         db.put(c,"outbox:discord",max(row["id"],db.get(c,"outbox:discord",0)))
         confirmation={"event_id":row["id"],"message_id":message_id,"at":now}
         db.put(c,"outbox:discord:confirmation",confirmation)
+        if p.get("status")=="notification_test": db.put(c,"outbox:discord:test_confirmation",confirmation)
         db.append(c,"alert_delivery","discord",row["symbol"],now,confirmation,key="discord:"+message_id)
     db.health("discord","delivered","Discord confirmed a saved message; event IDs identify possible retries",now)
 

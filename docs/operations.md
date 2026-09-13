@@ -18,18 +18,18 @@ All required code and service roles can be deployed without buying another serve
 - Databento SDK and stream rejections include a bounded, redacted reason in the authenticated Feed health view. API keys and provider URLs are removed before storage.
 - Ask Compass reports the OpenAI HTTP status and error code, so invalid keys, missing permissions and exhausted credits can be distinguished. Failed or empty answers do not mark the assistant ready.
 - GPT-5 Mini uses low reasoning effort and a 6,000-token combined reasoning/output cap; the previous 1,200-token cap produced an empty answer in the premarket browser check. Incomplete responses, including partial text, are rejected. Health retains response status and token counts without content or credentials. No automatic paid retry is made. See the [OpenAI reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) and [GPT-5 parameters](https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_new_params_and_tools).
-- Discord performs a read-only webhook check on worker startup and replaces stale configuration status. A successful check means the webhook is reachable; actual message delivery still requires a queued simulated alert. Startup never broadcasts a synthetic trade.
+- Discord performs a read-only webhook check on worker startup and replaces stale configuration status. A successful check means the webhook is reachable; actual message delivery still requires a queued alert. The authenticated Send test alert button queues a fixed TEST — NO TRADE message, rate-limited to once per minute and idempotent per request ID. Startup never broadcasts a synthetic trade.
 - Discord POST uses `wait=true` and requires a saved message ID. HTTP 204, missing IDs, rate limits and failures retain the alert in the queue. Feed health displays pending count, oldest queued age and last confirmation. `alert_delivery` journal events retain acknowledgements; duplicates can occur after uncertain network outcomes.
 - Closed exchanges display `market_closed` only when the worker heartbeat is current and no provider error is recorded. Source timestamps and task updates remain separate. During open sessions, each configured underlying/future gets its own fresh-quote check.
 - Exposure coverage counts gamma/OI/contract inputs independently of the underlying price. Missing price blocks calculation without erasing input counts. Counts of missing fields overlap. Missing vanna inputs stay null at strike level.
 - TraderMatrix matrices show the source snapshot time and fetched time separately. Totals and strike concentrations sum populated cells across returned expirations; they are not independently verified walls. Vendor VEX units are unverified. Raw envelopes remain in `matrix_raw`; bounded summaries are supplied to Q&A.
-- TraderMatrix flow uses the official documented row shape, a $50k minimum and five-page maximum. The dashboard exposes filters, vendor aggregates, row counts and pagination limits. Stable vendor IDs deduplicate first-observation journal records; latest poll rows may reflect vendor corrections. A live moving feed can shift pages and leave gaps.
+- TraderMatrix flow uses the documented row shape and a $50k minimum. Each cycle reads page 1 and resumes deeper pages from a durable checkpoint with overlap, for at most five pages per cycle. PostgreSQL stores daily unique IDs and the latest corrections, while the event journal retains distinct versions. Yesterday catch-up continues after a date change. Estimated missing IDs and past-day gaps are visible; moving pages still prevent a guarantee of complete capture.
 
 ## Tomorrow's acceptance criteria
 
 - Prices are from the selected provider/feed and source timestamps advance during the expected market session.
 - MES/MNQ observations retain the resolved contract instrument ID.
-- The first 15 regular-session minutes are present before an opening-range decision.
+- The first 15 minutes of the active Globex or RTH range are complete before an opening-range decision.
 - A missing option OI/Greek field is represented as missing; option coverage is assessed on the declared union of metadata and snapshot contracts.
 - The selected-contract count and limits are visible. Large prints are not described as complete unusual activity.
 - Trade entries have signal, decision and quote timestamps. Entry is at bid/ask plus adverse slippage, never an old chart level.
@@ -48,7 +48,7 @@ All required code and service roles can be deployed without buying another serve
 | Databento connection fails | Verify live GLBX.MDP3 plan and CME nonprofessional/professional declarations |
 | No option quotes | Verify Massive real-time options plan and selected contracts; snapshot access alone is insufficient |
 | Low GEX coverage | Inspect null OI/Greeks and OI dates; do not replace nulls with zero |
-| Partial prior-session levels | Wait for enough history or authorize bounded historical backfill |
+| Partial prior-session levels | Check the explicit contract and recovery counts in Feed health. Missing trade minutes are not synthesized. A failed reserved download is not retried automatically. |
 | Red collector, green server | Process health is not feed health; use timestamps in Feed health |
 | Webhook error | Fix destination; journal stays available and dispatcher retains its cursor for retry |
 | Storage growth | Reduce option universe, add compressed object archive, and review retention before deleting evidence |
@@ -81,5 +81,11 @@ All deployment source is in a private GitHub repository. Railway can redeploy a 
 - PostgreSQL persistent volume: 5 GB initially, mounted at /var/lib/postgresql/data.
 - Provider keys and dashboard authentication have been securely configured. Alpaca SIP and Massive options streams authenticated; Databento CME live connected after the exchange entitlement was activated. TraderMatrix returned paid GEX/VEX matrices; its Sunday `today` flow was empty. OpenAI completed a funded Responses API answer. Discord passed a read-only webhook check.
 - Premarket changes passed 38 offline tests plus JavaScript syntax validation before deployment. Fixtures exercise null coverage, matrix alignment, paging overlaps and caps, closed sessions versus failed workers, fresh-quote gating, confirmed Discord delivery and complete grounded responses. No fixture was inserted into production and no synthetic message was sent.
-- First-session checks remain: advancing stock/futures/option source times, actual chain coverage, nonempty vendor flow, complete opening ranges, simulated fills/exits and saved Discord alerts. Current strategies enter only during the US equity regular session, including futures; overnight collection is enabled.
+- First-session checks remain: advancing stock/futures/option source times, actual chain coverage, nonempty vendor flow, complete opening ranges, simulated fills/exits and saved Discord alerts. Futures v2 scans overnight and resets its opening range at the cash open. Equity/0DTE entries remain within the cash session.
 - The authenticated dashboard was previously browser verified. The Pine script still needs compilation and visual validation in the user's TradingView account.
+
+## Pre-open fixes, September 13
+
+The six pre-open changes cover the CME session/risk clock; explicit quarterly contracts with bounded same-contract prior-session recovery; a confirmed Discord test action; 0DTE selection that continues after risk or liquidity rejection; raw Greek-field diagnostics; and durable unusual-flow reconciliation. The offline suite now has 60 passing tests. Futures customarily roll to December for the September 14 session (MESZ6/MNQZ6 data symbols; MESZ2026/MNQZ2026 chart symbols). Continuous chart adjustment settings can differ; the existing Pine script draws the RTH range only and has not been compiled in TradingView.
+
+Historical recovery reserves the free provider cost estimate before one bounded download, against a default $0.10 cumulative ceiling. Unknown download outcomes retain the reservation and require review before a repeat. Free pre-download failures can retry on the next hourly recovery check. No data subscription or broker execution is added.

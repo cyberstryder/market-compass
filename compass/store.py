@@ -21,6 +21,11 @@ state=Table("state",meta,Column("key",String(240),primary_key=True),
     Column("value",JSON,nullable=False),Column("updated",Float,nullable=False))
 leases=Table("leases",meta,Column("key",String(100),primary_key=True),
     Column("owner",String(100),nullable=False),Column("until",Float,nullable=False))
+flow_records=Table("flow_records",meta,
+    Column("day",String(10),primary_key=True),Column("vendor_id",String(200),primary_key=True),
+    Column("source_ts",Float,nullable=False),Column("payload",JSON,nullable=False),
+    Column("first_seen",Float,nullable=False),Column("last_seen",Float,nullable=False))
+Index("flow_records_day_time",flow_records.c.day,flow_records.c.source_ts)
 
 def identity(*args):
     return hashlib.sha256(json.dumps(args,sort_keys=True,default=str).encode()).hexdigest()

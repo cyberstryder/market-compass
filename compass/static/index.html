@@ -11,15 +11,15 @@
 <div id="connection" class="banner">Connecting to the shared market state…</div>
 <section id="overview" class="tab active"><div id="stats" class="stats"></div><div class="columns">
 <article class="panel wide"><div class="panel-head"><h2>Watchlist & levels</h2><span class="muted">Latest observations</span></div><div id="watch"></div>
-<p class="fine">Opening range completes at 09:45 ET. Futures series retain their resolved contract IDs.</p></article>
+<p class="fine">Futures use a 17:00–17:15 CT Globex range, then a new 08:30–08:45 CT regular-session range. Explicit contract IDs keep rolled prices separate.</p></article>
 <article class="panel"><div class="panel-head"><h2>Decision journal</h2><span class="dot"></span></div><div id="journal"></div></article></div>
 <article class="panel"><div class="panel-head"><h2>Research rules</h2><span class="pill">v0.1 · forward test</span></div><div class="rule-grid">
-<div><h3>Futures / intraday</h3><p>Closed-minute break of the 15-minute opening range. ATR stop, 2R target, fresh bid/ask required.</p></div>
-<div><h3>0DTE</h3><p>Underlying breakout selects an eligible same-day call or put. A stale or missing option quote blocks the simulated entry.</p></div>
+<div><h3>Futures / intraday</h3><p>Closed-minute break of the active 15-minute range. Futures scan overnight and reset the range at the cash open. ATR stop, 2R target, fresh bid/ask required.</p></div>
+<div><h3>0DTE</h3><p>Underlying breakout selects an eligible same-day call or put. Up to eight nearby contracts are checked for fresh quotes, spread and risk capacity.</p></div>
 <div><h3>Swings</h3><p>Completed daily close above the preceding 20 daily highs. Entry waits for the next session and an executable quote.</p></div></div></article></section>
 <section id="exposure" class="tab"><div class="banner">Compare vendor exposure with the local research proxy. A recent fetch does not make an old market snapshot current.</div>
 <h2>TraderMatrix GEX / VEX</h2><p class="muted">Concentrations across the expirations returned by the vendor. Methodology and units remain vendor defined.</p><div id="matrix"></div>
-<h2>Local exposure & input coverage</h2><p class="muted">Daily open interest, calls positive / puts negative. Local VEX estimates vanna; it is not assumed equivalent to TraderMatrix VEX.</p><div id="exposures"></div></section>
+<h2>Local exposure & input coverage</h2><p class="muted">Daily open interest, calls positive / puts negative. Local VEX estimates vanna; it is not assumed equivalent to TraderMatrix VEX.</p><div id="exposures"></div><h2>Greek input diagnostics</h2><div id="greek-diagnostics"></div></section>
 <section id="flow" class="tab"><div class="banner">TraderMatrix supplies filtered unusual activity through polling. Massive supplies live prints for selected contracts. Neither view establishes a trade's opening or closing intent.</div>
 <article class="panel"><h2>TraderMatrix unusual activity</h2><div id="vendor-flows"></div></article>
 <article class="panel"><h2>Massive large option prints</h2><p class="muted">$100k minimum · selected contracts only</p><div id="flows"></div></article></section>
@@ -31,10 +31,11 @@
 <button type="submit">Ask Compass →</button></form><p id="answer" class="answer"></p><p id="answer-time" class="fine"></p></article></section>
 <section id="health" class="tab"><div class="banner">A running server does not mean market data is ready. Check both source timestamps and collector heartbeats during open sessions.</div>
 <article class="panel"><h2>Quotes required for simulation</h2><div id="quote-checks"></div></article>
+<article class="panel"><h2>Futures session & contracts</h2><div id="future-readiness"></div></article>
 <article class="panel"><h2>Independent collectors</h2><div id="health-table"></div><p id="workers" class="fine"></p></article>
-<article class="panel"><h2>Discord delivery</h2><div id="delivery"></div></article>
+<article class="panel"><h2>Discord delivery</h2><div id="delivery"></div><button id="test-alert" type="button">Send test alert</button><p id="test-result" class="fine" aria-live="polite"></p></article>
 <article class="panel"><h2>First-session verification</h2>
 <p class="muted">Connections are checked. Live readiness still requires advancing source times, usable option inputs, and a recorded simulated entry, exit, and confirmed alert.</p>
-<p class="fine">The current entry rules use the US equity regular session, including futures entries. Futures data collection also runs outside that window.</p></article></section>
+<p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></section>
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
 <script src="/static/app.js"></script></body></html>

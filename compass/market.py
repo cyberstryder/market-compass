@@ -34,8 +34,11 @@ def session(d):
     return cal.session_open(label).timestamp(),cal.session_close(label).timestamp()
 
 def is_open(now=None,future=False):
+    if future:
+        from .futures import futures_session
+        return futures_session(now or time.time())["is_open"]
     try:
-        return bool(calendar("CMES" if future else "XNYS").is_open_on_minute(
+        return bool(calendar("XNYS").is_open_on_minute(
             pd.Timestamp(now or time.time(),unit="s",tz="UTC").floor("min")))
     except (ValueError,KeyError): return False
 

@@ -4,6 +4,7 @@ import time
 import uuid
 from .market import levels,fresh,day,session,dedup
 from .store import identity
+from .futures import futures_session,risk_day,future_levels,selection
 
 VERSION="orb15-breakout-v1"
 
@@ -21,15 +22,16 @@ def fill(q,side,tick,entering=True):
 def candidate(symbol,previous,bar,context,now):
     if not context.get("or_complete") or not context.get("atr14") or context["atr14"]<=0: return None
     if not 0<=now-(bar["ts"]+60)<=90 or bar["ts"]<context["session_open"]+900: return None
-    if bar["ts"]>=context["session_close"]-1800 or bar["ts"]-previous["ts"]!=60: return None
+    if bar["ts"]>=context.get("entry_end",context["session_close"]-1800) or bar["ts"]-previous["ts"]!=60: return None
     p,b=previous["payload"]["c"],bar["payload"]["c"]
     high,low=context["or_high"],context["or_low"]
     side="long" if p<=high<b else "short" if p>=low>b else None
     if not side: return None
-    return {"id":identity(VERSION,symbol,bar["ts"],side),"strategy":VERSION,"symbol":symbol,
+    version=context.get("rule_version",VERSION)
+    return {"id":identity(version,symbol,bar["ts"],side),"strategy":version,"symbol":symbol,
         "side":side,"signal_time":bar["ts"]+60,"decided_at":now,"signal_price":b,
         "stop_distance":max(context["atr14"]*1.5,spec(symbol)["tick"]*4),
-        "reason":"Closed minute crossed the completed 15-minute opening range",
+        "reason":"Closed minute crossed the completed 15-minute "+context.get("range_name","RTH")+" opening range",
         "context":context,"bar_event":bar["id"],"status":"candidate","track":"intraday"}
 
 class Engine:
@@ -40,41 +42,53 @@ class Engine:
     def alert(self,c,symbol,data,key):
         self.db.append(c,"alert","engine",symbol,time.time(),{"mode":"SIMULATED",**data},key)
 
-    def enter(self,c,signal,now):
+    def entry_check(self,c,signal,now):
         symbol,side=signal["symbol"],signal["side"]
         s=spec(symbol)
         q=self.db.get(c,"quote:"+symbol)
         hours=session(day(now))
         reason=None
-        if not hours or not hours[0]<=now<hours[1]-1800: reason="Outside research entry session"
-        elif self.db.get(c,"position:"+symbol,{}).get("status")=="open": reason="Existing simulated position"
+        if s["asset"]=="future":
+            if not futures_session(now)["entry_open"]: reason="Outside futures entry session or exchange pause"
+        elif not hours or not hours[0]<=now<hours[1]-1800: reason="Outside research entry session"
+        if reason: return reason,None
+        if self.db.get(c,"position:"+symbol,{}).get("status")=="open": reason="Existing simulated position"
         elif not fresh(q,now): reason="Missing, stale, locked/invalid, or empty bid/ask quote"
         elif q["ts"]<signal["signal_time"]: reason="No quote after signal"
         elif q["ask"]-q["bid"]>max(s["tick"]*8,(q["ask"]+q["bid"])/2*(.08 if s["asset"]=="option" else .002)):
             reason="Spread exceeds simulation liquidity limit"
-        risk=self.db.get(c,"risk:"+day(now),{"realized":0,"entries":0})
+        risk=self.db.get(c,"risk:"+risk_day(now),{"realized":0,"entries":0})
         if risk["realized"]<=-self.cfg.daily_loss or risk["entries"]>=10: reason="Daily simulated loss or 10-entry cap"
         if sum(p.get("status")=="open" for p in self.db.prefix(c,"position:").values())>=3:
             reason="Portfolio cap: three simultaneous simulated positions"
         if reason:
-            self.alert(c,symbol,{**signal,"status":"skipped","reason":reason},"skip:"+signal["id"])
-            return False
+            return reason,None
         price=fill(q,side,s["tick"])
         distance=signal["stop_distance"]
         per_unit=distance*s["multiplier"]+2*s["fee"]+2*s["tick"]*s["multiplier"]
         qty=min(s["max_qty"],int(self.cfg.risk/per_unit),int(q["ask_size"] if side=="long" else q["bid_size"]))
         if qty<1 or (side=="long" and price-distance<=0):
-            self.alert(c,symbol,{**signal,"status":"skipped","reason":"One unit exceeds risk or stop invalid"},"skip:"+signal["id"])
+            return "One unit exceeds risk or stop invalid",None
+        flatten=futures_session(now)["flatten_at"] if s["asset"]=="future" else hours[1]-900
+        return None,{"spec":s,"quote":q,"price":price,"distance":distance,"per_unit":per_unit,"qty":qty,"risk":risk,"flatten_at":flatten}
+
+    def enter(self,c,signal,now):
+        reason,plan=self.entry_check(c,signal,now)
+        symbol,side=signal["symbol"],signal["side"]
+        if reason:
+            self.alert(c,symbol,{**signal,"status":"skipped","reason":reason},"skip:"+signal["id"])
             return False
+        s,q,price,distance,per_unit,qty,risk=(plan[k] for k in ("spec","quote","price","distance","per_unit","qty","risk"))
         direction=1 if side=="long" else -1
         trade={**signal,**s,"status":"open","entry":price,"entered_at":now,"entry_quote_ts":q["ts"],
             "stop":price-direction*distance,"target":price+direction*distance*2,"qty":qty,"initial_risk":per_unit*qty,
             "fill_model":"Observed bid/ask side plus one adverse tick; sample-based simulation",
-            "last_quote_ts":q["ts"],"last_bar_checked":signal["signal_time"]-60}
+            "last_quote_ts":q["ts"],"last_bar_checked":signal["signal_time"]-60,
+            "risk_day":risk_day(now),"flatten_at":plan["flatten_at"]}
         self.db.put(c,"position:"+symbol,trade)
         self.db.put(c,"trade:"+signal["id"],trade)
         risk["entries"]+=1
-        self.db.put(c,"risk:"+day(now),risk)
+        self.db.put(c,"risk:"+risk_day(now),risk)
         self.alert(c,symbol,{**trade,"status":"entered"},"entry:"+signal["id"])
         return True
 
@@ -101,15 +115,16 @@ class Engine:
                     reason="stop_detected_in_bar"
                     price=min(price,p["stop"]-p["tick"]) if long else max(price,p["stop"]+p["tick"])
             hours=session(day(now))
-            if p.get("track")!="swing" and hours and now>=hours[1]-900: reason=reason or "session_flatten"
+            deadline=p.get("flatten_at",hours[1]-900 if hours else None)
+            if p.get("track")!="swing" and deadline and now>=deadline: reason=reason or "session_flatten"
             p["last_quote_ts"]=q["ts"]
             p["mark"]=price
             p["unrealized"]=(price-p["entry"])*(1 if long else -1)*p["qty"]*p["multiplier"]-2*p["fee"]*p["qty"]
             if reason:
                 p.update(status="closed",exit=price,exited_at=now,exit_reason=reason,pnl=p["unrealized"])
-                risk=self.db.get(c,"risk:"+day(now),{"realized":0,"entries":0})
+                risk=self.db.get(c,"risk:"+risk_day(now),{"realized":0,"entries":0})
                 risk["realized"]+=p["pnl"]
-                self.db.put(c,"risk:"+day(now),risk)
+                self.db.put(c,"risk:"+risk_day(now),risk)
                 self.alert(c,p["symbol"],p,"exit:"+p["id"])
             self.db.put(c,key,p)
             self.db.put(c,"trade:"+p["id"],p)
@@ -123,14 +138,20 @@ class Engine:
         kind="call" if signal["side"]=="long" else "put"
         opts=[o for o in chain.get("contracts",[]) if o.get("expiry")==day(now) and o.get("type")==kind and o.get("multiplier")==100]
         opts.sort(key=lambda o:abs(o["strike"]-signal["signal_price"]))
+        rejected=[]
         for o in opts[:8]:
             q=self.db.get(c,"quote:"+o["symbol"])
             if fresh(q,now):
-                self.enter(c,{**signal,"id":identity(signal["id"],o["symbol"]),"symbol":o["symbol"],
-                    "underlying":signal["symbol"],"strategy":"0dte-underlying-orb-v1","side":"long",
-                    "stop_distance":max(.05,q["ask"]*.3)},now)
-                return
-        self.alert(c,signal["symbol"],{"status":"options_skipped","reason":"No eligible 0DTE contract with fresh bid/ask",
+                option_signal={**signal,"id":identity(signal["id"],o["symbol"]),"symbol":o["symbol"],
+                    "underlying":signal["symbol"],"strategy":"0dte-underlying-orb-v2","side":"long",
+                    "stop_distance":max(.05,q["ask"]*.3)}
+                reason,_=self.entry_check(c,option_signal,now)
+                if reason:
+                    rejected.append({"symbol":o["symbol"],"reason":reason})
+                    continue
+                if self.enter(c,{**option_signal,"selection_rejections":rejected},now): return
+            else: rejected.append({"symbol":o["symbol"],"reason":"Missing or invalid fresh quote"})
+        self.alert(c,signal["symbol"],{"status":"options_skipped","reason":"No eligible 0DTE contract passes quote, spread and risk checks","rejections":rejected,
             "parent_signal":signal["id"]},"option-skip:"+signal["id"])
 
     def swings(self,c,now):
@@ -158,7 +179,10 @@ class Engine:
         with self.db.tx() as c:
             if not self.db.lease(c,"engine",self.owner,30): return
             self.exits(c,now)
-            symbols=list(self.cfg.stocks)+[k[6:] for k in self.db.prefix(c,"quote:") if "@" in k]
+            active={p["raw_symbol"] for p in selection(self.cfg.futures,now)}
+            future_symbols={k[6:] for k in self.db.prefix(c,"quote:") if "@" in k and k[6:].split("@")[0] in active}
+            future_symbols|={k[10:] for k in self.db.prefix(c,"latestbar:") if "@" in k and k[10:].split("@")[0] in active}
+            symbols=list(self.cfg.stocks)+sorted(future_symbols)
             for symbol in symbols:
                 latest=self.db.get(c,"latestbar:"+symbol)
                 if latest is not None and latest<=self.db.get(c,"cursor:"+symbol,0): continue
@@ -166,7 +190,8 @@ class Engine:
                 if len(rows)<2: continue
                 bar=rows[-1]
                 if bar["ts"]<=self.db.get(c,"cursor:"+symbol,0): continue
-                context=levels(rows,bar["ts"]+60)
+                future=spec(symbol)["asset"]=="future"
+                context=future_levels(rows,now) if future else levels(rows,bar["ts"]+60)
                 self.db.put(c,"levels:"+symbol,context)
                 s=candidate(symbol,rows[-2],bar,context,now)
                 if s:

@@ -2,6 +2,7 @@
 import asyncio
 import json
 import time
+import uuid
 from datetime import datetime,timedelta,timezone
 from urllib.parse import urlparse
 import httpx
@@ -10,7 +11,10 @@ from .market import ts,number,day
 from .store import identity
 from .exposure import calculate
 from .diagnostics import redacted_detail
-from .vendor import matrix_summary,flow_page
+from .vendor import matrix_summary
+from .greek_diagnostics import diagnose
+from .flow_recovery import collect as collect_flow
+from .futures import selection
 
 class FeedError(Exception): pass
 
@@ -22,6 +26,7 @@ class Collectors:
         self.live=None
         self.matrix_last=0
         self.matrix_next=0
+        self.history_owner=uuid.uuid4().hex
 
     async def close(self):
         if self.live: self.live.stop()
@@ -56,6 +61,7 @@ class Collectors:
             self.supervise("alpaca_stocks",bool(c.alpaca_key and c.alpaca_secret),self.stocks),
             self.supervise("alpaca_history",bool(c.alpaca_key and c.alpaca_secret),self.history,3600),
             self.supervise("databento_futures",bool(c.databento),self.futures),
+            self.supervise("futures_history",bool(c.databento),self.future_history,3600),
             self.supervise("option_chain",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.chains,60),
             self.supervise("option_stream",bool(c.massive),self.options),
             self.supervise("tradermatrix",bool(c.matrix),self.matrix,15)]
@@ -123,9 +129,23 @@ class Collectors:
             else: raise FeedError("History pagination cap reached; incomplete")
         self.db.health("alpaca_history","available","7 calendar days minute bars; 120 calendar days daily bars",newest)
 
+    async def future_history(self):
+        import databento as sdk
+        from .future_history import recover
+        await asyncio.to_thread(recover,self,sdk.Historical(key=self.cfg.databento),time.time())
+
+    def future_targets(self):
+        targets=selection(self.cfg.futures,time.time())
+        symbols={t["raw_symbol"] for t in targets}
+        with self.db.tx() as c:
+            for p in self.db.prefix(c,"position:").values():
+                if p.get("status")=="open" and p.get("asset")=="future": symbols.add(p["symbol"].split("@")[0])
+        return targets,sorted(symbols)
+
     async def futures(self):
         import databento as db
-        self.db.health("databento_futures","connecting","GLBX.MDP3: continuous input with resolved instrument IDs")
+        targets,symbols=self.future_targets()
+        self.db.health("databento_futures","connecting","GLBX.MDP3 explicit contracts: "+", ".join(symbols))
         def run():
             client=db.Live(key=self.cfg.databento,heartbeat_interval_s=15,reconnect_policy="none",slow_reader_behavior="warn")
             self.live=client
@@ -135,8 +155,13 @@ class Collectors:
                     raise FeedError("Databento stream: "+redacted_detail(r.err,(self.cfg.databento,)))
                 if isinstance(r,db.SymbolMappingMsg):
                     with self.db.tx() as c:
-                        self.db.append(c,"mapping","databento",str(r.stype_out_symbol),time.time(),
-                            {"instrument_id":r.instrument_id,"input":str(r.stype_in_symbol),"output":str(r.stype_out_symbol)})
+                        raw=str(r.stype_in_symbol)
+                        target=next((t for t in targets if t["raw_symbol"]==raw),None)
+                        self.db.append(c,"mapping","databento",raw,time.time(),
+                            {"instrument_id":r.instrument_id,"input":target["configured_symbol"] if target else raw,"output":raw})
+                        if target:
+                            self.db.put(c,"contract:"+target["root"],{**target,"instrument_id":r.instrument_id,
+                                "resolved_symbol":f"{raw}@{r.instrument_id}","mapping_source":"databento live mapping","at":time.time()})
                     return
                 iid=getattr(r,"instrument_id",None)
                 alias=client.symbology_map.get(iid)
@@ -159,16 +184,22 @@ class Collectors:
                 self.db.health("databento_futures","error","Callback failed; stopping stream for controlled reconnect")
                 client.terminate()
             client.add_callback(callback,exception_callback=on_error)
-            client.subscribe(dataset="GLBX.MDP3",schema="ohlcv-1m",stype_in="continuous",symbols=self.cfg.futures,
+            client.subscribe(dataset="GLBX.MDP3",schema="ohlcv-1m",stype_in="raw_symbol",symbols=symbols,
                 start=(datetime.now(timezone.utc)-timedelta(hours=23)).isoformat())
-            client.subscribe(dataset="GLBX.MDP3",schema="mbp-1",stype_in="continuous",symbols=self.cfg.futures)
+            client.subscribe(dataset="GLBX.MDP3",schema="mbp-1",stype_in="raw_symbol",symbols=symbols)
             client.start()
-            self.db.health("databento_futures","connected","Waiting for CME market events")
+            self.db.health("databento_futures","connected","Waiting for CME market events: "+", ".join(symbols))
             try: client.block_for_close()
             finally: client.stop()
             if errors: raise FeedError("Databento callback failure: "+errors[0])
         try:
-            await asyncio.to_thread(run)
+            task=asyncio.create_task(asyncio.to_thread(run))
+            while not task.done():
+                await asyncio.wait({task},timeout=30)
+                if self.future_targets()[1]!=symbols and self.live:
+                    self.live.stop()
+                    break
+            await task
         except db.BentoError as error:
             raise FeedError("Databento: "+redacted_detail(error,(self.cfg.databento,))) from None
 
@@ -196,6 +227,7 @@ class Collectors:
                 self.db.append(c,"chain",source,symbol,now,chain)
                 self.db.put(c,"chain:"+symbol,chain)
                 self.db.put(c,"exposure:"+symbol,exposure)
+                self.db.put(c,"greeks:"+symbol,diagnose(contracts,reference,reference_ts,now,complete))
                 self.db.append(c,"exposure",source,symbol,now,exposure)
             chosen=select_contracts(contracts,reference,max(2,self.cfg.stream_limit//len(self.cfg.stocks)))
             total_contracts+=len(contracts)
@@ -212,15 +244,23 @@ class Collectors:
         url="https://api.massive.com/v3/snapshot/options/"+symbol
         params={"apiKey":self.cfg.massive,"limit":250,"expiration_date.gte":day(time.time()),"expiration_date.lte":day(time.time()+45*86400)}
         out=[]
+        pages_seen=set()
+        symbols_seen=set()
         for _ in range(40):
+            if url in pages_seen: raise FeedError("Options pagination repeated a page")
+            pages_seen.add(url)
             data=await self.get(url,params=params)
             for x in data.get("results",[]):
-                d,g,q=x.get("details",{}),x.get("greeks",{}),x.get("last_quote",{})
+                d,g,q=x.get("details") or {},x.get("greeks") or {},x.get("last_quote") or {}
                 o={"symbol":d.get("ticker"),"underlying":symbol,"expiry":d.get("expiration_date"),
                     "strike":d.get("strike_price"),"type":d.get("contract_type"),"multiplier":d.get("shares_per_contract"),
                     "oi":x.get("open_interest"),"oi_date":None,"gamma":g.get("gamma"),"delta":g.get("delta"),
+                    "gamma_field":"absent" if "gamma" not in g else "null" if g["gamma"] is None else "value",
+                    "greek_fields":sorted(k for k in g if k in {"gamma","delta","theta","vega"}),
                     "iv":x.get("implied_volatility"),"volume":x.get("day",{}).get("volume")}
                 if o["symbol"] and o["expiry"] and o["strike"]:
+                    if o["symbol"] in symbols_seen: raise FeedError("Options pagination repeated a contract")
+                    symbols_seen.add(o["symbol"])
                     out.append(o)
                     o["quote"]={"ts":ts(q.get("last_updated")),"bid":q.get("bid"),"ask":q.get("ask"),
                         "bid_size":q.get("bid_size",0),"ask_size":q.get("ask_size",0)}
@@ -315,39 +355,13 @@ class Collectors:
         data=await self.get("https://api.traderdaddy.pro/api/v1"+path,{"X-API-Key":self.cfg.matrix})
         now=time.time()
         with self.db.tx() as c:
-            self.db.append(c,"matrix_raw","tradermatrix",label,now,{"path":path,"data":data})
+            self.db.append(c,"matrix_raw","tradermatrix",label,now,{"path":path,"data":data},
+                key=identity("matrix_raw",day(now),path,data))
         return data,now
 
     async def matrix(self):
-        rows,seen,rejected,raw_count=[],set(),0,0
-        first=None
-        for page in range(1,6):
-            path=f"/unusual-activity?timeFrame=today&minPremium=50000&page={page}&pageSize=100"
-            data,now=await self.matrix_request(path,"unusual_activity")
-            try: part=flow_page(data,now)
-            except ValueError as e: raise FeedError(str(e)) from None
-            if part["page"]!=page: raise FeedError("TraderMatrix returned an unexpected page")
-            if first is None: first=part
-            rejected+=part["rejected"]
-            raw_count+=part["raw_count"]
-            for row in part["rows"]:
-                if row["vendor_id"] in seen: continue
-                seen.add(row["vendor_id"])
-                rows.append(row)
-                with self.db.tx() as c:
-                    self.db.append(c,"vendor_flow","tradermatrix",row["symbol"],row["source_ts"],row,
-                        key=identity("tradermatrix-flow",row["vendor_id"]))
-            if page*part["page_size"]>=part["total"] or not part["raw_count"]: break
-        limited=page*part["page_size"]<part["total"]
-        flow={"source":"tradermatrix","received":now,"source_ts":max((r["source_ts"] for r in rows),default=None),
-            "rows":sorted(rows,key=lambda r:r["source_ts"],reverse=True),"total":first["total"],
-            "pages":page,"page_cap":5,"fetched_rows":raw_count,"unique_rows":len(rows),"rejected":rejected,
-            "limited":limited,"status":"partial" if limited or rejected else "available",
-            "filters":first["filters"],"aggregates":first["aggregates"],
-            "coverage_note":"Vendor-filtered today feed, $50k minimum; at most 500 rows per poll. Page movement can create gaps. Aggregates are vendor totals, not sums of displayed rows.",
-            "schema_validation":"Official response example implemented; live row validation pending" if not rows else "Rows accepted against documented fields; classifications remain vendor supplied"}
-        with self.db.tx() as c:
-            self.db.put(c,"matrix:unusual_activity",flow)
+        try: await collect_flow(self,time.time())
+        except ValueError as e: raise FeedError(str(e)) from None
         if time.time()-self.matrix_last>=60:
             for symbol in self.cfg.stocks:
                 data,now=await self.matrix_request("/gex/"+symbol+"/matrix",symbol)

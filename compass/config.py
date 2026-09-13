@@ -25,6 +25,7 @@ class Config:
     risk: float = field(default_factory=lambda: float(env("SHADOW_RISK_DOLLARS","100")))
     daily_loss: float = field(default_factory=lambda: float(env("SHADOW_MAX_DAILY_LOSS","300")))
     stream_limit: int = field(default_factory=lambda: min(900,max(10,int(env("OPTION_STREAM_CONTRACTS","100")))))
+    history_budget: float = field(default_factory=lambda: float(env("FUTURES_HISTORY_BUDGET_USD","0.10")))
 
     def validate(self):
         if self.role not in {"all","web","collector","engine"}:
@@ -37,3 +38,4 @@ class Config:
             raise ValueError("v0.1 futures specifications support MES/MNQ only")
         if self.feed not in {"sip","iex"} or min(self.risk,self.daily_loss)<=0:
             raise ValueError("Invalid feed or simulation risk")
+        if not 0<=self.history_budget<=1: raise ValueError("History recovery budget must be between $0 and $1 cumulative")
