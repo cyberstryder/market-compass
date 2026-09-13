@@ -179,3 +179,29 @@ def test_databento_sdk_contract_is_supported():
     import databento as db
     assert all(hasattr(db.Live,name) for name in ["subscribe","start","stop","block_for_close","symbology_map"])
     assert db.OHLCVMsg and db.MBP1Msg and db.SymbolMappingMsg
+
+def test_alpaca_unmatched_contracts_remain_in_coverage(db,cfg):
+    async def scenario():
+        collector=Collectors(db,cfg)
+        await collector.client.aclose()
+        metadata={"option_contracts":[{"symbol":"SPY260914C00102000","expiration_date":"2026-09-14","strike_price":"102","type":"call","size":"100","open_interest":"100"}]}
+        snapshots={"snapshots":{"SPY260914P00102000":{"greeks":{"gamma":.1}}}}
+        def handler(request):
+            return httpx.Response(200,json=metadata if request.url.host=="paper-api.alpaca.markets" else snapshots)
+        collector.client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        contracts,complete=await collector.alpaca_chain("SPY")
+        assert complete and len(contracts)==2
+        assert {o["join_status"] for o in contracts}=={"missing_snapshot","missing_contract_metadata"}
+        assert calculate(contracts,102,NOW,"alpaca")["usable_gex"]==0
+        await collector.close()
+    asyncio.run(scenario())
+
+def test_databento_constructs_on_background_thread_without_network():
+    import databento as db
+    from concurrent.futures import ThreadPoolExecutor
+    def construct():
+        client=db.Live(key="fixture-not-a-real-key",reconnect_policy="none",slow_reader_behavior="warn")
+        assert not client.is_connected()
+        client.terminate()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(construct).result(timeout=10)

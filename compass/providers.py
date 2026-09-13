@@ -117,7 +117,7 @@ class Collectors:
         import databento as db
         self.db.health("databento_futures","connecting","GLBX.MDP3: continuous input with resolved instrument IDs")
         def run():
-            client=db.Live(key=self.cfg.databento,heartbeat_interval_s=15,reconnect_policy="none")
+            client=db.Live(key=self.cfg.databento,heartbeat_interval_s=15,reconnect_policy="none",slow_reader_behavior="warn")
             self.live=client
             last={}
             def callback(r):
@@ -142,7 +142,12 @@ class Collectors:
                 if time.monotonic()-last.get("health",0)>5:
                     self.db.health("databento_futures","receiving","Contract ID retained; BBO sampled up to 4 Hz",t)
                     last["health"]=time.monotonic()
-            client.add_callback(callback)
+            errors=[]
+            def on_error(error):
+                errors.append(type(error).__name__)
+                self.db.health("databento_futures","error","Callback failed; stopping stream for controlled reconnect")
+                client.terminate()
+            client.add_callback(callback,exception_callback=on_error)
             client.subscribe(dataset="GLBX.MDP3",schema="ohlcv-1m",stype_in="continuous",symbols=self.cfg.futures,
                 start=(datetime.now(timezone.utc)-timedelta(hours=23)).isoformat())
             client.subscribe(dataset="GLBX.MDP3",schema="mbp-1",stype_in="continuous",symbols=self.cfg.futures)
@@ -150,6 +155,7 @@ class Collectors:
             self.db.health("databento_futures","connected","Waiting for CME market events")
             try: client.block_for_close()
             finally: client.stop()
+            if errors: raise FeedError("Databento callback failure: "+errors[0])
         await asyncio.to_thread(run)
 
     async def chains(self):

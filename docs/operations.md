@@ -56,3 +56,17 @@ The previous planning estimate was Databento CME Standard plus Massive real-time
 ## Rollback and exports
 
 All deployment source is in a private GitHub repository. Railway can redeploy a previous commit. Database records survive application redeploys. Download small journal slices from the authenticated /api/events endpoint; use PostgreSQL backup/export for full records. Never delete or rewrite a test run to improve its reported results.
+
+## Deployment created on 2026-09-13
+
+- Dashboard: https://dashboard-production-c3a7.up.railway.app
+- Repository: https://github.com/cyberstryder/market-compass
+- Railway: https://railway.com/project/4801dbfb-a7a9-411b-abef-696df393f0b1
+- dashboard service: 33e96fc3-e153-4944-a131-b5944c12e902
+- collector service: 5a1ad3c7-4090-42d0-954f-a5a55f8e8f9d
+- engine service: b5a4b496-4359-45a4-b69e-8b0cfe5f2209
+- Postgres service: 38f0ad27-44ae-4a1e-ada8-6de878d46873
+- PostgreSQL persistent volume: 5 GB initially, mounted at /var/lib/postgresql/data.
+- Provider fields and the dashboard password are intentionally empty pending secure activation.
+- The first deployment passed 16 offline tests and Railway healthchecks on all four services. Subsequent commits may extend the test count.
+- Browser rendering and Pine compilation could not be verified after the coding/browser workspace disconnected. Backend login, protected API, source behavior and Docker build checks were verified.
