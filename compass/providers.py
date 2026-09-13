@@ -72,9 +72,14 @@ class Collectors:
 
     def bars(self,source,items,kind="bar"):
         with self.db.tx() as c:
+            latest={}
             for symbol,t,p in items:
                 if t is None or any(number(p.get(k)) is None for k in ["o","h","l","c","v"]): continue
                 self.db.append(c,kind,source,symbol,t,p)
+                latest[symbol]=max(latest.get(symbol,0),t)
+            if kind=="bar":
+                for symbol,t in latest.items():
+                    if t>=self.db.get(c,"latestbar:"+symbol,0): self.db.put(c,"latestbar:"+symbol,t)
 
     async def stocks(self):
         self.db.health("alpaca_stocks","connecting",self.cfg.feed.upper()+" stream")

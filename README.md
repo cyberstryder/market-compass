@@ -57,6 +57,7 @@ Risk defaults: $100 planned risk per entry, $300 daily realized-loss stop, 10 en
 - Stock/futures bid/ask observations sampled up to 4 Hz; options bid/ask sampled up to 1 Hz for a default 100-contract universe. This is not a tick-perfect execution simulator or complete OPRA recorder.
 - Massive chain scope: configured underlyings, expirations through 45 calendar days. Pagination is bounded and external next-page hosts are rejected.
 - Alpaca OPRA chain/contract metadata is an explicitly labeled fallback if Massive is not configured. Raw options streaming currently uses Massive; Alpaca's MsgPack stream is not implemented in v0.1.
+- Futures VWAP is labeled a volume-weighted minute-close approximation; Alpaca uses source minute-bar VWAP when present.
 - GEX: gamma × OI × 100 × spot² × 0.01, calls positive / puts negative as an inventory assumption. VEX: Black–Scholes vanna × OI × 100 × spot × 0.01, same assumption. Vanna uses a fixed 4% rate and zero dividends as a research approximation. American-option and very-short-expiry effects are not modeled. No SPX AM-settlement approximation is made.
 - Missing OI is null, not zero. Contract metadata and snapshot join failures remain visible in coverage. Greeks/IV timestamp and OI date availability vary; a new HTTP response does not imply new open interest.
 - Local flow labels $100k+ prints in selected contracts. It does not infer sweeps, opening/closing, aggressor intent, multi-leg linkage, or full-market unusual activity.

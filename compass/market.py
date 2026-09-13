@@ -77,6 +77,7 @@ def levels(rows,asof):
     if current:
         out["price"]=current[-1]["payload"]["c"]
         out["price_asof"]=current[-1]["ts"]+60
+        out["vwap_method"]="Volume-weighted source bar VWAP" if all("vw" in r["payload"] for r in current) else "Volume-weighted minute-close approximation"
         volume=sum(r["payload"]["v"] for r in current)
         out["vwap"]=sum(r["payload"].get("vw",r["payload"]["c"])*r["payload"]["v"] for r in current)/volume if volume else None
     if len(rows)>=15:

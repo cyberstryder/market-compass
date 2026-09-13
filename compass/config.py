@@ -33,5 +33,7 @@ class Config:
             raise ValueError("Production requires persistent PostgreSQL")
         if self.password and len(self.password)<16:
             raise ValueError("COMPASS_PASSWORD must be at least 16 characters")
+        if any(s not in {"MES.c.0","MNQ.c.0","MES.v.0","MNQ.v.0"} for s in self.futures):
+            raise ValueError("v0.1 futures specifications support MES/MNQ only")
         if self.feed not in {"sip","iex"} or min(self.risk,self.daily_loss)<=0:
             raise ValueError("Invalid feed or simulation risk")

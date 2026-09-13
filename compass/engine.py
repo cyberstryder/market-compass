@@ -160,6 +160,8 @@ class Engine:
             self.exits(c,now)
             symbols=list(self.cfg.stocks)+[k[6:] for k in self.db.prefix(c,"quote:") if "@" in k]
             for symbol in symbols:
+                latest=self.db.get(c,"latestbar:"+symbol)
+                if latest is not None and latest<=self.db.get(c,"cursor:"+symbol,0): continue
                 rows=dedup(self.db.recent(c,"bar",symbol,limit=8000,since=now-8*86400),now)
                 if len(rows)<2: continue
                 bar=rows[-1]
