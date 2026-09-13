@@ -240,6 +240,26 @@ def test_massive_next_url_cursor_reaches_http_transport(db):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("failure",["timeout","max_connections"])
+def test_option_auth_never_waits_forever_or_hides_connection_rejection(db,monkeypatch,failure):
+    class Socket:
+        async def __aenter__(self): return self
+        async def __aexit__(self,*args): pass
+        async def send(self,*args): pass
+        async def recv(self):
+            if failure=="timeout": raise asyncio.TimeoutError
+            return json.dumps([{"ev":"status","status":"max_connections","message":"fixture connection limit"}])
+    monkeypatch.setattr("compass.providers.websockets.connect",lambda *a,**kw:Socket())
+    async def run():
+        collector=Collectors(db,Config(local=True,massive="fixture"))
+        collector.option_symbols={"O:FIXTURE"}
+        try:
+            with pytest.raises(FeedError,match="timed out" if failure=="timeout" else "max_connections"):
+                await collector.options()
+        finally: await collector.close()
+    asyncio.run(run())
+
+
 def flow_fixture(page,total=800,correction=False):
     return {"page":page,"pageSize":100,"total":total,"data":[{"id":i,"ticker":"SPY",
         "tradeTime":"2026-09-14T14:00:00Z","premium":70000 if correction else 60000}

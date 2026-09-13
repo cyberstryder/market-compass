@@ -323,22 +323,29 @@ class Collectors:
         while not self.option_symbols:
             self.db.health("option_stream","waiting","Waiting for verified chain to select contracts")
             await asyncio.sleep(5)
+        self.db.health("option_stream","connecting","Opening Massive options stream")
         async with websockets.connect("wss://socket.massive.com/options",max_queue=8192,ping_interval=20) as ws:
             await ws.send(json.dumps({"action":"auth","params":self.cfg.massive}))
+            self.db.health("option_stream","authenticating","Waiting for Massive authentication acknowledgement")
+            auth_deadline=time.monotonic()+15
             subscribed=set()
             authenticated=False
             last={}
             while True:
+                if not authenticated and time.monotonic()>auth_deadline:
+                    raise FeedError("Massive authentication acknowledgement timed out; reconnecting")
                 wanted=set(self.option_symbols)
                 if authenticated:
                     for action,syms in [("unsubscribe",subscribed-wanted),("subscribe",wanted-subscribed)]:
                         if syms: await ws.send(json.dumps({"action":action,"params":",".join(f"{k}.{s}" for s in sorted(syms) for k in ["T","Q"])}))
                     subscribed=wanted
                 try: raw=await asyncio.wait_for(ws.recv(),10)
-                except asyncio.TimeoutError: continue
+                except asyncio.TimeoutError:
+                    if not authenticated: raise FeedError("Massive authentication acknowledgement timed out; reconnecting") from None
+                    continue
                 for x in json.loads(raw):
-                    if x.get("status") in {"auth_failed","error","not_authorized"} or x.get("ev")=="error":
-                        raise FeedError("Massive options subscription rejected")
+                    if x.get("status") in {"auth_failed","error","not_authorized","max_connections"} or x.get("ev")=="error":
+                        raise FeedError("Massive options "+redacted_detail(x.get("status") or "error")+": "+redacted_detail(x.get("message","subscription rejected"),(self.cfg.massive,),180))
                     if x.get("status")=="auth_success":
                         authenticated=True
                         self.db.health("option_stream","connected","Authenticated; waiting for selected-contract events")
