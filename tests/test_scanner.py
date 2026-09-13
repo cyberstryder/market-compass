@@ -69,6 +69,15 @@ def test_vendor_http_time_never_becomes_market_time():
     assert result['status']=='source_time_unknown'
 
 
+def test_history_gap_cannot_create_a_recent_range_breakout():
+    rows=[{'id':i,'ts':NOW-60*(40-i),'payload':{'o':100,'h':101,'l':99,'c':100,'v':100}} for i in range(40)]
+    assert features('SPY',rows,NOW)['status']=='ready'
+    for row in rows[:-2]: row['ts']-=3600
+    context=features('SPY',rows,NOW)
+    assert context['status']=='warming_up'
+    assert technical_candidates(context,{},NOW,.01)[0]==[]
+
+
 def test_reader_uses_collector_configuration_without_receiving_vendor_key(db):
     cfg=Config(local=True,role='web',matrix='')
     with db.tx() as c:
