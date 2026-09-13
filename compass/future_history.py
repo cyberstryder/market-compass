@@ -56,6 +56,12 @@ def recover(collector,client,now):
             existing["verification_error"]=redacted_detail(error,(cfg.databento,),180)
         with db.tx() as c: db.put(c,key,existing)
     def final(job):
+        # The old 1,200-record aggregate cap truncated a four-root session.
+        # Only a completed, count-verified legacy download qualifies for repair;
+        # uncertain/error reservations still retain the no-paid-retry rule.
+        legacy_truncation=(job and job.get('status')=='partial' and job.get('count_verified_at')
+            and not job.get('record_limit') and sum(job.get('provider_record_counts',{}).values())>1200)
+        if legacy_truncation: return False
         return job and not job.get("retryable") and not (job.get("status")=="planning" and now-job.get("at",now)>180)
     if final(existing):
         db.health("futures_history",existing["status"],existing["detail"],existing.get("source_ts"))
@@ -78,6 +84,8 @@ def recover(collector,client,now):
             if len(ids)!=1: raise ValueError("Historical contract mapping is absent or ambiguous")
             mappings[ids.pop()]=raw
         expected=round((end-start)/60)
+        record_limit=expected*len(raw_symbols)
+        plan['record_limit']=record_limit
         counts={raw:set() for raw in raw_symbols}
         with db.tx() as c:
             for iid,raw in mappings.items():
@@ -85,7 +93,7 @@ def recover(collector,client,now):
                     if start<=row["ts"]<end: counts[raw].add(row["ts"])
         params={"dataset":"GLBX.MDP3","schema":"ohlcv-1m","symbols":raw_symbols,
             "stype_in":"raw_symbol","start":datetime.fromtimestamp(start,timezone.utc).isoformat(),
-            "end":datetime.fromtimestamp(end,timezone.utc).isoformat(),"limit":1200}
+            "end":datetime.fromtimestamp(end,timezone.utc).isoformat(),"limit":record_limit}
         estimate=0.0
         if any(len(v)<expected for v in counts.values()):
             estimate=number(client.metadata.get_cost(**params))
@@ -117,7 +125,7 @@ def recover(collector,client,now):
                 items.append((f"{raw}@{iid}",stamp,{"o":row.open/1e9,"h":row.high/1e9,
                     "l":row.low/1e9,"c":row.close/1e9,"v":row.volume,"instrument_id":iid,"alias":raw}))
                 counts[raw].add(stamp)
-                if len(items)>1200: raise ValueError("History record limit exceeded")
+                if len(items)>record_limit: raise ValueError("History record limit exceeded")
             data.replay(capture)
             collector.bars("databento",items)
         complete=all(len(v)==expected for v in counts.values())

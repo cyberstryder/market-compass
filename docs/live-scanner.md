@@ -27,7 +27,8 @@ rules; it does not claim to reproduce undocumented proprietary algorithms.
   least 2.6 seconds apart. The vendor's 30/minute allowance is shared with other
   clients using the same key. No request schedule can force a cached source to
   recompute faster than the provider permits.
-- Six rule families run in the scanner: opening-range retest, session-extreme
+- Six rule families run in the scanner after 30 consecutive completed minutes:
+  opening-range retest, session-extreme
   sweep/reclaim, EMA/VWAP trend pullback, volume-supported range breakout,
   exposure-level crossing, and unusual-flow-plus-price breakout.
 - GEX and VEX concentrations are separately identified within vendor totals.
@@ -84,7 +85,8 @@ live bar writes run outside the collector event loop. A bad symbol is isolated
 rather than starving later symbols.
 
 The original baseline paper strategies remain versioned separately. Scanner
-trades use `compass-scanner-v1` plus the rule name. Secondary conditions on one
+trades use `compass-scanner-v2` plus the rule name. This version excludes startup
+history gaps from recent-range calculations. Secondary conditions on one
 symbol are grouped and deduplicated; a repeated print does not become a new trade
 because the worker restarted.
 

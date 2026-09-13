@@ -10,7 +10,7 @@ from .futures import future_levels, futures_session, risk_day, prior_rth, select
 from .store import identity
 from .research import FEEDS, catalog
 
-VERSION='compass-scanner-v1'
+VERSION='compass-scanner-v2'
 
 
 def ema(values, period):
@@ -34,6 +34,9 @@ def features(symbol, rows, now, previous=None,coverage=None):
     rows=dedup(rows,now)
     if len(rows)<30:
         return {'symbol':symbol,'status':'warming_up','reason':'At least 30 completed minute bars required'}
+    if rows[-1]['ts']-rows[-30]['ts']!=29*60:
+        return {'symbol':symbol,'status':'warming_up','asof':rows[-1]['ts']+60,
+            'reason':'Thirty consecutive completed minutes required; historical gaps cannot stand in for recent price structure'}
     future='@' in symbol
     context=future_levels(rows,now,coverage) if future else levels(rows,now)
     if previous and previous.get('day')==context.get('day') and previous.get('prior_complete') and not context.get('prior_complete'):
