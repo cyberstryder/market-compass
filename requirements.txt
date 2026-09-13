@@ -1,0 +1,10 @@
+fastapi==0.141.1
+uvicorn==0.52.4
+httpx==0.28.1
+sqlalchemy==2.0.52
+psycopg[binary]==3.3.5
+databento==0.86.0
+exchange-calendars==4.13.2
+websockets==17.1
+itsdangerous==2.2.0
+pytest==9.1.1

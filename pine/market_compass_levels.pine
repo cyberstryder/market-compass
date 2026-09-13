@@ -1,0 +1,46 @@
+//@version=6
+indicator("Market Compass • Session Levels", overlay=true, max_lines_count=50)
+rth = input.session("0930-1600", "Regular session (New York)")
+showManual = input.bool(false, "Show manually entered external levels")
+gexHigh = input.float(0, "External upper level", minval=0)
+gexLow = input.float(0, "External lower level", minval=0)
+externalAsOf = input.string("Not entered", "External level as-of (manual)")
+inSession = not na(time(timeframe.period, rth, "America/New_York"))
+sessionStart = inSession and not inSession[1]
+newDay = ta.change(time("D")) != 0
+var float sessionHigh = na
+var float sessionLow = na
+var float previousHigh = na
+var float previousLow = na
+var float orHigh = na
+var float orLow = na
+var int openedAt = na
+if sessionStart
+    previousHigh := sessionHigh
+    previousLow := sessionLow
+    sessionHigh := high
+    sessionLow := low
+    orHigh := high
+    orLow := low
+    openedAt := time
+if inSession
+    sessionHigh := math.max(nz(sessionHigh, high), high)
+    sessionLow := math.min(nz(sessionLow, low), low)
+    if time < openedAt + 15 * 60 * 1000
+        orHigh := math.max(nz(orHigh, high), high)
+        orLow := math.min(nz(orLow, low), low)
+orReady = inSession and not na(openedAt) and time >= openedAt + 15 * 60 * 1000
+plot(previousHigh, "Prior RTH high", color=color.new(color.orange, 15), style=plot.style_linebr)
+plot(previousLow, "Prior RTH low", color=color.new(color.orange, 15), style=plot.style_linebr)
+plot(orReady ? orHigh : na, "15-minute OR high", color=color.new(color.aqua, 0), style=plot.style_linebr)
+plot(orReady ? orLow : na, "15-minute OR low", color=color.new(color.aqua, 0), style=plot.style_linebr)
+plot(showManual and gexHigh > 0 ? gexHigh : na, "Manual external upper", color=color.fuchsia)
+plot(showManual and gexLow > 0 ? gexLow : na, "Manual external lower", color=color.fuchsia)
+crossUp = ta.crossover(close, orHigh)
+crossDown = ta.crossunder(close, orLow)
+alertcondition(barstate.isconfirmed and orReady and crossUp, "OR break up", "Closed bar above completed opening range")
+alertcondition(barstate.isconfirmed and orReady and crossDown, "OR break down", "Closed bar below completed opening range")
+var table note = table.new(position.bottom_right, 1, 2)
+if barstate.islast
+    table.cell(note, 0, 0, "Market Compass | Use 1-minute chart", text_color=color.white, bgcolor=color.new(color.black, 20))
+    table.cell(note, 0, 1, "External levels: " + externalAsOf, text_color=color.silver, bgcolor=color.new(color.black, 20))
