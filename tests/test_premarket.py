@@ -88,7 +88,8 @@ def test_flow_missing_time_and_redaction_are_counted_not_dated_at_fetch():
 def test_flow_paging_deduplicates_overlaps_and_repeated_polls(db):
     async def run():
         collector = Collectors(db, Config(local=True, matrix="fake", stocks=("SPY",)))
-        collector.matrix_last = time.time()
+        with db.tx() as c:
+            db.put(c, "matrix:SPY", {"received":time.time()})
         requested = []
         async def request(path, label):
             requested.append(path)
@@ -112,7 +113,8 @@ def test_flow_paging_deduplicates_overlaps_and_repeated_polls(db):
 def test_flow_page_cap_is_visible(db):
     async def run():
         collector = Collectors(db, Config(local=True, matrix="fake", stocks=("SPY",)))
-        collector.matrix_last = time.time()
+        with db.tx() as c:
+            db.put(c, "matrix:SPY", {"received":time.time()})
         count = 0
         async def request(path, label):
             nonlocal count
@@ -121,7 +123,7 @@ def test_flow_page_cap_is_visible(db):
         collector.matrix_request = request
         try: await collector.matrix()
         finally: await collector.close()
-        assert count == 5
+        assert count == 2
         with db.tx() as c:
             summary = db.get(c, "matrix:unusual_activity")
             assert summary["limited"] is True and summary["status"] == "partial"

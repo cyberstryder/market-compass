@@ -3,12 +3,24 @@
 <title>Market Compass</title><link rel="stylesheet" href="/static/style.css"></head><body>
 <aside class="sidebar"><a class="brand" href="/">↗ <span>Market<br>Compass</span></a><p class="eyebrow">WORKSPACE</p>
 <nav><button class="nav active" data-tab="overview">◈ Overview</button><button class="nav" data-tab="exposure">◎ Exposure</button>
+<button class="nav" data-tab="scanner">↗ Live scanner</button><button class="nav" data-tab="research">▤ Research desk</button>
 <button class="nav" data-tab="flow">≋ Options flow</button><button class="nav" data-tab="trades">↗ Simulated trades</button>
 <button class="nav" data-tab="assistant">✧ Ask Compass</button><button class="nav" data-tab="health">◷ Feed health</button></nav>
 <div class="sidebar-foot"><span class="pill">SIMULATION ONLY</span><p>No broker execution</p><button id="logout" class="quiet">Sign out</button></div></aside>
 <main class="workspace"><header><div><p class="eyebrow">MARKET INTELLIGENCE</p><h1 id="title">Session overview</h1></div>
 <div class="header-right"><span id="market" class="pill">Checking session</span><p id="clock" class="mono"></p></div></header>
 <div id="connection" class="banner">Connecting to the shared market state…</div>
+<section id="scanner" class="tab">
+<div class="banner">One watchlist, shared market context. Triggered setups include entry, invalidation, targets, and source clocks. All trades are simulated.</div>
+<div id="scanner-stats" class="stats"></div>
+<article class="panel"><div class="panel-head"><h2>Setup feed</h2><label class="inline-label" for="scanner-filter">Show <select id="scanner-filter"><option value="active">Active setups</option><option value="all">All recent decisions</option></select></label></div><div id="opportunities"></div></article>
+<article class="panel"><h2>Symbols receiving focused research</h2><div id="scanner-focus"></div><p class="fine">Live stock prices cover the full watchlist. Option chains and vendor analytics prioritize developing setups and rotate through the remaining names.</p></article>
+<article class="panel"><h2>Research coverage</h2><div id="scanner-coverage"></div></article>
+</section>
+<section id="research" class="tab">
+<div class="banner">Explore the latest vendor scanners, flow, market conditions, calendars, and positioning. Source time and retrieval time remain separate.</div>
+<article class="panel"><label for="research-source">Research source</label><select id="research-source"></select><div id="research-detail"></div></article>
+</section>
 <section id="overview" class="tab active"><div id="stats" class="stats"></div><div class="columns">
 <article class="panel wide"><div class="panel-head"><h2>Watchlist & levels</h2><span class="muted">Latest observations</span></div><div id="watch"></div>
 <p class="fine">Futures use a 17:00–17:15 CT Globex range, then a new 08:30–08:45 CT regular-session range. Explicit contract IDs keep rolled prices separate.</p></article>
@@ -19,6 +31,7 @@
 <div><h3>Swings</h3><p>Completed daily close above the preceding 20 daily highs. Entry waits for the next session and an executable quote.</p></div></div></article></section>
 <section id="exposure" class="tab"><div class="banner">Compare vendor exposure with the local research proxy. A recent fetch does not make an old market snapshot current.</div>
 <h2>TraderMatrix GEX / VEX</h2><p class="muted">Concentrations across the expirations returned by the vendor. Methodology and units remain vendor defined.</p><div id="matrix"></div>
+<article class="panel"><div class="panel-head"><h2>Strike / expiration map</h2><div class="map-controls"><select id="map-symbol" aria-label="Map symbol"></select><select id="map-metric" aria-label="Exposure measure"><option value="gex">GEX</option><option value="vex">VEX</option></select></div></div><div id="strike-map"></div></article>
 <h2>Local exposure & input coverage</h2><p class="muted">Daily open interest, calls positive / puts negative. Local VEX estimates vanna; it is not assumed equivalent to TraderMatrix VEX.</p><div id="exposures"></div><h2>Greek input diagnostics</h2><div id="greek-diagnostics"></div></section>
 <section id="flow" class="tab"><div class="banner">TraderMatrix supplies filtered unusual activity through polling. Massive supplies live prints for selected contracts. Neither view establishes a trade's opening or closing intent.</div>
 <article class="panel"><h2>TraderMatrix unusual activity</h2><div id="vendor-flows"></div></article>

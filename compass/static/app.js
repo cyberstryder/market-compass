@@ -5,9 +5,9 @@ const when=x=>x?new Date(x*1000).toLocaleString('en-US',{timeZone:'America/Chica
 const age=x=>x===null||x===undefined?'—':x<120?num(x,1)+'s':x<7200?num(x/60,1)+'m':num(x/3600,1)+'h';
 const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notation:'compact',maximumFractionDigits:2}).format(x);
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
-const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
+const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
-const titles={overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
+const titles={scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav,.tab').forEach(n=>n.classList.remove('active'));b.classList.add('active');$('#'+b.dataset.tab).classList.add('active');$('#title').textContent=titles[b.dataset.tab];});
 $('#logout').onclick=async()=>{await fetch('/logout',{method:'POST'});location.href='/login';};
 let lastState=null,first=true,testEvent=null;
@@ -51,9 +51,12 @@ function render(d){
  $('#stats').innerHTML=stats.map(x=>'<div class="stat"><div class="label">'+esc(x[0])+'</div><div class="value">'+esc(x[1])+'</div><div class="fine">'+esc(x[2])+'</div></div>').join('');
  $('#watch').innerHTML=populated?table(['Symbol','Bid / Ask','Age','OR high / low','Prior high / low'],Object.entries(d.quotes).map(([s,q])=>{const l=d.levels[s]||{};return [esc(s),num(q.bid)+' / '+num(q.ask),esc(num(q.age,1)+'s'),l.or_complete?num(l.or_high)+' / '+num(l.or_low):'Warming up',l.prior_complete?num(l.prior_high)+' / '+num(l.prior_low):'Incomplete history'];})):empty('Waiting for first observations',d.markets.futures||d.markets.equities?'Check Feed health for active contracts and source readiness.':'The next open session will provide live quotes. Feed health shows connection and history checks.');
  $('#journal').innerHTML=d.alerts.length?d.alerts.slice(0,7).map(a=>'<div class="journal-item"><strong>'+esc(a.symbol)+'</strong> '+tag(a.payload.status)+'<p>'+esc(a.payload.reason||a.payload.exit_reason||a.payload.strategy)+'</p><span class="time">#'+a.id+' · '+when(a.ts)+'</span></div>').join(''):empty('No decisions recorded yet','Signals, entries, exits and data-related skips will appear here.');
- const ex=Object.entries(d.exposure);
+ const ex=Object.entries(d.exposure).slice(0,6);
  $('#exposures').innerHTML=ex.length?'<div class="exposure-grid">'+ex.map(([s,e])=>'<article class="panel"><div class="panel-head"><h2>'+esc(s)+'</h2>'+tag(e.status)+'</div><p>GEX '+compact(e.gex)+' · local vanna proxy '+compact(e.vex)+'</p><p class="fine">'+esc(e.source)+' · '+num((e.coverage??0)*100,1)+'% GEX input coverage · '+num(e.usable_gex,0)+' / '+num(e.contracts,0)+' contracts</p><p class="fine">Missing/invalid OI '+num(e.missing_oi,0)+' · gamma '+num(e.missing_gamma,0)+' · contract metadata '+num(e.invalid_contract,0)+' (counts may overlap)</p><p class="fine">Chain checked '+when(e.asof)+' · underlying source '+when(e.spot_asof)+'</p><p class="fine">'+esc(e.reason)+'</p><details data-key="local-'+esc(s)+'"><summary>Strike exposure & methodology</summary><p class="fine">'+esc(e.sign_model)+'. '+esc(e.gex_units)+'; '+esc(e.vex_units)+'. Vanna input coverage '+num((e.vex_coverage??0)*100,1)+'%. OI dates: '+esc((e.oi_dates||[]).join(', ')||'provider date unavailable')+'</p>'+table(['Strike','GEX','Vanna proxy'],(e.strikes||[]).slice(0,200).map(r=>[num(r.strike),compact(r.gex),compact(r.vex)]))+'</details></article>').join('')+'</div>':empty('Exposure is waiting for input','A fresh underlying price, chain, Greeks and open interest are required.');
- $('#matrix').innerHTML=vendorMatrix(d.matrix);
+ $('#matrix').innerHTML=vendorMatrix(Object.fromEntries(Object.entries(d.matrix).slice(0,6)));
+ renderScanner(d.scanner);
+ renderStrikeMap(d.matrix);
+ updateResearchChoices(d.scanner.feeds);
  $('#vendor-flows').innerHTML=vendorFlow(d.matrix['matrix:unusual_activity']);
  $('#flows').innerHTML=d.flow.length?table(['Time','Contract','Premium','Size','Classification'],d.flow.map(r=>[when(r.ts),esc(r.symbol),'$'+num(r.payload.premium),num(r.payload.size),esc(r.payload.classification)])):empty('No qualifying prints recorded','Continuous selected-contract trades are recorded when Massive is connected.');
  $('#ledger').innerHTML=d.trades.length?table(['Entry time','Symbol','Strategy','State','Qty','Entry','Stop','Target','Exit','P&L'],d.trades.map(p=>[when(p.entered_at),esc(p.symbol),esc(p.strategy),tag(p.status),num(p.qty,0),num(p.entry),num(p.stop),num(p.target),num(p.exit),num(p.pnl??p.unrealized)])):empty('No simulated trades yet','The engine requires a complete setup, a fresh executable quote, and available risk capacity.');
@@ -81,4 +84,68 @@ $('#ask').addEventListener('submit',async e=>{e.preventDefault();const button=$(
 $('#test-alert').onclick=async()=>{const button=$('#test-alert');button.disabled=true;$('#test-result').textContent='Queuing a clearly labeled test…';
  try{const r=await fetch('/api/alerts/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:crypto.randomUUID()})});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Test request failed');testEvent=d.event_id;$('#test-result').textContent='Test event #'+testEvent+' queued. Waiting for Discord’s saved-message confirmation.';}
  catch(e){$('#test-result').textContent=e.message;}finally{button.disabled=false;}};
+function renderScanner(scanner){
+ if(!scanner)return;
+ const status=scanner.status;
+ const rows=scanner.opportunities.filter(o=>$('#scanner-filter').value==='all'||['triggered','watch','blocked'].includes(o.status));
+ const active=scanner.opportunities.filter(o=>o.status==='triggered').length;
+ const current=scanner.feeds.filter(f=>f.status==='current').length;
+ const metrics=[['Watchlist',status.watch_symbols,'Continuous price universe'],['Ready price contexts',status.features_ready??0,'Completed bars and history'],['Triggered setups',active,'Simulated entry conditions'],['Dated research sources',current+' / '+scanner.feeds.length,'Open details for actual source age']];
+ $('#scanner-stats').innerHTML=metrics.map(([label,value,note])=>'<div class="stat"><div class="label">'+esc(label)+'</div><div class="value">'+esc(value)+'</div><div class="fine">'+esc(note)+'</div></div>').join('');
+ $('#opportunities').innerHTML=rows.length?rows.map(o=>'<article class="setup-card"><div class="panel-head"><h2>'+esc(o.symbol)+' · '+esc(o.side.toUpperCase())+'</h2>'+tag(o.status)+'</div><p>'+esc(o.reason)+'</p><p class="fine">'+esc((o.matched_rules||[o.rule]).join(' · ').replaceAll('_',' '))+' · '+when(o.decided_at)+'</p><div class="setup-prices"><div><span>Modeled entry</span><strong>'+num(o.entry??o.signal_price)+'</strong></div><div><span>Invalidation</span><strong>'+num(o.invalidation)+'</strong></div><div><span>Target</span><strong>'+num(o.target)+'</strong></div></div>'+(o.blocked_reason?'<p class="fine">'+esc(o.blocked_reason)+'</p>':'')+'<p class="fine">Paper position: '+esc(o.paper_status||'No position confirmed')+' · Entry window ends '+when(o.expires_at)+'</p><details data-key="setup-'+esc(o.id)+'"><summary>Supporting observations</summary>'+table(['Source','Observation','As of'],(o.evidence||[]).map(e=>[esc(e.source),esc(e.kind.replaceAll('_',' '))+(e.symbol?' '+esc(e.symbol):'')+(e.agreement?' · '+esc(e.agreement):'')+(e.level?' · '+num(e.level):''),when(e.source_ts)]))+'</details></article>').join(''):empty('No active setup has qualified','The scanner waits for a fresh trigger, defined invalidation, and usable price data. Use All recent decisions to review expired or blocked setups.');
+ $('#scanner-focus').innerHTML=scanner.focus.length?table(['Symbol','Reason','Requested'],scanner.focus.map(f=>[esc(f.symbol),esc(f.reason),when(f.at)])):empty('No additional symbols prioritized','Core index coverage continues while the full watchlist is scanned.');
+ $('#scanner-coverage').innerHTML=table(['Research feed','State','Source age','Retrieved','Target cadence'],scanner.feeds.map(f=>[esc(f.label),tag(f.status),age(f.source_age),when(f.received),age(f.target_interval)]))+'<p class="fine">Target cadence is a scheduling goal. Provider caching, quotas, and failures can delay a refresh. Unknown source times are not treated as current.</p>';
+}
+let researchKey='',researchLoaded=0;
+function updateResearchChoices(feeds){
+ const select=$('#research-source');
+ if(!select.options.length){select.innerHTML=feeds.map(f=>'<option value="'+esc(f.key)+'">'+esc(f.label)+'</option>').join('');}
+ if($('#research').classList.contains('active')&&Date.now()-researchLoaded>15000)loadResearch();
+}
+function readable(value){
+ if(value===null||value===undefined)return '—';
+ if(typeof value==='object')return JSON.stringify(value).slice(0,1600);
+ return String(value);
+}
+async function loadResearch(){
+ const key=$('#research-source').value;
+ if(!key)return;
+ researchLoaded=Date.now();researchKey=key;
+ try{
+  const response=await fetch('/api/research?key='+encodeURIComponent(key));if(!response.ok)throw new Error('Unable to read research source');
+  const d=await response.json();if(researchKey!==key)return;
+  const meta='<h2>'+esc(d.label||key)+'</h2><p>'+tag(d.status)+' <span class="fine">Source '+when(d.source_ts)+' · Retrieved '+when(d.received)+'</span></p>';
+  const rows=(d.items||[]).filter(r=>!r.symbol||lastState.scanner.watchlist.includes(r.symbol));
+  let content=rows.length?rows.slice(0,100).map(r=>'<details data-key="research-'+esc(key+'-'+(r.symbol||''))+'"><summary>'+esc(r.symbol||'Market observation')+' · '+when(r.source_ts)+'</summary>'+table(['Field','Reported value'],Object.entries(r.data).map(([k,v])=>[esc(k.replaceAll('_',' ')),'<span class="research-value">'+esc(readable(v))+'</span>']))+'</details>').join(''):d.data?'<pre>'+esc(JSON.stringify(d.data,null,2))+'</pre>':empty('Waiting for this source','The coverage table shows its collector status.');
+  $('#research-detail').innerHTML=meta+content+'<p class="fine">Vendor-reported information. A missing source timestamp cannot establish a current trading condition. Up to 100 matching rows shown.</p>';
+ }catch(error){$('#research-detail').textContent=error.message;}
+}
+let mapData=null,mapRequested='',mapLoaded=0,mapPending=false;
+async function loadStrikeMap(symbol){
+ if(!symbol||mapPending)return;
+ mapPending=true;mapRequested=symbol;mapLoaded=Date.now();
+ try{const response=await fetch('/api/matrix?symbol='+encodeURIComponent(symbol));if(!response.ok)throw new Error('Unable to load strike matrix');const data=await response.json();if(mapRequested===symbol){mapData=data;mapLoaded=Date.now();}}
+ catch(error){$('#strike-map').textContent=error.message;}
+ finally{mapPending=false;if(lastState)renderStrikeMap(lastState.matrix);}
+}
+function renderStrikeMap(matrices){
+ const choices=Object.values(matrices).filter(m=>m.symbol&&m.strikes?.length);
+ const select=$('#map-symbol'),chosen=select.value;
+ select.innerHTML=choices.map(m=>'<option value="'+esc(m.symbol)+'">'+esc(m.symbol)+'</option>').join('');
+ if(choices.some(m=>m.symbol===chosen))select.value=chosen;
+ const summary=choices.find(m=>m.symbol===select.value);
+ if(summary&&((mapData?.symbol!==summary.symbol&&mapRequested!==summary.symbol)||Date.now()-mapLoaded>15000)&&!mapPending){loadStrikeMap(summary.symbol);}
+ const m=mapData?.symbol===select.value?mapData:null;
+ if(!m){$('#strike-map').innerHTML=empty('Waiting for a matrix','The strike map uses vendor-reported GEX and VEX cells.');return;}
+ const metric=$('#map-metric').value;
+ const near=[...m.strikes].sort((a,b)=>Math.abs(a.strike-m.spot)-Math.abs(b.strike-m.spot)).slice(0,25).sort((a,b)=>b.strike-a.strike);
+ const values=near.flatMap(r=>(r[metric+'_cells']||[]).slice(0,8)).filter(v=>v!==null);
+ const maximum=Math.max(1,...values.map(Math.abs));
+ const rows=near.map(r=>[num(r.strike),...(r[metric+'_cells']||[]).slice(0,8).map(v=>v===null?'—':'<span class="exposure-cell '+(v>=0?'positive':'negative')+' strength-'+Math.min(4,Math.ceil(Math.abs(v)/maximum*4))+'" title="'+esc(num(v))+'">'+compact(v)+'</span>')]);
+ $('#strike-map').innerHTML='<p class="fine">'+esc(m.symbol)+' · '+metric.toUpperCase()+' · Source '+when(m.source_ts)+' · nearest 25 strikes / first 8 expirations · vendor units</p>'+table(['Strike',...m.expirations.slice(0,8).map(e=>e.expiry)],rows);
+}
+$('#scanner-filter').onchange=()=>{if(lastState)renderScanner(lastState.scanner);};
+$('#research-source').onchange=loadResearch;
+$('#map-symbol').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};
+$('#map-metric').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};
 poll();

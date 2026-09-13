@@ -2,6 +2,7 @@
 import asyncio
 import time
 import uuid
+import re
 from .market import levels,fresh,day,session,dedup
 from .store import identity
 from .futures import futures_session,risk_day,future_levels,selection,prior_rth
@@ -11,6 +12,8 @@ VERSION="orb15-breakout-v1"
 def spec(symbol):
     if symbol.startswith("MES"): return {"tick":.25,"multiplier":5,"fee":1.5,"max_qty":2,"asset":"future"}
     if symbol.startswith("MNQ"): return {"tick":.25,"multiplier":2,"fee":1.5,"max_qty":2,"asset":"future"}
+    if re.fullmatch(r'ES[HMUZ]\d{1,4}(?:@\d+)?',symbol): return {"tick":.25,"multiplier":50,"fee":2.5,"max_qty":1,"asset":"future"}
+    if re.fullmatch(r'NQ[HMUZ]\d{1,4}(?:@\d+)?',symbol): return {"tick":.25,"multiplier":20,"fee":2.5,"max_qty":1,"asset":"future"}
     if symbol.startswith("O:") or (len(symbol)>15 and any(x.isdigit() for x in symbol)):
         return {"tick":.01,"multiplier":100,"fee":.65,"max_qty":1,"asset":"option"}
     return {"tick":.01,"multiplier":1,"fee":0,"max_qty":100,"asset":"stock"}
@@ -38,6 +41,10 @@ class Engine:
     def __init__(self,db,cfg):
         self.db,self.cfg=db,cfg
         self.owner=uuid.uuid4().hex
+        from .scanner import Scanner
+        self.scanner=Scanner(db,cfg)
+
+    specification=staticmethod(spec)
 
     def alert(self,c,symbol,data,key):
         self.db.append(c,"alert","engine",symbol,time.time(),{"mode":"SIMULATED",**data},key)
@@ -72,11 +79,14 @@ class Engine:
         flatten=futures_session(now)["flatten_at"] if s["asset"]=="future" else hours[1]-900
         return None,{"spec":s,"quote":q,"price":price,"distance":distance,"per_unit":per_unit,"qty":qty,"risk":risk,"flatten_at":flatten}
 
-    def enter(self,c,signal,now):
+    def enter(self,c,signal,now,quiet=False):
         reason,plan=self.entry_check(c,signal,now)
         symbol,side=signal["symbol"],signal["side"]
         if reason:
-            self.alert(c,symbol,{**signal,"status":"skipped","reason":reason},"skip:"+signal["id"])
+            if quiet:
+                self.db.append(c,'paper_decision','engine',symbol,now,{**signal,'status':'skipped','reason':reason},'skip:'+signal['id'])
+            else:
+                self.alert(c,symbol,{**signal,"status":"skipped","reason":reason},"skip:"+signal["id"])
             return False
         s,q,price,distance,per_unit,qty,risk=(plan[k] for k in ("spec","quote","price","distance","per_unit","qty","risk"))
         direction=1 if side=="long" else -1
@@ -89,7 +99,10 @@ class Engine:
         self.db.put(c,"trade:"+signal["id"],trade)
         risk["entries"]+=1
         self.db.put(c,"risk:"+risk_day(now),risk)
-        self.alert(c,symbol,{**trade,"status":"entered"},"entry:"+signal["id"])
+        if quiet:
+            self.db.append(c,'paper_decision','engine',symbol,now,{**trade,'status':'entered'},'entry:'+signal['id'])
+        else:
+            self.alert(c,symbol,{**trade,"status":"entered"},"entry:"+signal["id"])
         return True
 
     def exits(self,c,now):
@@ -106,6 +119,12 @@ class Engine:
             stopped=price<=p["stop"] if long else price>=p["stop"]
             target=price>=p["target"] if long else price<=p["target"]
             reason="stop" if stopped else "target" if target else None
+            if p.get('underlying_invalidation') is not None:
+                underlying=self.db.get(c,'quote:'+p['underlying'])
+                if fresh(underlying,now):
+                    invalidated=(underlying['bid']<=p['underlying_invalidation'] if p.get('underlying_side')=='long'
+                                 else underlying['ask']>=p['underlying_invalidation'])
+                    if invalidated: reason=reason or 'underlying_invalidation'
             bars=self.db.recent(c,"bar",p["symbol"],limit=120,since=p["last_bar_checked"])
             for b in sorted(bars,key=lambda b:b["ts"]):
                 if b["ts"]<=p["last_bar_checked"] or b["ts"]<p["entered_at"] or b["ts"]+60>now: continue
@@ -129,12 +148,13 @@ class Engine:
             self.db.put(c,key,p)
             self.db.put(c,"trade:"+p["id"],p)
 
-    def options(self,c,signal,now):
+    def options(self,c,signal,now,quiet=False):
         chain=self.db.get(c,"chain:"+signal["symbol"],{})
         if now-chain.get("asof",0)>120:
-            self.alert(c,signal["symbol"],{"status":"options_skipped","reason":"No recent options chain",
-                "parent_signal":signal["id"]},"option-skip:"+signal["id"])
-            return
+            if not quiet:
+                self.alert(c,signal["symbol"],{"status":"options_skipped","reason":"No recent options chain",
+                    "parent_signal":signal["id"]},"option-skip:"+signal["id"])
+            return False
         kind="call" if signal["side"]=="long" else "put"
         opts=[o for o in chain.get("contracts",[]) if o.get("expiry")==day(now) and o.get("type")==kind and o.get("multiplier")==100]
         opts.sort(key=lambda o:abs(o["strike"]-signal["signal_price"]))
@@ -143,16 +163,20 @@ class Engine:
             q=self.db.get(c,"quote:"+o["symbol"])
             if fresh(q,now):
                 option_signal={**signal,"id":identity(signal["id"],o["symbol"]),"symbol":o["symbol"],
-                    "underlying":signal["symbol"],"strategy":"0dte-underlying-orb-v2","side":"long",
+                    "underlying":signal["symbol"],"underlying_side":signal['side'],
+                    "underlying_invalidation":signal.get('invalidation'),
+                    "strategy":"0dte-"+signal['strategy'] if signal.get('strategy','').startswith('compass-scanner') else "0dte-underlying-orb-v2","side":"long",
                     "stop_distance":max(.05,q["ask"]*.3)}
                 reason,_=self.entry_check(c,option_signal,now)
                 if reason:
                     rejected.append({"symbol":o["symbol"],"reason":reason})
                     continue
-                if self.enter(c,{**option_signal,"selection_rejections":rejected},now): return
+                if self.enter(c,{**option_signal,"selection_rejections":rejected},now): return True
             else: rejected.append({"symbol":o["symbol"],"reason":"Missing or invalid fresh quote"})
-        self.alert(c,signal["symbol"],{"status":"options_skipped","reason":"No eligible 0DTE contract passes quote, spread and risk checks","rejections":rejected,
-            "parent_signal":signal["id"]},"option-skip:"+signal["id"])
+        if not quiet:
+            self.alert(c,signal["symbol"],{"status":"options_skipped","reason":"No eligible 0DTE contract passes quote, spread and risk checks","rejections":rejected,
+                "parent_signal":signal["id"]},"option-skip:"+signal["id"])
+        return False
 
     def swings(self,c,now):
         hours=session(day(now))
@@ -201,6 +225,8 @@ class Engine:
                     if symbol in self.cfg.stocks: self.options(c,s,now)
                 self.db.put(c,"cursor:"+symbol,bar["ts"])
             self.swings(c,now)
+            if self.cfg.scanner:
+                self.scanner.scan(c,now,self)
             self.db.put(c,"worker:engine",{"at":now,"mode":"SIMULATED","strategy_version":VERSION})
 
     async def run(self):
