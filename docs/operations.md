@@ -13,6 +13,12 @@ All required code and service roles can be deployed without buying another serve
 7. Confirm sleep mode is off and each service has one replica. Stock, option and futures streams must remain connected while markets are open.
 8. Set Railway volume backups and resource/spend monitoring in the Railway dashboard.
 
+### Connection diagnostics
+
+- Databento SDK and stream rejections include a bounded, redacted reason in the authenticated Feed health view. API keys and provider URLs are removed before storage.
+- Ask Compass reports the OpenAI HTTP status and error code, so invalid keys, missing permissions and exhausted credits can be distinguished. Failed or empty answers do not mark the assistant ready.
+- Discord performs a read-only webhook check on worker startup and replaces stale configuration status. A successful check means the webhook is reachable; actual message delivery still requires a queued simulated alert. Startup never broadcasts a synthetic trade.
+
 ## Tomorrow's acceptance criteria
 
 - Prices are from the selected provider/feed and source timestamps advance during the expected market session.

@@ -20,6 +20,7 @@ from .providers import Collectors
 from .engine import Engine
 from .alerts import deliver
 from .market import is_open
+from .diagnostics import assistant_error
 
 def create_app(cfg=None):
     cfg=cfg or Config()
@@ -224,10 +225,19 @@ def create_app(cfg=None):
                     json={"model":cfg.model,"instructions":instructions,
                         "input":json.dumps({"question":body.question,"market_context":context}),
                         "max_output_tokens":1200,"store":False})
-                if r.status_code!=200: raise HTTPException(502,"Assistant provider rejected request; verify model/key/quota")
+                if r.status_code!=200:
+                    detail=assistant_error(r,cfg.openai)
+                    db.health("assistant","error",detail)
+                    raise HTTPException(502,detail)
                 data=r.json()
                 answer="\n".join(part["text"] for item in data.get("output",[]) for part in item.get("content",[]) if part.get("type")=="output_text")
-        except httpx.HTTPError: raise HTTPException(502,"Assistant provider temporarily unavailable")
+                if not answer.strip():
+                    db.health("assistant","error","Provider returned no answer; response may have exhausted its output budget")
+                    raise HTTPException(502,"Provider returned no answer; try a shorter question")
+        except httpx.HTTPError:
+            db.health("assistant","error","Assistant provider temporarily unavailable")
+            raise HTTPException(502,"Assistant provider temporarily unavailable")
+        db.health("assistant","available","A grounded Responses API answer completed",time.time())
         return {"answer":answer,"asof":context["asof"],"configured":True}
 
     return app

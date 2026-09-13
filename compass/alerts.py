@@ -16,8 +16,18 @@ async def deliver(db,cfg):
         db.health("discord","error","Invalid Discord webhook URL")
         return
     async with httpx.AsyncClient(timeout=15) as client:
+        verified=False
         while True:
             try:
+                if not verified:
+                    # Read-only credential check: never broadcast a synthetic trade.
+                    check=await client.get(url._replace(query="",fragment="").geturl())
+                    if check.status_code!=200:
+                        db.health("discord","error",f"Webhook verification HTTP {check.status_code}; check destination and token")
+                        await asyncio.sleep(30)
+                        continue
+                    db.health("discord","connected","Webhook verified; awaiting simulated alerts")
+                    verified=True
                 with db.tx() as c:
                     rows=[]
                     if db.lease(c,"discord",owner,45):

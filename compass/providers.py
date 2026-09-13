@@ -9,6 +9,7 @@ import websockets
 from .market import ts,number,day
 from .store import identity
 from .exposure import calculate
+from .diagnostics import redacted_detail
 
 class FeedError(Exception): pass
 
@@ -126,7 +127,8 @@ class Collectors:
             self.live=client
             last={}
             def callback(r):
-                if isinstance(r,db.ErrorMsg): raise FeedError("Databento stream rejected; verify CME entitlement")
+                if isinstance(r,db.ErrorMsg):
+                    raise FeedError("Databento stream: "+redacted_detail(r.err,(self.cfg.databento,)))
                 if isinstance(r,db.SymbolMappingMsg):
                     with self.db.tx() as c:
                         self.db.append(c,"mapping","databento",str(r.stype_out_symbol),time.time(),
@@ -149,7 +151,7 @@ class Collectors:
                     last["health"]=time.monotonic()
             errors=[]
             def on_error(error):
-                errors.append(type(error).__name__)
+                errors.append(str(error) if isinstance(error,FeedError) else type(error).__name__)
                 self.db.health("databento_futures","error","Callback failed; stopping stream for controlled reconnect")
                 client.terminate()
             client.add_callback(callback,exception_callback=on_error)
@@ -161,7 +163,10 @@ class Collectors:
             try: client.block_for_close()
             finally: client.stop()
             if errors: raise FeedError("Databento callback failure: "+errors[0])
-        await asyncio.to_thread(run)
+        try:
+            await asyncio.to_thread(run)
+        except db.BentoError as error:
+            raise FeedError("Databento: "+redacted_detail(error,(self.cfg.databento,))) from None
 
     async def chains(self):
         source="massive" if self.cfg.massive else "alpaca"
