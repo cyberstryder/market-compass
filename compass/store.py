@@ -2,7 +2,7 @@ import hashlib
 import json
 import time
 from contextlib import contextmanager
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, JSON, Index, select, text, update
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, JSON, Index, select, text, update, cast
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sq_insert
 
@@ -61,6 +61,26 @@ class Store:
     def get(self,c,key,default=None):
         r=c.execute(select(state.c.value).where(state.c.key==key)).first()
         return r[0] if r else default
+
+    def locked_get(self,c,key,default):
+        """Serialize read/modify/write windows across live and backfill writers."""
+        c.execute(self.insert(state).values(key=key,value=default,updated=time.time())
+            .on_conflict_do_nothing(index_elements=['key']))
+        return c.execute(select(state.c.value).where(state.c.key==key).with_for_update()).scalar_one()
+
+    def put_quote(self,c,key,value):
+        """Atomic source-time comparison: a late snapshot cannot rewind a stream."""
+        q=self.insert(state).values(key=key,value=value,updated=time.time())
+        result=c.execute(q.on_conflict_do_update(index_elements=['key'],
+            set_={'value':value,'updated':time.time()},
+            where=state.c.value['ts'].as_float()<=value['ts']))
+        return result.rowcount>0
+
+    def put_max(self,c,key,value):
+        q=self.insert(state).values(key=key,value=value,updated=time.time())
+        c.execute(q.on_conflict_do_update(index_elements=['key'],
+            set_={'value':value,'updated':time.time()},
+            where=cast(cast(state.c.value,String),Float)<value))
 
     def prefix(self,c,prefix):
         return {r.key:r.value for r in c.execute(select(state).where(state.c.key.startswith(prefix)))}

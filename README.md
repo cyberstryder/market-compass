@@ -1,3 +1,8 @@
+> Continuous scanner update: the saved 144-symbol universe, broader vendor research,
+> six setup rule families, and the scanner/research/exposure views are described in
+> [docs/live-scanner.md](docs/live-scanner.md). All trading remains simulated.
+> Full-size ES/NQ require the updated FUTURES_SYMBOLS setting on each service.
+
 # Market Compass
 
 Personal market intelligence and **simulated** trade alerts for futures, 0DTE options, and swings. Separate from Atlas. No broker order API is implemented.

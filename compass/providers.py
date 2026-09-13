@@ -15,8 +15,13 @@ from .vendor import matrix_summary
 from .greek_diagnostics import diagnose
 from .flow_recovery import collect as collect_flow
 from .futures import selection
+from .universe import focus_symbols
+from .research import collect as collect_research
 
-class FeedError(Exception): pass
+class FeedError(Exception):
+    def __init__(self,message,status_code=None):
+        super().__init__(message)
+        self.status_code=status_code
 
 class Collectors:
     def __init__(self,db,cfg):
@@ -26,6 +31,10 @@ class Collectors:
         self.live=None
         self.matrix_last=0
         self.matrix_next=0
+        self.matrix_lock=asyncio.Lock()
+        self.matrix_cursor=0
+        self.chain_cursor=0
+        self.chain_selected={}
         self.history_owner=uuid.uuid4().hex
         self.chain_paging={}
 
@@ -36,7 +45,7 @@ class Collectors:
     async def get(self,url,headers=None,params=None):
         r=await self.client.get(url,headers=headers,params=params)
         if r.status_code!=200:
-            raise FeedError(f"HTTP {r.status_code}; check entitlement, quota and credentials")
+            raise FeedError(f"HTTP {r.status_code}; check entitlement, quota and credentials",r.status_code)
         return r.json()
 
     async def supervise(self,name,enabled,fn,interval=0):
@@ -63,33 +72,50 @@ class Collectors:
             self.supervise("alpaca_history",bool(c.alpaca_key and c.alpaca_secret),self.history,3600),
             self.supervise("databento_futures",bool(c.databento),self.futures),
             self.supervise("futures_history",bool(c.databento),self.future_history,3600),
-            self.supervise("option_chain",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.chains,60),
+            self.supervise("option_chain",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.chains,2),
             self.supervise("option_stream",bool(c.massive),self.options),
-            self.supervise("tradermatrix",bool(c.matrix),self.matrix,15)]
+            self.supervise("tradermatrix",bool(c.matrix),self.matrix,10),
+            self.supervise("research",bool(c.matrix and c.research),lambda:collect_research(self),1)]
 
     @property
     def alpaca_headers(self):
         return {"APCA-API-KEY-ID":self.cfg.alpaca_key,"APCA-API-SECRET-KEY":self.cfg.alpaca_secret}
 
-    def quote(self,source,symbol,q,instrument_id=None):
+    def quote(self,source,symbol,q,instrument_id=None,record=True):
         if not q.get("ts") or number(q.get("bid")) is None or number(q.get("ask")) is None: return
         q={**q,"source":source,"symbol":symbol,"instrument_id":instrument_id,"received":time.time()}
         with self.db.tx() as c:
-            old=self.db.get(c,"quote:"+symbol)
-            if old and old["ts"]>q["ts"]: return
-            self.db.put(c,"quote:"+symbol,q)
-            self.db.append(c,"quote",source,symbol,q["ts"],q,identity("quote",source,symbol,q["ts"]))
+            if not self.db.put_quote(c,"quote:"+symbol,q): return
+            if record: self.db.append(c,"quote",source,symbol,q["ts"],q,identity("quote",source,symbol,q["ts"]))
+
+    def quote_batch(self,source,items):
+        """One transaction per socket batch; broad watch quotes update latest state."""
+        with self.db.tx() as c:
+            for symbol,q,record in items:
+                if not q.get('ts') or number(q.get('bid')) is None or number(q.get('ask')) is None:
+                    continue
+                q={**q,'source':source,'symbol':symbol,'received':time.time()}
+                if not self.db.put_quote(c,'quote:'+symbol,q): continue
+                if record:
+                    self.db.append(c,'quote',source,symbol,q['ts'],q,identity('quote',source,symbol,q['ts']))
 
     def bars(self,source,items,kind="bar"):
         with self.db.tx() as c:
             latest={}
-            for symbol,t,p in items:
+            windows={}
+            for symbol,t,p in sorted(items,key=lambda row:(row[0],row[1] or 0)):
                 if t is None or any(number(p.get(k)) is None for k in ["o","h","l","c","v"]): continue
                 self.db.append(c,kind,source,symbol,t,p)
                 latest[symbol]=max(latest.get(symbol,0),t)
+                if kind=='bar':
+                    if symbol not in windows:
+                        windows[symbol]={r[0]:r for r in self.db.locked_get(c,'bar_window:'+symbol,[])}
+                    windows[symbol][t]=[t,p['o'],p['h'],p['l'],p['c'],p['v'],p.get('vw')]
             if kind=="bar":
                 for symbol,t in latest.items():
-                    if t>=self.db.get(c,"latestbar:"+symbol,0): self.db.put(c,"latestbar:"+symbol,t)
+                    self.db.put_max(c,"latestbar:"+symbol,t)
+                for symbol,window in windows.items():
+                    self.db.put(c,'bar_window:'+symbol,sorted(window.values(),key=lambda r:r[0])[-1800:])
 
     async def stocks(self):
         self.db.health("alpaca_stocks","connecting",self.cfg.feed.upper()+" stream")
@@ -97,38 +123,55 @@ class Collectors:
             await ws.send(json.dumps({"action":"auth","key":self.cfg.alpaca_key,"secret":self.cfg.alpaca_secret}))
             last={}
             async for raw in ws:
+                batch=[]
                 for x in json.loads(raw):
                     if x.get("T")=="error": raise FeedError("Alpaca stream error code "+str(x.get("code")))
                     if x.get("T")=="success" and x.get("msg")=="authenticated":
-                        await ws.send(json.dumps({"action":"subscribe","quotes":list(self.cfg.stocks),"bars":list(self.cfg.stocks)}))
+                        await ws.send(json.dumps({"action":"subscribe","quotes":list(self.cfg.watch_symbols),"bars":list(self.cfg.watch_symbols)}))
                     if x.get("T")=="subscription":
                         self.db.health("alpaca_stocks","connected","Subscribed; waiting for market events",feed=self.cfg.feed)
                     symbol,t=x.get("S"),ts(x.get("t"))
-                    if x.get("T")=="q" and time.monotonic()-last.get(symbol,0)>=.25:
-                        self.quote("alpaca",symbol,{"ts":t,"bid":x["bp"],"ask":x["ap"],"bid_size":x["bs"],"ask_size":x["as"]})
+                    if x.get("T")=="q" and time.monotonic()-last.get(symbol,0)>=(.25 if symbol in self.cfg.stocks else 1):
+                        batch.append((symbol,{"ts":t,"bid":x["bp"],"ask":x["ap"],"bid_size":x["bs"],"ask_size":x["as"]},symbol in self.cfg.stocks))
                         last[symbol]=time.monotonic()
                     if x.get("T") in {"b","u"}:
                         self.bars("alpaca",[(symbol,t,{k:x[k] for k in ["o","h","l","c","v","vw"] if k in x})])
                     if t and symbol and time.monotonic()-last.get("health",0)>5:
-                        self.db.health("alpaca_stocks","receiving","Quotes sampled up to 4 Hz; closed minute bars",t)
+                        self.db.health("alpaca_stocks","receiving","Core quotes up to 4 Hz; full watchlist latest quotes up to 1 Hz; closed minute bars",t,watch_symbols=len(self.cfg.watch_symbols))
                         last["health"]=time.monotonic()
+                if batch: await asyncio.to_thread(self.quote_batch,'alpaca',batch)
 
     async def history(self):
         newest=None
-        for frame,days,kind in [("1Min",7,"bar"),("1Day",120,"daily")]:
-            params={"symbols":",".join(self.cfg.stocks),"timeframe":frame,
+        failures=[]
+        universe=self.cfg.watch_symbols
+        async def batch_history(batch,frame,days,kind):
+            nonlocal newest
+            params={"symbols":",".join(batch),"timeframe":frame,
                 "start":(datetime.now(timezone.utc)-timedelta(days=days)).isoformat(),
                 "limit":10000,"feed":self.cfg.feed,"adjustment":"split","sort":"asc"}
-            for _ in range(20):
-                data=await self.get("https://data.alpaca.markets/v2/stocks/bars",self.alpaca_headers,params)
-                items=[(symbol,ts(b["t"]),{k:b[k] for k in ["o","h","l","c","v","vw"] if k in b})
-                    for symbol,bars in data.get("bars",{}).items() for b in bars]
-                await asyncio.to_thread(self.bars,"alpaca",items,kind)
-                if items: newest=max(newest or 0,max(item[1] for item in items))
-                if not data.get("next_page_token"): break
-                params["page_token"]=data["next_page_token"]
-            else: raise FeedError("History pagination cap reached; incomplete")
-        self.db.health("alpaca_history","available","7 calendar days minute bars; 120 calendar days daily bars",newest)
+            try:
+                for _ in range(20):
+                    data=await self.get("https://data.alpaca.markets/v2/stocks/bars",self.alpaca_headers,params)
+                    items=[(symbol,ts(b["t"]),{k:b[k] for k in ["o","h","l","c","v","vw"] if k in b})
+                        for symbol,bars in data.get("bars",{}).items() for b in bars]
+                    await asyncio.to_thread(self.bars,"alpaca",items,kind)
+                    if items: newest=max(newest or 0,max(item[1] for item in items))
+                    if not data.get("next_page_token"): return
+                    params["page_token"]=data["next_page_token"]
+                raise FeedError("History pagination cap reached for a watchlist batch; incomplete")
+            except FeedError as error:
+                if error.status_code in (401,403,429): raise
+                if error.status_code in (400,422) and len(batch)>1:
+                    for symbol in batch: await batch_history((symbol,),frame,days,kind)
+                else:
+                    failures.append({"symbols":list(batch),"frame":frame,"reason":str(error)})
+        for frame,days,kind in [("1Min",7,"bar"),("1Day",120,"daily")]:
+            for offset in range(0,len(universe),8):
+                await batch_history(universe[offset:offset+8],frame,days,kind)
+        self.db.health("alpaca_history","partial" if failures else "available",
+            "Batched full-watchlist history: 7 calendar days minute bars; 120 calendar days daily bars",newest,
+            failed_batches=failures,watch_symbols=len(universe))
 
     async def future_history(self):
         import databento as sdk
@@ -206,45 +249,79 @@ class Collectors:
 
     async def chains(self):
         source="massive" if self.cfg.massive else "alpaca"
-        selected=[]
-        total_contracts=0
-        for symbol in self.cfg.stocks:
-            contracts,complete=await (self.massive_chain(symbol) if source=="massive" else self.alpaca_chain(symbol))
-            now=time.time()
-            with self.db.tx() as c:
-                q=self.db.get(c,"quote:"+symbol)
-                spot=(q["bid"]+q["ask"])/2 if q and -1<=now-q["ts"]<120 and 0<q["bid"]<=q["ask"] else None
-                reference,reference_ts=spot,q["ts"] if spot else None
-                if reference is None:
-                    last_bar=self.db.recent(c,"bar",symbol,limit=1)
-                    if last_bar:
-                        reference=number(last_bar[0]["payload"].get("c"))
-                        reference_ts=last_bar[0]["ts"]
-                exposure=calculate(contracts,spot,now,source,complete)
-                exposure["spot_asof"]=q["ts"] if spot else None
-                chain={"contracts":contracts,"complete":complete,"asof":now,"source":source,
-                    "selection_reference":reference,"selection_reference_ts":reference_ts,
-                    "selection_note":"Last bar may seed subscriptions only; stale prices cannot fill trades or calculate exposure"}
-                self.db.append(c,"chain",source,symbol,now,chain)
-                self.db.put(c,"chain:"+symbol,chain)
-                self.db.put(c,"exposure:"+symbol,exposure)
-                self.db.put(c,"greeks:"+symbol,{**diagnose(contracts,reference,reference_ts,now,complete),
-                    "pagination":self.chain_paging.get(symbol,{})})
-                self.db.append(c,"exposure",source,symbol,now,exposure)
-            chosen=select_contracts(contracts,reference,max(2,self.cfg.stream_limit//len(self.cfg.stocks)))
-            total_contracts+=len(contracts)
-            selected += [o["symbol"] for o in chosen]
-            for o in chosen:
-                if o.get("quote"): self.quote(source,o["symbol"],o["quote"])
+        now=time.time()
+        with self.db.tx() as c:
+            focus=focus_symbols(self.db,c,self.cfg,now,self.cfg.option_focus)
+            universe=list(self.cfg.watch_symbols)
+            rotation=universe[self.chain_cursor:]+universe[:self.chain_cursor]
+            retry=lambda s: now>=self.db.get(c,'chain_retry:'+s,{}).get('retry_at',0)
+            due=[s for s in focus if retry(s) and now-self.db.get(c,"chain:"+s,{}).get("asof",0)>=45]
+            background=next((s for s in rotation if s not in due and retry(s) and now-self.db.get(c,"chain:"+s,{}).get("asof",0)>=900),None)
+            # One focused symbol and one background symbol per turn. A new price
+            # setup can reach the front of the next turn instead of waiting for
+            # a monolithic full-universe chain loop.
+            targets=due[:1]+([background] if background else [])
+            if background: self.chain_cursor=(universe.index(background)+1)%len(universe)
+        for symbol in targets:
+            try:
+                contracts,complete=await (self.massive_chain(symbol) if source=="massive" else self.alpaca_chain(symbol))
+                now=time.time()
+                with self.db.tx() as c:
+                    q=self.db.get(c,"quote:"+symbol)
+                    spot=(q["bid"]+q["ask"])/2 if q and -1<=now-q["ts"]<120 and 0<q["bid"]<=q["ask"] else None
+                    reference,reference_ts=spot,q["ts"] if spot else None
+                    if reference is None:
+                        last_bar=self.db.recent(c,"bar",symbol,limit=1)
+                        if last_bar:
+                            reference=number(last_bar[0]["payload"].get("c"))
+                            reference_ts=last_bar[0]["ts"]
+                    exposure=calculate(contracts,spot,now,source,complete)
+                    exposure["spot_asof"]=q["ts"] if spot else None
+                    chain={"contracts":contracts,"complete":complete,"asof":now,"source":source,
+                        "selection_reference":reference,"selection_reference_ts":reference_ts,
+                        "selection_note":"Historical references seed subscriptions only; execution needs fresh quotes"}
+                    # Full chains remain in latest state; compressed archives
+                    # retain research inputs without repeating huge JSON blocks.
+                    import base64,gzip
+                    archive={"encoding":"gzip+base64-json","data":base64.b64encode(gzip.compress(json.dumps(chain).encode())).decode(),"contracts":len(contracts)}
+                    self.db.append(c,"chain_archive",source,symbol,now,archive)
+                    self.db.put(c,"chain:"+symbol,chain)
+                    self.db.put(c,'chain_retry:'+symbol,{'retry_at':0})
+                    self.db.put(c,"exposure:"+symbol,exposure)
+                    self.db.put(c,"greeks:"+symbol,{**diagnose(contracts,reference,reference_ts,now,complete),
+                        "pagination":self.chain_paging.get(symbol,{})})
+                    self.db.append(c,"exposure",source,symbol,now,exposure)
+                chosen=select_contracts(contracts,reference,max(4,self.cfg.stream_limit//max(1,len(focus))))
+                self.chain_selected[symbol]=[o["symbol"] for o in chosen]
+                for o in chosen:
+                    if o.get("quote"): self.quote(source,o["symbol"],o["quote"])
+                self.db.health('chain_'+symbol,'available','Options chain fetched',poll_ts=now,contracts=len(contracts))
+            except asyncio.CancelledError: raise
+            except Exception as error:
+                detail=str(error) if isinstance(error,FeedError) else type(error).__name__
+                self.db.health('chain_'+symbol,'error',detail)
+                # An unavailable/delisted name must not stop other chains.
+                with self.db.tx() as c:
+                    self.db.put(c,'chain_retry:'+symbol,{'at':now,'retry_at':now+300})
         with self.db.tx() as c:
             held=[p["symbol"] for p in self.db.prefix(c,"position:").values() if p.get("status")=="open" and p.get("asset")=="option"]
+        with self.db.tx() as c:
+            for symbol in focus:
+                if symbol not in self.chain_selected:
+                    chain=self.db.get(c,'chain:'+symbol,{})
+                    self.chain_selected[symbol]=[o['symbol'] for o in select_contracts(chain.get('contracts',[]),
+                        chain.get('selection_reference'),max(4,self.cfg.stream_limit//max(1,len(focus))))]
+        selected=[]
+        choices=[self.chain_selected.get(s,[]) for s in focus]
+        for i in range(max((len(rows) for rows in choices),default=0)):
+            selected.extend(rows[i] for rows in choices if i<len(rows))
         self.option_symbols=set(held+selected[:max(0,self.cfg.stream_limit-len(held))])
-        self.db.health("option_chain","available",source+"; daily OI; chain refresh time is not an OI timestamp",
-            contracts=total_contracts,stream_contracts=len(self.option_symbols),poll_ts=time.time(),source_ts=None)
+        self.db.health("option_chain","available",source+"; focused chains target 45s, background target 15m; daily OI; actual source ages shown",
+            stream_contracts=len(self.option_symbols),focus_symbols=focus,watch_symbols=len(self.cfg.watch_symbols),poll_ts=time.time(),source_ts=None)
 
     async def massive_chain(self,symbol):
         url="https://api.massive.com/v3/snapshot/options/"+symbol
-        params={"apiKey":self.cfg.massive,"limit":250,"expiration_date.gte":day(time.time()),"expiration_date.lte":day(time.time()+45*86400)}
+        params={"apiKey":self.cfg.massive,"limit":250,"expiration_date.gte":day(time.time()),"expiration_date.lte":day(time.time()+self.cfg.chain_dte*86400)}
         out={}
         pages_seen=set()
         raw_count=overlaps=conflicts=0
@@ -284,7 +361,7 @@ class Collectors:
     async def alpaca_chain(self,symbol):
         metadata={}
         params={"underlying_symbols":symbol,"status":"active","expiration_date_gte":day(time.time()),
-            "expiration_date_lte":day(time.time()+45*86400),"limit":1000}
+            "expiration_date_lte":day(time.time()+self.cfg.chain_dte*86400),"limit":1000}
         complete=False
         for _ in range(30):
             data=await self.get("https://paper-api.alpaca.markets/v2/options/contracts",self.alpaca_headers,params)
@@ -293,7 +370,7 @@ class Collectors:
                 complete=True
                 break
             params["page_token"]=data["next_page_token"]
-        params={"feed":"opra","limit":1000,"expiration_date_gte":day(time.time()),"expiration_date_lte":day(time.time()+45*86400)}
+        params={"feed":"opra","limit":1000,"expiration_date_gte":day(time.time()),"expiration_date_lte":day(time.time()+self.cfg.chain_dte*86400)}
         out=[]
         for _ in range(30):
             data=await self.get("https://data.alpaca.markets/v1beta1/options/snapshots/"+symbol,self.alpaca_headers,params)
@@ -366,9 +443,10 @@ class Collectors:
                         last["health"]=time.monotonic()
 
     async def matrix_request(self,path,label):
-        # Under 24 requests/minute from this worker; vendor key's 30/min is shared with MCP.
-        await asyncio.sleep(max(0,self.matrix_next-time.monotonic()))
-        self.matrix_next=time.monotonic()+2.6
+        # A shared lock spaces request starts across flow, matrices and research.
+        async with self.matrix_lock:
+            await asyncio.sleep(max(0,self.matrix_next-time.monotonic()))
+            self.matrix_next=time.monotonic()+2.6
         data=await self.get("https://api.traderdaddy.pro/api/v1"+path,{"X-API-Key":self.cfg.matrix})
         now=time.time()
         with self.db.tx() as c:
@@ -377,17 +455,41 @@ class Collectors:
         return data,now
 
     async def matrix(self):
-        try: await collect_flow(self,time.time())
+        try: await collect_flow(self,time.time(),page_cap=2)
         except ValueError as e: raise FeedError(str(e)) from None
-        if time.time()-self.matrix_last>=60:
-            for symbol in self.cfg.stocks:
-                data,now=await self.matrix_request("/gex/"+symbol+"/matrix",symbol)
-                try: result=matrix_summary(data,now)
-                except ValueError as e: raise FeedError(str(e)) from None
-                if result["symbol"]!=symbol: raise FeedError("TraderMatrix returned a different symbol")
-                with self.db.tx() as c: self.db.put(c,"matrix:"+symbol,result)
-            self.matrix_last=time.time()
-        self.db.health("tradermatrix","available","Timestamped vendor GEX/VEX and paged $50k unusual activity; polling is not a tick stream",poll_ts=time.time())
+        now=time.time()
+        with self.db.tx() as c:
+            focus=focus_symbols(self.db,c,self.cfg,now,self.cfg.option_focus)
+            candidates=list(dict.fromkeys(focus+list(self.cfg.watch_symbols)))
+            stamps={s:self.db.get(c,"matrix:"+s,{}).get("received",0) for s in candidates}
+            due=[s for s in candidates if now-stamps[s]>=(60 if s in focus else 1800)]
+        if due:
+            focused=[s for s in due if s in focus]
+            background=[s for s in due if s not in focus]
+            pool=background if self.matrix_cursor%4==3 and background else focused or background
+            symbol=min(pool,key=lambda s:stamps[s])
+            self.matrix_cursor+=1
+            data,received=await self.matrix_request("/gex/"+symbol+"/matrix",symbol)
+            try: result=matrix_summary(data,received)
+            except ValueError as e: raise FeedError(str(e)) from None
+            if result["symbol"]!=symbol: raise FeedError("TraderMatrix returned a different symbol")
+            with self.db.tx() as c:
+                previous=self.db.get(c,'matrix_levels:'+symbol,{})
+                known={(r['kind'],r['price']):r.get('known_at',received) for r in previous.get('levels',[])}
+                concentrations=[]
+                for field in ('gex','vex'):
+                    maximum=max((abs(r.get(field) or 0) for r in result['strikes']),default=0)
+                    if not maximum: continue
+                    for row in result['strikes']:
+                        if abs(row.get(field) or 0)>=maximum*.75:
+                            kind=field+'_concentration'
+                            concentrations.append({'kind':kind,'price':row['strike'],'value':row[field],
+                                'known_at':known.get((kind,row['strike']),received)})
+                self.db.put(c,'matrix_levels:'+symbol,{'symbol':symbol,'source':'tradermatrix',
+                    'source_ts':result['source_ts'],'received':received,'levels':concentrations,
+                    'method':'Relative concentration within vendor GEX/VEX totals; not a dealer-inventory or direction claim'})
+                self.db.put(c,"matrix:"+symbol,result)
+        self.db.health("tradermatrix","available","Shared-rate vendor matrices and unusual activity; per-source clocks retained",poll_ts=time.time())
 
 
 def select_contracts(contracts,reference,limit):
