@@ -219,6 +219,27 @@ def test_massive_overlapping_pages_merge_contracts_and_preserve_newest_quote(db)
     asyncio.run(run())
 
 
+def test_massive_next_url_cursor_reaches_http_transport(db):
+    requests=[]
+    async def run():
+        collector=Collectors(db,Config(local=True,massive="fixture"))
+        await collector.client.aclose()
+        def respond(request):
+            requests.append(request)
+            assert request.url.params["apiKey"]=="fixture"
+            if len(requests)==1:
+                return httpx.Response(200,json={"results":[],"next_url":"https://api.massive.com/v3/snapshot/options/SPY?cursor=next%2Bpage%3D&order=asc"})
+            assert request.url.params["cursor"]=="next+page="
+            assert request.url.params["order"]=="asc"
+            return httpx.Response(200,json={"results":[]})
+        collector.client=httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        try:
+            _,complete=await collector.massive_chain("SPY")
+            assert complete and len(requests)==2
+        finally: await collector.close()
+    asyncio.run(run())
+
+
 def flow_fixture(page,total=800,correction=False):
     return {"page":page,"pageSize":100,"total":total,"data":[{"id":i,"ticker":"SPY",
         "tradeTime":"2026-09-14T14:00:00Z","premium":70000 if correction else 60000}

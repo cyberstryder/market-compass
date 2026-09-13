@@ -86,10 +86,12 @@ All deployment source is in a private GitHub repository. Railway can redeploy a 
 
 ## Pre-open fixes, September 13
 
-The six pre-open changes cover the CME session/risk clock; explicit quarterly contracts with bounded same-contract prior-session recovery; a confirmed Discord test action; 0DTE selection that continues after risk or liquidity rejection; raw Greek-field diagnostics; and durable unusual-flow reconciliation. The offline suite now has 62 passing tests, including provider page overlaps and sparse-history count verification. Futures customarily roll to December for the September 14 session (MESZ6/MNQZ6 data symbols; MESZ2026/MNQZ2026 chart symbols). Continuous chart adjustment settings can differ; the existing Pine script draws the RTH range only and has not been compiled in TradingView.
+The six pre-open changes cover the CME session/risk clock; explicit quarterly contracts with bounded same-contract prior-session recovery; a confirmed Discord test action; 0DTE selection that continues after risk or liquidity rejection; raw Greek-field diagnostics; and durable unusual-flow reconciliation. The offline suite now has 63 passing tests, including provider page overlaps and sparse-history count verification. Futures customarily roll to December for the September 14 session (MESZ6/MNQZ6 data symbols; MESZ2026/MNQZ2026 chart symbols). Continuous chart adjustment settings can differ; the existing Pine script draws the RTH range only and has not been compiled in TradingView.
 
 Historical recovery reserves the free provider cost estimate before one bounded download, against a default $0.10 cumulative ceiling. Unknown download outcomes retain the reservation and require review before a repeat. Free pre-download failures can retry on the next hourly recovery check. No data subscription or broker execution is added.
 
 Production delivery verification: the explicit TEST — NO TRADE event #144895 received Discord saved-message ID 1548793440488267977 at 2026-09-13 15:32:11 CT. It created no simulated position.
 
 Databento OHLCV omits intervals without trades ([schema reference](https://databento.com/docs/schemas-and-data-formats/ohlcv)). Friday recovery returned 387 MESZ6 bars and 389 MNQZ6 bars; free metadata record counts now distinguish a complete sparse session from a dropped download. The strict 15-consecutive-minute rule for a new opening-range signal remains unchanged.
+
+Massive cursor correction: HTTPX replaces URL query parameters when `params` is supplied. Follow-up snapshot requests now preserve all vendor cursor query fields while setting the configured API key. This fixes repeated first-page reads and the resulting distorted chain coverage. A transport-level regression test verifies encoded cursor preservation.

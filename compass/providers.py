@@ -4,7 +4,7 @@ import json
 import time
 import uuid
 from datetime import datetime,timedelta,timezone
-from urllib.parse import urlparse
+from urllib.parse import urlparse,parse_qsl
 import httpx
 import websockets
 from .market import ts,number,day
@@ -276,7 +276,9 @@ class Collectors:
             if not url: return list(out.values()),True
             if urlparse(url).hostname not in {"api.massive.com","api.polygon.io"}:
                 raise FeedError("Unexpected pagination host")
-            params={"apiKey":self.cfg.massive}
+            # HTTPX params replace a URL's existing query. Preserve the vendor
+            # cursor explicitly, or every request silently re-fetches page 1.
+            params=[(k,v) for k,v in parse_qsl(urlparse(url).query,keep_blank_values=True) if k!="apiKey"]+[("apiKey",self.cfg.massive)]
         return list(out.values()),False
 
     async def alpaca_chain(self,symbol):
