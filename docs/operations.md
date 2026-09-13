@@ -18,6 +18,11 @@ All required code and service roles can be deployed without buying another serve
 - Databento SDK and stream rejections include a bounded, redacted reason in the authenticated Feed health view. API keys and provider URLs are removed before storage.
 - Ask Compass reports the OpenAI HTTP status and error code, so invalid keys, missing permissions and exhausted credits can be distinguished. Failed or empty answers do not mark the assistant ready.
 - Discord performs a read-only webhook check on worker startup and replaces stale configuration status. A successful check means the webhook is reachable; actual message delivery still requires a queued simulated alert. Startup never broadcasts a synthetic trade.
+- Discord POST uses `wait=true` and requires a saved message ID. HTTP 204, missing IDs, rate limits and failures retain the alert in the queue. Feed health displays pending count, oldest queued age and last confirmation. `alert_delivery` journal events retain acknowledgements; duplicates can occur after uncertain network outcomes.
+- Closed exchanges display `market_closed` only when the worker heartbeat is current and no provider error is recorded. Source timestamps and task updates remain separate. During open sessions, each configured underlying/future gets its own fresh-quote check.
+- Exposure coverage counts gamma/OI/contract inputs independently of the underlying price. Missing price blocks calculation without erasing input counts. Counts of missing fields overlap. Missing vanna inputs stay null at strike level.
+- TraderMatrix matrices show the source snapshot time and fetched time separately. Totals and strike concentrations sum populated cells across returned expirations; they are not independently verified walls. Vendor VEX units are unverified. Raw envelopes remain in `matrix_raw`; bounded summaries are supplied to Q&A.
+- TraderMatrix flow uses the official documented row shape, a $50k minimum and five-page maximum. The dashboard exposes filters, vendor aggregates, row counts and pagination limits. Stable vendor IDs deduplicate first-observation journal records; latest poll rows may reflect vendor corrections. A live moving feed can shift pages and leave gaps.
 
 ## Tomorrow's acceptance criteria
 
@@ -73,6 +78,7 @@ All deployment source is in a private GitHub repository. Railway can redeploy a 
 - engine service: b5a4b496-4359-45a4-b69e-8b0cfe5f2209
 - Postgres service: 38f0ad27-44ae-4a1e-ada8-6de878d46873
 - PostgreSQL persistent volume: 5 GB initially, mounted at /var/lib/postgresql/data.
-- Provider fields and the dashboard password are intentionally empty pending secure activation.
-- The first deployment passed 16 offline tests and Railway healthchecks on all four services. Subsequent commits may extend the test count.
-- Browser rendering and Pine compilation could not be verified after the coding/browser workspace disconnected. Backend login, protected API, source behavior and Docker build checks were verified.
+- Provider keys and dashboard authentication have been securely configured. Alpaca SIP and Massive options streams authenticated; Databento CME live connected after the exchange entitlement was activated. TraderMatrix returned paid GEX/VEX matrices; its Sunday `today` flow was empty. OpenAI completed a funded Responses API answer. Discord passed a read-only webhook check.
+- Premarket changes passed 35 offline tests plus JavaScript syntax validation before deployment. Fixtures exercise null coverage, matrix alignment, paging overlaps and caps, closed sessions versus failed workers, fresh-quote gating and confirmed Discord delivery. No fixture was inserted into production and no synthetic message was sent.
+- First-session checks remain: advancing stock/futures/option source times, actual chain coverage, nonempty vendor flow, complete opening ranges, simulated fills/exits and saved Discord alerts. Current strategies enter only during the US equity regular session, including futures; overnight collection is enabled.
+- The authenticated dashboard was previously browser verified. The Pine script still needs compilation and visual validation in the user's TradingView account.

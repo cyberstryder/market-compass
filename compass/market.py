@@ -42,7 +42,7 @@ def is_open(now=None,future=False):
 def fresh(q,now,age=5):
     if not q or q.get("ts") is None or not -1<=now-q["ts"]<=age: return False
     b,a=number(q.get("bid")),number(q.get("ask"))
-    return b is not None and a is not None and 0<b<a and q.get("bid_size",0)>0 and q.get("ask_size",0)>0
+    return b is not None and a is not None and 0<b<a and (number(q.get("bid_size")) or 0)>0 and (number(q.get("ask_size")) or 0)>0
 
 def dedup(rows,asof):
     latest={}

@@ -17,10 +17,12 @@
 <div><h3>Futures / intraday</h3><p>Closed-minute break of the 15-minute opening range. ATR stop, 2R target, fresh bid/ask required.</p></div>
 <div><h3>0DTE</h3><p>Underlying breakout selects an eligible same-day call or put. A stale or missing option quote blocks the simulated entry.</p></div>
 <div><h3>Swings</h3><p>Completed daily close above the preceding 20 daily highs. Entry waits for the next session and an executable quote.</p></div></div></article></section>
-<section id="exposure" class="tab"><div class="banner">GEX/VEX are modeled from daily open interest, not observed dealer positions. Vendor outputs remain separate.</div>
-<div id="exposures"></div><article class="panel"><h2>TraderMatrix observations</h2><p class="muted">Original API responses are retained for schema and coverage validation.</p><div id="matrix"></div></article></section>
-<section id="flow" class="tab"><div class="banner">The raw stream follows a bounded contract universe. Large prints do not reveal opening/closing intent. TraderMatrix unusual activity is captured separately.</div>
-<article class="panel"><h2>Large option prints</h2><div id="flows"></div></article></section>
+<section id="exposure" class="tab"><div class="banner">Compare vendor exposure with the local research proxy. A recent fetch does not make an old market snapshot current.</div>
+<h2>TraderMatrix GEX / VEX</h2><p class="muted">Concentrations across the expirations returned by the vendor. Methodology and units remain vendor defined.</p><div id="matrix"></div>
+<h2>Local exposure & input coverage</h2><p class="muted">Daily open interest, calls positive / puts negative. Local VEX estimates vanna; it is not assumed equivalent to TraderMatrix VEX.</p><div id="exposures"></div></section>
+<section id="flow" class="tab"><div class="banner">TraderMatrix supplies filtered unusual activity through polling. Massive supplies live prints for selected contracts. Neither view establishes a trade's opening or closing intent.</div>
+<article class="panel"><h2>TraderMatrix unusual activity</h2><div id="vendor-flows"></div></article>
+<article class="panel"><h2>Massive large option prints</h2><p class="muted">$100k minimum · selected contracts only</p><div id="flows"></div></article></section>
 <section id="trades" class="tab"><div class="banner">Every entry and exit is simulated. Fills cross the observed spread and include adverse slippage. Missing exits remain unresolved.</div>
 <article class="panel"><h2>Trade ledger</h2><div id="ledger"></div></article></section>
 <section id="assistant" class="tab"><article class="panel ask-panel"><p class="eyebrow">SHARED MARKET CONTEXT</p><h2>What would you like to understand?</h2>
@@ -28,7 +30,11 @@
 <form id="ask"><label for="question">Your question</label><textarea id="question" maxlength="2000" rows="3" placeholder="What is missing before we can trust the SPY exposure view?" required></textarea>
 <button type="submit">Ask Compass →</button></form><p id="answer" class="answer"></p><p id="answer-time" class="fine"></p></article></section>
 <section id="health" class="tab"><div class="banner">A running server does not mean market data is ready. Check both source timestamps and collector heartbeats during open sessions.</div>
-<article class="panel"><h2>Independent collectors</h2><div id="health-table"></div></article><article class="panel"><h2>First-session checklist</h2>
-<ol><li>Add provider keys in Railway and verify the subscribed feeds.</li><li>Check stock and futures quote ages during their open sessions.</li><li>Compare chain counts, missing OI/Greeks, and exposure assumptions.</li><li>Verify a complete simulated entry → exit → delivered-alert record.</li></ol><p id="workers" class="fine"></p></article></section>
+<article class="panel"><h2>Quotes required for simulation</h2><div id="quote-checks"></div></article>
+<article class="panel"><h2>Independent collectors</h2><div id="health-table"></div><p id="workers" class="fine"></p></article>
+<article class="panel"><h2>Discord delivery</h2><div id="delivery"></div></article>
+<article class="panel"><h2>First-session verification</h2>
+<p class="muted">Connections are checked. Live readiness still requires advancing source times, usable option inputs, and a recorded simulated entry, exit, and confirmed alert.</p>
+<p class="fine">The current entry rules use the US equity regular session, including futures entries. Futures data collection also runs outside that window.</p></article></section>
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
 <script src="/static/app.js"></script></body></html>

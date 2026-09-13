@@ -1,10 +1,56 @@
 import asyncio
 import time
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import urlparse,parse_qsl,urlencode
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select,func
 from .store import events
+
+class DeliveryError(Exception):
+    def __init__(self,detail,retry=15):
+        super().__init__(detail)
+        self.retry=retry
+
+
+def confirmed_url(webhook):
+    url=urlparse(webhook)
+    params=[(k,v) for k,v in parse_qsl(url.query,keep_blank_values=True) if k!="wait"]
+    return url._replace(query=urlencode(params+[("wait","true")]),fragment="").geturl()
+
+
+def outbox_status(db,c,now):
+    cursor=db.get(c,"outbox:discord",0)
+    count,oldest=c.execute(select(func.count(),func.min(events.c.ts)).where(events.c.kind=="alert",events.c.id>cursor)).one()
+    return {"pending":count,"oldest_age":round(now-oldest,1) if oldest is not None else None,
+        "last_acknowledged_event":cursor or None,"last_confirmation":db.get(c,"outbox:discord:confirmation")}
+
+
+async def dispatch(client,db,webhook,row):
+    p=row["payload"]
+    content=f"[SIMULATED] {row['symbol']} | {p.get('status')}\n{p.get('strategy','')} {p.get('side','')}\n{p.get('reason',p.get('exit_reason',''))}"
+    for label in ["entry","stop","target","qty","exit","pnl"]:
+        if label in p: content+=f"\n{label}: {p[label]}"
+    content+=f"\nEvent #{row['id']} | "+time.strftime("%Y-%m-%d %H:%M:%S UTC",time.gmtime(row["ts"]))
+    response=await client.post(confirmed_url(webhook),json={"content":content[:1900],"allowed_mentions":{"parse":[]}})
+    if response.status_code==429:
+        try: retry=max(1,min(60,float(response.json().get("retry_after",5))))
+        except (ValueError,TypeError): retry=5
+        raise DeliveryError("Discord rate limit; alert remains queued",retry)
+    if response.status_code!=200:
+        raise DeliveryError(f"Discord HTTP {response.status_code}; message not confirmed")
+    try: message=response.json()
+    except ValueError: raise DeliveryError("Discord returned no message confirmation") from None
+    message_id=message.get("id") if isinstance(message,dict) else None
+    if not isinstance(message_id,str) or not message_id.isdigit():
+        raise DeliveryError("Discord returned no message ID; alert remains queued")
+    now=time.time()
+    with db.tx() as c:
+        db.put(c,"outbox:discord",max(row["id"],db.get(c,"outbox:discord",0)))
+        confirmation={"event_id":row["id"],"message_id":message_id,"at":now}
+        db.put(c,"outbox:discord:confirmation",confirmation)
+        db.append(c,"alert_delivery","discord",row["symbol"],now,confirmation,key="discord:"+message_id)
+    db.health("discord","delivered","Discord confirmed a saved message; event IDs identify possible retries",now)
+
 
 async def deliver(db,cfg):
     owner=uuid.uuid4().hex
@@ -34,19 +80,11 @@ async def deliver(db,cfg):
                         cursor=db.get(c,"outbox:discord",0)
                         rows=list(c.execute(select(events).where(events.c.kind=="alert",events.c.id>cursor).order_by(events.c.id).limit(1)).mappings())
                 for row in rows:
-                    p=row["payload"]
-                    content=f"[SIMULATED] {row['symbol']} | {p.get('status')}\n{p.get('strategy','')} {p.get('side','')}\n{p.get('reason',p.get('exit_reason',''))}"
-                    for label in ["entry","stop","target","qty","exit","pnl"]:
-                        if label in p: content+=f"\n{label}: {p[label]}"
-                    content+=f"\nEvent #{row['id']} | "+time.strftime("%Y-%m-%d %H:%M:%S UTC",time.gmtime(row["ts"]))
-                    r=await client.post(cfg.discord,json={"content":content[:1900],"allowed_mentions":{"parse":[]}})
-                    if r.status_code==429:
-                        await asyncio.sleep(min(30,float(r.json().get("retry_after",5))))
-                        continue
-                    if r.status_code not in {200,204}: raise RuntimeError("Webhook rejected")
-                    with db.tx() as c: db.put(c,"outbox:discord",row["id"])
-                    db.health("discord","delivered","At least once delivery; event IDs identify retries",time.time())
+                    await dispatch(client,db,cfg.discord,row)
             except asyncio.CancelledError: raise
+            except DeliveryError as e:
+                db.health("discord","error",str(e))
+                await asyncio.sleep(e.retry)
             except Exception as e:
                 db.health("discord","error",type(e).__name__+"; alert remains queued")
                 await asyncio.sleep(15)

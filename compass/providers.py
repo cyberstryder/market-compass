@@ -10,6 +10,7 @@ from .market import ts,number,day
 from .store import identity
 from .exposure import calculate
 from .diagnostics import redacted_detail
+from .vendor import matrix_summary,flow_page
 
 class FeedError(Exception): pass
 
@@ -20,6 +21,7 @@ class Collectors:
         self.client=httpx.AsyncClient(timeout=20,follow_redirects=False)
         self.live=None
         self.matrix_last=0
+        self.matrix_next=0
 
     async def close(self):
         if self.live: self.live.stop()
@@ -105,6 +107,7 @@ class Collectors:
                         last["health"]=time.monotonic()
 
     async def history(self):
+        newest=None
         for frame,days,kind in [("1Min",7,"bar"),("1Day",120,"daily")]:
             params={"symbols":",".join(self.cfg.stocks),"timeframe":frame,
                 "start":(datetime.now(timezone.utc)-timedelta(days=days)).isoformat(),
@@ -114,10 +117,11 @@ class Collectors:
                 items=[(symbol,ts(b["t"]),{k:b[k] for k in ["o","h","l","c","v","vw"] if k in b})
                     for symbol,bars in data.get("bars",{}).items() for b in bars]
                 await asyncio.to_thread(self.bars,"alpaca",items,kind)
+                if items: newest=max(newest or 0,max(item[1] for item in items))
                 if not data.get("next_page_token"): break
                 params["page_token"]=data["next_page_token"]
             else: raise FeedError("History pagination cap reached; incomplete")
-        self.db.health("alpaca_history","available","7 calendar days minute bars; 120 calendar days daily bars",time.time())
+        self.db.health("alpaca_history","available","7 calendar days minute bars; 120 calendar days daily bars",newest)
 
     async def futures(self):
         import databento as db
@@ -171,27 +175,38 @@ class Collectors:
     async def chains(self):
         source="massive" if self.cfg.massive else "alpaca"
         selected=[]
+        total_contracts=0
         for symbol in self.cfg.stocks:
             contracts,complete=await (self.massive_chain(symbol) if source=="massive" else self.alpaca_chain(symbol))
             now=time.time()
             with self.db.tx() as c:
                 q=self.db.get(c,"quote:"+symbol)
-                spot=(q["bid"]+q["ask"])/2 if q and now-q["ts"]<120 else None
+                spot=(q["bid"]+q["ask"])/2 if q and -1<=now-q["ts"]<120 and 0<q["bid"]<=q["ask"] else None
+                reference,reference_ts=spot,q["ts"] if spot else None
+                if reference is None:
+                    last_bar=self.db.recent(c,"bar",symbol,limit=1)
+                    if last_bar:
+                        reference=number(last_bar[0]["payload"].get("c"))
+                        reference_ts=last_bar[0]["ts"]
                 exposure=calculate(contracts,spot,now,source,complete)
-                chain={"contracts":contracts,"complete":complete,"asof":now,"source":source}
+                exposure["spot_asof"]=q["ts"] if spot else None
+                chain={"contracts":contracts,"complete":complete,"asof":now,"source":source,
+                    "selection_reference":reference,"selection_reference_ts":reference_ts,
+                    "selection_note":"Last bar may seed subscriptions only; stale prices cannot fill trades or calculate exposure"}
                 self.db.append(c,"chain",source,symbol,now,chain)
                 self.db.put(c,"chain:"+symbol,chain)
                 self.db.put(c,"exposure:"+symbol,exposure)
                 self.db.append(c,"exposure",source,symbol,now,exposure)
-            candidates=sorted(contracts,key=lambda o:(o["expiry"],abs(o["strike"]-(spot or o["strike"]))))
-            chosen=candidates[:max(2,self.cfg.stream_limit//len(self.cfg.stocks))]
+            chosen=select_contracts(contracts,reference,max(2,self.cfg.stream_limit//len(self.cfg.stocks)))
+            total_contracts+=len(contracts)
             selected += [o["symbol"] for o in chosen]
             for o in chosen:
                 if o.get("quote"): self.quote(source,o["symbol"],o["quote"])
         with self.db.tx() as c:
             held=[p["symbol"] for p in self.db.prefix(c,"position:").values() if p.get("status")=="open" and p.get("asset")=="option"]
         self.option_symbols=set(held+selected[:max(0,self.cfg.stream_limit-len(held))])
-        self.db.health("option_chain","available",source+"; daily OI with missing fields preserved",time.time(),contracts=len(selected))
+        self.db.health("option_chain","available",source+"; daily OI; chain refresh time is not an OI timestamp",
+            contracts=total_contracts,stream_contracts=len(self.option_symbols),poll_ts=time.time(),source_ts=None)
 
     async def massive_chain(self,symbol):
         url="https://api.massive.com/v3/snapshot/options/"+symbol
@@ -293,17 +308,67 @@ class Collectors:
                         self.db.health("option_stream","receiving","Selected-contract trades; $100k large-print filter; not full-market unusual activity",t,contracts=len(subscribed))
                         last["health"]=time.monotonic()
 
+    async def matrix_request(self,path,label):
+        # Under 24 requests/minute from this worker; vendor key's 30/min is shared with MCP.
+        await asyncio.sleep(max(0,self.matrix_next-time.monotonic()))
+        self.matrix_next=time.monotonic()+2.6
+        data=await self.get("https://api.traderdaddy.pro/api/v1"+path,{"X-API-Key":self.cfg.matrix})
+        now=time.time()
+        with self.db.tx() as c:
+            self.db.append(c,"matrix_raw","tradermatrix",label,now,{"path":path,"data":data})
+        return data,now
+
     async def matrix(self):
-        paths=["/unusual-activity?timeFrame=today&page=1&pageSize=100"]
+        rows,seen,rejected,raw_count=[],set(),0,0
+        first=None
+        for page in range(1,6):
+            path=f"/unusual-activity?timeFrame=today&minPremium=50000&page={page}&pageSize=100"
+            data,now=await self.matrix_request(path,"unusual_activity")
+            try: part=flow_page(data,now)
+            except ValueError as e: raise FeedError(str(e)) from None
+            if part["page"]!=page: raise FeedError("TraderMatrix returned an unexpected page")
+            if first is None: first=part
+            rejected+=part["rejected"]
+            raw_count+=part["raw_count"]
+            for row in part["rows"]:
+                if row["vendor_id"] in seen: continue
+                seen.add(row["vendor_id"])
+                rows.append(row)
+                with self.db.tx() as c:
+                    self.db.append(c,"vendor_flow","tradermatrix",row["symbol"],row["source_ts"],row,
+                        key=identity("tradermatrix-flow",row["vendor_id"]))
+            if page*part["page_size"]>=part["total"] or not part["raw_count"]: break
+        limited=page*part["page_size"]<part["total"]
+        flow={"source":"tradermatrix","received":now,"source_ts":max((r["source_ts"] for r in rows),default=None),
+            "rows":sorted(rows,key=lambda r:r["source_ts"],reverse=True),"total":first["total"],
+            "pages":page,"page_cap":5,"fetched_rows":raw_count,"unique_rows":len(rows),"rejected":rejected,
+            "limited":limited,"status":"partial" if limited or rejected else "available",
+            "filters":first["filters"],"aggregates":first["aggregates"],
+            "coverage_note":"Vendor-filtered today feed, $50k minimum; at most 500 rows per poll. Page movement can create gaps. Aggregates are vendor totals, not sums of displayed rows.",
+            "schema_validation":"Official response example implemented; live row validation pending" if not rows else "Rows accepted against documented fields; classifications remain vendor supplied"}
+        with self.db.tx() as c:
+            self.db.put(c,"matrix:unusual_activity",flow)
         if time.time()-self.matrix_last>=60:
-            paths += ["/gex/"+s+"/matrix" for s in self.cfg.stocks]
+            for symbol in self.cfg.stocks:
+                data,now=await self.matrix_request("/gex/"+symbol+"/matrix",symbol)
+                try: result=matrix_summary(data,now)
+                except ValueError as e: raise FeedError(str(e)) from None
+                if result["symbol"]!=symbol: raise FeedError("TraderMatrix returned a different symbol")
+                with self.db.tx() as c: self.db.put(c,"matrix:"+symbol,result)
             self.matrix_last=time.time()
-        for path in paths:
-            data=await self.get("https://api.traderdaddy.pro/api/v1"+path,{"X-API-Key":self.cfg.matrix})
-            now=time.time()
-            label="unusual_activity" if path.startswith("/unusual") else path.split("/")[2]
-            with self.db.tx() as c:
-                self.db.append(c,"matrix_raw","tradermatrix",label,now,{"path":path,"data":data})
-                self.db.put(c,"matrix:"+label,{"received":now,"data":data,"normalization":"Pending paid-account schema validation"})
-            await asyncio.sleep(2.6)
-        self.db.health("tradermatrix","available","Raw analytics captured; schema and completeness verification pending",time.time())
+        self.db.health("tradermatrix","available","Timestamped vendor GEX/VEX and paged $50k unusual activity; polling is not a tick stream",poll_ts=time.time())
+
+
+def select_contracts(contracts,reference,limit):
+    """Balance near-money calls and puts; a historical reference only seeds subscriptions."""
+    if not reference or reference<=0 or limit<1: return []
+    valid=[o for o in contracts if o.get("symbol") and o.get("expiry") and (number(o.get("strike")) or 0)>0
+        and o.get("type") in {"call","put"} and number(o.get("multiplier"))==100]
+    calls=sorted((o for o in valid if o["type"]=="call"),key=lambda o:(o["expiry"],abs(o["strike"]-reference)))
+    puts=sorted((o for o in valid if o["type"]=="put"),key=lambda o:(o["expiry"],abs(o["strike"]-reference)))
+    chosen=[]
+    for i in range(max(len(calls),len(puts))):
+        for side in (calls,puts):
+            if i<len(side): chosen.append(side[i])
+            if len(chosen)>=limit: return chosen
+    return chosen

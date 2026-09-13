@@ -36,7 +36,7 @@ Exits require fresh quotes. Stops discovered in intervening closed bars are hand
 | Option chain, Greeks, daily OI | Massive | Alpaca chain + contract metadata if Massive absent |
 | Selected option prints and quotes | Massive WebSocket | Alpaca stream not yet implemented |
 | Local GEX/VEX | Deterministic derived proxy | Independent of TraderMatrix |
-| Vendor exposure and unusual activity | TraderMatrix API | Raw envelope first; paid-account schema validation required |
+| Vendor exposure and unusual activity | TraderMatrix API | Paid matrix schema normalized; flow follows official example and needs nonempty live validation |
 | Q&A | OpenAI Responses API + bounded recorded facts | Dashboard and scanners remain independent |
 
 TraderMatrix/Cipher charts cannot reveal their exact inventory assumptions, filters or proprietary classification. Reproducing their presentation and buying API access does not establish numerical equivalence. Benchmark local output and vendor output separately.
@@ -48,14 +48,14 @@ Railway project: Market Compass.
 A PostgreSQL volume stores all shared state. No application service uses ephemeral SQLite in production.
 Only dashboard receives a public domain. A password and signed HttpOnly session cookie protect market data. An absent password blocks protected routes. Worker services return 404 for market-facing routes.
 
-Each provider retries independently with bounded backoff. Errors do not log keys or full request URLs. This prevents a single missing data entitlement from blocking unrelated inputs. UI health shows source age and collector heartbeat separately.
+Each provider retries independently with bounded backoff. Errors do not log keys or full request URLs. This prevents a single missing data entitlement from blocking unrelated inputs. UI health separates market source age, task update age and worker heartbeat. Exchange closure does not hide a dead worker or a provider error. Per-symbol quote readiness uses a five-second age limit; an authenticated stream without events is not marked ready during the session.
 
 ## Known engineering follow-ups
 
 1. Validate paid-account schemas, API plans, symbol identity and network connectivity during an open session.
 2. Add large-volume batching and durable raw object archives before expanding beyond the bounded options watchlist.
 3. Add gap manifests, sequence-based live-stream recovery where the vendor supports it, and a standalone replay runner. Current reconnects refill stock history hourly and futures minute bars on connection; missed raw options ticks are not reconstructed.
-4. Normalize and paginate TraderMatrix unusual activity after inspecting authentic response fixtures.
+4. Validate nonempty TraderMatrix flow rows against the paid feed, monitor moving-page gaps, and verify vendor exposure units before comparing models or using them in a strategy.
 5. Add measured options aggressor and multi-leg classifiers only after trade-condition research and truth-set validation.
 6. Add rate/dividend curves, actual Greek timestamps, settlement metadata and exposure-model comparison reports.
 7. Validate macro-event blackout rules and prop-account session policies before any later execution work.
@@ -68,6 +68,7 @@ Each provider retries independently with bounded backoff. Errors do not log keys
 - [Massive option chain snapshots](https://massive.com/docs/rest/options/snapshots/option-chain-snapshot)
 - [Databento live API](https://databento.com/docs/api-reference-live)
 - [OpenAI Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create/)
-- TraderMatrix API: https://api.traderdaddy.pro/api/v1; response-schema validation is explicitly pending credentials.
+- [TraderMatrix developer reference](https://www.tradermatrix.pro/developers): REST reference includes the unusual-activity example and paging parameters; paid GEX matrix responses were inspected separately.
+- [Discord webhook reference](https://docs.discord.com/developers/resources/webhook): execute webhook with `wait=true` for saved-message confirmation.
 
 Uploaded reference documents were read before implementation. None of their example prices, signals or profit claims are used as live data.
