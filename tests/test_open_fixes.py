@@ -132,9 +132,30 @@ def historical_fixture(cost=.001,fail=False,missing=False):
                     callback(SimpleNamespace(instrument_id=i,ts_event=int(t*1e9),
                         open=int(100e9),high=int(101e9),low=int(99e9),close=int(100e9),volume=10))
         return SimpleNamespace(replay=replay)
-    client=SimpleNamespace(symbology=SimpleNamespace(resolve=resolve),metadata=SimpleNamespace(get_cost=lambda **kw:cost),
+    client=SimpleNamespace(symbology=SimpleNamespace(resolve=resolve),metadata=SimpleNamespace(get_cost=lambda **kw:cost,get_record_count=lambda **kw:390),
         timeseries=SimpleNamespace(get_range=get_range))
     return client,calls
+
+
+def test_sparse_history_is_complete_only_after_matching_provider_count(db):
+    client,calls=historical_fixture(missing=True)
+    client.metadata.get_record_count=lambda **kwargs:389
+    async def run():
+        collector=Collectors(db,Config(local=True))
+        try:
+            recover(collector,client,SUNDAY)
+            recover(collector,client,SUNDAY+3600)
+        finally: await collector.close()
+    asyncio.run(run())
+    assert len(calls)==1
+    with db.tx() as c:
+        job=list(db.prefix(c,"recovery:futures:").values())[0]
+        assert job["status"]=="available" and job["provider_record_counts"]["MESZ6"]==389
+        coverage=db.get(c,"historycoverage:MESZ6@1:2026-09-11")
+        rows=db.recent(c,"bar","MESZ6@1",limit=400)
+        assert not future_levels(rows,SUNDAY)["prior_complete"]
+        assert future_levels(rows,SUNDAY,coverage)["prior_complete"]
+        assert len(rows)==389  # No forward-filled or synthetic minute.
 
 
 @pytest.mark.parametrize("cost,fail,missing,status,count",[(.001,False,False,"available",1),(.2,False,False,"blocked",0),
@@ -178,6 +199,24 @@ def test_massive_raw_greek_omissions_are_explained_by_expiry_and_moneyness(db):
     assert result["target_near_atm"]["contracts"]==3
     assert any(r["moneyness"]=="deep_ITM_10pct" for r in result["groups"])
     assert diagnose(contracts,None,None,SUNDAY,complete)["target_near_atm"]["contracts"]==0
+
+
+def test_massive_overlapping_pages_merge_contracts_and_preserve_newest_quote(db):
+    async def run():
+        collector=Collectors(db,Config(local=True,massive="fixture"))
+        row={"details":{"ticker":"O:QQQ","expiration_date":"2026-09-14","strike_price":100,"contract_type":"call","shares_per_contract":100},
+            "greeks":{"gamma":.1},"last_quote":{"last_updated":MONDAY*1e9}}
+        pages=[{"results":[row],"next_url":"https://api.massive.com/v3/snapshot/options/QQQ?cursor=2"},
+            {"results":[{**row,"greeks":{},"last_quote":{"last_updated":(MONDAY-60)*1e9}}]}]
+        async def get(*args,**kwargs): return pages.pop(0)
+        collector.get=get
+        try:
+            contracts,complete=await collector.massive_chain("QQQ")
+            assert complete and len(contracts)==1 and contracts[0]["gamma"]==.1
+            assert collector.chain_paging["QQQ"]["overlaps_merged"]==1
+            assert collector.chain_paging["QQQ"]["conflicting_overlaps"]==1
+        finally: await collector.close()
+    asyncio.run(run())
 
 
 def flow_fixture(page,total=800,correction=False):

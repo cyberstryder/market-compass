@@ -65,7 +65,7 @@ def prior_rth(trading_day):
     return label.date().isoformat(), cal.session_open(label).timestamp(), cal.session_close(label).timestamp()
 
 
-def future_levels(rows, asof):
+def future_levels(rows, asof, coverage=None):
     rows = dedup(rows, asof)
     h = futures_session(asof)
     d = date.fromisoformat(h["day"])
@@ -87,6 +87,8 @@ def future_levels(rows, asof):
         "or_complete": {int(r["ts"]) for r in opening} == expected and asof >= range_start+900,
         "prior_day": prior_day, "prior_bars": len(prior),
         "prior_complete": len(prior) == round((previous_end-previous_start)/60)}
+    if coverage and coverage.get("verified") and coverage.get("day")==prior_day and len(prior)==coverage.get("record_count"):
+        out.update(prior_complete=True,prior_history_basis="Provider record count verified; zero-trade intervals omitted")
     for label, group in (("prior", prior), ("overnight", overnight), ("or", opening)):
         if group:
             out[label+"_high"] = max(r["payload"]["h"] for r in group)

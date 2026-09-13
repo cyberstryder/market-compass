@@ -4,7 +4,7 @@ import time
 import uuid
 from .market import levels,fresh,day,session,dedup
 from .store import identity
-from .futures import futures_session,risk_day,future_levels,selection
+from .futures import futures_session,risk_day,future_levels,selection,prior_rth
 
 VERSION="orb15-breakout-v1"
 
@@ -191,7 +191,8 @@ class Engine:
                 bar=rows[-1]
                 if bar["ts"]<=self.db.get(c,"cursor:"+symbol,0): continue
                 future=spec(symbol)["asset"]=="future"
-                context=future_levels(rows,now) if future else levels(rows,bar["ts"]+60)
+                coverage=self.db.get(c,"historycoverage:"+symbol+":"+prior_rth(risk_day(now))[0]) if future else None
+                context=future_levels(rows,now,coverage) if future else levels(rows,bar["ts"]+60)
                 self.db.put(c,"levels:"+symbol,context)
                 s=candidate(symbol,rows[-2],bar,context,now)
                 if s:

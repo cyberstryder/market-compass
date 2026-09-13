@@ -27,6 +27,7 @@ class Collectors:
         self.matrix_last=0
         self.matrix_next=0
         self.history_owner=uuid.uuid4().hex
+        self.chain_paging={}
 
     async def close(self):
         if self.live: self.live.stop()
@@ -227,7 +228,8 @@ class Collectors:
                 self.db.append(c,"chain",source,symbol,now,chain)
                 self.db.put(c,"chain:"+symbol,chain)
                 self.db.put(c,"exposure:"+symbol,exposure)
-                self.db.put(c,"greeks:"+symbol,diagnose(contracts,reference,reference_ts,now,complete))
+                self.db.put(c,"greeks:"+symbol,{**diagnose(contracts,reference,reference_ts,now,complete),
+                    "pagination":self.chain_paging.get(symbol,{})})
                 self.db.append(c,"exposure",source,symbol,now,exposure)
             chosen=select_contracts(contracts,reference,max(2,self.cfg.stream_limit//len(self.cfg.stocks)))
             total_contracts+=len(contracts)
@@ -243,14 +245,15 @@ class Collectors:
     async def massive_chain(self,symbol):
         url="https://api.massive.com/v3/snapshot/options/"+symbol
         params={"apiKey":self.cfg.massive,"limit":250,"expiration_date.gte":day(time.time()),"expiration_date.lte":day(time.time()+45*86400)}
-        out=[]
+        out={}
         pages_seen=set()
-        symbols_seen=set()
+        raw_count=overlaps=conflicts=0
         for _ in range(40):
             if url in pages_seen: raise FeedError("Options pagination repeated a page")
             pages_seen.add(url)
             data=await self.get(url,params=params)
             for x in data.get("results",[]):
+                raw_count+=1
                 d,g,q=x.get("details") or {},x.get("greeks") or {},x.get("last_quote") or {}
                 o={"symbol":d.get("ticker"),"underlying":symbol,"expiry":d.get("expiration_date"),
                     "strike":d.get("strike_price"),"type":d.get("contract_type"),"multiplier":d.get("shares_per_contract"),
@@ -259,17 +262,22 @@ class Collectors:
                     "greek_fields":sorted(k for k in g if k in {"gamma","delta","theta","vega"}),
                     "iv":x.get("implied_volatility"),"volume":x.get("day",{}).get("volume")}
                 if o["symbol"] and o["expiry"] and o["strike"]:
-                    if o["symbol"] in symbols_seen: raise FeedError("Options pagination repeated a contract")
-                    symbols_seen.add(o["symbol"])
-                    out.append(o)
                     o["quote"]={"ts":ts(q.get("last_updated")),"bid":q.get("bid"),"ask":q.get("ask"),
                         "bid_size":q.get("bid_size",0),"ask_size":q.get("ask_size",0)}
+                    old=out.get(o["symbol"])
+                    if old:
+                        overlaps+=1
+                        conflicts+=any(old.get(k)!=o.get(k) for k in ("gamma","oi","iv","gamma_field"))
+                    if not old or (o["quote"]["ts"] or 0)>=(old["quote"]["ts"] or 0): out[o["symbol"]]=o
+            self.chain_paging[symbol]={"pages":len(pages_seen),"returned_records":raw_count,
+                "unique_contracts":len(out),"overlaps_merged":overlaps,"conflicting_overlaps":conflicts,
+                "merge_policy":"One row per contract; newest quote timestamp wins, last occurrence breaks equal timestamps. Pagination is not an atomic snapshot."}
             url=data.get("next_url")
-            if not url: return out,True
+            if not url: return list(out.values()),True
             if urlparse(url).hostname not in {"api.massive.com","api.polygon.io"}:
                 raise FeedError("Unexpected pagination host")
             params={"apiKey":self.cfg.massive}
-        return out,False
+        return list(out.values()),False
 
     async def alpaca_chain(self,symbol):
         metadata={}

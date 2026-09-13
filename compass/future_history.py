@@ -6,6 +6,40 @@ from .market import number
 from .diagnostics import redacted_detail
 
 
+def verify_counts(db,client,plan,now):
+    """Free count checks distinguish sparse OHLCV from an incomplete download.
+
+    RTH endpoints are 10-minute aligned, as required for exact metadata counts.
+    Databento publishes no OHLCV record for an interval without trades.
+    """
+    counts={}
+    for raw in plan["symbols"]:
+        count=client.metadata.get_record_count(dataset="GLBX.MDP3",schema="ohlcv-1m",
+            symbols=[raw],stype_in="raw_symbol",
+            start=datetime.fromtimestamp(plan["start"],timezone.utc).isoformat(),
+            end=datetime.fromtimestamp(plan["end"],timezone.utc).isoformat())
+        if not isinstance(count,int) or count<0: raise ValueError("Invalid historical record count")
+        counts[raw]=count
+    plan.update(provider_record_counts=counts,count_verified_at=now)
+    complete=all(0<counts[s]==plan["counts"][s] for s in plan["symbols"])
+    plan.update(status="available" if complete else "partial",
+        detail=plan["day"]+" same-contract RTH: "+", ".join(f"{s} {plan['counts'][s]}/{counts[s]} provider bars" for s in plan["symbols"])+
+        ("; provider count verified. No-trade minutes have no bar; no prices synthesized" if complete else "; stored/provider count mismatch; references remain incomplete"))
+    with db.tx() as c:
+        contracts=db.prefix(c,"contract:")
+        for contract in contracts.values():
+            raw=contract["raw_symbol"]
+            if raw not in counts: continue
+            symbol=contract["resolved_symbol"]
+            coverage={"day":plan["day"],"record_count":counts[raw],"stored_count":plan["counts"][raw],
+                "verified":0<counts[raw]==plan["counts"][raw],"verified_at":now}
+            db.put(c,"historycoverage:"+symbol+":"+plan["day"],coverage)
+            level=db.get(c,"levels:"+symbol)
+            if level and level.get("prior_day")==plan["day"] and level.get("prior_bars")==counts[raw]:
+                level.update(prior_complete=coverage["verified"],prior_history_basis="Provider record count verified; zero-trade intervals omitted")
+                db.put(c,"levels:"+symbol,level)
+
+
 def recover(collector,client,now):
     db,cfg=collector.db,collector.cfg
     targets=selection(cfg.futures,now)
@@ -15,6 +49,12 @@ def recover(collector,client,now):
     key="recovery:futures:"+identity(prior,raw_symbols)
     with db.tx() as c:
         existing=db.get(c,key)
+    if existing and existing.get("counts") and not existing.get("count_verified_at"):
+        # An existing partial download needs only free metadata verification.
+        try: verify_counts(db,client,existing,now)
+        except Exception as error:
+            existing["verification_error"]=redacted_detail(error,(cfg.databento,),180)
+        with db.tx() as c: db.put(c,key,existing)
     def final(job):
         return job and not job.get("retryable") and not (job.get("status")=="planning" and now-job.get("at",now)>180)
     if final(existing):
@@ -92,6 +132,10 @@ def recover(collector,client,now):
                 db.put(c,"contract:"+target["root"],{**target,"instrument_id":iid,"resolved_symbol":f"{raw}@{iid}","mapping_source":"databento historical symbology","at":now})
                 db.append(c,"mapping","databento",raw,now,{"instrument_id":iid,"input":target["configured_symbol"],"output":raw})
             db.put(c,key,plan)
+        try: verify_counts(db,client,plan,now)
+        except Exception as error:
+            plan["verification_error"]=redacted_detail(error,(cfg.databento,),180)
+        with db.tx() as c: db.put(c,key,plan)
         db.health("futures_history",plan["status"],plan["detail"],plan["source_ts"])
     except Exception as error:
         # Provider exceptions may contain credential-bearing URLs; redact before reporting.
