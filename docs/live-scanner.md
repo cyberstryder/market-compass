@@ -79,7 +79,9 @@ an automatic event blackout requires a verified event schema and is not claimed.
 Live and historical quotes use an atomic source-time comparison, so a late
 snapshot cannot replace a newer quote. Bar windows use ordered row locks and
 monotonic latest-bar cursors. History pagination is separated into small symbol
-batches; a bad symbol is isolated rather than starving later symbols.
+batches; bounded multi-row database inserts shorten recovery transactions, and
+live bar writes run outside the collector event loop. A bad symbol is isolated
+rather than starving later symbols.
 
 The original baseline paper strategies remain versioned separately. Scanner
 trades use `compass-scanner-v1` plus the rule name. Secondary conditions on one

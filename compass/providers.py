@@ -100,12 +100,15 @@ class Collectors:
                     self.db.append(c,'quote',source,symbol,q['ts'],q,identity('quote',source,symbol,q['ts']))
 
     def bars(self,source,items,kind="bar"):
+        items=sorted((row for row in items if row[1] is not None and
+            all(number(row[2].get(k)) is not None for k in ['o','h','l','c','v'])),
+            key=lambda row:(row[0],row[1]))
+        if not items: return
         with self.db.tx() as c:
+            self.db.append_bars(c,kind,source,items)
             latest={}
             windows={}
-            for symbol,t,p in sorted(items,key=lambda row:(row[0],row[1] or 0)):
-                if t is None or any(number(p.get(k)) is None for k in ["o","h","l","c","v"]): continue
-                self.db.append(c,kind,source,symbol,t,p)
+            for symbol,t,p in items:
                 latest[symbol]=max(latest.get(symbol,0),t)
                 if kind=='bar':
                     if symbol not in windows:
@@ -135,7 +138,7 @@ class Collectors:
                         batch.append((symbol,{"ts":t,"bid":x["bp"],"ask":x["ap"],"bid_size":x["bs"],"ask_size":x["as"]},symbol in self.cfg.stocks))
                         last[symbol]=time.monotonic()
                     if x.get("T") in {"b","u"}:
-                        self.bars("alpaca",[(symbol,t,{k:x[k] for k in ["o","h","l","c","v","vw"] if k in x})])
+                        await asyncio.to_thread(self.bars,"alpaca",[(symbol,t,{k:x[k] for k in ["o","h","l","c","v","vw"] if k in x})])
                     if t and symbol and time.monotonic()-last.get("health",0)>5:
                         self.db.health("alpaca_stocks","receiving","Core quotes up to 4 Hz; full watchlist latest quotes up to 1 Hz; closed minute bars",t,watch_symbols=len(self.cfg.watch_symbols))
                         last["health"]=time.monotonic()

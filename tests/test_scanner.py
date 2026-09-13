@@ -297,3 +297,18 @@ def test_backfilled_window_keeps_later_live_bar(db):
             assert db.get(c,'latestbar:SPY')==NOW
         await collector.close()
     asyncio.run(run())
+
+
+def test_history_uses_bounded_bulk_inserts_and_deduplicates(db):
+    from sqlalchemy import event
+    inserts=[]
+    def observe(connection,cursor,statement,parameters,context,executemany):
+        if statement.startswith('INSERT INTO events '): inserts.append(statement)
+    event.listen(db.engine,'before_cursor_execute',observe)
+    price={'o':100,'h':101,'l':99,'c':100,'v':100}
+    items=[('SPY',NOW-i*60,price) for i in range(1001)]
+    with db.tx() as c:
+        db.append_bars(c,'bar','fixture',items+[items[0]])
+        assert len(db.recent(c,'bar','SPY',limit=1100))==1001
+    assert len(inserts)==3
+    event.remove(db.engine,'before_cursor_execute',observe)
