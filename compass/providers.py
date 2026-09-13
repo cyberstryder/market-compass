@@ -289,6 +289,7 @@ class Collectors:
                     archive={"encoding":"gzip+base64-json","data":base64.b64encode(gzip.compress(json.dumps(chain).encode())).decode(),"contracts":len(contracts)}
                     self.db.append(c,"chain_archive",source,symbol,now,archive)
                     self.db.put(c,"chain:"+symbol,chain)
+                    self.db.put(c,'chain_inventory:'+symbol,{'contracts':len(contracts),'at':now})
                     self.db.put(c,'chain_retry:'+symbol,{'retry_at':0})
                     self.db.put(c,"exposure:"+symbol,exposure)
                     self.db.put(c,"greeks:"+symbol,{**diagnose(contracts,reference,reference_ts,now,complete),
@@ -308,6 +309,7 @@ class Collectors:
                     self.db.put(c,'chain_retry:'+symbol,{'at':now,'retry_at':now+300})
         with self.db.tx() as c:
             held=[p["symbol"] for p in self.db.prefix(c,"position:").values() if p.get("status")=="open" and p.get("asset")=="option"]
+            contract_count=sum(v['contracts'] for k,v in self.db.prefix(c,'chain_inventory:').items() if k[16:] in self.cfg.watch_symbols)
         with self.db.tx() as c:
             for symbol in focus:
                 if symbol not in self.chain_selected:
@@ -320,7 +322,7 @@ class Collectors:
             selected.extend(rows[i] for rows in choices if i<len(rows))
         self.option_symbols=set(held+selected[:max(0,self.cfg.stream_limit-len(held))])
         self.db.health("option_chain","available",source+"; focused chains target 45s, background target 15m; daily OI; actual source ages shown",
-            stream_contracts=len(self.option_symbols),focus_symbols=focus,watch_symbols=len(self.cfg.watch_symbols),poll_ts=time.time(),source_ts=None)
+            stream_contracts=len(self.option_symbols),contracts=contract_count,focus_symbols=focus,watch_symbols=len(self.cfg.watch_symbols),poll_ts=time.time(),source_ts=None)
 
     async def massive_chain(self,symbol):
         url="https://api.massive.com/v3/snapshot/options/"+symbol

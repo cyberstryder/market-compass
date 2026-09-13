@@ -158,6 +158,34 @@ def test_sparse_history_is_complete_only_after_matching_provider_count(db):
         assert len(rows)==389  # No forward-filled or synthetic minute.
 
 
+@pytest.mark.parametrize('legacy_truncation',[False,True])
+def test_four_futures_roots_have_room_for_a_complete_session(db,legacy_truncation):
+    from compass.store import identity
+    cfg=Config(local=True,futures=('ES.c.0','NQ.c.0','MES.c.0','MNQ.c.0'))
+    targets=selection(cfg.futures,SUNDAY)
+    names=[row['raw_symbol'] for row in targets]
+    prior,start,end=prior_rth(targets[0]['trading_day'])
+    key='recovery:futures:'+identity(prior,names)
+    if legacy_truncation:
+        with db.tx() as c:
+            db.put(c,key,{'status':'partial','day':prior,'symbols':names,'start':start,'end':end,
+                'counts':{name:300 for name in names},'provider_record_counts':{name:390 for name in names},
+                'count_verified_at':SUNDAY-60,'estimated_usd':0,'detail':'Known legacy cap'})
+    client,calls=historical_fixture(cost=0)
+    async def run():
+        collector=Collectors(db,cfg)
+        try:
+            recover(collector,client,SUNDAY)
+            recover(collector,client,SUNDAY+3600)
+        finally: await collector.close()
+    asyncio.run(run())
+    assert len(calls)==1 and calls[0]['limit']==1560
+    with db.tx() as c:
+        job=db.get(c,key)
+        assert job['status']=='available' and job['record_limit']==1560
+        assert job['counts']=={name:390 for name in names}
+
+
 @pytest.mark.parametrize("cost,fail,missing,status,count",[(.001,False,False,"available",1),(.2,False,False,"blocked",0),
     (.001,True,False,"error",1),(.001,False,True,"partial",1)])
 def test_history_is_bounded_persistent_and_never_retries_uncertain_paid_call(db,cost,fail,missing,status,count):

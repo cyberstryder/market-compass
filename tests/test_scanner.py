@@ -11,7 +11,7 @@ from compass.market import NY
 from compass.engine import Engine,spec
 from compass.scanner import (features,technical_candidates,exposure_candidates,
     flow_candidate,Scanner,snapshot)
-from compass.research import Feed,normalize,apex_levels,collect,FEEDS
+from compass.research import Feed,normalize,apex_levels,collect,FEEDS,catalog
 from compass.providers import Collectors,FeedError
 from compass.flow_recovery import collect as collect_flow
 from compass.alerts import message_for
@@ -67,6 +67,16 @@ def test_vendor_http_time_never_becomes_market_time():
     assert result['received']==NOW and result['source_ts'] is None
     assert result['items'][0]['source_ts'] is None
     assert result['status']=='source_time_unknown'
+
+
+def test_reader_uses_collector_configuration_without_receiving_vendor_key(db):
+    cfg=Config(local=True,role='web',matrix='')
+    with db.tx() as c:
+        db.put(c,'health:research',{'status':'receiving'})
+        db.put(c,'research:signals',{'source_ts':NOW-30,'received':NOW,'items':[]})
+        rows=catalog(db,c,cfg,NOW)
+        assert next(row for row in rows if row['key']=='signals')['status']=='current'
+        assert next(row for row in rows if row['key']=='reversals')['status']=='waiting'
 
 
 @pytest.mark.parametrize('problem',['stale','future','unknown','new_level','vendor_stale'])

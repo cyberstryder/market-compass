@@ -163,12 +163,15 @@ def apex_levels(payload, symbol, now):
 
 def catalog(db, c, cfg, now):
     result=[]
+    collector_status=db.get(c,'health:research',{}).get('status')
     for feed in FEEDS:
         item=db.get(c, 'research:'+feed.key)
         job=db.get(c, 'research_job:'+feed.key, {})
         stamp=item.get('source_ts') if item else None
         age=now-stamp if stamp is not None else None
-        status=('not_configured' if not cfg.matrix else 'disabled' if not cfg.research else
+        # Reader services do not need the collector's vendor credential.
+        unconfigured=collector_status=='not_configured' or (not collector_status and not cfg.matrix and not item and not job)
+        status=('not_configured' if unconfigured else 'disabled' if not cfg.research else
                 'error' if job.get('error') else 'waiting' if not item else
                 'clock_error' if age is not None and age < -1 else
                 'stale' if item.get('vendor_stale') or (age is not None and age>max(feed.interval*2, 180)) else
