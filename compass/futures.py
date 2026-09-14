@@ -3,6 +3,7 @@ from datetime import datetime, date, time as wall, timedelta
 from functools import lru_cache
 import pandas as pd
 from .market import CT, calendar, session, dedup
+from .instruments import future_root, configured
 
 
 def at(d, hour, minute=0):
@@ -23,11 +24,12 @@ def hours_for(d):
         "halt_start": at(trading_date, 15, 15), "halt_end": at(trading_date, 15, 30)}
 
 
-def futures_session(now):
+def futures_session(now, symbol=None):
     local = datetime.fromtimestamp(now, CT)
     requested = local.date() + timedelta(days=local.hour >= 17)
     result = dict(hours_for(requested.isoformat()))
-    result["is_open"] = result["open"] <= now < result["close"] and not result["halt_start"] <= now < result["halt_end"]
+    index_halt = symbol is None or future_root(symbol) in ('MES','MNQ','ES','NQ')
+    result["is_open"] = result["open"] <= now < result["close"] and not (index_halt and result["halt_start"] <= now < result["halt_end"])
     result["entry_open"] = result["is_open"] and now < result["entry_end"]
     return result
 
@@ -50,12 +52,26 @@ def lead_contract(root, trading_day):
     raise ValueError("No quarterly contract selected")
 
 
-def selection(aliases, now):
+def selection(aliases, now, contracts=None):
     session_info = futures_session(now)
-    return [{**lead_contract(alias.split(".")[0], session_info["day"]),
+    selected = [{**lead_contract(alias.split(".")[0], session_info["day"]),
         "configured_symbol": alias, "trading_day": session_info["day"],
         "policy": "CME customary quarterly roll, effective for the Monday trading session; explicit raw contract, no price adjustment"}
-        for alias in aliases]
+        for alias in aliases if alias.split('.')[0] in ('MES','MNQ','ES','NQ')]
+    for alias in aliases:
+        root = alias.split('.')[0]
+        if root in ('MES','MNQ','ES','NQ'): continue
+        mapping = (contracts or {}).get('contract:'+root, {})
+        valid = (mapping.get('configured_symbol') == alias
+                 and mapping.get('mapping_start', 0) <= now < mapping.get('mapping_end', 0))
+        selected.append({**(mapping if valid else {}), 'root':root, 'configured_symbol':alias,
+            'raw_symbol':mapping['raw_symbol'] if valid else alias, 'trading_day':session_info['day'],
+            'resolved':valid, 'policy':'Databento prior-day volume leader; original dated contract prices'})
+    return selected
+
+
+def active_selection(db, c, cfg, now):
+    return selection(configured(cfg), now, db.prefix(c, 'contract:'))
 
 
 def prior_rth(trading_day):
@@ -65,9 +81,9 @@ def prior_rth(trading_day):
     return label.date().isoformat(), cal.session_open(label).timestamp(), cal.session_close(label).timestamp()
 
 
-def future_levels(rows, asof, coverage=None):
+def future_levels(rows, asof, coverage=None, symbol=None):
     rows = dedup(rows, asof)
-    h = futures_session(asof)
+    h = futures_session(asof, symbol)
     d = date.fromisoformat(h["day"])
     rth = session(h["day"])
     use_rth = bool(rth and asof >= rth[0])
@@ -82,7 +98,7 @@ def future_levels(rows, asof, coverage=None):
     out = {"asof": asof, "day": h["day"], "session_open": range_start,
         "session_close": h["entry_end"]+1800, "flatten_at": h["flatten_at"],
         "futures_session_open": h["open"], "futures_session_close": h["close"],
-        "entry_end": h["entry_end"], "range_name": "RTH" if use_rth else "Globex",
+        "entry_end": h["entry_end"], "range_name": ("RTH" if symbol is None or future_root(symbol) in ('MES','MNQ','ES','NQ') else "08:30 CT research") if use_rth else "Globex",
         "rule_version": "futures-orb15-v2", "bars": len(current),
         "or_complete": {int(r["ts"]) for r in opening} == expected and asof >= range_start+900,
         "prior_day": prior_day, "prior_bars": len(prior),

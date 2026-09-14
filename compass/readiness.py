@@ -21,7 +21,7 @@ def decorate_health(items, workers, markets, now):
         h["source_asof"] = clock(h.get("source_ts"))
         h["age"] = round(now - h["source_ts"], 1) if h.get("source_ts") is not None else None
         h["check_age"] = round(now - h.get("checked_at", 0), 1)
-        role = "collector" if h["name"] in COLLECTORS else "engine" if h["name"] in {"engine", "discord", "secondary"} else "web"
+        role = "collector" if h["name"] in COLLECTORS or h["name"].startswith("databento_") else "engine" if h["name"] in {"engine", "discord", "secondary"} else "web"
         worker = workers.get("worker:" + role) or workers.get("worker:all")
         h["heartbeat_age"] = round(now - worker["at"], 1) if worker else None
         h["recorded_status"] = h["status"]
@@ -32,8 +32,8 @@ def decorate_health(items, workers, markets, now):
             h.update(status="stale", detail=role + " worker heartbeat missing or older than 20s; " + h["detail"])
         elif h["status"] == "error":
             pass  # Exchange closure must never hide an actual provider rejection.
-        elif h["name"] in STREAMS:
-            if not markets[STREAMS[h["name"]]]:
+        elif h["name"] in STREAMS or h["name"].startswith("databento_"):
+            if not markets[STREAMS.get(h["name"], "futures")]:
                 h.update(status="market_closed", detail="Session closed; live quote validation resumes when it opens. " + h["detail"])
             elif h["age"] is None:
                 h.update(status="waiting", detail="Session open; no source event observed yet. " + h["detail"])

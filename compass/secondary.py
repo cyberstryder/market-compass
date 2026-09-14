@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from sqlalchemy import Column, Float, Index, Integer, JSON, String, Table, and_, func, or_, select, update
 
 from .market import day, fresh, is_open, session
-from .futures import futures_session, selection
+from .futures import futures_session, active_selection
+from .instruments import ROOTS
 from .scanner import ema
 from .store import events, identity, meta
 from .projects import records as originals
@@ -23,7 +24,7 @@ VERSION = "secondary-context-v1"
 LABELS = {"morning": "Morning Algo", "smoothers": "Smoothers",
           "futures": "TradingView futures", "compass_futures": "Compass futures"}
 VERDICTS = ("supported", "watch", "rejected", "insufficient_data")
-ROOT = re.compile(r"^(MES|MNQ|MGC|ES|NQ)(?:[12]!|[FGHJKMNQUVXZ]\d{1,4})(?:@\d+)?$")
+ROOT = re.compile(r"^("+ROOTS+r")(?:[12]!|[FGHJKMNQUVXZ]\d{1,4})(?:@\d+)?$")
 reviews = Table("secondary_reviews_v1", meta,
     Column("id", String(64), primary_key=True),
     Column("project", String(30), nullable=False), Column("source_key", String(64), nullable=False),
@@ -55,7 +56,7 @@ def future_root(symbol):
 
 def contract_code(symbol, now):
     value = symbol.split(":")[-1].split("@")[0]
-    match = re.fullmatch(r"(MES|MNQ|MGC|ES|NQ)([FGHJKMNQUVXZ])(\d{1,4})", value)
+    match = re.fullmatch(r"("+ROOTS+r")([FGHJKMNQUVXZ])(\d{1,4})", value)
     if not match:
         return None
     digits = match.group(3)
@@ -83,7 +84,7 @@ def resolve_symbol(db, c, candidate, cfg, now):
     if contract_code(symbol, now):
         matches = [key[6:] for key in quotes if "@" in key and contract_code(key[6:], now) == contract_code(symbol, now)]
         return (sorted(matches)[0], "same_contract") if matches else (None, "missing_contract")
-    active = {r["raw_symbol"] for r in selection(cfg.futures, now) if r["root"] == root}
+    active = {r["raw_symbol"] for r in active_selection(db, c, cfg, now) if r["root"] == root}
     matches = [key[6:] for key in quotes if "@" in key and key[6:].split("@")[0] in active]
     # Continuous source levels are never compared directly to dated prices.
     return (sorted(matches)[0], "linked_contract_context") if matches else (None, "missing_contract")
@@ -132,7 +133,7 @@ def capture(db, c, candidate, cfg, now):
             seen.add(key)
             flow_rows.append({k: row.get(k) for k in ("vendor_id", "symbol", "source_ts", "score", "premium", "sentiment")})
     peers = []
-    for peer in ("SPY", "QQQ"):
+    for peer in (("SPY", "QQQ") if root is None or root in ("MES","MNQ","ES","NQ") else ()):
         if peer == symbol:
             continue
         f, q = db.get(c, "scanner_features:" + peer, {}), db.get(c, "quote:" + peer)
@@ -192,7 +193,7 @@ def assess(candidate, inputs, now):
                 reject.append("Price moved more than half an ATR from the source reference")
         else:
             caution.append("Continuous-chart levels cannot validate the separate dated contract's stop or target")
-    if root and not futures_session(now)["entry_open"]:
+    if root and not futures_session(now,candidate["symbol"])["entry_open"]:
         reject.append("Outside the current futures research entry window")
     if not root and not is_open(now):
         reject.append("Cash market is closed")
@@ -268,7 +269,7 @@ def start_measurement(candidate, inputs, decision, now):
     if not valid:
         return result
     mid = (q["bid"] + q["ask"]) / 2
-    hours = futures_session(now) if future_root(candidate["symbol"]) else None
+    hours = futures_session(now,candidate["symbol"]) if future_root(candidate["symbol"]) else None
     cash = session(day(now)) if not hours else None
     deadline = hours["flatten_at"] if hours else cash[1] if cash else now
     result.update(anchor=mid, anchor_ts=q["ts"], anchor_bid=q["bid"], anchor_ask=q["ask"],

@@ -6,8 +6,9 @@ flow and vendor screeners remain attributed evidence, never probability claims.
 import time
 from collections import defaultdict
 from .market import levels, fresh, day, number, session, dedup
-from .futures import future_levels, futures_session, risk_day, prior_rth, selection
+from .futures import future_levels, futures_session, risk_day, prior_rth, active_selection
 from .store import identity
+from .instruments import future_root
 from .alert_format import alert_context
 from .research import FEEDS, catalog
 
@@ -39,7 +40,7 @@ def features(symbol, rows, now, previous=None,coverage=None):
         return {'symbol':symbol,'status':'warming_up','asof':rows[-1]['ts']+60,
             'reason':'Thirty consecutive completed minutes required; historical gaps cannot stand in for recent price structure'}
     future='@' in symbol
-    context=future_levels(rows,now,coverage) if future else levels(rows,now)
+    context=future_levels(rows,now,coverage,symbol) if future else levels(rows,now)
     if previous and previous.get('day')==context.get('day') and previous.get('prior_complete') and not context.get('prior_complete'):
         context.update({key:previous[key] for key in ('prior_high','prior_low','prior_close','prior_complete') if key in previous})
     latest=rows[-1]
@@ -73,7 +74,7 @@ def features(symbol, rows, now, previous=None,coverage=None):
 
 def session_open(symbol,now):
     if '@' in symbol:
-        return futures_session(now)['entry_open']
+        return futures_session(now,symbol)['entry_open']
     hours=session(day(now))
     return bool(hours and hours[0]<=now<hours[1]-1800)
 
@@ -226,11 +227,15 @@ def context_evidence(f,flow,apex,quotes,features_by_symbol,now):
         'vwap':f.get('vwap'),'ema9':f.get('ema9'),'ema21':f.get('ema21'),
         'rvol20':f.get('rvol20'),'htf15_bias':f.get('htf15_bias')}]
     symbol=f['symbol']
-    peers=list(('QQQ','SPY') if not symbol.startswith(('MES','ES')) else ('SPY','QQQ'))
-    for roots in (('NQ','MNQ'),('ES','MES')):
-        matches=[key for key in features_by_symbol if '@' in key and key.startswith(roots)]
+    root=future_root(symbol)
+    pair={'MGC':('GC','MGC'),'GC':('GC','MGC'),'SIL':('SI','SIL'),'SI':('SI','SIL'),
+          'MCL':('CL','MCL'),'CL':('CL','MCL')}.get(root)
+    peers=[] if pair else list(('QQQ','SPY') if root not in ('MES','ES') else ('SPY','QQQ'))
+    for roots in ((pair,) if pair else (('NQ','MNQ'),('ES','MES'))):
+        matches=[key for key in features_by_symbol if '@' in key and future_root(key) in roots]
         if matches:
-            peers.append(sorted(matches,key=lambda key:(key.startswith('M'),key))[0])
+            ordered=sorted(matches,key=lambda key:(key.startswith('M'),key))
+            peers.extend(ordered if pair else ordered[:1])
     for peer in peers:
         other=features_by_symbol.get(peer)
         quote=quotes.get(peer)
@@ -262,7 +267,7 @@ class Scanner:
         flow=db.get(c,'matrix:unusual_activity',{}).get('rows',[])
         apexes={key[5:]:value for key,value in db.prefix(c,'apex:').items()}
         concentrations={key[14:]:value for key,value in db.prefix(c,'matrix_levels:').items()}
-        selected={item['raw_symbol'] for item in selection(cfg.futures,now)}
+        selected={item['raw_symbol'] for item in active_selection(db,c,cfg,now)}
         wanted=set(cfg.watch_symbols)|{symbol for symbol in quotes if '@' in symbol and symbol.split('@')[0] in selected}
         changed=[]
         for symbol in sorted(wanted):
@@ -309,6 +314,7 @@ class Scanner:
                 grouped[group]['matched_rules'].append(item['rule'])
                 grouped[group]['candidate_ids'].append(item['id'])
                 grouped[group]['evidence']+=item['evidence']
+        candidate_map={item['id']:dict(item) for item in candidates}
         for item in grouped.values():
             symbol=item['symbol']
             if db.get(c,'scanner_seen:'+item['id']):
@@ -341,6 +347,11 @@ class Scanner:
                 item.update(status='blocked',blocked_reason='Price moved too far from the observed trigger')
             elif now-cool<600:
                 item.update(status='watch',blocked_reason='Same-direction alert cooldown; evidence recorded')
+            if item['status'] in ('triggered','watch'):
+                for candidate_id in item['candidate_ids']:
+                    trial_signal={**candidate_map[candidate_id],'context':f}
+                    engine.study.start(c,trial_signal,now,engine.specification(symbol),
+                        alerted=item['status']=='triggered',primary=candidate_id==item['id'])
             if item['status']=='triggered':
                 db.put(c,'scanner_cooldown:'+symbol+':'+item['side'],now)
                 # Preserve price invalidation even if the executable quote moved.
@@ -359,6 +370,7 @@ class Scanner:
                         item['paper_status']='entered' if filled else 'risk_or_position_blocked'
                         if symbol in cfg.watch_symbols:
                             db.put(c,'pending_options:'+item['id'],{'signal':signal,'expires_at':item['expires_at'],'status':'waiting'})
+                    item['setup_trial_id']=identity('setup-outcomes-v1',item['id']) if cfg.setup_study else None
                     db.append(c,'alert','scanner',symbol,now,{**item,'status':'setup_triggered'},'setup:'+item['id'])
             current=db.get(c,'opportunity:'+symbol+':'+item['side'],{})
             if not (current.get('status')=='triggered' and now<current.get('expires_at',0) and item['status'] in ('watch','blocked')):
