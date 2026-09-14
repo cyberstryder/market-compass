@@ -18,6 +18,7 @@ from .flow_recovery import collect as collect_flow
 from .futures import selection
 from .instruments import future_root
 from .futures_replay import ReplayBars
+from .futures_ingress import IngressProbe
 from .universe import focus_symbols, data_symbols
 from .research import collect as collect_research
 from .vendor_schedule import matrix_target, matrix_health
@@ -205,6 +206,7 @@ class Collectors:
             self.live=client
             last={}
             replay=ReplayBars(self)
+            probe=IngressProbe("CME")
             def callback(r):
                 replay.flush_due()
                 if isinstance(r,db.ErrorMsg):
@@ -224,12 +226,14 @@ class Collectors:
                 if alias is None: return
                 symbol=f"{alias}@{iid}"
                 t=r.ts_event/1e9
+                if isinstance(r,db.MBP1Msg):
+                    probe.quote(symbol,r)
                 if isinstance(r,db.OHLCVMsg):
                     replay.add((symbol,t,{"o":r.open/1e9,"h":r.high/1e9,"l":r.low/1e9,"c":r.close/1e9,"v":r.volume,"instrument_id":iid,"alias":str(alias)}))
                 elif isinstance(r,db.MBP1Msg) and time.monotonic()-last.get(symbol,0)>.25:
                     level=r.levels[0]
                     if level.bid_px<9e18 and level.ask_px<9e18:
-                        self.quote("databento",symbol,{"ts":t,"bid":level.bid_px/1e9,"ask":level.ask_px/1e9,"bid_size":level.bid_sz,"ask_size":level.ask_sz},iid)
+                        probe.writing(symbol,lambda: self.quote("databento",symbol,{"ts":t,"bid":level.bid_px/1e9,"ask":level.ask_px/1e9,"bid_size":level.bid_sz,"ask_size":level.ask_sz},iid))
                     last[symbol]=time.monotonic()
                 if time.monotonic()-last.get("health",0)>5:
                     self.db.health("databento_futures","receiving","Contract ID retained; BBO sampled up to 4 Hz",t,monotonic_source=True)
@@ -239,7 +243,7 @@ class Collectors:
                 errors.append(str(error) if isinstance(error,FeedError) else type(error).__name__)
                 self.db.health("databento_futures","error","Callback failed; stopping stream for controlled reconnect")
                 client.terminate()
-            client.add_callback(callback,exception_callback=on_error)
+            client.add_callback(probe.wrap(callback),exception_callback=on_error)
             client.subscribe(dataset="GLBX.MDP3",schema="ohlcv-1m",stype_in="raw_symbol",symbols=symbols,
                 start=(datetime.now(timezone.utc)-timedelta(hours=23)).isoformat())
             client.subscribe(dataset="GLBX.MDP3",schema="mbp-1",stype_in="raw_symbol",symbols=symbols)
