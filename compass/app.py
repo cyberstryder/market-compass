@@ -31,6 +31,7 @@ from .option_ideas import snapshot as ideas_snapshot
 from .swing_ideas import SwingIdeas, snapshot as swing_snapshot
 from .scanner import snapshot as scanner_snapshot
 from .research import FEEDS
+from .universe import data_symbols
 from .projects import install as install_projects, run_sources, snapshot as projects_snapshot, records as project_records, PROJECTS
 from .secondary import Secondary, snapshot as secondary_snapshot, reviews as secondary_reviews
 
@@ -162,10 +163,11 @@ def create_app(cfg=None):
             health=list(db.prefix(c,"health:").values())
             workers=db.prefix(c,"worker:")
             quotes=db.prefix(c,"quote:")
+            collected_symbols=data_symbols(db,c,cfg,now)
             watch={k[6:]:{**q,"age":round(now-q["ts"],2)} for k,q in quotes.items()
-                if k[6:] in cfg.watch_symbols or "@" in k}
+                if k[6:] in collected_symbols or "@" in k}
             health=decorate_health(health,workers,markets,now)
-            checks=quote_checks(cfg.watch_symbols,configured(cfg),{k[6:]:q for k,q in quotes.items()},
+            checks=quote_checks(collected_symbols,configured(cfg),{k[6:]:q for k,q in quotes.items()},
                 db.recent(c,"mapping",limit=100),markets,now,active_selection(db,c,cfg,now))
             matrix={k:{field:value for field,value in v.items() if field!="data"} for k,v in db.prefix(c,"matrix:").items()}
             for item in matrix.values():

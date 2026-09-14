@@ -11,16 +11,16 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Float, Index, Integer, JSON, String, Table, and_, func, or_, select, update
+from sqlalchemy import Column, Float, Index, Integer, JSON, String, Table, and_, delete, func, or_, select, update
 
-from .market import day, fresh, is_open, session
+from .market import day, fresh, is_open, session, number
 from .futures import futures_session, active_selection
 from .instruments import ROOTS, INDEX_FUTURES
-from .scanner import ema
+from .scanner import ema, features, bars_from_window
 from .store import events, identity, meta
 from .projects import records as originals
 
-VERSION = "secondary-context-v1"
+VERSION = "secondary-context-v2"
 LABELS = {"morning": "Morning Algo", "smoothers": "Smoothers",
           "futures": "TradingView futures", "compass_futures": "Compass futures"}
 VERDICTS = ("supported", "watch", "rejected", "insufficient_data")
@@ -39,6 +39,13 @@ Index("secondary_review_time", reviews.c.decided_at)
 Index("secondary_tracking", reviews.c.tracking, reviews.c.decided_at)
 handled = Table("secondary_events_v1", meta, Column("event_id", Integer, primary_key=True),
     Column("handled_at", Float, nullable=False))
+pending = Table("secondary_pending_v1", meta,
+    Column("id", String(64), primary_key=True), Column("project", String(30), nullable=False),
+    Column("source_key", String(64), nullable=False), Column("deadline", Float, nullable=False),
+    Column("first_seen", Float, nullable=False), Column("last_check", Float, nullable=False),
+    Column("attempts", Integer, nullable=False), Column("candidate", JSON, nullable=False),
+    Column("outcome", JSON, nullable=False), Column("missing", JSON, nullable=False))
+Index("secondary_pending_deadline", pending.c.deadline)
 
 
 def numeric(value):
@@ -91,26 +98,57 @@ def resolve_symbol(db, c, candidate, cfg, now):
 
 
 def daily_context(db, c, symbol, now):
+    from datetime import date, timedelta
+    from .swing_signals import sessions_between
+    today = date.fromisoformat(day(now))
+    expected = sessions_between((today-timedelta(days=160)).isoformat(),
+                                (today-timedelta(days=1)).isoformat())
     raw = db.recent(c, "daily", symbol, limit=160)
     unique = {}
     for row in reversed(raw):
-        if row["ts"] < now and day(row["ts"]) < day(now):
+        p = row["payload"]
+        values = [number(p.get(k)) for k in ("o", "h", "l", "c", "v")]
+        valid = (all(v is not None for v in values) and min(values[:4]) > 0 and values[4] >= 0
+                 and values[1] >= max(values[0], values[2], values[3]) and values[2] <= min(values[0], values[3]))
+        if valid and row["ts"] < now and day(row["ts"]) in expected:
             unique[day(row["ts"])] = row
-    rows = sorted(unique.values(), key=lambda r: r["ts"])
-    if len(rows) < 50 or now - rows[-1]["ts"] > 5 * 86400:
-        return {"status": "missing", "note": "Fifty recent completed daily bars required for swing bias"}
+    if len(expected) < 50 or any(d not in unique for d in expected[-50:]):
+        return {"status": "missing", "note": "Fifty consecutive completed daily sessions required for swing bias"}
+    dates = []
+    for d in reversed(expected):
+        if d not in unique:
+            break
+        dates.insert(0, d)
+    rows = [unique[d] for d in dates]
     closes = [r["payload"]["c"] for r in rows]
     fast, slow = ema(closes, 21)[-1], ema(closes, 50)[-1]
-    return {"status": "ready", "source_ts": rows[-1]["ts"], "ema21": fast, "ema50": slow,
+    return {"status": "ready", "source_ts": rows[-1]["ts"], "through": dates[-1], "bars": len(rows), "ema21": fast, "ema50": slow,
             "bias": 1 if fast > slow else -1 if fast < slow else 0}
+
+
+def technical_ready(feature, now):
+    return (feature.get("status") == "ready" and current(feature.get("asof"), now, 90)
+            and numeric(feature.get("atr14")) and feature["atr14"] > 0)
+
+
+def technical_context(db, c, symbol, now):
+    feature = db.get(c, "scanner_features:" + symbol, {})
+    if technical_ready(feature, now) or future_root(symbol):
+        return feature
+    # Connected equities can be outside the scanner universe, and a corrected
+    # bar window can be newer than its scanner cache. Apply the same bar rules.
+    rows = bars_from_window(db.get(c, "bar_window:" + symbol, []))
+    if not rows:
+        rows = db.recent(c, "bar", symbol, limit=1800)
+    return features(symbol, rows, now, feature)
 
 
 def capture(db, c, candidate, cfg, now):
     symbol, basis = resolve_symbol(db, c, candidate, cfg, now)
     root = future_root(candidate["symbol"])
     quote = db.get(c, "quote:" + symbol) if symbol else None
-    feature = db.get(c, "scanner_features:" + symbol, {}) if symbol else {}
-    technical = {k: feature.get(k) for k in ("status", "asof", "atr14", "vwap", "ema9", "ema21",
+    feature = technical_context(db, c, symbol, now) if symbol else {}
+    technical = {k: feature.get(k) for k in ("status", "reason", "asof", "atr14", "vwap", "ema9", "ema21",
         "htf15_bias", "rvol20", "prior_high", "prior_low", "or_high", "or_low")}
     exposure_symbol = {"MES": "SPY", "ES": "SPY", "MNQ": "QQQ", "NQ": "QQQ"}.get(root)
     if not root:
@@ -172,7 +210,7 @@ def assess(candidate, inputs, now):
     quote_ok = bool(fresh(q, now) and current(q.get("ts"), now, 5))
     if not quote_ok:
         missing.append("Independent bid/ask quote is missing or older than five seconds")
-    feature_ok = f.get("status") == "ready" and current(f.get("asof"), now, 90) and numeric(f.get("atr14")) and f["atr14"] > 0
+    feature_ok = technical_ready(f, now)
     if not feature_ok:
         missing.append("Completed price context is missing or stale")
     comparable = inputs.get("price_basis") in ("same_underlying", "same_contract")
@@ -201,10 +239,14 @@ def assess(candidate, inputs, now):
         reject.append("Source signal was already resolved when reviewed")
     if candidate["project"] == "smoothers":
         daily = inputs.get("daily", {})
-        if daily.get("status") == "ready" and daily.get("bias") == side:
+        if daily.get("status") != "ready" or daily.get("bias") not in (-1, 0, 1):
+            missing.append("Completed daily price history is unavailable; direction cannot be compared")
+        elif daily.get("bias") == side:
             support.append("Completed daily EMA21/50 bias agrees with the weekly direction")
+        elif daily.get("bias") == -side:
+            caution.append("Completed daily EMA21/50 trend opposes the weekly direction")
         else:
-            caution.append("Completed daily trend does not confirm the weekly direction")
+            caution.append("Completed daily EMA21/50 trend is neutral")
         difficulty = candidate.get("target_atr_mult")
         if numeric(difficulty) and 0 < difficulty <= .75:
             support.append("Source target is within 0.75 of its recorded daily ATR")
@@ -257,7 +299,10 @@ def assess(candidate, inputs, now):
         "accepted": verdict == "supported", "rule_version": VERSION,
         "scope": "Underlying-direction review; option profitability and broker execution are unverified",
         "price_basis": inputs.get("price_basis"), "latency_seconds": round(now - available_at, 3),
-        "source_reference_age_seconds": round(now - candidate["source_ts"], 3)}
+        "source_reference_age_seconds": round(now - candidate["source_ts"], 3),
+        "data_checks": {"quote": {"ready": quote_ok, "source_ts": (q or {}).get("ts")},
+            "minute": {"ready": feature_ok, "source_ts": f.get("asof"), "reason": f.get("reason")},
+            "daily": inputs.get("daily", {})}}
 
 
 def start_measurement(candidate, inputs, decision, now):
@@ -351,12 +396,31 @@ class Secondary:
     def __init__(self, db, cfg):
         self.db, self.cfg, self.owner = db, cfg, uuid.uuid4().hex
 
-    def review(self, c, candidate, outcome, now):
+    def review(self, c, candidate, outcome, now, waiting=None):
         key = identity(VERSION, candidate["project"], candidate["source_key"])
-        if c.execute(select(reviews.c.id).where(reviews.c.id == key)).first():
+        if c.execute(select(reviews.c.id).where(reviews.c.project == candidate["project"],
+                reviews.c.source_key == candidate["source_key"])).first():
+            c.execute(delete(pending).where(pending.c.id == key))
             return
         inputs = capture(self.db, c, candidate, self.cfg, now)
         decision = assess(candidate, inputs, now)
+        deadline = candidate.get("available_at", candidate["source_ts"]) + 60
+        if (decision["timely"] and decision["missing"] and not decision["rejections"]
+                and candidate.get("side") in ("long", "short") and now < deadline):
+            previous = waiting or c.execute(select(pending).where(pending.c.id == key)).mappings().first()
+            values = {"id": key, "project": candidate["project"], "source_key": candidate["source_key"],
+                "deadline": deadline, "first_seen": previous["first_seen"] if previous else now,
+                "last_check": now, "attempts": previous["attempts"]+1 if previous else 1,
+                "candidate": candidate, "outcome": outcome, "missing": decision["missing"]}
+            c.execute(self.db.insert(pending).values(**values).on_conflict_do_update(index_elements=["id"],
+                set_={k: v for k, v in values.items() if k not in ("id", "first_seen", "deadline")}))
+            return
+        if waiting:
+            decision["readiness_wait_seconds"] = round(now-waiting["first_seen"], 3)
+            decision["readiness_attempts"] = waiting["attempts"]+1
+            if now > deadline:
+                decision["reasons"] = ["Review deadline passed before independent data became usable", *waiting["missing"]]
+        c.execute(delete(pending).where(pending.c.id == key))
         measures = start_measurement(candidate, inputs, decision, now)
         row = {"id": key, "project": candidate["project"], "source_key": candidate["source_key"],
             "source_id": candidate["source_id"], "symbol": candidate["symbol"], "side": candidate["side"],
@@ -387,9 +451,16 @@ class Secondary:
         if not source:
             return
         payload = source["payload"]
-        review_id = identity(VERSION, project, key)
-        c.execute(update(reviews).where(reviews.c.id == review_id).values(
+        c.execute(update(reviews).where(reviews.c.project == project, reviews.c.source_key == key).values(
             source_outcome=source_result(payload, project), updated=now))
+        queued = c.execute(select(pending).where(pending.c.project == project, pending.c.source_key == key)).mappings().first()
+        if queued:
+            # Outcome revisions never reset candidate availability or the deadline.
+            frozen = dict(queued["candidate"])
+            if project == "smoothers" and payload.get("status") not in ("open", "tracking"):
+                frozen["resolved_at_review"] = True
+            c.execute(update(pending).where(pending.c.id == queued["id"]).values(
+                outcome=source_result(payload, project), candidate=frozen))
         if not p.get("first_observation") or (project == "futures" and payload.get("status") not in ("entry_alert", "emulator_fill")):
             return
         self.review(c, source_candidate(project, payload, key), source_result(payload, project), now)
@@ -402,8 +473,12 @@ class Secondary:
             return
         key = identity("compass_futures", p["id"])
         if p["status"] == "closed":
-            c.execute(update(reviews).where(reviews.c.id == identity(VERSION, "compass_futures", key)).values(
+            c.execute(update(reviews).where(reviews.c.project == "compass_futures", reviews.c.source_key == key).values(
                 source_outcome=source_result(p, "compass_futures"), updated=now))
+            queued = c.execute(select(pending).where(pending.c.project == "compass_futures", pending.c.source_key == key)).mappings().first()
+            if queued:
+                c.execute(update(pending).where(pending.c.id == queued["id"]).values(
+                    outcome=source_result(p, "compass_futures"), candidate={**queued["candidate"], "resolved_at_review": True}))
             return
         payload = {**p, "symbol": event["symbol"], "source_ts": event["ts"], "version": p.get("strategy"),
                    "stream": event["source"]}
@@ -448,6 +523,13 @@ class Secondary:
                     .on_conflict_do_nothing(index_elements=["event_id"]))
                 cursor = max(cursor, event["id"])
             self.db.put(c, "secondary:cursor", cursor)
+            waiting = c.execute(select(pending).where(pending.c.last_check < now)
+                .order_by(pending.c.deadline, pending.c.id).limit(200)).mappings().all()
+            for row in waiting:
+                if live_clock:
+                    now = time.time()
+                with c.begin_nested():
+                    self.review(c, row["candidate"], row["outcome"], now, waiting=row)
             if live_clock:
                 now = time.time()
             active = c.execute(select(reviews).where(reviews.c.tracking == "tracking")
@@ -458,7 +540,9 @@ class Secondary:
                 c.execute(update(reviews).where(reviews.c.id == row["id"]).values(measurements=m, tracking=m["state"], updated=now))
             self.db.put(c, "secondary:status", {"at": now, "version": VERSION, "enabled": True,
                 "alerts_enabled": self.cfg.secondary_alerts, "events_checked": len(batch),
-                "active_measured": len(active), "originals_changed": False})
+                "active_measured": len(active),
+                "waiting_for_data": c.execute(select(func.count()).select_from(pending)).scalar_one(),
+                "originals_changed": False})
             report = self.db.get(c, "secondary:report", {})
             if now - report.get("at", 0) >= 60:
                 self.db.put(c, "secondary:report", build_report(self.db, c, now))
@@ -531,10 +615,28 @@ def build_report(db, c, now):
 def snapshot(db, c, now):
     report = db.get(c, "secondary:report", {"at": None, "counts": {v: 0 for v in VERDICTS}, "comparisons": [], "window": {"reviewed": 0}})
     columns = [reviews.c[k] for k in ("id", "project", "symbol", "side", "source_id", "source_ts", "decided_at", "version", "verdict", "candidate", "decision", "measurements")]
-    recent = c.execute(select(*columns).order_by(reviews.c.decided_at.desc(), reviews.c.id).limit(100)).mappings().all()
+    recent = []
+    for project in LABELS:
+        recent.extend(c.execute(select(*columns).where(reviews.c.project == project)
+            .order_by(reviews.c.decided_at.desc(), reviews.c.id).limit(100)).mappings().all())
+    recent.sort(key=lambda r: (-r["decided_at"], r["id"]))
+    waiting = c.execute(select(pending).order_by(pending.c.deadline).limit(100)).mappings().all()
+    coverage = db.get(c, "secondary:data_status", {})
+    coverage = {**coverage, "rows": [dict(row) for row in coverage.get("rows", [])]}
+    for row in coverage["rows"]:
+        q = db.get(c, "quote:" + row["symbol"])
+        row["quote_ready"] = bool(fresh(q, now) and current(q.get("ts"), now, 5))
+        row["quote_age"] = round(now-q["ts"], 2) if q else None
+        row["minute_ready"] = bool(row.get("minute_ready") and current(row.get("minute_asof"), now, 90))
+        row["ready"] = bool(current(coverage.get("at"), now, 45) and row["collection_enabled"]
+            and row["quote_ready"] and row["minute_ready"] and
+            ("smoothers" not in row["projects"] or row.get("daily_ready")))
     return {"status": db.get(c, "secondary:status", {"enabled": False, "at": None}),
         "activation": db.get(c, "secondary:activation"), "version": VERSION,
         "report_at": report["at"], "window": report["window"], "counts": report["counts"],
         "comparisons": report["comparisons"], "reviews": [dict(r) for r in recent], "originals_changed": False,
+        "data_readiness": coverage,
+        "pending": [{"project": r["project"], "symbol": r["candidate"]["symbol"], "deadline": r["deadline"],
+            "first_seen": r["first_seen"], "attempts": r["attempts"], "missing": r["missing"]} for r in waiting],
         "method": "Same secondary-decision quote and checkpoint for original-candidate and selected subsets. Missing data are excluded, never losses.",
         "limitation": "Midpoint moves are before spreads, fees and execution slippage; not option or broker P&L. No improvement is established by activating the filter."}

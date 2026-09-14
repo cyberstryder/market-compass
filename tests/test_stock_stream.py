@@ -70,7 +70,7 @@ def test_slow_database_does_not_stop_reading_fresh_stock_quotes():
             saved.extend(batch)
             if any(p['ts']==NOW+.5 for _,p,_ in batch):latest_written.set()
         collector=SimpleNamespace(cfg=SimpleNamespace(watch_symbols=('SPY',),stocks=('SPY',),feed='sip'),
-            quote_batch=write,bars=lambda *a:None,db=SimpleNamespace(health=lambda *a,**k:None))
+            stock_symbols=lambda:('SPY',),quote_batch=write,bars=lambda *a:None,db=SimpleNamespace(health=lambda *a,**k:None))
         task=asyncio.create_task(consume(WS(),collector))
         try:
             await asyncio.wait_for(read_burst.wait(),2)
@@ -90,7 +90,7 @@ def test_vendor_error_propagates_and_cancels_writer():
         async def rows(self):yield json.dumps([dict(T='error',code=406)])
     cfg=SimpleNamespace(watch_symbols=('SPY',),stocks=('SPY',),feed='sip')
     async def run():
-        with pytest.raises(StockStreamError,match='406'):await consume(WS(),SimpleNamespace(cfg=cfg))
+        with pytest.raises(StockStreamError,match='406'):await consume(WS(),SimpleNamespace(cfg=cfg,stock_symbols=lambda:('SPY',)))
     asyncio.run(run())
 
 
@@ -107,6 +107,6 @@ def test_writer_failure_propagates_while_reader_is_idle():
     async def run():
         cfg=SimpleNamespace(watch_symbols=('SPY',),stocks=('SPY',),feed='sip')
         with pytest.raises(RuntimeError,match='Database unavailable'):
-            await asyncio.wait_for(consume(WS(),SimpleNamespace(cfg=cfg,quote_batch=broken)),2)
+            await asyncio.wait_for(consume(WS(),SimpleNamespace(cfg=cfg,stock_symbols=lambda:('SPY',),quote_batch=broken)),2)
         assert cancelled
     asyncio.run(run())

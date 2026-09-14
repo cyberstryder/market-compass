@@ -44,7 +44,9 @@ class StockBuffer:
 
 
 async def consume(ws, collector):
-    buffer=StockBuffer(collector.cfg.watch_symbols,collector.cfg.stocks)
+    watch=await asyncio.to_thread(collector.stock_symbols)
+    buffer=StockBuffer(watch,collector.cfg.stocks)
+    authenticated=asyncio.Event()
     async def read():
         frames=0
         async for raw in ws:
@@ -52,7 +54,8 @@ async def consume(ws, collector):
                 if item.get('T')=='error':
                     raise StockStreamError('Alpaca stream error code '+str(item.get('code')))
                 if item.get('T')=='success' and item.get('msg')=='authenticated':
-                    await ws.send(json.dumps(dict(action='subscribe',quotes=list(collector.cfg.watch_symbols),bars=list(collector.cfg.watch_symbols))))
+                    await ws.send(json.dumps(dict(action='subscribe',quotes=sorted(buffer.watch),bars=sorted(buffer.watch))))
+                    authenticated.set()
                 if item.get('T')=='subscription':
                     await asyncio.to_thread(collector.db.health,'alpaca_stocks','connected',
                         'Subscribed; waiting for market events',feed=collector.cfg.feed)
@@ -73,15 +76,33 @@ async def consume(ws, collector):
             if source is not None and time.monotonic()-last_health>5:
                 await asyncio.to_thread(collector.db.health,'alpaca_stocks','receiving',
                     'Latest quotes coalesced: core up to 4 Hz, watchlist up to 1 Hz; batched completed bars',
-                    source,watch_symbols=len(collector.cfg.watch_symbols))
+                    source,watch_symbols=len(buffer.watch))
                 last_health=time.monotonic()
             await asyncio.sleep(.05)
 
-    reader,writer=asyncio.create_task(read()),asyncio.create_task(write())
+    async def subscriptions():
+        await authenticated.wait()
+        while True:
+            await asyncio.sleep(5)
+            wanted=set(await asyncio.to_thread(collector.stock_symbols))
+            added=wanted-buffer.watch
+            removed=buffer.watch-wanted
+            if added:
+                buffer.watch.update(added)
+                await ws.send(json.dumps(dict(action='subscribe',quotes=sorted(added),bars=sorted(added))))
+            if removed:
+                await ws.send(json.dumps(dict(action='unsubscribe',quotes=sorted(removed),bars=sorted(removed))))
+                buffer.watch.difference_update(removed)
+                for symbol in removed:
+                    for values in (buffer.quotes,buffer.last_source,buffer.written):
+                        values.pop(symbol,None)
+                buffer.bars={k:v for k,v in buffer.bars.items() if k[0] not in removed}
+
+    workers=tuple(asyncio.create_task(fn()) for fn in (read,write,subscriptions))
     try:
-        done,_=await asyncio.wait((reader,writer),return_when=asyncio.FIRST_COMPLETED)
+        done,_=await asyncio.wait(workers,return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             task.result()
     finally:
-        for task in (reader,writer):task.cancel()
-        await asyncio.gather(reader,writer,return_exceptions=True)
+        for task in workers:task.cancel()
+        await asyncio.gather(*workers,return_exceptions=True)
