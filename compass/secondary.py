@@ -125,7 +125,7 @@ def daily_context(db, c, symbol, now):
     rows = [unique[d] for d in dates]
     closes = [r["payload"]["c"] for r in rows]
     fast, slow = ema(closes, 21)[-1], ema(closes, 50)[-1]
-    return {"status": "ready", "source_ts": rows[-1]["ts"], "through": dates[-1], "bars": len(rows), "ema21": fast, "ema50": slow,
+    return {"status": "ready", "source_ts": rows[-1]["ts"], "received": rows[-1].get('received'), "through": dates[-1], "bars": len(rows), "ema21": fast, "ema50": slow,
             "bias": 1 if fast > slow else -1 if fast < slow else 0}
 
 

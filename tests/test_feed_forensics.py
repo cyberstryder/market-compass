@@ -34,3 +34,60 @@ def test_gap_report_separates_late_arrivals_and_preserves_outcome(db,cfg):
         assert row['stored_after_finish']==1 and row['available_by_finish']=={}
         assert row['first_next_quote']['reason']=='stale_or_invalid_at_receipt'
         assert rows(c)==before and rows(c)[0]['status']=='unresolved'
+
+
+def test_closed_session_history_is_separate_from_live_readiness(db,cfg):
+    from compass.feed_forensics import input_readiness
+    from compass.market import CT
+    from datetime import datetime
+    now=datetime(2026,9,14,16,10,tzinfo=CT).timestamp()
+    cfg.watchlist=('TGT','SBUX')
+    with db.tx() as c:
+        for symbol in ('TGT','SBUX','YMZ6@1','MYMZ6@2'):
+            end=now-600
+            db.put(c,'quote:'+symbol,quote(end))
+            db.put(c,'bar_window:'+symbol,[[end-60*i,100,102,99,101,10] for i in range(30,0,-1)])
+        db.put(c,'secondary:data_status',dict(at=now,rows=[dict(symbol='TGT',projects=['smoothers'],
+            daily_ready=True,daily_through='2026-09-11',collection_enabled=True)]))
+        result=input_readiness(db,c,cfg,now)
+        assert not result['stocks_market_open']
+        assert result['stock_current_quotes']==0
+        assert all(r['last_30_complete'] for r in result['stock_focus'])
+        assert result['smoother_daily_ready']==1
+        assert all(not r['market_open'] and not r['quote_current'] for r in result['dow'])
+        assert all(r['last_30_complete'] for r in result['dow'])
+        assert all(r['htf15_bias'] is None for r in result['dow'])
+
+
+def test_history_gaps_are_explicit_and_missing_quotes_not_ready(db,cfg):
+    from compass.feed_forensics import input_readiness
+    cfg.watchlist=('TGT','SBUX')
+    with db.tx() as c:
+        db.put(c,'bar_window:TGT',[[NOW-60*i,100,102,99,101,10] for i in range(31,0,-1) if i!=5])
+        result=input_readiness(db,c,cfg,NOW)
+        tgt=next(r for r in result['stock_focus'] if r['symbol']=='TGT')
+        assert not tgt['last_30_complete'] and tgt['missing_recent_minutes']==1
+        assert not tgt['quote_current']
+        assert all(r['history_status']=='missing' for r in result['dow'])
+
+
+def test_next_session_daily_history_requires_after_close_receipt(db,cfg):
+    from compass.feed_forensics import input_readiness
+    from compass.swing_signals import sessions_between
+    from compass.market import session
+    from compass.store import events
+    from sqlalchemy import update
+    dates=sessions_between('2026-06-01','2026-09-14')
+    end=session('2026-09-14')[1]
+    cfg.watchlist=('TGT',)
+    with db.tx() as c:
+        for i,date in enumerate(dates):
+            c.execute(db.insert(events).values(key='daily-'+date,kind='daily',source='fixture',symbol='TGT',
+                ts=session(date)[0],received=end-60,payload=dict(o=100+i,h=102+i,l=99+i,c=101+i,v=100)))
+        db.put(c,'secondary:data_status',dict(at=end,rows=[dict(symbol='TGT',projects=['smoothers'],
+            daily_ready=True,daily_through='2026-09-11',collection_enabled=True)]))
+        first=input_readiness(db,c,cfg,end+120)
+        assert first['next_stock_session']=='2026-09-15'
+        assert first['smoother_next_session_ready']==0
+        c.execute(update(events).where(events.c.key=='daily-2026-09-14').values(received=end+60))
+        assert input_readiness(db,c,cfg,end+120)['smoother_next_session_ready']==1
