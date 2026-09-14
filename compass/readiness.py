@@ -5,7 +5,7 @@ from .market import fresh, CT
 
 STREAMS = {"alpaca_stocks": "equities", "databento_futures": "futures", "option_stream": "equities"}
 COLLECTORS = set(STREAMS) | {"alpaca_history", "futures_history", "option_chain", "tradermatrix", "tradermatrix_flow",
-    "project_morning", "project_smoothers", "research"}
+    "project_morning", "project_smoothers", "research", "secondary_data"}
 
 
 def clock(value):
@@ -39,9 +39,9 @@ def decorate_health(items, workers, markets, now):
                 h.update(status="waiting", detail="Session open; no source event observed yet. " + h["detail"])
             elif h["age"] > 20 or h["age"] < -1:
                 h.update(status="stale", detail="Session open; source events are not current. " + h["detail"])
-        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine", "secondary", "project_morning", "project_smoothers"}:
+        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine", "secondary", "secondary_data", "project_morning", "project_smoothers"}:
             limit = {"alpaca_history": 3900,"futures_history":3900, "option_chain": 300, "tradermatrix": 180,"tradermatrix_flow":180, "engine": 20,
-                "secondary": 20, "project_morning": 25, "project_smoothers": 25}[h["name"]]
+                "secondary": 20, "secondary_data": 45, "project_morning": 25, "project_smoothers": 25}[h["name"]]
             if h["check_age"] > limit:
                 h.update(status="stale", detail="Worker is alive but this task has stopped reporting. " + h["detail"])
         result.append(h)

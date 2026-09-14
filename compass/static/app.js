@@ -173,24 +173,37 @@ function renderSecondary(data){
  if(!data)return;
  const names={morning:'Morning Algo',smoothers:'Smoothers',futures:'TradingView futures',compass_futures:'Compass futures'};
  const labels={supported:'Supported',watch:'Watch',rejected:'Rejected',insufficient_data:'Insufficient data'};
- const status=data.status||{}, count=data.counts||{};
+ const status=data.status||{}, filter=$('#secondary-filter').value;
+ const groups=(data.comparisons||[]).filter(g=>filter==='all'||g.project===filter);
+ const count=groups.reduce((tot,g)=>{for(const key of Object.keys(labels))tot[key]=(tot[key]||0)+(g.counts?.[key]||0);return tot;},{});
  const stale=!status.at||Date.now()/1000-status.at>25;
  $('#secondary-status').textContent=(status.enabled?(stale?'Review worker update is stale. ':'Review worker active. '):'Awaiting review worker. ')+
   'Originals run independently. Started '+when(data.activation?.at)+'. Last check '+when(status.at)+'. Comparison refreshed '+when(data.report_at)+'. '+data.version+
   (data.window?.truncated?' · Comparison limited to the latest 5,000 reviews.':' · Rolling 30-day comparison.');
  $('#secondary-stats').innerHTML=Object.entries(labels).map(([key,label])=>'<div class="stat"><div class="label">'+label+'</div><div class="value">'+num(count[key]||0,0)+'</div><div class="fine">'+(key==='supported'?'Selected by the secondary rules':key==='insufficient_data'?'Excluded from directional comparison':'Retained for comparison')+'</div></div>').join('');
  const horizon=Number($('#secondary-horizon').value);
- const groups=(data.comparisons||[]).filter(g=>$('#secondary-filter').value==='all'||g.project===$('#secondary-filter').value);
+ const readiness=data.data_readiness||{}, readinessStale=!readiness.at||Date.now()/1000-readiness.at>45;
+ const coverage=(readiness.rows||[]).filter(r=>filter==='all'||r.projects.includes(filter));
+ const ready=coverage.filter(r=>r.ready&&!readinessStale).length;
+ $('#secondary-readiness-note').textContent=(readinessStale?'Input coverage check is stale. ':'')+ready+' / '+coverage.length+' connected equity symbols have usable review inputs. Checked '+when(readiness.at)+'. Current readiness does not rescore earlier alerts. Quote age must be at most 5 seconds; completed minute context at most 90 seconds. Smoothers also requires completed daily history.';
+ $('#secondary-readiness').innerHTML=coverage.length?'<details data-key="secondary-data"><summary>Input status by symbol</summary>'+table(['Symbol','Collection','Quote','Minute context','Daily history','Daily bias'],coverage.map(r=>[esc(r.symbol),r.collection_enabled?'Included':'Missing',r.quote_ready?'Ready · '+num(r.quote_age,1)+'s':'Missing / stale · '+num(r.quote_age,1)+'s',r.minute_ready?'Ready':esc(r.minute_reason||'Missing / stale'),r.projects.includes('smoothers')?(r.daily_ready?'Through '+esc(r.daily_through):'Missing'):'Not required',r.daily_ready?(r.daily_bias===1?'Bullish':r.daily_bias===-1?'Bearish':'Neutral'):'Unavailable']))+'</details>':empty('No connected equity coverage','Equity review inputs appear after source records are imported.');
+ const waiting=(data.pending||[]).filter(r=>filter==='all'||r.project===filter);
+ $('#secondary-pending').innerHTML=waiting.length?'<h3>Waiting for current data</h3>'+table(['Source / symbol','Deadline','Attempts','Missing inputs'],waiting.map(r=>[esc(names[r.project])+' · '+esc(r.symbol),when(r.deadline),num(r.attempts,0),esc(r.missing.join('; '))])):'<p class="fine">No reviews waiting for data. A pending review can retry only within 60 seconds of original candidate availability.</p>';
  const pct=v=>v===null||v===undefined?'—':num(v,3)+'%';
  $('#secondary-comparison').innerHTML=groups.length?table(['Source / symbol / strategy','Measured / eligible','Selected','All candidates: mean','Selected: mean','Filter per candidate','Missed positive / avoided negative','Pending / missing / session end'],groups.map(g=>{const h=g.horizons.find(h=>h.minutes===horizon);return [esc(g.label)+' · '+esc(g.symbol)+' · '+esc(g.side)+'<br><span class="fine">'+esc(g.strategy)+' · '+esc(g.source_version)+'</span>',num(h.measured,0)+' / '+num(h.eligible,0),num(h.selected,0),pct(h.original_mean_pct),pct(h.selected_mean_pct),pct(h.filter_per_candidate_pct),num(h.missed_positive,0)+' / '+num(h.avoided_negative,0),num(h.pending,0)+' / '+num(h.missing,0)+' / '+num(h.session_boundary,0)];})):empty('Waiting for forward candidates','Every supported, watch and rejected candidate is measured from the same review-time reference. The first comparison needs a completed checkpoint.');
  const weekly=groups.filter(g=>g.project==='smoothers');
  $('#secondary-weekly').innerHTML=weekly.length?'<h3>Smoothers weekly target outcomes</h3>'+table(['Symbol / strategy','All resolved: target hits','Selected resolved: target hits'],weekly.map(g=>[esc(g.symbol)+' · '+esc(g.side)+' · '+esc(g.strategy),num(g.weekly.target_hits,0)+' / '+num(g.weekly.resolved,0),num(g.weekly.selected_target_hits,0)+' / '+num(g.weekly.selected_resolved,0)]))+'<p class="fine">These are the original underlying target tests. Option observations remain available in each full record; a target hit is not an option profit.</p>':'';
- const rows=data.reviews.filter(r=>$('#secondary-filter').value==='all'||r.project===$('#secondary-filter').value);
+ const rows=data.reviews.filter(r=>filter==='all'||r.project===filter).slice(0,100);
  $('#secondary-reviews').innerHTML=rows.length?rows.map(r=>{
   const d=r.decision,m=r.measurements;
   return '<details data-key="secondary-'+esc(r.id)+'"><summary><strong>'+esc(names[r.project])+' | SECONDARY '+esc(labels[r.verdict].toUpperCase())+' | '+esc(r.symbol)+' · '+esc(r.side.toUpperCase())+'</strong> · '+when(r.decided_at)+'</summary>'+
    '<p>'+esc(r.candidate.strategy)+' · '+esc(d.reasons.join('; '))+'</p><p class="fine">Original reference '+when(r.source_ts)+' · candidate available '+when(r.candidate.available_at??r.source_ts)+' · review delay '+num(d.latency_seconds,1)+'s · '+esc(r.version)+'</p>'+
    '<p>Review reference '+num(m.anchor)+' · '+esc(m.market_symbol||'Independent quote unavailable')+'</p>'+
+   (d.readiness_attempts?'<p class="fine">Data checks: '+num(d.readiness_attempts,0)+' · waited '+num(d.readiness_wait_seconds,1)+'s within the original review window.</p>':'')+
+   (d.data_checks?table(['Frozen input','Status','Source time / detail'],[
+    ['Independent quote',d.data_checks.quote.ready?'Ready':'Missing / stale',when(d.data_checks.quote.source_ts)],
+    ['Completed minute context',d.data_checks.minute.ready?'Ready':'Missing / stale',when(d.data_checks.minute.source_ts)+' · '+esc(d.data_checks.minute.reason||'')],
+    ['Completed daily history',d.data_checks.daily.status==='ready'?'Ready':r.project==='smoothers'?'Missing':'Not required',d.data_checks.daily.status==='ready'?esc(d.data_checks.daily.through||'')+' · EMA21 '+num(d.data_checks.daily.ema21)+' / EMA50 '+num(d.data_checks.daily.ema50):esc(d.data_checks.daily.note||'')]]):'<p class="fine">Legacy review: its daily-trend caution may also mean missing history. Original decision preserved.</p>')+
    (d.support.length?'<p>Support: '+esc(d.support.join('; '))+'</p>':'')+(d.cautions.length?'<p>Watch points: '+esc(d.cautions.join('; '))+'</p>':'')+
    '<p class="fine">'+esc(d.optional_missing.join('; '))+'</p>'+
    table(['Checkpoint','Observation','Direction-adjusted move'],Object.entries(m.horizons||{}).map(([h,p])=>[h+'m',esc(p.status)+(p.source_ts?' · '+when(p.source_ts):''),pct(p.return_pct)]))+

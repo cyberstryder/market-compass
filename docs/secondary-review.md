@@ -1,6 +1,56 @@
 # Secondary review: originals versus Compass
 
-Requested September 14, 2026. Rule version: `secondary-context-v1`.
+Requested September 14, 2026. Current rule version: `secondary-context-v2`.
+
+## September 14 data recovery fix
+
+The morning comparison contained 76 Smoothers records with unusable independent
+quotes and minute context. Eighteen Smoothers symbols were outside the configured
+scanner list, including BKNG. Version 1 also used the same daily-trend caution for
+missing history and a nonconfirming direction. Those records remain unchanged and
+are excluded from directional performance comparisons.
+
+Collection now includes the union of the configured watchlist and equity symbols
+observed from connected projects in the last 30 days, up to 500 symbols. The stock
+socket checks for subscription changes every five seconds. This expands data
+coverage without adding these symbols to the native scanner's entry universe.
+
+The separate `secondary_data` collector checks coverage every 15 seconds and
+repairs missing completed daily/minute data in batches of at most eight symbols.
+Daily history uses 120 calendar days; minute recovery uses the preceding three
+hours. Attempts are limited to once per symbol per five minutes for daily data
+and once per minute for minute data. A waiting equity review can request a latest
+quote batch (at most 100 symbols per pass). Each provider request has a six-second
+timeout. There are at most three requests per pass, plus the independent ordinary
+history collector. Market-closed periods repair daily history only. No new vendor
+subscription is required; these use the existing Alpaca feed entitlement.
+
+Provider references: [historical bars](https://docs.alpaca.markets/us/reference/stockbars)
+and [latest quote request parameters](https://alpaca.markets/sdks/python/api_reference/data/stock/requests.html#alpaca.data.requests.StockLatestQuoteRequest).
+Source timestamps and missing bars are preserved. Recovery does not fabricate
+quotes or backdate historical observations into an earlier decision.
+
+New candidates with missing required inputs enter a durable waiting queue within
+the original 60-second availability window. They produce one final decision when
+usable data arrive, or an insufficient-data record at expiry. Waiting does not
+reset the original clock, block other source events, or publish provisional trade
+alerts. Restarts preserve waiting candidates; later source outcomes cannot extend
+their deadline. Final decisions, including older rule versions, are never rescored.
+Original outcome revisions still update their separate outcome fields.
+
+Daily confirmation now requires 50 consecutive completed exchange sessions through
+the last session, respecting weekends and exchange holidays. Missing daily history
+is required-data failure; bearish, bullish and neutral observed trends have explicit
+labels. The daily EMA21/50 and target/ATR study rules otherwise stay unchanged.
+When the scanner cache is missing/stale, connected equities compute the same
+intraday rules from the stored completed bar window. The thirty-consecutive-minute
+requirement, five-second quote age and 90-second minute age are not relaxed.
+
+The dashboard shows current per-symbol collection, quote, minute and daily
+readiness and pending deadlines separately from historical comparisons. It also
+shows frozen input checks in version 2 reviews. Summary counts respect the selected
+project, and the latest 100 reviews per source remain accessible despite activity
+in other projects. Current readiness is not a new assessment of an old alert.
 
 The original Smoothers, Morning Algo and TradingView futures services keep their
 own alerts, rules, positions and schedules. Compass publishes a separately
@@ -17,13 +67,15 @@ baseline cohort. It never blocks the original ingestion or engine loop.
 
 A source strategy first generates its candidate. The existing read-only import
 or TradingView mirror brings it into Compass. The secondary worker then reads
-already collected market data, freezes its decision, and queues its own alert.
+already collected market data, waits within the deadline if required inputs are
+missing, freezes its final decision, and queues its own alert.
 This is a review **after the original trigger and before the secondary alert**.
 There is no callback that changes the original signal before it fires.
 
 The secondary loop targets two seconds plus processing time. Morning/Smoothers
 import targets five seconds per scan; TradingView webhook latency is separate.
-No new provider request or LLM call runs in the review path. End-to-end latency
+No provider request or LLM call blocks the review path; recovery runs on the
+collector service. End-to-end latency
 must be observed, not inferred from those targets.
 
 A candidate must have become available at most 60 seconds ago for a timely
@@ -33,7 +85,8 @@ candidate availability; both clocks and the full model-reference age remain
 recorded. No later option update resets that clock. Independent
 underlying quotes must be valid and at most five seconds old; completed minute
 features must be at most 90 seconds old. Future-dated observations do not qualify.
-Delayed imports receive an insufficient-data record without a fresh notification.
+Delayed imports and reviews expiring after the deadline receive an insufficient-data
+record without a fresh notification.
 Activation records the current event cursor and start time; existing history is not converted
 into a new stream of trade alerts. Restarting preserves acknowledgements and all
 decisions. Source outcome revisions update only the separate outcome fields.
@@ -78,9 +131,9 @@ substituted directly onto ES/NQ futures price axes.
 TradingView continuous futures symbols link to the selected dated data contract
 for directional context. Original continuous-chart stops, targets and reference
 prices are not validated against that different price basis. Explicit dated
-contracts must match before absolute levels can be compared. MGC has no
-independent price feed in the current Compass integration and therefore receives
-Insufficient data, not a fabricated gold confirmation.
+contracts must match before absolute levels can be compared. Optional futures
+such as MGC use their own entitled dated-contract feed and price context.
+Missing access or unusable data receive Insufficient data.
 
 ## Alerts and dashboard
 

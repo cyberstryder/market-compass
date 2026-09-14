@@ -21,6 +21,27 @@ def saved_watchlist():
     return symbols((Path(__file__).parent / 'watchlist.txt').read_text())
 
 
+def connected_symbols(db, c, now):
+    """Observed equity projects need data even outside the scanner watchlist."""
+    from sqlalchemy import select
+    from .projects import records
+    rows = c.execute(select(records.c.symbol).where(
+        records.c.project.in_(("morning", "smoothers")),
+        records.c.source_ts >= now-30*86400).distinct().order_by(records.c.symbol).limit(500)).scalars()
+    result = []
+    for symbol in rows:
+        try:
+            result.extend(symbols((symbol,)))
+        except ValueError:
+            continue
+    return symbols(result)
+
+
+def data_symbols(db, c, cfg, now):
+    """Expand collection only; connected projects do not change scanner entries."""
+    return symbols((*cfg.watch_symbols, *connected_symbols(db, c, now)))[:500]
+
+
 def focus_symbols(db, c, cfg, now, limit=12):
     """Open positions first, then fresh setups, then stable index/core coverage."""
     allowed = set(cfg.watch_symbols)

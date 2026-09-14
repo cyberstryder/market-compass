@@ -18,7 +18,7 @@ from .flow_recovery import collect as collect_flow
 from .futures import selection
 from .instruments import future_root
 from .futures_replay import ReplayBars
-from .universe import focus_symbols
+from .universe import focus_symbols, data_symbols
 from .research import collect as collect_research
 from .stock_stream import consume as consume_stocks, StockStreamError
 
@@ -79,9 +79,11 @@ class Collectors:
     def tasks(self):
         c=self.cfg
         from .extra_futures import tasks as extra_tasks
+        from .secondary_data import refresh as refresh_secondary_data
         return [
             self.supervise("alpaca_stocks",bool(c.alpaca_key and c.alpaca_secret),self.stocks),
             self.supervise("alpaca_history",bool(c.alpaca_key and c.alpaca_secret),self.history,3600),
+            self.supervise("secondary_data",bool(c.secondary and c.alpaca_key and c.alpaca_secret),lambda:refresh_secondary_data(self),2),
             self.supervise("databento_futures",bool(c.databento),self.futures),
             self.supervise("futures_history",bool(c.databento),self.future_history,3600),
             self.supervise("option_chain",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.chains,2),
@@ -93,6 +95,10 @@ class Collectors:
     @property
     def alpaca_headers(self):
         return {"APCA-API-KEY-ID":self.cfg.alpaca_key,"APCA-API-SECRET-KEY":self.cfg.alpaca_secret}
+
+    def stock_symbols(self):
+        with self.db.tx() as c:
+            return data_symbols(self.db,c,self.cfg,time.time())
 
     def quote(self,source,symbol,q,instrument_id=None,record=True):
         if not q.get("ts") or number(q.get("bid")) is None or number(q.get("ask")) is None: return
@@ -145,7 +151,7 @@ class Collectors:
     async def history(self):
         newest=None
         failures=[]
-        universe=self.cfg.watch_symbols
+        universe=await asyncio.to_thread(self.stock_symbols)
         async def batch_history(batch,frame,days,kind):
             nonlocal newest
             params={"symbols":",".join(batch),"timeframe":frame,
