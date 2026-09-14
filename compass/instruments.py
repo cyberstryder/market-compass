@@ -6,10 +6,12 @@ from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 FUTURES = {
     'MES': (.25, 5, 1.5, 2, 'CME'), 'MNQ': (.25, 2, 1.5, 2, 'CME'),
     'ES': (.25, 50, 2.5, 1, 'CME'), 'NQ': (.25, 20, 2.5, 1, 'CME'),
+    'YM': (1, 5, 2.5, 1, 'CBOT'), 'MYM': (1, .5, 1.5, 2, 'CBOT'),
     'MGC': (.1, 10, 1.5, 2, 'COMEX'), 'GC': (.1, 100, 2.5, 1, 'COMEX'),
     'SIL': (.005, 1000, 1.5, 2, 'COMEX'), 'SI': (.005, 5000, 2.5, 1, 'COMEX'),
     'MCL': (.01, 100, 1.5, 2, 'NYMEX'), 'CL': (.01, 1000, 2.5, 1, 'NYMEX'),
 }
+INDEX_FUTURES = frozenset(('MES', 'MNQ', 'ES', 'NQ', 'YM', 'MYM'))
 ROOTS = '|'.join(sorted(FUTURES, key=len, reverse=True))
 DATED = re.compile(r'^(' + ROOTS + r')([FGHJKMNQUVXZ])(\d{1,4})(?:@\d+)?$')
 FUTURE = re.compile(r'^(' + ROOTS + r')(?:[12]!|\.[cvn]\.0|[FGHJKMNQUVXZ]\d{1,4})(?:@\d+)?$')

@@ -1,9 +1,9 @@
-"""MES/MNQ session clock, customary quarterly roll and versioned research ranges."""
+"""Futures session clock, contract selection and versioned research ranges."""
 from datetime import datetime, date, time as wall, timedelta
 from functools import lru_cache
 import pandas as pd
 from .market import CT, calendar, session, dedup
-from .instruments import future_root, configured
+from .instruments import future_root, configured, INDEX_FUTURES
 
 
 def at(d, hour, minute=0):
@@ -28,7 +28,7 @@ def futures_session(now, symbol=None):
     local = datetime.fromtimestamp(now, CT)
     requested = local.date() + timedelta(days=local.hour >= 17)
     result = dict(hours_for(requested.isoformat()))
-    index_halt = symbol is None or future_root(symbol) in ('MES','MNQ','ES','NQ')
+    index_halt = symbol is None or future_root(symbol) in INDEX_FUTURES
     result["is_open"] = result["open"] <= now < result["close"] and not (index_halt and result["halt_start"] <= now < result["halt_end"])
     result["entry_open"] = result["is_open"] and now < result["entry_end"]
     return result
@@ -98,7 +98,7 @@ def future_levels(rows, asof, coverage=None, symbol=None):
     out = {"asof": asof, "day": h["day"], "session_open": range_start,
         "session_close": h["entry_end"]+1800, "flatten_at": h["flatten_at"],
         "futures_session_open": h["open"], "futures_session_close": h["close"],
-        "entry_end": h["entry_end"], "range_name": ("RTH" if symbol is None or future_root(symbol) in ('MES','MNQ','ES','NQ') else "08:30 CT research") if use_rth else "Globex",
+        "entry_end": h["entry_end"], "range_name": ("RTH" if symbol is None or future_root(symbol) in INDEX_FUTURES else "08:30 CT research") if use_rth else "Globex",
         "rule_version": "futures-orb15-v2", "bars": len(current),
         "or_complete": {int(r["ts"]) for r in opening} == expected and asof >= range_start+900,
         "prior_day": prior_day, "prior_bars": len(prior),

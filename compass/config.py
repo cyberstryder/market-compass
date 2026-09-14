@@ -14,7 +14,7 @@ class Config:
     local: bool = field(default_factory=lambda: env("COMPASS_LOCAL")=="true")
     stocks: tuple = field(default_factory=lambda: tuple(env("STOCK_SYMBOLS","SPY,QQQ,IWM,NVDA,AAPL").split(",")))
     futures: tuple = field(default_factory=lambda: tuple(env("FUTURES_SYMBOLS","MES.c.0,MNQ.c.0").split(",")))
-    extra_futures: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("EXTRA_FUTURES_SYMBOLS","MGC.v.0,GC.v.0,SIL.v.0,SI.v.0,MCL.v.0,CL.v.0").split(",") if s.strip()))
+    extra_futures: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("EXTRA_FUTURES_SYMBOLS","MGC.v.0,GC.v.0,SIL.v.0,SI.v.0,MCL.v.0,CL.v.0,YM.v.0,MYM.v.0").split(",") if s.strip()))
     alpaca_key: str = field(default_factory=lambda: env("APCA_API_KEY_ID"))
     alpaca_secret: str = field(default_factory=lambda: env("APCA_API_SECRET_KEY"))
     feed: str = field(default_factory=lambda: env("ALPACA_FEED","sip"))
@@ -60,7 +60,7 @@ class Config:
             raise ValueError("COMPASS_PASSWORD must be at least 16 characters")
         if any(s not in {root+suffix for root in ("MES","MNQ","ES","NQ") for suffix in (".c.0",".v.0")} for s in self.futures):
             raise ValueError("Futures specifications support ES/NQ/MES/MNQ only")
-        if any(s not in {r+'.v.0' for r in ('MGC','GC','SIL','SI','MCL','CL')} for s in self.extra_futures):
+        if any(s not in {r+'.v.0' for r in ('MGC','GC','SIL','SI','MCL','CL','YM','MYM')} for s in self.extra_futures):
             raise ValueError("Additional futures require supported volume-ranked symbols")
         if self.max_entries < 0:
             raise ValueError("SHADOW_MAX_ENTRIES must be zero (unlimited) or positive")

@@ -230,8 +230,9 @@ def context_evidence(f,flow,apex,quotes,features_by_symbol,now):
     root=future_root(symbol)
     pair={'MGC':('GC','MGC'),'GC':('GC','MGC'),'SIL':('SI','SIL'),'SI':('SI','SIL'),
           'MCL':('CL','MCL'),'CL':('CL','MCL')}.get(root)
-    peers=[] if pair else list(('QQQ','SPY') if root not in ('MES','ES') else ('SPY','QQQ'))
-    for roots in ((pair,) if pair else (('NQ','MNQ'),('ES','MES'))):
+    peers=[] if pair else list(('QQQ','SPY') if root not in ('MES','ES','YM','MYM') else ('SPY','QQQ'))
+    families=(('NQ','MNQ'),('ES','MES'))+((('YM','MYM'),) if root in ('YM','MYM') else ())
+    for roots in ((pair,) if pair else families):
         matches=[key for key in features_by_symbol if '@' in key and future_root(key) in roots]
         if matches:
             ordered=sorted(matches,key=lambda key:(key.startswith('M'),key))
