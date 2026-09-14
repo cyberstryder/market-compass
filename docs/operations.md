@@ -2,6 +2,15 @@
 
 ## September 14 data and observation fixes
 
+Live archive diagnostics exposed another persistence issue: new futures quotes
+were reaching latest state while no corresponding quote events were retained.
+Insert/upsert success now uses explicit `RETURNING` results rather than an
+INSERT rowcount, which drivers may report as unknown. This protects quote
+archiving and new-event/dedup decisions for flow and idea queues. A regression
+forces unknown insert rowcounts while checking the complete collector-to-archive
+path and stale-quote rejection. Earlier missing paths remain unresolved.
+See [SQLAlchemy rowcount semantics](https://docs.sqlalchemy.org/en/20/core/connections.html#sqlalchemy.engine.CursorResult.rowcount).
+
 - Index-overview objects now retain their individual `lastUpdated` clocks.
   A current SPY row cannot make an older USO row current. The aggregate clock
   stays unknown when the vendor does not supply one; Research coverage shows

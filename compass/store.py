@@ -51,7 +51,10 @@ class Store:
     def append(self,c,kind,source,symbol,ts,payload,key=None):
         q=self.insert(events).values(key=key or identity(kind,source,symbol,ts,payload),
             kind=kind,source=source,symbol=symbol,ts=ts,received=time.time(),payload=payload)
-        return c.execute(q.on_conflict_do_nothing(index_elements=["key"])).rowcount>0
+        # INSERT rowcount is not portable (some drivers return -1). The row
+        # returned by PostgreSQL/SQLite distinguishes a new insert from dedup.
+        return c.execute(q.on_conflict_do_nothing(index_elements=["key"])
+            .returning(events.c.id)).first() is not None
 
     def append_bars(self,c,kind,source,items):
         """Bounded multi-row inserts keep history recovery off the live write path."""
@@ -83,8 +86,8 @@ class Store:
         q=self.insert(state).values(key=key,value=value,updated=time.time())
         result=c.execute(q.on_conflict_do_update(index_elements=['key'],
             set_={'value':value,'updated':time.time()},
-            where=state.c.value['ts'].as_float()<=value['ts']))
-        return result.rowcount>0
+            where=state.c.value['ts'].as_float()<=value['ts']).returning(state.c.key))
+        return result.first() is not None
 
     def put_max(self,c,key,value):
         q=self.insert(state).values(key=key,value=value,updated=time.time())
