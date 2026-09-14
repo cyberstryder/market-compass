@@ -3,6 +3,45 @@
 Requested September 14, 2026. Status: research specification; no new strategy or
 daily profit stop has been activated. Original futures automation is unchanged.
 
+## Account and session constraint
+
+The user confirmed **Lucid Trading, $50,000 LucidFlex**. No position may carry
+between exchange trading sessions. Evaluation versus funded stage, any purchased
+optional daily loss limit, current account loss floor and daily profit objective
+have not yet been confirmed. Do not infer these from the nominal $50,000 size.
+
+Lucid's published regular-session schedule requires Flex positions closed by
+4:45 p.m. Eastern and allows trading again at 6:00 p.m. Eastern, Sunday through
+Thursday. In Chicago that is a 3:45 p.m. cutoff and 5:00 p.m. reopen. The source
+labels Eastern time as "EST"; implement named exchange/account timezones and
+validate daylight-saving transitions rather than hard-coding a UTC offset.
+Holiday closes override normal hours.
+[Lucid allowed trading times](https://support.lucidtrading.com/en/articles/11404729-allowed-trading-times).
+
+For this study, use **3:42 p.m. America/Chicago** as the regular-day flatten
+deadline, and the earlier exchange close minus three minutes on shortened days.
+Block new entries during flattening and the daily closure. Confirm zero open
+positions and cancel residual orders; a flatten instruction alone is not proof
+of closure. The next session requires a fresh signal and an explicit risk reset.
+
+"Overnight" here means trading during the night inside a single futures session:
+for example, entry at 2 a.m. and exit at 5 a.m. It never means holding through the
+daily cutoff or using the full multiday selloff as one trade. Midnight does not
+end the futures risk day. Once the chosen daily goal is secured, remain locked
+for the rest of that exchange session, even if the US cash session has not opened.
+
+The published 50K Flex max-loss amount is $2,000 with an end-of-day trailing
+calculation; the account's current floor, stage and optional daily limit must be
+verified before deriving executable risk limits. The published evaluation target
+is $3,000 with a 50% consistency rule. Funded Flex has no consistency percentage
+and uses a scaling plan. Keep these stage-specific rules separate.
+[Lucid drawdown](https://support.lucidtrading.com/en/articles/12945815-lucidflex-drawdown),
+[evaluation](https://support.lucidtrading.com/en/articles/12945790-lucidflex-evaluation-account),
+[funded account](https://support.lucidtrading.com/en/articles/12945795-lucidflex-funded-account).
+
+These are documented design constraints, not a change to any running alert,
+broker connection, existing account limit or existing strategy cutoff.
+
 ## Objective
 
 Capture a tradable portion of an overnight MNQ trend while Josh is asleep, protect
@@ -24,8 +63,8 @@ axis is cropped, so no point count or P&L is inferred from the image.
 
 The existing scripts use full electronic sessions and flatten at 15:42 CT on
 their supported regular sessions. Compass currently uses a separate 15:45 CT
-research cutoff. The new study must set an explicit account calendar and flatten
-buffer; it must not silently treat these different schedules as equivalent.
+research cutoff. The new study uses the LucidFlex calendar and 15:42 CT buffer
+specified above; it must not silently treat these different schedules as equivalent.
 
 ## First test design
 
@@ -52,8 +91,9 @@ buffer; it must not silently treat these different schedules as equivalent.
    is requested, latch the session against new entries; report the actual net
    result after the exit rather than assuming the threshold was achieved. A
    separate loss stop and account drawdown reserve always remain in force.
-6. Flatten before the configured account cutoff, including early closes. A trend
-   continuing into another exchange session requires a new eligible entry.
+6. Flatten at the earlier of 15:42 CT or three minutes before a shortened exchange
+   close. A trend continuing into another exchange session requires a new eligible
+   entry. Carrying a position through the closure is never an eligible result.
 7. Use a separate durable research ledger, independent of existing strategy
    positions and performance. Emit simulated entry, stop-update, exit and daily-
    lock events with timestamps and reasons. Provide a morning review of what was
