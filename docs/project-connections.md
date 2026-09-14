@@ -53,6 +53,8 @@ MGC's own TradingView fill price is recorded without inventing such a feed.
 Source services: `COMPASS_INTEGRATION_TOKEN`, a distinct random token per project.
 Compass: `MORNING_SOURCE_URL`, `MORNING_INTEGRATION_TOKEN`,
 `SMOOTHERS_SOURCE_URL`, `SMOOTHERS_INTEGRATION_TOKEN`, `FUTURES_OBSERVER_TOKEN`.
+`FUTURES_OBSERVER_STREAMS` lists only saved, verified active mirrors (`mnq,mgc`
+once both are active); an endpoint token alone does not mark a mirror configured.
 Tokens are stored only in service variables and the observer webhook setting.
 Never put credentials in source control, alert text or documentation.
 
