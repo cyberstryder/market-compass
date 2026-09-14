@@ -65,3 +65,40 @@ connection.
 Next: inspect the new diagnostics and corrected-period records after deployment,
 then test repeated-entry, first-entry-per-trend and pullback-reset variants in
 separate research cohorts while preserving every qualifying setup.
+
+## Vendor support clarification — September 14, 2026
+
+The operator supplied a direct TraderMatrix support response confirming a rolling
+per-symbol cache for matrix, Apex and Apex Evolution: 900 seconds during regular
+US equity hours, 21600 seconds off-hours on trading weekdays, and 86400 seconds
+on weekends and holidays. The website, MCP and API share these caches; neither a
+higher tier nor a bypass parameter provides a faster snapshot. `data.snapshotTime`
+is the authoritative clock for these endpoints. Other envelope clocks are retained
+as metadata, never substituted for this snapshot time.
+
+The exposure panel separates expected cache age, current collection, context
+eligibility and strict live confirmation. Calendar-aware windows include holidays
+and early closes. Context uses the stricter computation/evaluation session window
+at transitions; expected cache health alone cannot qualify an entry. Apex context
+allows its existing five-minute polling cadence; matrix polling remains unchanged.
+Price quotes, completed bars and previously known levels still control entries.
+No new cache duration is inferred for other endpoints.
+
+Secondary v4 freezes paired decisions on new original candidates only: identical
+quotes, technical/daily context, peers and observations, with vendor flow/levels
+versus those two inputs removed. The UI reports added winners/losers, avoided
+losers, missed winners and missing checkpoints at 15/30/60 minutes, plus paired
+Smoothers weekly target outcomes. The results concern underlying prices, not
+option returns or causal proof. Legacy decisions are excluded, never rewritten.
+This attribution measures secondary reviews of connected originals; it does not
+claim attribution for every independent scanner or swing strategy or LEAPS.
+
+Unusual activity has a 45–60-second API cache and symbol scans around 60/300/900
+seconds; a symbol's tier is unknown. Vendor ordering is detection time descending
+with score as tie-breaker. `tradeTime` remains a trade clock, not an invented
+detection clock. Quiet filtered events are separate from collection health.
+Durable ID upserts, correction retention and overlapping recovery remain in place.
+For budgets of at least three requests, a head-page recheck follows deeper-page
+reads within the same cap. This spends one recovery request on current arrivals;
+large archives may take another cycle. Offset pagination is still not atomic and
+no full-coverage guarantee is made from matching counts.

@@ -546,16 +546,16 @@ class Collectors:
                                 'known_at':known.get((kind,row['strike']),received)})
                 self.db.put(c,'matrix_levels:'+symbol,{'symbol':symbol,'source':'tradermatrix',
                     'source_ts':result['source_ts'],'received':received,'levels':concentrations,
-                    **{k:result.get(k) for k in ('cached','vendor_stale','vendor_refresh_seconds')},
+                    **{k:result.get(k) for k in ('cached','vendor_stale','vendor_refresh_seconds','cache_policy')},
                     'method':'Relative concentration within vendor GEX/VEX totals; not a dealer-inventory or direction claim'})
                 self.db.put(c,"matrix:"+symbol,result)
             log_observation('matrix:'+symbol,result,received)
         now=time.time()
         with self.db.tx() as c:
             core=matrix_health(self.db,c,self.cfg,now)
-        ready=all(r['status']=='current' for r in core) and bool(core)
+        ready=all(r['context']['eligible_for_context'] and r['status']!='error' for r in core) and bool(core)
         self.db.health('tradermatrix','available' if ready else 'partial',
-            'Core matrices: '+', '.join(r['symbol']+' '+r['status'] for r in core)+
+            'Core matrices: '+', '.join(r['symbol']+' cache='+r['context']['cache_status']+' live='+r['status'] for r in core)+
             '; flow refreshes independently. Shared request spacing remains 2.6s.',poll_ts=now,core=core)
 
 

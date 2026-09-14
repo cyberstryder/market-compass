@@ -11,7 +11,7 @@ from .market import is_open, number
 from .store import identity
 from .universe import focus_symbols
 from .vendor import source_time
-from .vendor_freshness import metadata, confirmation, progress, log_observation
+from .vendor_freshness import metadata, confirmation, progress, log_observation, CACHE_POLICY
 
 
 @dataclass(frozen=True)
@@ -115,6 +115,9 @@ def normalize(feed, payload, now):
     if not isinstance(freshness, dict):
         freshness = {}
     stamp = observation_time(body) or observation_time(payload) or observation_time(freshness)
+    rolling = feed.path.startswith('/gex/') and feed.path.rsplit('/',1)[-1] in ('matrix','apex','apex-evolution')
+    if rolling:
+        stamp = source_time(body.get('snapshotTime')) if isinstance(body,dict) else None
     items = []
     rows = row_list(payload)
     if feed.key == 'gamma_market' and isinstance(body, dict):
@@ -134,6 +137,7 @@ def normalize(feed, payload, now):
     return {'key': feed.key, 'label': feed.label, 'category': feed.category,
         'source': 'tradermatrix', 'path': feed.path, 'received': now, 'source_ts': stamp,
         'target_interval': feed.interval, **metadata(payload),
+        'cache_policy': CACHE_POLICY if rolling else None,
         'items': items, 'data': raw, 'status': 'available' if stamp is not None else 'per_item_clocks' if any(r['source_ts'] is not None for r in items) else 'source_time_unknown',
         'coverage': 'Vendor-returned results; not proof of complete market coverage',
         'timestamp_note': 'Calculation or event clock supplied by vendor; fetch time is separate. Disclosures describe past activity.'}
@@ -162,6 +166,7 @@ def apex_levels(payload, symbol, now):
     if flip is not None and flip>0:
         levels.append({'price': flip, 'score': None, 'kind': 'gamma_flip'})
     return {'symbol': symbol, 'source': 'tradermatrix', 'source_ts': stamp, 'received': now,
+        'cache_policy': CACHE_POLICY, 'clock_basis': 'data.snapshotTime', 'target_interval': 300,
         'spot': number(body.get('spotPrice')), 'levels': levels, 'mode': body.get('mode'),
         'expirations': body.get('expirationsUsed', []), **metadata(payload),
         'method': 'Vendor Apex ranking and flip; no assumption that a level predicts direction.'}

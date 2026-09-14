@@ -5,7 +5,7 @@ Reference: https://www.tradermatrix.pro/developers (REST reference).
 """
 from datetime import datetime
 from .market import number
-from .vendor_freshness import metadata
+from .vendor_freshness import metadata, CACHE_POLICY
 
 
 def source_time(value):
@@ -60,6 +60,7 @@ def matrix_summary(payload, received):
     stamp = source_time(data.get("snapshotTime"))
     return {"symbol": data.get("underlyingSymbol"), "source": "tradermatrix",
         "source_ts": stamp, "received": received, **metadata(payload),
+        "cache_policy": CACHE_POLICY, "clock_basis": "data.snapshotTime",
         "spot": number(data.get("spotPrice")), "status": "available" if stamp and coverage["gex"] else "partial",
         "gex": observed_sum(row["gex"] for row in strikes),
         "vex": observed_sum(row["vex"] for row in strikes),
