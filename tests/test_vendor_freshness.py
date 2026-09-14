@@ -161,3 +161,17 @@ def test_swing_waits_for_current_collection_before_quoted_entry(db):
         row=records(c)[0]
         assert row['status']=='pending' and row['entry'] is None
         assert 'vendor_stale' in row['waiting_reason']
+
+
+def test_documented_refresh_metadata_is_preserved_without_extending_eligibility():
+    from compass.vendor_freshness import metadata, confirmation
+    from datetime import datetime
+    at=datetime.fromisoformat('2026-09-14T19:00:00+00:00').timestamp()
+    data=metadata({'freshness':{'computedAt':'2026-09-14T19:00:00Z',
+        'nextRefreshAt':'2026-09-14T19:05:00Z','refreshSeconds':300,'sessionState':'live','stale':False}})
+    assert data['vendor_computed_ts']==at and data['vendor_next_refresh_ts']==at+300
+    assert data['vendor_session_state']=='live'
+    check=confirmation(dict(data,source_ts=at,received=at+301),at+301)
+    assert check['vendor_refresh_overdue_seconds']==1
+    assert not check['eligible_for_live_confirmation']
+    assert metadata({'freshness':{'computedAt':'2026-09-14','nextRefreshAt':'invalid'}})['vendor_computed_ts'] is None

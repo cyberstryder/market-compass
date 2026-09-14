@@ -1,6 +1,16 @@
 """Separate vendor observation clocks, retrieval clocks and cache metadata."""
 from .market import number
+from datetime import datetime
 import logging
+
+
+def vendor_clock(value):
+    if not isinstance(value,str): return None
+    try:
+        parsed = datetime.fromisoformat(value.replace('Z','+00:00'))
+        return parsed.timestamp() if parsed.tzinfo is not None else None
+    except (ValueError, OverflowError):
+        return None
 
 
 def metadata(payload):
@@ -9,7 +19,11 @@ def metadata(payload):
     flags = flags if isinstance(flags, dict) else {}
     return dict(cached=envelope.get('cached') if isinstance(envelope.get('cached'), bool) else None,
         vendor_stale=flags.get('stale') is True or envelope.get('stale') is True,
-        vendor_refresh_seconds=number(flags.get('refreshSeconds')))
+        vendor_refresh_seconds=number(flags.get('refreshSeconds')),
+        vendor_computed_ts=vendor_clock(flags.get('computedAt')),
+        vendor_next_refresh_ts=vendor_clock(flags.get('nextRefreshAt')),
+        vendor_session_state=flags.get('sessionState') if flags.get('sessionState') in
+            ('live','closed','pre','post','premarket','afterhours','overnight') else None)
 
 
 def confirmation(item, now, source_limit=180, poll_limit=180):
@@ -25,6 +39,11 @@ def confirmation(item, now, source_limit=180, poll_limit=180):
         source_ts=source, source_age=source_age, received=received, poll_age=poll_age,
         cached=item.get('cached'), vendor_stale=bool(item.get('vendor_stale') or item.get('stale')),
         vendor_refresh_seconds=item.get('vendor_refresh_seconds'),
+        vendor_computed_ts=item.get('vendor_computed_ts'),
+        vendor_next_refresh_ts=item.get('vendor_next_refresh_ts'),
+        vendor_session_state=item.get('vendor_session_state'),
+        vendor_refresh_overdue_seconds=max(0,now-item['vendor_next_refresh_ts'])
+            if number(item.get('vendor_next_refresh_ts')) is not None else None,
         source_limit=source_limit, poll_limit=poll_limit)
 
 
@@ -42,6 +61,7 @@ def progress(previous, item):
 def log_observation(label, item, now, source_limit=180, poll_limit=180):
     check = confirmation(item,now,source_limit,poll_limit)
     logging.getLogger('uvicorn.error').info(
-        'Vendor freshness: feed=%s status=%s source_ts=%s received=%s cached=%s repeated_source_polls=%s',
+        'Vendor freshness: feed=%s status=%s source_ts=%s received=%s cached=%s repeated_source_polls=%s refresh_seconds=%s next_refresh_ts=%s session=%s',
         label,check['status'],check['source_ts'],check['received'],check['cached'],
-        item.get('source_progress',{}).get('repeated_source_polls',0))
+        item.get('source_progress',{}).get('repeated_source_polls',0),
+        check['vendor_refresh_seconds'],check['vendor_next_refresh_ts'],check['vendor_session_state'])

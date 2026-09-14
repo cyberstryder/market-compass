@@ -11,7 +11,7 @@ from .secondary import reviews, comparisons, VERSION as REVIEW_VERSION
 from .store import events
 from .universe import data_symbols
 
-VERSION = 'stock-observation-audit-v1'
+VERSION = 'stock-observation-audit-v2'
 # First whole second after PR23 collector rollout completed. Earlier PR22
 # retained quotes may exist, but this conservative boundary has both fixes.
 CORRECTED_SINCE = 1789414991.0
@@ -88,14 +88,20 @@ def build(db, c, cfg, now, since=CORRECTED_SINCE):
 def capture(db,cfg,now):
     with db.tx() as c:
         previous = db.get(c,'observation_audit:report',{})
-        if now-previous.get('at',0)<600:
+        if previous.get('version')==VERSION and now-previous.get('at',0)<600:
             return
         result = build(db,c,cfg,now)
+        from .feed_forensics import futures_gaps, vendor_clocks
+        result['futures_gaps'] = futures_gaps(db,c,now)
+        result['vendor_clocks'] = vendor_clocks(db,c,now)
         db.put(c,'observation_audit:report',result)
     # Private operational logs contain only bounded measurement diagnostics,
     # never original webhook bodies, credentials, or broker/account details.
-    summary = {k:v for k,v in result.items() if k not in ('comparisons','checkpoints','focus')}
+    summary = {k:v for k,v in result.items() if k not in ('comparisons','checkpoints','focus','futures_gaps','vendor_clocks')}
     LOG.info('Stock observation audit: %s',json.dumps(summary,sort_keys=True))
+    LOG.info('Feed forensics futures: %s',json.dumps(result['futures_gaps'],sort_keys=True))
+    for row in result['vendor_clocks']:
+        LOG.info('Feed forensics vendor: %s',json.dumps(row,sort_keys=True))
     for section in ('comparisons','checkpoints','focus'):
         for row in result[section][:200]:
             LOG.info('Stock observation audit %s: %s',section,json.dumps(row,sort_keys=True))
