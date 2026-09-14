@@ -36,7 +36,7 @@ EVENTS = {
 CONTEXT_FIELDS = ('strategy', 'track', 'side', 'underlying', 'underlying_side',
                   'asset', 'rule', 'matched_rules', 'alert_category')
 OPTION = re.compile(r'^(?:O:)?([A-Z.]+)(\d{6})([CP])(\d{8})$')
-FUTURE = re.compile(r'^(?:[A-Z_]+:)?(?:MES|MNQ|ES|NQ|MGC|GC|SIL|SI|MCL|CL|HG)(?:[FGHJKMNQUVXZ]\d{1,4}|\d+!)(?:@\d+)?$')
+FUTURE = re.compile(r'^(?:[A-Z_]+:)?(?:MES|MNQ|ES|NQ|MYM|YM|MGC|GC|SIL|SI|MCL|CL|HG)(?:[FGHJKMNQUVXZ]\d{1,4}|\d+!)(?:@\d+)?$')
 
 
 def alert_context(payload):

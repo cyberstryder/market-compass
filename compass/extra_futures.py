@@ -1,4 +1,4 @@
-"""Optional metals/energy live streams, isolated from the equity-index feed.
+"""Optional metals, energy and Dow live streams, isolated from the ES/NQ feed.
 
 Subscriptions themselves verify exchange/schema entitlement. A rejected group
 cannot stop ES/MES/NQ/MNQ. No historical API download or new plan purchase.

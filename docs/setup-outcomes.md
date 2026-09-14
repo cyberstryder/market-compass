@@ -48,8 +48,8 @@ Primary alerted experiments emit separate **SETUP RESULT** notifications.
 
 ## Additional futures
 
-Optional `EXTRA_FUTURES_SYMBOLS` defaults to MGC/GC, SIL/SI and MCL/CL, using
-`.v.0` prior-day-volume selection. Two independent COMEX/NYMEX live tasks verify
+Optional `EXTRA_FUTURES_SYMBOLS` defaults to MGC/GC, SIL/SI, MCL/CL and YM/MYM, using
+`.v.0` prior-day-volume selection. Independent COMEX/NYMEX/CBOT live tasks verify
 access through the existing Databento key. Rejections are reported per exchange;
 they cannot add instruments to, terminate or replace the original index stream.
 The existing historical-download budget and core history scope are unchanged.
@@ -64,9 +64,17 @@ Use Feed health for the live evidence. Each resolved raw contract and instrument
 ID is stored; expired mappings cannot be used for new signals. When the live
 provider sends undefined interval bounds, a fresh quote activates a 30-second
 mapping lease that must be renewed by further live quotes. Known expired
-intervals remain invalid. Index contracts
-keep their original quarterly roll policy. New commodity contracts use their
-provider mapping instead of applying an index quarterly calendar.
+intervals remain invalid. ES/NQ families keep their original quarterly roll
+policy. Optional contracts, including Dow, use the provider's volume-leader mapping.
+
+YM and MYM use one-point ticks, worth $5 and $0.50 respectively. Both participate
+in the intraday scanner, independent one-unit trials, secondary reviews and
+FUTURES alert/result categories. Their index session and RTH opening range follow
+the same research clock as ES/NQ, including the 15:45 CT flatten deadline.
+SPY/QQQ direction is labeled broad equity context; their option exposure levels
+are not substituted onto Dow prices. YM/MYM results remain separate by dated
+contract and setup. Adding Dow does not change original TradingView strategies,
+broker routes or the paid history-recovery scope.
 
 Commodity studies use a labeled **08:30 CT research** opening range in addition
 to the Globex range, not an asserted commodity pit-session opening. They do not
@@ -81,3 +89,5 @@ Specification references:
 - [CME Micro Gold specifications](https://www.cmegroup.com/markets/metals/precious/e-micro-gold.contractSpecs.html)
 - [CME metals product guide](https://www.cmegroup.com/markets/metals/metals-product-guide.html)
 - [CME Micro WTI / WTI specifications](https://www.cmegroup.com/education/articles-and-reports/micro-wti-crude-oil-futures-faq)
+- [CME E-mini Dow overview and multiplier](https://www.cmegroup.com/education/lessons/e-mini-dow-product-overview)
+- [CME Micro E-mini futures specifications](https://www.cmegroup.com/education/courses/micro-e-mini-futures/micro-e-mini-futures-products-overview)

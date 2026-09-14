@@ -15,7 +15,7 @@ from sqlalchemy import Column, Float, Index, Integer, JSON, String, Table, and_,
 
 from .market import day, fresh, is_open, session
 from .futures import futures_session, active_selection
-from .instruments import ROOTS
+from .instruments import ROOTS, INDEX_FUTURES
 from .scanner import ema
 from .store import events, identity, meta
 from .projects import records as originals
@@ -133,7 +133,7 @@ def capture(db, c, candidate, cfg, now):
             seen.add(key)
             flow_rows.append({k: row.get(k) for k in ("vendor_id", "symbol", "source_ts", "score", "premium", "sentiment")})
     peers = []
-    for peer in (("SPY", "QQQ") if root is None or root in ("MES","MNQ","ES","NQ") else ()):
+    for peer in (("SPY", "QQQ") if root is None or root in INDEX_FUTURES else ()):
         if peer == symbol:
             continue
         f, q = db.get(c, "scanner_features:" + peer, {}), db.get(c, "quote:" + peer)
