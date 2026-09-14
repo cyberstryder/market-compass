@@ -18,6 +18,7 @@ def metadata(payload):
     flags = envelope.get('freshness')
     flags = flags if isinstance(flags, dict) else {}
     return dict(cached=envelope.get('cached') if isinstance(envelope.get('cached'), bool) else None,
+        vendor_envelope_ts=vendor_clock(envelope.get('timestamp')),
         vendor_stale=flags.get('stale') is True or envelope.get('stale') is True,
         vendor_refresh_seconds=number(flags.get('refreshSeconds')),
         vendor_computed_ts=vendor_clock(flags.get('computedAt')),
@@ -40,6 +41,7 @@ def confirmation(item, now, source_limit=180, poll_limit=180):
         cached=item.get('cached'), vendor_stale=bool(item.get('vendor_stale') or item.get('stale')),
         vendor_refresh_seconds=item.get('vendor_refresh_seconds'),
         vendor_computed_ts=item.get('vendor_computed_ts'),
+        vendor_envelope_ts=item.get('vendor_envelope_ts'),
         vendor_next_refresh_ts=item.get('vendor_next_refresh_ts'),
         vendor_session_state=item.get('vendor_session_state'),
         vendor_refresh_overdue_seconds=max(0,now-item['vendor_next_refresh_ts'])

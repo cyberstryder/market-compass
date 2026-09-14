@@ -110,3 +110,34 @@ def test_dow_defaults_and_paired_context(cfg):
     facts={s:dict(symbol=s,status='ready',asof=NOW,htf15_bias=1) for s in ('MYMZ6@1','YMZ6@2','SPY','QQQ')}
     evidence=context_evidence(facts['MYMZ6@1'],[],None,{s:quote() for s in facts},facts,NOW)
     assert {e['symbol'] for e in evidence if e['kind']=='cross_market'}=={'YMZ6@2','SPY','QQQ'}
+
+
+
+@pytest.mark.parametrize('root',['YM','MYM'])
+def test_dow_roll_rejects_september_mapping_on_september_14(root):
+    from compass.futures import risk_day
+    alias=root+'.v.0'
+    mapping={'contract:'+root:dict(configured_symbol=alias,raw_symbol=root+'U6',mapping_start=NOW-86400*4,mapping_end=NOW+86400)}
+    assert not selection((alias,),NOW,mapping)[0]['resolved']
+    mapping['contract:'+root]['raw_symbol']=root+'Z6'
+    assert selection((alias,),NOW,mapping)[0]['resolved']
+    friday=datetime(2026,9,11,10,tzinfo=CT).timestamp()
+    mapping['contract:'+root]['raw_symbol']=root+'U6'
+    assert selection((alias,),friday,mapping)[0]['resolved']
+
+
+def test_dow_subscription_retains_open_old_contracts_without_selecting_them(db,cfg):
+    from compass.extra_futures import subscription_plan
+    from compass.setup_study import SetupStudy
+    with db.tx() as c:
+        db.put(c,'quote:MYMU6@1',quote(NOW,40000,40001))
+        candidate=signal(symbol='MYMU6@1')|dict(signal_price=40000,stop_distance=20)
+        SetupStudy(db,cfg).start(c,candidate,NOW,spec('MYMU6@1'))
+        assert rows(c)[0]['status']=='open'
+        db.put(c,'position:YMU6@2',dict(status='open',asset='future',symbol='YMU6@2'))
+        stype,requested,targets=subscription_plan(db,c,['YM.v.0','MYM.v.0'],NOW)
+        assert stype=='raw_symbol'
+        assert set(requested)=={'YMZ6','MYMZ6','YMU6','MYMU6'}
+        assert targets=={'YMZ6':'YM.v.0','MYMZ6':'MYM.v.0'}
+        assert rows(c)[0]['symbol']=='MYMU6@1'
+        assert subscription_plan(db,c,['MGC.v.0'],NOW)==('continuous',['MGC.v.0'],{})

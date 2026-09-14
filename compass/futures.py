@@ -64,9 +64,12 @@ def selection(aliases, now, contracts=None):
         mapping = (contracts or {}).get('contract:'+root, {})
         valid = (mapping.get('configured_symbol') == alias
                  and mapping.get('mapping_start', 0) <= now < mapping.get('mapping_end', 0))
+        if root in ('YM','MYM'):
+            valid = valid and mapping.get('raw_symbol') == lead_contract(root,session_info['day'])['raw_symbol']
         selected.append({**(mapping if valid else {}), 'root':root, 'configured_symbol':alias,
             'raw_symbol':mapping['raw_symbol'] if valid else alias, 'trading_day':session_info['day'],
-            'resolved':valid, 'policy':'Databento prior-day volume leader; original dated contract prices'})
+            'resolved':valid, 'policy':('CME customary quarterly lead; explicit Databento contract mapping' if root in ('YM','MYM')
+                else 'Databento prior-day volume leader; original dated contract prices')})
     return selected
 
 

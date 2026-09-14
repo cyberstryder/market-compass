@@ -21,7 +21,7 @@ def test_optional_live_access_mapping_quotes_and_rejection_isolation(tmp_path,mo
     symbol=raw+'@123'
     class Mapping:
         instrument_id=123
-        stype_in_symbol=alias;stype_out_symbol=raw
+        stype_in_symbol=raw if exchange=='CBOT' else alias;stype_out_symbol=raw
         start_ts=18446744073709551615 if unspecified else int((NOW-86400)*1e9)
         end_ts=18446744073709551615 if unspecified else int((NOW+86400)*1e9)
     class Error:
@@ -67,7 +67,8 @@ def test_optional_live_access_mapping_quotes_and_rejection_isolation(tmp_path,mo
             assert selection((alias,),NOW,mapping)[0]['raw_symbol']==raw
             assert db.get(c,'health:databento_'+exchange.lower()+'_'+root)['status']=='receiving'
     assert len(subscriptions)==2
-    assert all(s['stype_in']=='continuous' for s in subscriptions)
+    assert all(s['stype_in']==('raw_symbol' if exchange=='CBOT' else 'continuous') for s in subscriptions)
+    if exchange=='CBOT': assert all(s['symbols']==[raw] for s in subscriptions)
     db.engine.dispose()
 
 

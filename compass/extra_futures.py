@@ -8,9 +8,28 @@ import logging
 import time
 from datetime import datetime, timezone, timedelta
 from .instruments import FUTURES, DATED
-from .futures import risk_day
+from .futures import risk_day, lead_contract
 from .diagnostics import redacted_detail
 from .futures_replay import ReplayBars
+
+
+def subscription_plan(db,c,aliases,now):
+    """Dow uses the same customary lead quarter as ES/NQ, in its own stream."""
+    if not all(a.split('.')[0] in ('YM','MYM') for a in aliases):
+        return 'continuous',list(aliases),{}
+    targets={lead_contract(a.split('.')[0],risk_day(now))['raw_symbol']:a for a in aliases}
+    requested=set(targets)
+    from sqlalchemy import select
+    from .setup_study import trials
+    held=[p.get('symbol') for p in db.prefix(c,'position:').values()
+          if p.get('status')=='open' and p.get('asset')=='future']
+    held+=list(c.execute(select(trials.c.symbol).where(trials.c.status=='open')).scalars())
+    roots={a.split('.')[0] for a in aliases}
+    for symbol in held:
+        match=DATED.fullmatch(symbol or '')
+        if match and match.group(1) in roots:
+            requested.add(symbol.split('@')[0])
+    return 'raw_symbol',sorted(requested),targets
 
 
 def mapping_window(start_ns, end_ns, observed_at, now, quote_ts=None):
@@ -42,7 +61,10 @@ async def collect_group(collector, exchange, aliases):
             last = {}
             mappings = {}
             replay = ReplayBars(collector)
-            db.health(name, 'connecting', 'Checking live access: '+', '.join(aliases))
+            with db.tx() as c:
+                stype,requested,targets=subscription_plan(db,c,aliases,time.time())
+            db.health(name, 'connecting', 'Checking live access: '+', '.join(requested))
+            logging.getLogger('uvicorn.error').info('Optional futures subscription: exchange=%s stype=%s symbols=%s',exchange,stype,requested)
 
             def activate(root, now, quote_ts=None):
                 mapping = mappings[root]
@@ -56,17 +78,26 @@ async def collect_group(collector, exchange, aliases):
                         'configured_symbol':alias, 'instrument_id':iid,
                         'resolved_symbol':f'{raw}@{iid}', 'trading_day':risk_day(now),
                         'mapping_start':start, 'mapping_end':end, 'provider_interval_unspecified':unspecified,
-                        'mapping_source':'databento live volume mapping'+('; fresh-quote lease' if unspecified else ''), 'at':now})
+                        'mapping_source':('CME customary lead quarter; Databento explicit mapping' if targets else
+                            'databento live volume mapping')+('; fresh-quote lease' if unspecified else ''), 'at':now})
                 return True
 
             def callback(r):
                 replay.flush_due()
+                if targets and time.monotonic()-last.get('roll_check',0)>60:
+                    last['roll_check']=time.monotonic()
+                    if any(lead_contract(alias.split('.')[0],risk_day(time.time()))['raw_symbol']!=raw
+                           for raw,alias in targets.items()):
+                        client.terminate()
+                        return
                 if isinstance(r, sdk.ErrorMsg):
                     errors.append(redacted_detail(r.err, (cfg.databento,), 200))
                     client.terminate()
                     return
                 if isinstance(r, sdk.SymbolMappingMsg):
-                    alias, raw = str(r.stype_in_symbol), str(r.stype_out_symbol)
+                    source_alias = str(r.stype_in_symbol)
+                    raw = source_alias if targets else str(r.stype_out_symbol)
+                    alias = targets.get(source_alias) if targets else source_alias
                     logging.getLogger('uvicorn.error').info(
                         'Optional futures mapping: %s -> %s id=%s start_ns=%s end_ns=%s',
                         alias, raw, r.instrument_id, r.start_ts, r.end_ts)
@@ -85,6 +116,7 @@ async def collect_group(collector, exchange, aliases):
                 raw = client.symbology_map.get(iid)
                 match = DATED.fullmatch(str(raw)) if raw else None
                 if not match or match.group(1)+'.v.0' not in aliases: return
+                if targets and str(raw) not in requested: return
                 root, symbol = match.group(1), f'{raw}@{iid}'
                 stamp = r.ts_event/1e9
                 if isinstance(r, sdk.OHLCVMsg):
@@ -112,9 +144,9 @@ async def collect_group(collector, exchange, aliases):
 
             def run():
                 try:
-                    client.subscribe(dataset='GLBX.MDP3',schema='ohlcv-1m',stype_in='continuous',symbols=aliases,
+                    client.subscribe(dataset='GLBX.MDP3',schema='ohlcv-1m',stype_in=stype,symbols=requested,
                         start=(datetime.now(timezone.utc)-timedelta(hours=23)).isoformat())
-                    client.subscribe(dataset='GLBX.MDP3',schema='mbp-1',stype_in='continuous',symbols=aliases)
+                    client.subscribe(dataset='GLBX.MDP3',schema='mbp-1',stype_in=stype,symbols=requested)
                     client.start()
                     client.block_for_close()
                 finally:
