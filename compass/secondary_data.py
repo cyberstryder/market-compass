@@ -23,11 +23,21 @@ def coverage(db, c, cfg, now):
     for symbol in connected_symbols(db, c, now):
         daily = daily_context(db, c, symbol, now) if "smoothers" in projects.get(symbol, ()) else {}
         minute = technical_context(db, c, symbol, now)
+        minute_reason = minute.get("reason")
+        if not technical_ready(minute, now):
+            stamps = {int(r[0]) for r in db.get(c, "bar_window:" + symbol, []) if r[0]+60 <= now}
+            if stamps:
+                last = max(stamps)
+                missing = [t for t in range(last-29*60, last+1, 60) if t not in stamps]
+                times = ', '.join(datetime.fromtimestamp(t, timezone.utc).strftime('%H:%M') for t in missing[:6])
+                minute_reason = (minute_reason or 'Minute context unavailable') + (
+                    f'; last bar {datetime.fromtimestamp(last, timezone.utc).strftime("%H:%M")} UTC'
+                    + (f'; {len(missing)} gaps: {times} UTC' if missing else '; last 30 minute slots present'))
         rows.append(dict(symbol=symbol, projects=sorted(projects.get(symbol, ())),
             collection_enabled=symbol in subscribed, daily_ready=daily.get("status") == "ready",
             daily_through=daily.get("through"), daily_reason=daily.get("note"),
             daily_bias=daily.get("bias"), minute_ready=technical_ready(minute, now),
-            minute_asof=minute.get("asof"), minute_reason=minute.get("reason")))
+            minute_asof=minute.get("asof"), minute_reason=minute_reason))
     result = dict(at=now, rows=rows, market_open=is_open(now),
         note="Current input readiness only. It does not rescore historical reviews or generate trade signals.")
     db.put(c, "secondary:data_status", result)
@@ -70,6 +80,7 @@ async def refresh(collector):
     fresh. History is observed now and never backdated into a frozen review.
     """
     jobs = await asyncio.to_thread(plan, collector, time.time())
+    recovered = []
     if jobs["quotes"]:
         data = await asyncio.wait_for(collector.get("https://data.alpaca.markets/v2/stocks/quotes/latest",
             collector.alpaca_headers, {"symbols": ",".join(jobs["quotes"]), "feed": collector.cfg.feed}), timeout=6)
@@ -95,11 +106,13 @@ async def refresh(collector):
         items = [(s, ts(b["t"]), {k: b[k] for k in ("o", "h", "l", "c", "v", "vw") if k in b})
                  for s, bars in data.get("bars", {}).items() if s in wanted for b in bars]
         await asyncio.to_thread(collector.bars, "alpaca", items, "daily" if kind == "daily" else "bar")
+        recovered.append(kind + ': ' + ', '.join(s + '=' + str(sum(row[0] == s for row in items)) for s in wanted))
     if jobs["daily"] or jobs["minute"]:
         def update_coverage():
             with collector.db.tx() as c:
                 return coverage(collector.db, c, collector.cfg, time.time())
         await asyncio.to_thread(update_coverage)
     await asyncio.to_thread(collector.db.health, "secondary_data", "running",
-        "Connected equity coverage and bounded quote/history recovery; original review records unchanged",
+        "Connected equity coverage and bounded quote/history recovery; original review records unchanged"
+        + ('; returned bars ' + ' / '.join(recovered) if recovered else '; no history requests this pass'),
         quote_requests=len(jobs["quotes"]), daily_symbols=len(jobs["daily"]), minute_symbols=len(jobs["minute"]))
