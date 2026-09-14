@@ -35,6 +35,7 @@ def ingest(db,label,page,part,now):
                 new_ages.append(now-row['source_ts'])
             elif {k:v for k,v in previous.items() if k != 'received'} != {k:v for k,v in row.items() if k != 'received'}:
                 changed += 1
+            prior[row['vendor_id']] = row
             q=db.insert(flow_records).values(day=label,vendor_id=row["vendor_id"],
                 source_ts=row["source_ts"],payload=row,first_seen=now,last_seen=now)
             c.execute(q.on_conflict_do_update(index_elements=["day","vendor_id"],
@@ -93,10 +94,13 @@ async def collect(collector,now,page_cap=5):
     # atomic snapshot. Repeated full passes repair shifted pages and corrections.
     overlap=1 if page_cap-requests>=2 else 0
     page=max(2,min(cp["next_page"]-overlap,cp["page_ceiling"]))
-    while requests<page_cap and page<=cp["page_ceiling"] and first["total"]:
+    depth_cap = page_cap-1 if page_cap>=3 else page_cap
+    while requests<depth_cap and page<=cp["page_ceiling"] and first["total"]:
         part,cp=await fetch(today,page)
         if page>=cp["page_ceiling"] or not part["raw_count"]: break
         page+=1
+    if page_cap>=3 and first["total"] and requests>1 and requests<page_cap:
+        first,cp=await fetch(today,1)  # Recheck the head after moving offset pages.
     with db.tx() as c:
         cp=checkpoint(db,c,today)
         rows=[{**r.payload, 'first_seen': r.first_seen, 'last_seen': r.last_seen} for r in c.execute(
@@ -116,9 +120,15 @@ async def collect(collector,now,page_cap=5):
         summary['source_progress'] = progress(db.get(c,'matrix:unusual_activity',{}),summary)
         summary['freshness'] = freshness(summary, cp['at'])
         db.put(c,"matrix:unusual_activity",summary)
+    summary['vendor_scan_policy'] = {'api_cache_seconds': [45,60], 'symbol_scan_seconds': [60,300,900],
+        'symbol_tier': 'unknown', 'ordering': 'detection time descending, score tie-breaker',
+        'note': 'Quiet filtered results are not transport failure; tradeTime is not a documented detection timestamp.'}
+    summary['collection_status'] = 'receiving'
+    with db.tx() as c:
+        db.put(c,'matrix:unusual_activity',summary)
     state = summary['freshness']['status']
     log_observation('unusual_activity',summary,cp['at'],120,60)
-    db.health("tradermatrix_flow",summary['status'] if state == 'current' else state,
+    db.health("tradermatrix_flow",state if state in ('poll_stale','clock_error','vendor_stale') else summary['status'],
         f"{today}: {cp['unique_rows']} unique rows / {cp['total']} vendor count; estimated gap {cp['estimated_gap']}; resume page {cp['next_page']}; event freshness {state}",
         summary["source_ts"], poll_ts=summary['received'], freshness=summary['freshness'])
     return summary

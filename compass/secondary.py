@@ -20,10 +20,10 @@ from .scanner import ema, features, bars_from_window
 from .store import events, identity, meta
 from .projects import records as originals
 from .quote_path import recorded_path
-from .vendor_freshness import confirmation
+from .vendor_freshness import confirmation, context_check
 from .flow_recovery import freshness as flow_freshness
 
-VERSION = "secondary-context-v3"
+VERSION = "secondary-context-v4"
 LABELS = {"morning": "Morning Algo", "smoothers": "Smoothers",
           "futures": "TradingView futures", "compass_futures": "Compass futures"}
 VERDICTS = ("supported", "watch", "rejected", "insufficient_data")
@@ -161,6 +161,7 @@ def capture(db, c, candidate, cfg, now):
     vex = sorted(matrix.get("strikes", []), key=lambda r: abs(r.get("vex") or 0), reverse=True)[:5]
     equity_open = is_open(now)
     matrix_check = confirmation(matrix,now)
+    matrix_context = context_check(matrix,now)
     matrix_live = bool(equity_open and matrix_check['eligible_for_live_confirmation'])
     flow_summary = db.get(c, "matrix:unusual_activity", {})
     flow_check = flow_freshness(flow_summary,now)
@@ -183,17 +184,17 @@ def capture(db, c, candidate, cfg, now):
         if equity_open and f.get("status") == "ready" and current(f.get("asof"), now, 90) and fresh(q, now):
             peers.append({"symbol": peer, "bias": f.get("htf15_bias"), "source_ts": f["asof"]})
     levels = []
-    if matrix_live and not root:
+    if not root:
         for prefix in ("apex:", "matrix_levels:"):
             obj = db.get(c, prefix + symbol, {})
-            if confirmation(obj,now)['eligible_for_live_confirmation']:
-                levels.extend({"price": r.get("price"), "kind": r.get("kind"), "source_ts": obj["source_ts"]}
+            if context_check(obj,now)['eligible_for_context']:
+                levels.extend({"price": r.get("price"), "kind": r.get("kind"), "source_ts": obj["source_ts"], "received": obj["received"], "context_check": context_check(obj,now)}
                     for r in obj.get("levels", []) if numeric(r.get("known_at", obj.get("received")))
                     and r.get("known_at", obj.get("received")) <= now)
     return {"captured_at": now, "market_symbol": symbol, "price_basis": basis, "quote": quote,
         "technical": technical, "daily": daily_context(db, c, symbol, now) if candidate["project"] == "smoothers" and symbol else {},
         "peers": peers, "flow": flow_rows[:8], "levels": levels[:12],
-        "vendor_checks": {"matrix":matrix_check,"flow":flow_check},
+        "vendor_checks": {"matrix":matrix_check,"matrix_context":matrix_context,"flow":flow_check},
         "exposure": {"symbol": exposure_symbol, "relationship": "cross_asset_context" if root else "same_underlying",
             "status": "current" if matrix_live else "cash_market_closed" if not equity_open else "missing_or_stale",
             "source_ts": matrix.get("source_ts"), "received": matrix.get("received"),
@@ -277,7 +278,7 @@ def assess(candidate, inputs, now):
         for level in inputs.get("levels", []):
             value = level.get("price")
             if numeric(value) and 0 < side * (value - mid) < .35 * f["atr14"]:
-                caution.append("A fresh exposure concentration is less than 0.35 ATR ahead; reaction is uncertain")
+                caution.append("A timestamped exposure concentration is less than 0.35 ATR ahead; context only, reaction is uncertain")
                 break
     peer_bias = [p.get("bias") for p in inputs.get("peers", []) if p.get("bias") in (-1, 1)]
     if peer_bias and all(b == -side for b in peer_bias):
@@ -467,6 +468,15 @@ class Secondary:
             if now > deadline:
                 decision["reasons"] = ["Review deadline passed before independent data became usable", *waiting["missing"]]
         c.execute(delete(pending).where(pending.c.id == key))
+        baseline_inputs = {**inputs, 'flow': [], 'levels': [], 'exposure': {}}
+        baseline = assess(candidate, baseline_inputs, now)
+        decision['tradermatrix_comparison'] = {
+            'version': 'tradermatrix-contribution-v1', 'captured_at': now,
+            'with_vendor': decision['verdict'], 'without_vendor': baseline['verdict'],
+            'without_vendor_reasons': baseline['reasons'],
+            'changed': baseline['verdict'] != decision['verdict'],
+            'evidence_present': bool(inputs.get('flow') or inputs.get('levels')),
+            'basis': 'Same candidate, quote, completed bars, peers and checkpoint; remove only vendor flow and levels. No historical reclassification.'}
         measures = start_measurement(candidate, inputs, decision, now)
         row = {"id": key, "project": candidate["project"], "source_key": candidate["source_key"],
             "source_id": candidate["source_id"], "symbol": candidate["symbol"], "side": candidate["side"],
@@ -612,6 +622,43 @@ class Secondary:
             await asyncio.sleep(2)
 
 
+def vendor_comparison(rows):
+    pairs = [r for r in rows if r['decision'].get('tradermatrix_comparison',{}).get('version') == 'tradermatrix-contribution-v1']
+    result = []
+    for horizon in ('15','30','60'):
+        measured, missing, pending, boundary = [], 0, 0, 0
+        for row in pairs:
+            if not row['decision']['timely'] or row['verdict']=='insufficient_data':
+                continue
+            point = row['measurements'].get('horizons',{}).get(horizon,{})
+            status = point.get('status')
+            if status == 'observed':
+                pair = row['decision']['tradermatrix_comparison']
+                measured.append((pair['with_vendor']=='supported',pair['without_vendor']=='supported',point['return_pct']))
+            elif status == 'pending': pending += 1
+            elif status == 'session_boundary': boundary += 1
+            else: missing += 1
+        result.append(dict(minutes=int(horizon), measured=len(measured), missing=missing,pending=pending,session_boundary=boundary,
+            vendor_selected=sum(a for a,b,v in measured),baseline_selected=sum(b for a,b,v in measured),
+            added_winners=sum(a and not b and v>0 for a,b,v in measured),
+            added_losers=sum(a and not b and v<0 for a,b,v in measured),
+            avoided_losers=sum(b and not a and v<0 for a,b,v in measured),
+            missed_winners=sum(b and not a and v>0 for a,b,v in measured),
+            selection_delta_per_candidate_pct=sum((int(a)-int(b))*v for a,b,v in measured)/len(measured) if measured else None))
+    weekly = [(r['decision']['tradermatrix_comparison'],r['source_outcome'].get('status')) for r in pairs
+        if r['project']=='smoothers' and r['decision']['timely'] and r['verdict']!='insufficient_data'
+        and r['source_outcome'].get('status') in ('win','loss')]
+    weekly_counts = dict(resolved=len(weekly),
+        vendor_selected=sum(p['with_vendor']=='supported' for p,outcome in weekly),
+        baseline_selected=sum(p['without_vendor']=='supported' for p,outcome in weekly),
+        vendor_target_hits=sum(p['with_vendor']=='supported' and outcome=='win' for p,outcome in weekly),
+        baseline_target_hits=sum(p['without_vendor']=='supported' and outcome=='win' for p,outcome in weekly))
+    return dict(paired=len(pairs),excluded_legacy=len(rows)-len(pairs),weekly=weekly_counts,
+        changed=sum(r['decision']['tradermatrix_comparison']['changed'] for r in pairs),
+        with_evidence=sum(r['decision']['tradermatrix_comparison']['evidence_present'] for r in pairs),
+        horizons=result,basis='Paired underlying midpoint selection comparison; not option P&L or causal proof')
+
+
 def comparisons(rows):
     grouped = defaultdict(list)
     for row in rows:
@@ -648,7 +695,7 @@ def comparisons(rows):
         selected_weekly = [r for r in weekly if r["verdict"] == "supported"]
         result.append({"project": project, "label": LABELS[project], "strategy": strategy,
             "symbol": symbol, "side": side,
-            "source_version": source_version, "version": version, "total": len(group), "counts": counts, "horizons": horizons,
+            "source_version": source_version, "version": version, "total": len(group), "counts": counts, "horizons": horizons, "tradermatrix": vendor_comparison(group),
             "weekly": {"resolved": len(weekly), "target_hits": sum(r["source_outcome"]["status"] == "win" for r in weekly),
                 "selected_resolved": len(selected_weekly), "selected_target_hits": sum(r["source_outcome"]["status"] == "win" for r in selected_weekly),
                 "basis": "Original Smoothers underlying target result; not option profit"}})

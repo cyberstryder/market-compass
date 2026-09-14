@@ -306,11 +306,15 @@ def test_flow_resume_survives_restart_beyond_500_and_updates_corrections(db):
         try: return await collect(collector,MONDAY)
         finally: await collector.close()
     first=asyncio.run(run())
-    assert requested==[1,2,3,4,5]
-    assert first["recovery"]["estimated_gap"]==300
+    assert requested==[1,2,3,4,1]
+    assert first["recovery"]["estimated_gap"]==400
     requested.clear()
     second=asyncio.run(run(True))
-    assert requested==[1,5,6,7,8]
+    assert requested==[1,4,5,6,1]
+    assert second["unique_rows"]==600
+    requested.clear()
+    second=asyncio.run(run(True))
+    assert requested==[1,6,7,8,1]
     assert second["unique_rows"]==800 and second["recovery"]["estimated_gap"]==0
     with db.tx() as c:
         assert c.execute(select(func.count()).select_from(flow_records)).scalar_one()==800
@@ -369,3 +373,4 @@ def test_explicit_discord_test_is_authenticated_idempotent_and_never_a_position(
         state=web.get("/api/state").json()
         assert state["delivery"]["last_test_confirmation"]["event_id"]==one.json()["event_id"]
         assert state["delivery"]["pending"]==0 and state["trades"]==[]
+

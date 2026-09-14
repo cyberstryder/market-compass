@@ -3,7 +3,7 @@ from .market import is_open
 from .universe import focus_symbols
 from sqlalchemy import select
 from .store import state
-from .vendor_freshness import confirmation
+from .vendor_freshness import confirmation, context_check
 
 
 def matrix_target(db, c, cfg, now, cursor=0):
@@ -45,5 +45,5 @@ def matrix_health(db, c, cfg, now):
         job = jobs.get('matrix_job:' + symbol, {})
         status = 'error' if job.get('error') else 'waiting' if not item else check['status']
         rows.append(dict(**{**check,'status':status,'eligible_for_live_confirmation':status=='current'},
-            symbol=symbol, source_progress=item.get('source_progress'), retry_at=job.get('retry_at')))
+            context=context_check(item,now), symbol=symbol, source_progress=item.get('source_progress'), retry_at=job.get('retry_at')))
     return rows

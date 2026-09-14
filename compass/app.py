@@ -183,8 +183,9 @@ def create_app(cfg=None):
                 item["source_asof"]=clock(stamp)
                 item["fetched_at"]=clock(item.get("received"))
                 item["source_age"]=round(now-stamp,1) if stamp is not None else None
-                from .vendor_freshness import confirmation
+                from .vendor_freshness import confirmation, context_check
                 item['confirmation']=confirmation(item,now)
+                item['context']=context_check(item,now)
                 item["freshness"]=item['confirmation']['status']
                 if 'recovery' in item:
                     from .flow_recovery import freshness as flow_freshness

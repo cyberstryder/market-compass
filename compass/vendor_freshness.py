@@ -67,3 +67,41 @@ def log_observation(label, item, now, source_limit=180, poll_limit=180):
         label,check['status'],check['source_ts'],check['received'],check['cached'],
         item.get('source_progress',{}).get('repeated_source_polls',0),
         check['vendor_refresh_seconds'],check['vendor_next_refresh_ts'],check['vendor_session_state'])
+
+
+CACHE_POLICY = 'tradermatrix-support-2026-09-14'
+
+
+def cache_window(now):
+    """Vendor-confirmed rolling TTL, using the US equity session calendar."""
+    from .market import day, session
+    hours = session(day(now))
+    return 86400 if hours is None else 900 if hours[0] <= now < hours[1] else 21600
+
+
+def context_check(item, now):
+    """Cache health is separate from live confirmation and collection health.
+
+    On session transitions use the stricter TTL of computation and evaluation;
+    a weekend snapshot cannot become current RTH context on Monday.
+    """
+    strict = confirmation(item, now)
+    source = number(item.get('source_ts'))
+    rolling = item.get('cache_policy') == CACHE_POLICY
+    ttl = cache_window(now) if rolling else None
+    age = strict['source_age']
+    context_limit = min(ttl,cache_window(source)) if ttl is not None and age is not None and 0<=age<86400 else ttl
+    cache_status = ('unknown_policy' if not rolling else 'source_time_unknown' if source is None else
+        'clock_error' if source > now or (number(item.get('received')) is not None and source > item['received']) else
+        'within_expected_cache' if age < ttl else 'refresh_due')
+    # Poll age is independent of source age; allow the existing off-hours jobs.
+    poll_limit = max(180,min(600,(number(item.get('target_interval')) or 90)*2)) if cache_window(now) == 900 else 1800
+    poll_age = strict['poll_age']
+    available = (cache_status == 'within_expected_cache' and age < context_limit and not strict['vendor_stale'] and
+        poll_age is not None and 0 <= poll_age <= poll_limit)
+    return dict(cache_policy=item.get('cache_policy'), cache_status=cache_status,
+        expected_cache_seconds=ttl, context_source_limit=context_limit, source_ts=source, source_age=age,
+        expected_refresh_at=source+ttl if ttl is not None and source is not None else None,
+        poll_age=poll_age, context_poll_limit=poll_limit, eligible_for_context=available,
+        eligible_for_live_confirmation=strict['eligible_for_live_confirmation'] and cache_status != 'clock_error',
+        usage='positioning_context; entry timing requires independent current prices and completed bars')

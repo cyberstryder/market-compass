@@ -11,7 +11,7 @@ from .store import identity
 from .instruments import future_root
 from .alert_format import alert_context
 from .research import FEEDS, catalog
-from .vendor_freshness import confirmation
+from .vendor_freshness import confirmation, context_check
 from .flow_recovery import freshness as flow_freshness
 from .futures_variants import observe_bar
 
@@ -170,7 +170,7 @@ def exposure_candidates(f,apex,now,tick):
     if not apex or f.get('status')!='ready' or not 0<=now-f.get('asof',0)<=90 or not f.get('atr14') or apex.get('vendor_stale'):
         return []
     stamp=apex.get('source_ts')
-    if not confirmation(apex,now,600,600)['eligible_for_live_confirmation']:
+    if not (context_check(apex,now)['eligible_for_context'] if apex.get('cache_policy') else confirmation(apex,now,600,600)['eligible_for_live_confirmation']):
         return []
     b,p=f['bar'],f['previous_bar']
     result=[]
@@ -253,8 +253,8 @@ def context_evidence(f,flow,apex,quotes,features_by_symbol,now):
         evidence.append({'source':'tradermatrix','kind':'unusual_flow','source_ts':row['source_ts'],
             'premium':row.get('premium'),'score':row.get('score'),'sentiment':row.get('sentiment'),
             'vendor_id':row.get('vendor_id')})
-    if apex and confirmation(apex,now,600,600)['eligible_for_live_confirmation']:
-        evidence.append({'source':'tradermatrix','kind':'apex_context','source_ts':apex['source_ts'],
+    if apex and (context_check(apex,now)['eligible_for_context'] if apex.get('cache_policy') else confirmation(apex,now,600,600)['eligible_for_live_confirmation']):
+        evidence.append({'source':'tradermatrix','kind':'apex_context','source_ts':apex['source_ts'], 'freshness':context_check(apex,now),
             'levels':apex.get('levels',[])[:8]})
     return evidence
 
