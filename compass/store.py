@@ -109,9 +109,11 @@ class Store:
             (leases.c.until<now)|(leases.c.owner==owner)).values(owner=owner,until=now+seconds))
         return r.rowcount==1
 
-    def health(self,name,status,detail,source_ts=None,**extra):
+    def health(self,name,status,detail,source_ts=None,monotonic_source=False,**extra):
         with self.tx() as c:
-            value={**self.get(c,"health:"+name,{}),"name":name,"status":status,
+            previous=self.locked_get(c,"health:"+name,{}) if monotonic_source else self.get(c,"health:"+name,{})
+            value={**previous,"name":name,"status":status,
                 "detail":detail,"checked_at":time.time(),**extra}
-            if source_ts is not None: value["source_ts"]=source_ts
+            if source_ts is not None:
+                value["source_ts"]=max(source_ts,previous.get("source_ts") or source_ts) if monotonic_source else source_ts
             self.put(c,"health:"+name,value)
