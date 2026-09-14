@@ -14,6 +14,7 @@ CATEGORIES = {
     'swing': ('SWING', 'Multi-session swing'),
     'options_0dte': ('0DTE OPTIONS', 'Same-day expiry'),
     'options_ideas': ('OPTIONS IDEAS', 'Intraday options'),
+    'swing_ideas': ('SWING IDEAS', 'Multi-session options'),
     'exposure': ('EXPOSURE LEVELS', 'Intraday'),
     'intraday': ('INTRADAY STOCKS', 'Intraday'),
     'system': ('SYSTEM', 'Service notice'),
@@ -27,6 +28,9 @@ SETUPS = {
     'volume_breakout': 'Volume-supported range breakout',
     'exposure_level_break': 'Exposure-level price break',
     'flow_price_breakout': 'Unusual options flow + price breakout',
+    'daily_breakout': 'Daily range breakout',
+    'pullback_reclaim': 'Daily pullback reclaim',
+    'daily_reversal': 'Daily reversal',
 }
 EVENTS = {
     'entered': 'PAPER ENTRY', 'open': 'PAPER ENTRY', 'closed': 'PAPER EXIT',
@@ -106,6 +110,16 @@ def alert_identity(row, now=None):
         event = 'SETUP RESULT · ' + clean(p.get('outcome','unresolved')).upper()
         mode = '[INDEPENDENT SETUP TEST] — one unit; no broker order'
         origin = 'Compass setup study'
+    elif status.startswith('swing_idea_'):
+        suffix=status.removeprefix('swing_idea_')
+        event=('NEW SWING' if suffix=='new' else 'SWING UPDATE' if suffix.startswith('update_')
+               else 'SESSION REOPEN' if suffix.startswith('reopen_') else 'SWING EXIT' if suffix=='closed' else 'DATA GAP')
+        if suffix=='new' and now-p.get('opened_at',0)>120:
+            event='HISTORICAL SWING ENTRY'
+        elif suffix!='new' and now-row['ts']>120:
+            event='DELAYED '+event
+        mode='[SIMULATED SWING IDEA] — one contract; carries between stock sessions'
+        origin='Compass swing scanner'
     elif status.startswith('option_idea_'):
         suffix=status.removeprefix('option_idea_')
         event=('NEW IDEA' if suffix=='new' else 'OPTION UPDATE' if suffix.startswith('update_')
@@ -144,6 +158,8 @@ def message_for(row, now=None):
     now = time.time() if now is None else now
     p = row['payload']
     identity = alert_identity(row, now)
+    if p.get('status','').startswith('swing_idea_'):
+        return swing_idea_message(row, identity, now)
     if p.get('status','').startswith('option_idea_'):
         return option_idea_message(row, identity, now)
     if p.get('status') == 'secondary_review':
@@ -274,3 +290,33 @@ def option_idea_message(row, identity, now):
         lines.append('Delayed historical notification; not a current entry.')
     lines.append('Source setup '+clean(p['source_id'],16)+' · Event #'+str(row['id'])+' · '+clock(row['ts']))
     return '\n'.join(lines)[:1900]
+
+
+def swing_idea_message(row, identity, now):
+    p=row['payload']
+    o,d,f=p['contract'],p['daily'],p['flow']
+    lines=[f"**{identity['title']}**",identity['mode'],
+        clean(p['underlying'])+' $'+number(o['strike'])+' '+clean(o['type']).upper()+' · expires '+clean(o['expiry']),
+        'Setup: '+identity['setup']+' · '+('bullish' if p['underlying_side']=='long' else 'bearish'),
+        'Tech: SMA20 '+number(d['sma20'])+' / SMA50 '+number(d['sma50'])+' · RSI '+number(d['rsi14'])
+        +' · completed daily through '+clean(d['through'])+'; weekly '+clean(d['weekly_bias']),
+        'Observed filtered flow (30m): calls $'+number(f.get('call_premium'))+' / puts $'+number(f.get('put_premium')),
+        'Vendor-classified swing flow: bullish $'+number(f.get('bullish_premium'))+' / bearish $'+number(f.get('bearish_premium')),
+        'Flow source time '+clock(f['latest'])+' · unusual feed only; not total market buying',
+        'Option entry $'+number(p['entry'])+' · premium stop $'+number(p['premium_stop'])+' · target $'+number(p['premium_target']),
+        'Underlying invalidation '+number(p['underlying_stop'])+' · target '+number(p['underlying_target'])]
+    if p.get('idea_status')=='closed':
+        lines.append('Simulated exit $'+number(p['exit'])+' · net $'+number(p['pnl'])+' ('+number(p['return_pct'])+'%) · '+clean(p['exit_reason']).replace('_',' '))
+    elif p.get('idea_status')=='unresolved':
+        lines.append('UNRESOLVED: '+clean(p['exit_reason']).replace('_',' ')+'; no final win/loss.')
+    elif p.get('mark_pct') is not None:
+        lines.append('Last observed net return '+number(p['mark_pct'])+'% · option quote '+clock(p['last_option_ts']))
+    if p.get('overnight_gaps'):
+        gap=p['overnight_gaps'][-1]
+        lines.append('Latest reopen: option bid change $'+number(gap['option_bid_change'])+' · underlying change $'+number(gap['underlying_mid_change']))
+    lines.append('Final exit deadline '+clock(p['exit_deadline'])+'; overnight gaps can exceed stops.')
+    lines.append('One-contract experiment; $0.65 per side and $0.01 price allowances. Pending orders are not broker trades.')
+    if identity['event']=='HISTORICAL SWING ENTRY' or identity['event'].startswith('DELAYED'):
+        lines.append('Delayed historical notification; not a current entry.')
+    footer='\nRef '+clean(p['id'],16)+' · Event #'+str(row['id'])+' · '+clock(row['ts'])
+    return '\n'.join(lines)[:1900-len(footer)]+footer

@@ -67,8 +67,8 @@ def eligible_contracts(chain, underlying, side, spot, now, cfg):
         o['symbol']))[:4]
 
 
-def stream_requests(c, now):
-    rows = c.execute(select(ideas.c.payload).where(ideas.c.status.in_(('pending','open')))
+def stream_requests(c, now, status=None):
+    rows = c.execute(select(ideas.c.payload).where(ideas.c.status.in_((status,) if status else ('pending','open')))
                      .order_by(ideas.c.created)).scalars().all()
     held = [p['contract']['symbol'] for p in rows if p['status']=='open']
     pending = [p for p in rows if p['status']=='pending' and now < p['expires_at']]

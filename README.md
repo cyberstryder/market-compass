@@ -82,6 +82,8 @@ Risk defaults: $100 planned risk per entry, $300 daily realized-loss stop, 10 en
 
 ## Local development
 
+**SWING IDEAS:** The dedicated multi-session option scanner tests daily breakouts, pullback reclaims and reversals across the watchlist, with fresh vendor-classified flow confirmation. Calls and puts default to 14–60 DTE, target 30 DTE, and hold at most 10 trading sessions. A separate ledger tracks quoted option results, overnight gaps and unresolved observation paths. Open **Swing ideas** in the private dashboard; see [swing rules and operations](docs/swing-ideas.md). Original systems and the intraday options study retain their own rules and results.
+
 Use Python 3.12, create a virtual environment, install requirements.txt, copy .env.example and export its settings. Set a local access password.
 
     COMPASS_LOCAL=true COMPASS_PASSWORD=your-long-local-password uvicorn compass.app:app --reload

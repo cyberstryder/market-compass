@@ -7,6 +7,7 @@
 <button class="nav" data-tab="projects">▦ Connected projects</button>
 <button class="nav" data-tab="setup-study">◉ Setup results</button>
 <button class="nav" data-tab="option-ideas">◇ Options ideas</button>
+<button class="nav" data-tab="swing-ideas">↗ Swing ideas</button>
 <button class="nav" data-tab="secondary">◇ Secondary review</button>
 <button class="nav" data-tab="flow">≋ Options flow</button><button class="nav" data-tab="trades">↗ Simulated trades</button>
 <button class="nav" data-tab="assistant">✧ Ask Compass</button><button class="nav" data-tab="health">◷ Feed health</button></nav>
@@ -41,6 +42,14 @@
 <p id="ideas-status" class="fine"></p><div id="ideas-stats" class="stats"></div>
 <article class="panel"><div class="panel-head"><h2>All-day options ideas</h2><label for="ideas-filter">Show <select id="ideas-filter"><option value="all">All recent ideas</option><option value="active">Pending and open</option><option value="closed">Completed outcomes</option></select></label></div><div id="ideas-records"></div>
 <p class="fine">Pending ideas have no option entry. Missing observation paths remain unresolved. Expiration date and intraday holding period are separate. Overlapping one-contract results are not account performance.</p></article>
+</section>
+<section id="swing-ideas" class="tab">
+<div class="banner">SWING IDEAS · Bullish and bearish daily setups with fresh, vendor-classified options flow. Selected contracts are tracked across stock sessions.</div>
+<p id="swings-status" class="fine"></p><div id="swings-stats" class="stats"></div>
+<article class="panel"><div class="panel-head"><h2>Swing ideas and outcomes</h2><label for="swings-filter">Show <select id="swings-filter"><option value="all">All recent ideas</option><option value="active">Pending and open</option><option value="closed">Completed outcomes</option></select></label></div><div id="swings-records"></div>
+<p class="fine">Pending candidates have no option entry. Closed markets preserve the last observed mark. Overnight gaps can exceed stops; missing open-session observations remain unresolved. These overlapping one-contract experiments are separate from Smoothers and account performance.</p></article>
+<article class="panel"><h2>Results by swing setup</h2><div id="swings-groups"></div></article>
+<article class="panel"><h2>Swing scan coverage</h2><p id="swings-coverage-summary" class="fine"></p><details data-key="swing-coverage"><summary>Watchlist readiness</summary><div id="swings-coverage"></div></details></article>
 </section>
 <section id="research" class="tab">
 <div class="banner">Explore the latest vendor scanners, flow, market conditions, calendars, and positioning. Source time and retrieval time remain separate.</div>

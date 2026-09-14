@@ -7,7 +7,7 @@ const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notati
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
 const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
-const titles={'option-ideas':'Options ideas','setup-study':'Setup results',secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
+const titles={'swing-ideas':'Swing ideas','option-ideas':'Options ideas','setup-study':'Setup results',secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav,.tab').forEach(n=>n.classList.remove('active'));b.classList.add('active');$('#'+b.dataset.tab).classList.add('active');$('#title').textContent=titles[b.dataset.tab];});
 $('#logout').onclick=async()=>{await fetch('/logout',{method:'POST'});location.href='/login';};
 let lastState=null,first=true,testEvent=null;
@@ -59,6 +59,7 @@ function render(d){
  renderSecondary(d.secondary);
  renderSetupStudy(d.setup_study);
  renderOptionIdeas(d.option_ideas);
+ renderSwingIdeas(d.swing_ideas,d.asof);
  renderStrikeMap(d.matrix);
  updateResearchChoices(d.scanner.feeds);
  $('#vendor-flows').innerHTML=vendorFlow(d.matrix['matrix:unusual_activity']);
@@ -237,3 +238,33 @@ function renderOptionIdeas(d){
 }
 $('#ideas-filter').onchange=()=>{if(lastState)renderOptionIdeas(lastState.option_ideas);};
 if(location.hash==='#option-ideas')document.querySelector('[data-tab="option-ideas"]').click();
+
+function renderSwingIdeas(d,asof){
+ if(!d)return;
+ const counts=d.counts||{},workerAge=asof-(d.worker?.at||0);
+ $('#swings-status').textContent=(d.enabled?'Enabled. ':'New swings disabled. ')+d.min_dte+'–'+d.max_dte+' DTE; target '+d.target_dte+' DTE; maximum '+d.max_hold_sessions+' trading sessions including entry. Entries stop 30 minutes before cash close. '+(workerAge>30?'Worker heartbeat needs attention. ':'')+'Last check '+when(d.worker?.at)+'.';
+ const metrics=[['Daily history ready',d.daily_ready+' / '+d.watch_symbols,'Full watchlist; completed daily and weekly bars'],['Active swings',(counts.pending||0)+(counts.open||0),'Pending or open option observations'],['Completed',counts.closed||0,'Net option results after modeled costs'],['Unresolved / excluded',(counts.unresolved||0)+' / '+(counts.excluded||0),'Outside win/loss; no invented fills']];
+ $('#swings-stats').innerHTML=metrics.map(([label,value,note])=>'<div class="stat"><div class="label">'+esc(label)+'</div><div class="value">'+esc(value)+'</div><div class="fine">'+esc(note)+'</div></div>').join('');
+ const filter=$('#swings-filter').value;
+ const rows=(d.records||[]).filter(p=>filter==='all'||(filter==='active'?['pending','open'].includes(p.status):p.status==='closed'));
+ $('#swings-records').innerHTML=rows.map(p=>{
+  const o=p.contract,daily=p.daily||{},f=p.flow||{},q=p.last_quote||{};
+  const title=o?p.underlying+' $'+num(o.strike)+' '+o.type.toUpperCase()+' · '+o.expiry:p.underlying+' · '+(p.underlying_side==='long'?'CALL candidate':'PUT candidate');
+  const pct=p.status==='closed'?p.return_pct:p.status==='open'?p.mark_pct:null;
+  return '<details data-key="swing-'+esc(p.id)+'"><summary>'+esc(title)+' · '+esc(p.outcome||p.status)+(pct!=null?' · '+num(pct,1)+'% last observed':'')+' · '+when(p.opened_at||p.created_at)+'</summary>'+
+   '<p><strong>'+esc(p.rule.replaceAll('_',' '))+'</strong> · '+esc(p.reason)+'</p>'+
+   '<p>Tech: SMA20 '+num(daily.sma20)+' / SMA50 '+num(daily.sma50)+' · RSI '+num(daily.rsi14,1)+' · daily through '+esc(daily.through)+' · completed weekly trend '+esc(daily.weekly_bias)+' through '+esc(daily.weekly_through)+'</p>'+
+   '<p>Observed filtered flow, 30m: calls $'+compact(f.call_premium)+' / puts $'+compact(f.put_premium)+'. Vendor-classified '+d.min_dte+'–'+d.max_dte+' DTE flow: bullish $'+compact(f.bullish_premium)+' / bearish $'+compact(f.bearish_premium)+'.</p><p class="fine">'+esc(f.basis)+' Latest source print '+when(f.latest)+'.</p>'+
+   '<p>Underlying invalidation '+num(p.underlying_stop)+' · target '+num(p.underlying_target)+'</p>'+
+   (o?'<p>Option entry $'+num(p.entry)+' · premium stop $'+num(p.premium_stop)+' · premium target $'+num(p.premium_target)+'</p><p>Last option bid / ask $'+num(q.bid)+' / $'+num(q.ask)+' · source '+when(q.ts)+' · '+esc(p.option_source)+'</p>':'<p>'+esc(p.waiting_reason||p.exit_reason)+'</p>')+
+   (p.status==='closed'?'<p>Simulated exit $'+num(p.exit)+' · net $'+num(p.pnl)+' · '+num(p.return_pct,1)+'% · '+esc(p.exit_reason)+'</p>':p.status==='open'?'<p>'+tag(p.observation_state)+' · last observed net $'+num(p.unrealized)+' ('+num(p.mark_pct,1)+'%). '+(asof-q.ts>5?'This is a previous quote, not a live mark.':'')+'</p>':'<p>'+esc(p.exit_reason||'Awaiting an eligible contract and fresh quote')+'</p>')+
+   ((p.overnight_gaps||[]).length?'<h3>Opening gaps</h3>'+table(['Session','Option bid change','Stock midpoint change','Observed'],p.overnight_gaps.map(g=>[esc(g.day),'$'+num(g.option_bid_change),'$'+num(g.underlying_mid_change),when(g.observed_at)])):'')+
+   '<p class="fine">Final exit deadline '+when(p.exit_deadline)+' · sessions observed '+num(p.sessions_observed?.length,0)+' · best observed '+num(p.best_pct,1)+'% · worst observed '+num(p.worst_pct,1)+'% · largest open-session gap '+num(p.max_gap_seconds,1)+'s</p>'+
+   '<p class="fine">'+esc(p.basis)+' · '+esc(p.version)+' · ref '+esc(p.id.slice(0,16))+'</p></details>';
+ }).join('')||empty('Waiting for a qualifying swing','Daily breakouts, pullback reclaims and reversals require fresh directional swing flow, an eligible contract and a liquid quote.');
+ $('#swings-groups').innerHTML=(d.groups||[]).length?table(['Setup','Direction','State / outcome','Count','Mean net option return'],d.groups.map(g=>[esc(g.rule?.replaceAll('_',' ')),esc(g.side==='long'?'CALL':'PUT'),esc(g.outcome||g.status),num(g.count,0),g.status==='closed'?num(g.avg_return_pct,1)+'%':'—'])):empty('No swing outcomes yet','Forward observations accumulate by setup and direction.');
+ $('#swings-coverage-summary').textContent=d.scanned+' / '+d.watch_symbols+' symbols checked today. '+Object.entries(d.scan_counts||{}).map(([k,v])=>k.replaceAll('_',' ')+': '+v).join(' · ')+'. Coverage timestamps show actual cadence; the full scan targets about 24 seconds plus processing.';
+ $('#swings-coverage').innerHTML=table(['Symbol','Daily / weekly history','Recent minute bars','Decision','Last scan'],(d.coverage||[]).map(p=>[esc(p.symbol),p.daily_ready?'Ready':esc(p.reason||'Warming up'),p.price_ready?'Ready':'Waiting',tag(p.status),when(p.at)]));
+}
+$('#swings-filter').onchange=()=>{if(lastState)renderSwingIdeas(lastState.swing_ideas,lastState.asof);};
+if(location.hash==='#swing-ideas')document.querySelector('[data-tab="swing-ideas"]').click();

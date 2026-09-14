@@ -262,6 +262,7 @@ class Collectors:
             raise FeedError("Databento: "+redacted_detail(error,(self.cfg.databento,))) from None
 
     async def chains(self):
+        from .swing_ideas import active_underlyings
         source="massive" if self.cfg.massive else "alpaca"
         now=time.time()
         with self.db.tx() as c:
@@ -270,6 +271,13 @@ class Collectors:
             rotation=universe[self.chain_cursor:]+universe[:self.chain_cursor]
             retry=lambda s: now>=self.db.get(c,'chain_retry:'+s,{}).get('retry_at',0)
             due=[s for s in focus if retry(s) and now-self.db.get(c,"chain:"+s,{}).get("asof",0)>=45]
+            # Refresh each carried contract's terms before observing the new session.
+            # Rotate all held swing names even when there are more than the focus cap.
+            carried=active_underlyings(c)
+            stale_carried=sorted((s for s in carried if retry(s)
+                and now-self.db.get(c,'chain:'+s,{}).get('asof',0)>=900),
+                key=lambda s:self.db.get(c,'chain:'+s,{}).get('asof',0))
+            due=list(dict.fromkeys(stale_carried+due))
             background=next((s for s in rotation if s not in due and retry(s) and now-self.db.get(c,"chain:"+s,{}).get("asof",0)>=900),None)
             # One focused symbol and one background symbol per turn. A new price
             # setup can reach the front of the next turn instead of waiting for
@@ -340,12 +348,15 @@ class Collectors:
     async def refresh_option_subscriptions(self):
         """Reconcile tracked ideas every two seconds, independently of chain HTTP work."""
         from .option_ideas import stream_requests, choose_streams
+        from .swing_ideas import stream_requests as swing_requests
         def reconcile():
             now=time.time()
             with self.db.tx() as c:
                 held=[p["symbol"] for p in self.db.prefix(c,"position:").values()
                       if p.get("status")=="open" and p.get("asset")=="option"]
-                requested=stream_requests(c,now)
+                # Every open contract precedes every unfilled candidate in both studies.
+                requested=(stream_requests(c,now,'open')+swing_requests(c,now,'open')
+                    +stream_requests(c,now,'pending')+swing_requests(c,now,'pending'))
                 selected=choose_streams(held,requested,self.background_option_symbols,self.cfg.stream_limit)
                 self.option_symbols=set(selected)
                 # This is requested subscription state; opening still requires actual fresh quotes.
