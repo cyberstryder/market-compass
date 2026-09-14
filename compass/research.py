@@ -54,11 +54,14 @@ FEEDS = (
         ('leveraged', 'Leveraged ETF candidates'), ('daily-cuts', 'Combined screener shortlist')))
 
 
-def observation_time(value):
+def observation_time(value, *, index_gamma=False):
     """Do not substitute HTTP time, ageSeconds or an undated price for an observation."""
     if not isinstance(value, dict):
         return None
-    for key in ('tradeTime', 'signalTime', 'detectedAt', 'snapshotTime', 'computedAt'):
+    keys = ('tradeTime', 'signalTime', 'detectedAt', 'snapshotTime', 'computedAt')
+    # Confirmed in the index-overview response. Do not interpret arbitrary
+    # lastUpdated fields on calendars/disclosures as market observation times.
+    for key in keys + (('lastUpdated',) if index_gamma else ()):
         stamp = source_time(value.get(key))
         if stamp is not None:
             return stamp
@@ -112,13 +115,17 @@ def normalize(feed, payload, now):
         freshness = {}
     stamp = observation_time(body) or observation_time(payload) or observation_time(freshness)
     items = []
-    for row in row_list(payload)[:500]:
+    rows = row_list(payload)
+    if feed.key == 'gamma_market' and isinstance(body, dict):
+        rows = [row for symbol, row in body.items() if isinstance(row, dict)
+                and row.get('symbol') == symbol and isinstance(symbol, str)]
+    for row in rows[:500]:
         if not isinstance(row, dict):
             continue
         ticker = row.get('symbol', row.get('ticker'))
         if ticker is not None and (not isinstance(ticker, str) or len(ticker)>20):
             continue
-        row_stamp = observation_time(row)
+        row_stamp = observation_time(row, index_gamma=feed.key == 'gamma_market')
         items.append({'symbol': ticker.upper() if ticker else None,
             'source_ts': row_stamp, 'data': bounded(row)})
     # Row clocks are not a snapshot clock: old disclosures and upcoming events
@@ -127,7 +134,7 @@ def normalize(feed, payload, now):
         'source': 'tradermatrix', 'path': feed.path, 'received': now, 'source_ts': stamp,
         'target_interval': feed.interval, 'vendor_refresh_seconds': number(freshness.get('refreshSeconds')),
         'vendor_stale': freshness.get('stale') is True, 'cached': bool(payload.get('cached')) if isinstance(payload, dict) else False,
-        'items': items, 'data': raw, 'status': 'available' if stamp is not None else 'source_time_unknown',
+        'items': items, 'data': raw, 'status': 'available' if stamp is not None else 'per_item_clocks' if any(r['source_ts'] is not None for r in items) else 'source_time_unknown',
         'coverage': 'Vendor-returned results; not proof of complete market coverage',
         'timestamp_note': 'Calculation or event clock supplied by vendor; fetch time is separate. Disclosures describe past activity.'}
 
@@ -171,16 +178,27 @@ def catalog(db, c, cfg, now):
         age=now-stamp if stamp is not None else None
         # Reader services do not need the collector's vendor credential.
         unconfigured=collector_status=='not_configured' or (not collector_status and not cfg.matrix and not item and not job)
+        item_clocks = [{'symbol': r.get('symbol'), 'source_ts': r.get('source_ts'),
+            'source_age': now-r['source_ts'] if r.get('source_ts') is not None else None}
+            for r in (item or {}).get('items', [])]
+        for row in item_clocks:
+            row['status'] = ('source_time_unknown' if row['source_age'] is None else
+                'clock_error' if row['source_age'] < -1 else
+                'stale' if row['source_age'] > max(feed.interval*2, 180) else 'current')
+        states = {r['status'] for r in item_clocks}
+        row_status = ('current' if states == {'current'} else 'stale' if states == {'stale'} else
+                      'mixed' if states and states != {'source_time_unknown'} else 'source_time_unknown')
         status=('not_configured' if unconfigured else 'disabled' if not cfg.research else
                 'error' if job.get('error') else 'waiting' if not item else
                 'clock_error' if age is not None and age < -1 else
                 'stale' if item.get('vendor_stale') or (age is not None and age>max(feed.interval*2, 180)) else
-                'source_time_unknown' if stamp is None else 'current')
+                row_status if stamp is None else 'current')
         result.append({'key': feed.key, 'label': feed.label, 'category': feed.category,
             'status': status, 'source_ts': stamp, 'source_age': age,
             'received': item.get('received') if item else None,
             'target_interval': feed.interval, 'last_error': job.get('error'),
-            'rows': len(item.get('items', [])) if item else 0})
+            'rows': len(item.get('items', [])) if item else 0,
+            'clock_basis': 'snapshot' if stamp is not None else 'per_item', 'item_clocks': item_clocks})
     return result
 
 
@@ -191,9 +209,10 @@ async def collect(collector, now=None):
     with db.tx() as c:
         focus=focus_symbols(db,c,cfg,now,cfg.option_focus)
         feeds=list(FEEDS)+[Feed('apex_'+s, s+' Apex levels', '/gex/'+s+'/apex', 300, 8, 'exposure') for s in focus]
+        jobs=db.prefix(c,'research_job:')
         due=[]
         for feed in feeds:
-            job=db.get(c,'research_job:'+feed.key,{})
+            job=jobs.get('research_job:'+feed.key,{})
             interval=feed.interval if is_open(now) else max(feed.interval,900)
             elapsed=now-job.get('attempted_at',0)
             if now<job.get('retry_at',0) or elapsed<interval:

@@ -10,6 +10,7 @@ from .futures import futures_session,risk_day,future_levels,active_selection,pri
 from .instruments import future_spec, tick_price
 from .setup_study import SetupStudy
 from .option_ideas import OptionIdeas
+from .simulation import bracket, exit_price, FILL_VERSION, FILL_DESCRIPTION
 
 VERSION="orb15-breakout-v1"
 
@@ -42,6 +43,7 @@ def candidate(symbol,previous,bar,context,now):
 class Engine:
     def __init__(self,db,cfg,clock=None):
         self.db,self.cfg=db,cfg
+        self.clock=clock
         self.owner=uuid.uuid4().hex
         from .scanner import Scanner
         self.scanner=Scanner(db,cfg)
@@ -57,6 +59,8 @@ class Engine:
         symbol,side=signal["symbol"],signal["side"]
         s=spec(symbol)
         q=self.db.get(c,"quote:"+symbol)
+        if self.clock:
+            now=self.clock()
         hours=session(day(now))
         reason=None
         if s["asset"]=="future":
@@ -64,7 +68,7 @@ class Engine:
         elif not hours or not hours[0]<=now<hours[1]-1800: reason="Outside research entry session"
         if reason: return reason,None
         if self.db.get(c,"position:"+symbol,{}).get("status")=="open": reason="Existing simulated position"
-        elif not fresh(q,now): reason="Missing, stale, locked/invalid, or empty bid/ask quote"
+        elif not fresh(q,now) or q['ts']>now: reason="Missing, stale, locked/invalid, or empty bid/ask quote"
         elif q["ts"]<signal["signal_time"]: reason="No quote after signal"
         elif q["ask"]-q["bid"]>max(s["tick"]*8,(q["ask"]+q["bid"])/2*(.08 if s["asset"]=="option" else .002)):
             reason="Spread exceeds simulation liquidity limit"
@@ -75,14 +79,18 @@ class Engine:
             reason="Portfolio cap: three simultaneous simulated positions"
         if reason:
             return reason,None
-        price=fill(q,side,s["tick"])
-        distance=signal["stop_distance"]
+        try:
+            prices=bracket(signal,q,s)
+        except ValueError as error:
+            return str(error),None
+        price,distance=prices['entry'],prices['distance']
         per_unit=distance*s["multiplier"]+2*s["fee"]+2*s["tick"]*s["multiplier"]
         qty=min(s["max_qty"],int(self.cfg.risk/per_unit),int(q["ask_size"] if side=="long" else q["bid_size"]))
         if qty<1 or (side=="long" and price-distance<=0):
             return "One unit exceeds risk or stop invalid",None
         flatten=futures_session(now)["flatten_at"] if s["asset"]=="future" else hours[1]-900
-        return None,{"spec":s,"quote":q,"price":price,"distance":distance,"per_unit":per_unit,"qty":qty,"risk":risk,"flatten_at":flatten}
+        return None,{"spec":s,"quote":q,"price":price,"distance":distance,"per_unit":per_unit,"qty":qty,"risk":risk,"flatten_at":flatten,
+                     'observed_at':now,'stop':prices['stop'],'target':prices['target']}
 
     def enter(self,c,signal,now,quiet=False):
         self.study.start(c,signal,now,spec(signal["symbol"]))
@@ -95,10 +103,11 @@ class Engine:
                 self.alert(c,symbol,{**signal,"status":"skipped","reason":reason},"skip:"+signal["id"])
             return False
         s,q,price,distance,per_unit,qty,risk=(plan[k] for k in ("spec","quote","price","distance","per_unit","qty","risk"))
+        now=plan['observed_at']
         direction=1 if side=="long" else -1
         trade={**signal,**s,"status":"open","entry":price,"entered_at":now,"entry_quote_ts":q["ts"],
-            "stop":price-direction*distance,"target":price+direction*distance*2,"qty":qty,"initial_risk":per_unit*qty,
-            "fill_model":"Observed bid/ask side plus one adverse tick; sample-based simulation",
+            "stop":plan['stop'],"target":plan['target'],"qty":qty,"initial_risk":per_unit*qty,
+            "fill_model":FILL_DESCRIPTION,"fill_version":FILL_VERSION,
             "last_quote_ts":q["ts"],"last_bar_checked":signal["signal_time"]-60,
             "risk_day":risk_day(now),"flatten_at":plan["flatten_at"]}
         self.db.put(c,"position:"+symbol,trade)
@@ -115,15 +124,18 @@ class Engine:
         for key,p in self.db.prefix(c,"position:").items():
             if p.get("status")!="open": continue
             q=self.db.get(c,"quote:"+p["symbol"])
-            if not fresh(q,now) or q["ts"]<=p["last_quote_ts"]:
+            if self.clock:
+                now=self.clock()
+            if not fresh(q,now) or q['ts']>now or q["ts"]<=p["last_quote_ts"]:
                 if now-p.get("last_quote_ts",now)>15:
                     self.alert(c,p["symbol"],{**alert_context(p),"status":"management_blocked","trade_id":p["id"],
                         "reason":"No fresh exit quote; position remains unresolved"},"stale:"+p["id"]+":"+str(int(now//300)))
                 continue
             price=fill(q,p["side"],p["tick"],False)
             long=p["side"]=="long"
-            stopped=price<=p["stop"] if long else price>=p["stop"]
-            target=price>=p["target"] if long else price<=p["target"]
+            trigger=(q['bid'] if long else q['ask']) if p.get('fill_version')==FILL_VERSION else price
+            stopped=trigger<=p["stop"] if long else trigger>=p["stop"]
+            target=trigger>=p["target"] if long else trigger<=p["target"]
             reason="stop" if stopped else "target" if target else None
             if p.get('underlying_invalidation') is not None:
                 underlying=self.db.get(c,'quote:'+p['underlying'])
@@ -142,6 +154,8 @@ class Engine:
             hours=session(day(now))
             deadline=p.get("flatten_at",hours[1]-900 if hours else None)
             if p.get("track")!="swing" and deadline and now>=deadline: reason=reason or "session_flatten"
+            if p.get('fill_version')==FILL_VERSION and reason and reason!='stop_detected_in_bar':
+                price=exit_price(p,q,reason)
             p["last_quote_ts"]=q["ts"]
             p["mark"]=price
             p["unrealized"]=(price-p["entry"])*(1 if long else -1)*p["qty"]*p["multiplier"]-2*p["fee"]*p["qty"]

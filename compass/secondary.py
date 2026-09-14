@@ -393,8 +393,9 @@ def source_candidate(project, payload, key):
 
 
 class Secondary:
-    def __init__(self, db, cfg):
+    def __init__(self, db, cfg, clock=None):
         self.db, self.cfg, self.owner = db, cfg, uuid.uuid4().hex
+        self.clock = clock
 
     def review(self, c, candidate, outcome, now, waiting=None):
         key = identity(VERSION, candidate["project"], candidate["source_key"])
@@ -403,6 +404,14 @@ class Secondary:
             c.execute(delete(pending).where(pending.c.id == key))
             return
         inputs = capture(self.db, c, candidate, self.cfg, now)
+        inputs['capture_started_at'] = now
+        # A READ COMMITTED quote can arrive after the loop's initial clock.
+        # Evaluate against a local clock sampled after the read, never against
+        # a clock inferred from the provider's timestamp.
+        if self.clock:
+            now = self.clock()
+        inputs['captured_at'] = now
+        inputs['clock_basis'] = 'Local clock after input reads; source timestamps remain unchanged'
         decision = assess(candidate, inputs, now)
         deadline = candidate.get("available_at", candidate["source_ts"]) + 60
         if (decision["timely"] and decision["missing"] and not decision["rejections"]
@@ -536,6 +545,8 @@ class Secondary:
                 .order_by(reviews.c.updated).limit(500)).mappings().all()
             for row in active:
                 quote = self.db.get(c, "quote:" + row["measurements"]["market_symbol"])
+                if self.clock or live_clock:
+                    now = self.clock() if self.clock else time.time()
                 m = advance_measurement(row["measurements"], row["side"], quote, now)
                 c.execute(update(reviews).where(reviews.c.id == row["id"]).values(measurements=m, tracking=m["state"], updated=now))
             self.db.put(c, "secondary:status", {"at": now, "version": VERSION, "enabled": True,
@@ -612,7 +623,7 @@ def build_report(db, c, now):
         "counts": {v: sum(r["verdict"] == v for r in rows) for v in VERDICTS}, "comparisons": comparisons(rows)}
 
 
-def snapshot(db, c, now):
+def snapshot(db, c, now, clock=None):
     report = db.get(c, "secondary:report", {"at": None, "counts": {v: 0 for v in VERDICTS}, "comparisons": [], "window": {"reviewed": 0}})
     columns = [reviews.c[k] for k in ("id", "project", "symbol", "side", "source_id", "source_ts", "decided_at", "version", "verdict", "candidate", "decision", "measurements")]
     recent = []
@@ -623,8 +634,12 @@ def snapshot(db, c, now):
     waiting = c.execute(select(pending).order_by(pending.c.deadline).limit(100)).mappings().all()
     coverage = db.get(c, "secondary:data_status", {})
     coverage = {**coverage, "rows": [dict(row) for row in coverage.get("rows", [])]}
+    quotes = db.prefix(c, 'quote:')
+    if clock:
+        now = clock()
+    coverage['evaluated_at'] = now
     for row in coverage["rows"]:
-        q = db.get(c, "quote:" + row["symbol"])
+        q = quotes.get('quote:' + row["symbol"])
         row["quote_ready"] = bool(fresh(q, now) and current(q.get("ts"), now, 5))
         row["quote_age"] = round(now-q["ts"], 2) if q else None
         row["minute_ready"] = bool(row.get("minute_ready") and current(row.get("minute_asof"), now, 90))

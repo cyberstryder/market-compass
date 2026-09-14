@@ -68,7 +68,7 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(run_sources(db,cfg)))
         if cfg.role in {"all","engine"}:
             tasks.extend([asyncio.create_task(Engine(db,cfg,clock=time.time).run()),asyncio.create_task(deliver(db,cfg))])
-            tasks.append(asyncio.create_task(Secondary(db,cfg).run()))
+            tasks.append(asyncio.create_task(Secondary(db,cfg,clock=time.time).run()))
             tasks.append(asyncio.create_task(SwingIdeas(db,cfg).run()))
         tasks.append(asyncio.create_task(heartbeat()))
         yield
@@ -164,12 +164,14 @@ def create_app(cfg=None):
             workers=db.prefix(c,"worker:")
             quotes=db.prefix(c,"quote:")
             collected_symbols=data_symbols(db,c,cfg,now)
+            now=time.time()
             watch={k[6:]:{**q,"age":round(now-q["ts"],2)} for k,q in quotes.items()
                 if k[6:] in collected_symbols or "@" in k}
             health=decorate_health(health,workers,markets,now)
             checks=quote_checks(collected_symbols,configured(cfg),{k[6:]:q for k,q in quotes.items()},
                 db.recent(c,"mapping",limit=100),markets,now,active_selection(db,c,cfg,now))
             matrix={k:{field:value for field,value in v.items() if field!="data"} for k,v in db.prefix(c,"matrix:").items()}
+            now=time.time()
             for item in matrix.values():
                 if 'strikes' in item:
                     item['strikes']=[{k:v for k,v in row.items() if not k.endswith('_cells')} for row in item['strikes']]
@@ -178,13 +180,16 @@ def create_app(cfg=None):
                 item["fetched_at"]=clock(item.get("received"))
                 item["source_age"]=round(now-stamp,1) if stamp is not None else None
                 item["freshness"]="no_source_event" if stamp is None else "clock_error" if stamp>now+1 else "current" if now-stamp<=180 else "previous_snapshot" if not markets["equities"] else "stale"
+                if 'recovery' in item:
+                    from .flow_recovery import freshness as flow_freshness
+                    item['flow_freshness']=flow_freshness(item,now)
             positions=list(db.prefix(c,"position:").values())
             trades=sorted(db.prefix(c,"trade:").values(),key=lambda p:p.get("entered_at",0),reverse=True)[:100]
             return {"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","markets":markets,
                 "health":health,"workers":workers,"quotes":watch,
                 "scanner":scanner_snapshot(db,c,cfg,now),
                 "projects":projects_snapshot(db,c,cfg,now),
-                "secondary":secondary_snapshot(db,c,now),
+                "secondary":secondary_snapshot(db,c,now,clock=time.time),
                 "setup_study":study_snapshot(db,c,cfg,now),
                 "option_ideas":ideas_snapshot(db,c,cfg,now),
                 "swing_ideas":swing_snapshot(db,c,cfg,now),
@@ -226,7 +231,7 @@ def create_app(cfg=None):
 
     @app.get("/api/secondary")
     def get_secondary():
-        with db.tx() as c: return secondary_snapshot(db,c,time.time())
+        with db.tx() as c: return secondary_snapshot(db,c,time.time(),clock=time.time)
 
     @app.get("/api/secondary/record")
     def get_secondary_record(id:str):

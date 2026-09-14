@@ -7,6 +7,7 @@ from compass.alerts import dispatch, DeliveryError, outbox_status
 from compass.config import Config
 from compass.exposure import calculate
 from compass.providers import Collectors, select_contracts
+from compass.flow_recovery import collect as collect_flow
 from compass.readiness import decorate_health, quote_checks
 from compass.store import Store
 from compass.vendor import matrix_summary, flow_page
@@ -97,8 +98,8 @@ def test_flow_paging_deduplicates_overlaps_and_repeated_polls(db):
                 else page([flow_row(2), flow_row(3)], number=2)), NOW
         collector.matrix_request = request
         try:
-            await collector.matrix()
-            await collector.matrix()
+            await collect_flow(collector,NOW,page_cap=2)
+            await collect_flow(collector,NOW,page_cap=2)
         finally: await collector.close()
         assert len(requested) == 4
         with db.tx() as c:
@@ -121,7 +122,7 @@ def test_flow_page_cap_is_visible(db):
             count += 1
             return page([flow_row(count)], number=count, total=1000), NOW
         collector.matrix_request = request
-        try: await collector.matrix()
+        try: await collect_flow(collector,NOW,page_cap=2)
         finally: await collector.close()
         assert count == 2
         with db.tx() as c:
