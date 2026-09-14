@@ -5,6 +5,10 @@
 
 # Market Compass
 
+Secondary review now compares original Morning Algo, Smoothers and futures
+candidates with a separately labeled Compass selection. Originals remain
+independent; see [the review rules and comparison limits](docs/secondary-review.md).
+
 Personal market intelligence and **simulated** trade alerts for futures, 0DTE options, and swings. Separate from Atlas. No broker order API is implemented.
 
 ## Services
