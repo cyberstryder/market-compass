@@ -70,6 +70,8 @@ def create_app(cfg=None):
             tasks.extend([asyncio.create_task(Engine(db,cfg,clock=time.time).run()),asyncio.create_task(deliver(db,cfg))])
             tasks.append(asyncio.create_task(Secondary(db,cfg,clock=time.time).run()))
             tasks.append(asyncio.create_task(SwingIdeas(db,cfg).run()))
+            from .observation_audit import run as run_observation_audit
+            tasks.append(asyncio.create_task(run_observation_audit(db,cfg)))
         tasks.append(asyncio.create_task(heartbeat()))
         yield
         if collectors: await collectors.close()
@@ -244,6 +246,11 @@ def create_app(cfg=None):
             row=c.execute(select(secondary_reviews).where(secondary_reviews.c.id==id)).mappings().first()
         if row is None: raise HTTPException(404,"Review not found")
         return dict(row)
+
+    @app.get('/api/observation-audit')
+    def observation_audit_report():
+        with db.tx() as c:
+            return db.get(c, 'observation_audit:report', {'status':'waiting'})
 
     @app.get('/api/secondary/report')
     def get_secondary_report(since:float):
