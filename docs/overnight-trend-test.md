@@ -1,14 +1,15 @@
-# Overnight trend capture and daily profit stop
+# Full-session futures alerts: Lucid evaluation and funded accounts
 
 Requested September 14, 2026. Status: research specification; no new strategy or
 daily profit stop has been activated. Original futures automation is unchanged.
 
 ## Account and session constraint
 
-The user confirmed **Lucid Trading, $50,000 LucidFlex**. No position may carry
-between exchange trading sessions. Evaluation versus funded stage, any purchased
-optional daily loss limit, current account loss floor and daily profit objective
-have not yet been confirmed. Do not infer these from the nominal $50,000 size.
+The user confirmed **Lucid Trading, $50,000 LucidFlex evaluation**, with a funded
+profile also required for the eventual transition. No position may carry between
+exchange trading sessions. Any purchased optional daily loss limit, current
+account loss floor and daily profit objective have not yet been confirmed. Do
+not infer these from the nominal $50,000 size.
 
 Lucid's published regular-session schedule requires Flex positions closed by
 4:45 p.m. Eastern and allows trading again at 6:00 p.m. Eastern, Sunday through
@@ -27,11 +28,13 @@ of closure. The next session requires a fresh signal and an explicit risk reset.
 "Overnight" here means trading during the night inside a single futures session:
 for example, entry at 2 a.m. and exit at 5 a.m. It never means holding through the
 daily cutoff or using the full multiday selloff as one trade. Midnight does not
-end the futures risk day. Once the chosen daily goal is secured, remain locked
-for the rest of that exchange session, even if the US cash session has not opened.
+end the futures risk day. Once the chosen daily goal is secured, keep that account
+locked against new entries for the rest of the exchange session, even if the US
+cash session has not opened. Continue detecting and recording later setups as
+observation-only.
 
 The published 50K Flex max-loss amount is $2,000 with an end-of-day trailing
-calculation; the account's current floor, stage and optional daily limit must be
+calculation; the account's current floor and optional daily limit must be
 verified before deriving executable risk limits. The published evaluation target
 is $3,000 with a 50% consistency rule. Funded Flex has no consistency percentage
 and uses a scaling plan. Keep these stage-specific rules separate.
@@ -42,12 +45,47 @@ and uses a scaling plan. Keep these stage-specific rules separate.
 These are documented design constraints, not a change to any running alert,
 broker connection, existing account limit or existing strategy cutoff.
 
+## One setup engine, two account profiles
+
+Use the same market observations and versioned setup definitions for evaluation
+and funded research. Apply account-specific sizing and eligibility afterward;
+changing account stage does not itself establish a different trading edge.
+
+| Control | Evaluation: current account | Funded: future account |
+| --- | --- | --- |
+| Objective | Track progress toward the published $3,000 evaluation target | Preserve the account and evaluate repeatable net results; no evaluation target |
+| Consistency | Track largest profitable day divided by total profit against 50% | No Flex consistency percentage |
+| Published contract ceiling | 4 minis / 40 micros; not a recommended position size | Scaling: 2 minis / 20 micros at $0–999 profit, 3 / 30 at $1,000–1,999, 4 / 40 at $2,000+ |
+| Loss control | Current trailing loss floor, any purchased daily loss limit, and a separately chosen internal risk reserve | Reconcile the current floor and balance, including payouts, and apply the funded scaling tier |
+| Entries and exits | Compare fixed-target and trailing-exit variants on matched signals | Reuse qualified setups; compare exit policies without assuming funded status warrants larger risk |
+| Session boundary | Flatten before the daily cutoff; fresh eligibility next session | Same no-carry rule |
+
+The evaluation consistency rule is a qualification condition, not an automatic
+daily profit breach: an unusually large winning day can require more total
+profit before passing. Track it separately from the user's optional daily goal.
+Funded scaling updates at the end of the session, not immediately when intraday
+profit crosses a tier. It can decrease after losses or payouts. Actual platform
+limits remain authoritative; the research controller must not infer extra size
+from unrealized gains or an unknown account state.
+[Lucid consistency](https://support.lucidtrading.com/en/articles/12945805-lucidflex-consistency-percentage),
+[Lucid scaling plan](https://support.lucidtrading.com/en/articles/12945808-lucidflex-scaling-plan).
+
+Keep evaluation and funded simulation ledgers distinct. A live account can have
+only one selected stage, changed explicitly after its new account rules and
+state have been verified. Every strategy on that account must share its risk
+budget and lock state. A futures account lock does not mute options alerts or
+other systems trading separate accounts.
+
 ## Objective
 
-Capture a tradable portion of an overnight MNQ trend while Josh is asleep, protect
-the profit, and stop taking new trades once the selected daily objective is
-secured. Favor few trades, controlled drawdown and low profit giveback. No target
-requires a trade on every session. The submitted chart covers August 17–20; it is
+Detect tradable trends, breakouts and confirmed reversals throughout the allowed
+futures session, including Asia, Europe, the US open and the daytime session.
+Overnight trend capture is one playbook in the wider alert system. Test capturing
+a portion of an MNQ trend while Josh is asleep, protecting the profit, and
+stopping new account entries once the selected daily objective is secured. Keep
+observing subsequent daytime opportunities even after that account is locked.
+Favor few trades, controlled drawdown and low profit giveback. No target requires
+a trade on every session. The submitted chart covers August 17–20; it is
 an example of the desired behavior, not proof of one executable trade. Its price
 axis is cropped, so no point count or P&L is inferred from the image.
 
@@ -57,7 +95,7 @@ axis is cropped, so no point count or P&L is inferred from the image.
 | --- | --- | --- |
 | MNQ v0.10.3 | Session/overnight level rejection in Trend Speed direction, one MNQ, fixed 1.5R bracket, 60 three-minute bars maximum, two entries per session | Not a dedicated trend-continuation entry or trailing exit |
 | MGC v0.7.3 | One MGC, range/MFI short, fixed 1R bracket, 60-bar timeout | Different setup; no shared account risk state |
-| Compass scanner | Overnight futures session support; EMA/VWAP pullback and volume-breakout candidates with completed 15-minute bias | Uses one-minute technical triggers; no dedicated three-minute trend cohort |
+| Compass scanner | Full futures session support; opening-range retests, sweep/reclaims, EMA/VWAP pullbacks, volume breakouts, exposure crossings and flow-confirmed breakouts | Uses one-minute technical triggers; no dedicated three-minute trend cohort or stage-aware account controller |
 | Compass simulator | Fixed 2R target, loss and position-count limits | No runner, account-wide realized-profit stop, or broker reconciliation |
 | Futures source integration | Custom Pine alert messages mirrored into Compass | Bracket fills and actual broker P&L are absent; an exit instruction cannot prove a fill |
 
@@ -65,6 +103,58 @@ The existing scripts use full electronic sessions and flatten at 15:42 CT on
 their supported regular sessions. Compass currently uses a separate 15:45 CT
 research cutoff. The new study uses the LucidFlex calendar and 15:42 CT buffer
 specified above; it must not silently treat these different schedules as equivalent.
+
+## Alert families and implementation status
+
+The ES/NQ family shares setup logic, with contract-specific prices, tick values,
+costs and sizing for ES, NQ, MES and MNQ. The initial runner study uses MNQ. Test
+long and short directions separately, and retain each family's identity even
+when several conditions support the same trade idea.
+
+| Family | Evidence for a candidate | Current status |
+| --- | --- | --- |
+| Trend continuation | Completed trend bias and EMA/VWAP pullback followed by continuation | One-minute scanner exists; three-minute entry and trailing runner are proposed |
+| Range or consolidation breakout | Price clears the established range with supporting volume | Scanner exists; sustained-trend exit comparison is proposed |
+| Opening-range breakout/retest | Break and retest of the US opening range | Scanner exists; inherently tied to the opening window |
+| Liquidity sweep/reclaim reversal | Session extreme is swept and reclaimed with the detector's confirmation | Scanner exists |
+| Failed-breakout reversal | Break fails, price closes back into the range, and a retest/structure trigger confirms failure | Proposed separate detector |
+| Trend reversal | Prior trend loses structure, then an opposite structure break and failed reclaim confirm a transition | Proposed separate detector; extension or one contrary candle is insufficient |
+| Range rotation | A defined range boundary rejects with confirmation during a range regime | Proposed; volume-profile variants require a separately verified profile implementation |
+| Exposure/flow-supported move | Price trigger agrees with sufficiently fresh exposure or unusual-flow evidence | Existing families where coverage is available; stale options context is not live confirmation |
+
+Trend, range and transition classification should choose eligible playbooks.
+Reversals must be tested separately from trailing exits; a trend exit is not
+automatically a signal to open the other direction. Publish one primary alert
+for overlapping same-direction signals, with supporting conditions attached,
+while preserving every candidate in the research ledger. A confirmed opposing
+setup invalidates an incompatible pending idea; it must not automatically flip
+an open broker position.
+
+## Alert lifecycle and account eligibility
+
+Monitor throughout permitted futures hours. Technical alerts occur after the
+required bar closes and eligible fresh quotes arrive; a two-second scan loop
+does not turn a three-minute confirmation into an instantaneous entry.
+
+Record candidate, confirmed simulated entry, invalidation/skip, stop update,
+simulated exit and account-lock events. Actionable alerts should state symbol,
+direction, setup family, session, trigger time, quote time/age, reference entry,
+initial stop, target or trailing policy, risk estimate, and evaluation/funded
+eligibility. Clearly distinguish simulated instructions from broker fills.
+Use persistent event IDs so restarts do not resend an entry or reset account risk.
+
+After a daily profit or loss lock, continue recording the market and qualifying
+setups. Any subsequent notification must say **observation only — account
+locked**, with the reason; do not emit another account-entry instruction. This
+preserves daytime learning after an overnight trade finishes the account's day.
+Account locks remain effective until a verified reset for the next permitted
+exchange session, not merely until midnight or the cash open. Preserve other
+projects' independent alerts.
+
+Provide a morning recap of overnight observations and a session recap covering
+daytime activity. These are planned outputs, not newly scheduled notifications.
+No alert by itself opens or manages a position while the user is asleep; that
+requires separately enabled and verified execution after shadow testing.
 
 ## First test design
 
@@ -75,6 +165,9 @@ specified above; it must not silently treat these different schedules as equival
    three-minute continuation bar after an EMA/VWAP pullback. Evaluate a separate
    consolidation-breakout candidate for trends that do not pull back. Keep their
    identities and results separate; do not optimize both from this screenshot.
+   Apply these tests during the day as well as overnight. Add failed-breakout
+   and confirmed trend-reversal cohorts separately, rather than treating every
+   trend exit as a reversal entry.
 3. Fill only on an eligible quote after the trigger, with spread, fees and adverse
    slippage. Define initial invalidation before entry. Start with one MNQ, no
    averaging down or pyramiding, and at most two attempts per exchange session.
@@ -95,9 +188,11 @@ specified above; it must not silently treat these different schedules as equival
    close. A trend continuing into another exchange session requires a new eligible
    entry. Carrying a position through the closure is never an eligible result.
 7. Use a separate durable research ledger, independent of existing strategy
-   positions and performance. Emit simulated entry, stop-update, exit and daily-
-   lock events with timestamps and reasons. Provide a morning review of what was
-   seen, entered, skipped, earned or lost, and whether the daily goal was met.
+   positions and performance. Compare evaluation and funded policy results from
+   the same observed candidates. Emit simulated entry, stop-update, exit and
+   daily-lock events with timestamps and reasons. Provide morning and session
+   reviews of what was seen, entered, skipped, earned or lost, and whether the
+   daily goal was met. Continue the observation ledger after an account lock.
 
 Overnight entry eligibility must rely on live futures data. Last cash-session
 options GEX/VEX and unusual-flow data can be dated context; they must never be
@@ -111,7 +206,9 @@ verification for each replay window.
 Use the pictured period only for development inspection, then chronological
 unseen sessions and a forward shadow test. Compare net P&L, worst drawdown, MAE,
 MFE, profit giveback, costs, attempts/session, rejected signals, overnight vs US
-results, and fraction of sessions finishing at the goal. Track losses on choppy
+results, evaluation consistency, funded tier eligibility, and fraction of
+sessions finishing at the goal. Report each setup family's results separately
+and combined after conflict handling and account limits. Track losses on choppy
 overnights and how often the trail exits before a trend resumes. A visually large
 move or one strong week is not validation. Reserve any paid historical request
 for a separately bounded window and known cost; no new backfill was requested here.
@@ -129,6 +226,11 @@ Inspected saved originals: `MNQ_Level_Rejection_Speed_v0.10.3_TradersPost_JSON.p
 and `MGC_Range_MFI_v0.7.3_TradersPost_JSON.pine`, September 9, 2026; Compass
 `compass/scanner.py`, `compass/engine.py`, `compass/futures.py`, and
 `docs/project-connections.md` at base `ad4aff409a68589d233ae617bb31bd9c0877e07a`.
+Rechecked scanner coverage in `docs/live-scanner.md`, `compass/scanner.py`,
+`compass/engine.py`, `compass/futures.py`, and `compass/config.py` at
+`7dcd462df86fa802a7f1f03299c91ef7566a07f0`. Lucid account-stage rules checked
+September 14, 2026; purchased limits and the dashboard's actual account state
+still require account-specific reconciliation.
 
 MNQ is $2 per index point per contract: a hypothetical 150-point capture with one
 contract is $300 gross before fees and slippage. This is unit arithmetic, not a
