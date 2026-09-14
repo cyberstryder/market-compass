@@ -6,6 +6,7 @@
 <button class="nav" data-tab="scanner">↗ Live scanner</button><button class="nav" data-tab="research">▤ Research desk</button>
 <button class="nav" data-tab="projects">▦ Connected projects</button>
 <button class="nav" data-tab="setup-study">◉ Setup results</button>
+<button class="nav" data-tab="option-ideas">◇ Options ideas</button>
 <button class="nav" data-tab="secondary">◇ Secondary review</button>
 <button class="nav" data-tab="flow">≋ Options flow</button><button class="nav" data-tab="trades">↗ Simulated trades</button>
 <button class="nav" data-tab="assistant">✧ Ask Compass</button><button class="nav" data-tab="health">◷ Feed health</button></nav>
@@ -34,6 +35,12 @@
 <article class="panel"><div class="panel-head"><h2>Setup feed</h2><label class="inline-label" for="scanner-filter">Show <select id="scanner-filter"><option value="active">Active setups</option><option value="all">All recent decisions</option></select></label></div><div id="opportunities"></div></article>
 <article class="panel"><h2>Symbols receiving focused research</h2><div id="scanner-focus"></div><p class="fine">Live stock prices cover the full watchlist. Option chains and vendor analytics prioritize developing setups and rotate through the remaining names.</p></article>
 <article class="panel"><h2>Research coverage</h2><div id="scanner-coverage"></div></article>
+</section>
+<section id="option-ideas" class="tab">
+<div class="banner">Options ideas discovered throughout the cash session. Each selected call or put has its own quoted entry, underlying invalidation, premium exits and follow-up observations.</div>
+<p id="ideas-status" class="fine"></p><div id="ideas-stats" class="stats"></div>
+<article class="panel"><div class="panel-head"><h2>All-day options ideas</h2><label for="ideas-filter">Show <select id="ideas-filter"><option value="all">All recent ideas</option><option value="active">Pending and open</option><option value="closed">Completed outcomes</option></select></label></div><div id="ideas-records"></div>
+<p class="fine">Pending ideas have no option entry. Missing observation paths remain unresolved. Expiration date and intraday holding period are separate. Overlapping one-contract results are not account performance.</p></article>
 </section>
 <section id="research" class="tab">
 <div class="banner">Explore the latest vendor scanners, flow, market conditions, calendars, and positioning. Source time and retrieval time remain separate.</div>

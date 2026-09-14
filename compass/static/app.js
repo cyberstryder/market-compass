@@ -7,7 +7,7 @@ const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notati
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
 const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
-const titles={'setup-study':'Setup results',secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
+const titles={'option-ideas':'Options ideas','setup-study':'Setup results',secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav,.tab').forEach(n=>n.classList.remove('active'));b.classList.add('active');$('#'+b.dataset.tab).classList.add('active');$('#title').textContent=titles[b.dataset.tab];});
 $('#logout').onclick=async()=>{await fetch('/logout',{method:'POST'});location.href='/login';};
 let lastState=null,first=true,testEvent=null;
@@ -58,6 +58,7 @@ function render(d){
  renderProjects(d.projects);
  renderSecondary(d.secondary);
  renderSetupStudy(d.setup_study);
+ renderOptionIdeas(d.option_ideas);
  renderStrikeMap(d.matrix);
  updateResearchChoices(d.scanner.feeds);
  $('#vendor-flows').innerHTML=vendorFlow(d.matrix['matrix:unusual_activity']);
@@ -212,3 +213,27 @@ function renderSetupStudy(d){
 }
 $('#study-cohort').onchange=()=>{if(lastState)renderSetupStudy(lastState.setup_study);};
 if(location.hash==='#setup-study')document.querySelector('[data-tab="setup-study"]').click();
+
+function renderOptionIdeas(d){
+ if(!d)return;
+ const counts=d.counts||{},active=(counts.pending||0)+(counts.open||0);
+ $('#ideas-status').textContent=(d.enabled?'Enabled. ':'New ideas disabled. ')+d.min_dte+'–'+d.max_dte+' DTE; target '+d.target_dte+' DTE. New entries from cash open until 30 minutes before close; simulations exit 15 minutes before close. Last check '+when(d.worker?.at)+'.';
+ const metrics=[['Active ideas',active,'Pending or tracking live quotes'],['Completed',counts.closed||0,'Option outcomes after modeled costs'],['Unresolved',counts.unresolved||0,'Observation gaps; outside win/loss'],['Excluded',counts.excluded||0,'No qualified option entry']];
+ $('#ideas-stats').innerHTML=metrics.map(([label,value,note])=>'<div class="stat"><div class="label">'+esc(label)+'</div><div class="value">'+num(value,0)+'</div><div class="fine">'+esc(note)+'</div></div>').join('');
+ const filter=$('#ideas-filter').value;
+ const rows=(d.records||[]).filter(p=>filter==='all'||(filter==='active'?['pending','open'].includes(p.status):p.status==='closed'));
+ $('#ideas-records').innerHTML=rows.map(p=>{
+  const o=p.contract,title=o?p.underlying+' '+num(o.strike)+' '+o.type.toUpperCase()+' · '+o.expiry:p.underlying+' · '+(p.underlying_side==='long'?'CALL candidate':'PUT candidate');
+  const pct=p.status==='closed'?p.return_pct:p.status==='open'?p.mark_pct:null;
+  return '<details data-key="idea-'+esc(p.id)+'"><summary>'+esc(title)+' · '+esc(p.outcome||p.status)+(pct!==null&&pct!==undefined?' · '+num(pct,1)+'%':'')+' · '+when(p.opened_at||p.created_at)+'</summary>'+
+   '<p>'+esc(p.reason)+'</p><p>Underlying invalidation '+num(p.underlying_stop)+' · underlying target '+num(p.underlying_target)+'</p>'+
+   (o?'<p>Option entry $'+num(p.entry)+' · premium stop $'+num(p.premium_stop)+' · premium target $'+num(p.premium_target)+'</p><p>Last option bid / ask $'+num(p.last_quote?.bid)+' / $'+num(p.last_quote?.ask)+' · source '+when(p.last_quote?.ts)+'</p>':'<p>'+esc(p.waiting_reason||p.exit_reason)+'</p>')+
+   (p.status==='closed'?'<p>Simulated exit $'+num(p.exit)+' · net $'+num(p.pnl)+' · '+num(p.return_pct,1)+'% · '+esc(p.exit_reason)+'</p>':
+    p.status==='open'?'<p>Current modeled net $'+num(p.unrealized)+' · '+num(p.mark_pct,1)+'%</p>':'<p>'+esc(p.exit_reason||'Awaiting fresh contract quote')+'</p>')+
+   '<p class="fine">Best observed '+num(p.best_pct,1)+'% at '+when(p.peak_at)+' · samples '+num(p.samples,0)+' · largest quote gap '+num(p.max_gap_seconds,1)+'s</p>'+
+   '<p class="fine">Intraday exit deadline '+when(p.flatten_at)+' · '+esc(p.basis)+'</p>'+
+   '<p class="fine">Source setup '+esc(p.source_id)+' · '+esc(p.version)+'</p></details>';
+ }).join('')||empty('Waiting for a qualifying options idea','Fresh price triggers prioritize a chain and live quotes. Pending candidates are not option entries.');
+}
+$('#ideas-filter').onchange=()=>{if(lastState)renderOptionIdeas(lastState.option_ideas);};
+if(location.hash==='#option-ideas')document.querySelector('[data-tab="option-ideas"]').click();

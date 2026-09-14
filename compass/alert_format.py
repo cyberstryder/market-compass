@@ -13,6 +13,7 @@ CATEGORIES = {
     'end_of_day_algo': ('END OF DAY ALGO', 'End-of-day setup'),
     'swing': ('SWING', 'Multi-session swing'),
     'options_0dte': ('0DTE OPTIONS', 'Same-day expiry'),
+    'options_ideas': ('OPTIONS IDEAS', 'Intraday options'),
     'exposure': ('EXPOSURE LEVELS', 'Intraday'),
     'intraday': ('INTRADAY STOCKS', 'Intraday'),
     'system': ('SYSTEM', 'Service notice'),
@@ -105,6 +106,16 @@ def alert_identity(row, now=None):
         event = 'SETUP RESULT · ' + clean(p.get('outcome','unresolved')).upper()
         mode = '[INDEPENDENT SETUP TEST] — one unit; no broker order'
         origin = 'Compass setup study'
+    elif status.startswith('option_idea_'):
+        suffix=status.removeprefix('option_idea_')
+        event=('NEW IDEA' if suffix=='new' else 'OPTION UPDATE' if suffix.startswith('update_')
+               else 'OPTION EXIT' if suffix=='closed' else 'DATA GAP')
+        if suffix=='new' and now-p.get('opened_at',0)>120:
+            event='EXPIRED IDEA'
+        elif suffix.startswith('update_') and now-row['ts']>120:
+            event='DELAYED OPTION UPDATE'
+        mode='[SIMULATED OPTION IDEA] — one contract; intraday'
+        origin='Compass all-day options scanner'
     elif status == 'secondary_review':
         event = 'SECONDARY ' + clean(p.get('verdict', 'review')).replace('_', ' ').upper()
         if now >= p.get('expires_at', 0):
@@ -133,6 +144,8 @@ def message_for(row, now=None):
     now = time.time() if now is None else now
     p = row['payload']
     identity = alert_identity(row, now)
+    if p.get('status','').startswith('option_idea_'):
+        return option_idea_message(row, identity, now)
     if p.get('status') == 'secondary_review':
         return secondary_message(row, identity, now)
     lines = [f"**{identity['title']}**", f"{identity['mode']} · {identity['horizon']}"]
@@ -230,3 +243,34 @@ def secondary_message(row, identity, now):
               '\nReview ref: ' + clean(p.get('review_id'), 64) +
               '\nRule: ' + clean(p.get('rule_version'), 60) + ' | Event #' + str(row['id']))
     return '\n'.join(lines)[:1900 - len(footer)] + footer
+
+
+def option_idea_message(row, identity, now):
+    p=row['payload']
+    contract=p['contract']
+    lines=[f"**{identity['title']}**", identity['mode'],
+        clean(p['underlying'])+' '+number(contract['strike'])+' '+clean(contract['type']).upper()
+        +' · expires '+clean(contract['expiry']),
+        'Setup: '+clean(p.get('reason') or p.get('strategy')),
+        'Option entry $'+number(p['entry'])+' · premium stop $'+number(p['premium_stop'])
+        +' · premium target $'+number(p['premium_target']),
+        'Underlying invalidation '+number(p['underlying_stop'])+' · target '+number(p['underlying_target'])]
+    q=p.get('last_quote',{})
+    if q:
+        lines.append('Option bid / ask $'+number(q['bid'])+' / $'+number(q['ask'])
+                     +' · '+clock(q['ts'])+' · '+clean(p.get('option_source')))
+    if p.get('idea_status')=='closed':
+        lines.append('Simulated exit $'+number(p['exit'])+' · net $'+number(p['pnl'])
+                     +' ('+number(p['return_pct'])+'%) · '+clean(p['exit_reason']).replace('_',' '))
+    elif p.get('idea_status')=='unresolved':
+        lines.append('Observation gap: final option P&L and win/loss are unresolved.')
+    elif p.get('mark_pct') is not None:
+        lines.append('Modeled net return '+number(p['mark_pct'])+'% · current bid less exit allowance and fees')
+    if p.get('best_pct') is not None:
+        lines.append('Best observed net return '+number(p['best_pct'])+'% · '+clock(p['peak_at']))
+    lines.append('Intraday close deadline '+clock(p['flatten_at'])+'; expiry is not the holding period.')
+    lines.append('One-contract experiment. Includes $0.65 per side and $0.01 price allowances; not account P&L.')
+    if identity['event'] in ('EXPIRED IDEA','DELAYED OPTION UPDATE'):
+        lines.append('Delayed historical notification; not a current entry.')
+    lines.append('Source setup '+clean(p['source_id'],16)+' · Event #'+str(row['id'])+' · '+clock(row['ts']))
+    return '\n'.join(lines)[:1900]
