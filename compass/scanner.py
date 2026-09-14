@@ -13,6 +13,7 @@ from .alert_format import alert_context
 from .research import FEEDS, catalog
 from .vendor_freshness import confirmation
 from .flow_recovery import freshness as flow_freshness
+from .futures_variants import observe_bar
 
 VERSION='compass-scanner-v2'
 
@@ -288,6 +289,8 @@ class Scanner:
             facts[symbol]=f
             db.put(c,'scanner_features:'+symbol,f)
             db.put(c,'scanner_cursor:'+symbol,last)
+            if cfg.setup_study and engine.specification(symbol)['asset'] == 'future':
+                observe_bar(db,c,symbol,f,now)
             changed.append(symbol)
         candidates=[]
         for symbol in changed:

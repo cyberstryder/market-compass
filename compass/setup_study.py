@@ -5,6 +5,7 @@ separate experiments, not a realizable account equity curve. Only observations
 received after activation may open a trial; missing paths are not reconstructed.
 """
 from collections import defaultdict
+import logging
 from sqlalchemy import Table, Column, String, Float, JSON, Index, select, update
 from .store import meta, identity
 from .market import fresh, number, session, day
@@ -12,6 +13,7 @@ from .futures import futures_session
 from .instruments import tick_price
 from .simulation import bracket, exit_price, FILL_VERSION, FILL_DESCRIPTION
 from .quote_path import recorded_path
+from . import futures_variants
 
 VERSION = 'setup-outcomes-v2'
 MAX_GAP = 15
@@ -80,6 +82,8 @@ class SetupStudy:
             'last_quote_ts':q['ts'] if fresh(q, now) else None, 'samples':0, 'max_gap_seconds':0,
             'mfe_r':0, 'mae_r':0, 'pnl':None, 'r_multiple':None,
             'basis':'Independent one-unit trial; sampled executable quotes, one adverse entry/stop tick, illustrative fees; not account P&L'}
+        if future:
+            p['entry_variants'] = futures_variants.classify(self.db, c, signal, now, cause is None)
         c.execute(self.db.insert(trials).values(id=key, source_id=signal['id'], symbol=p['symbol'],
             strategy=p['strategy'], side=p['side'], version=VERSION, status=p['status'], started=now,
             finished=p['finished'], payload=p).on_conflict_do_nothing(index_elements=['id']))
@@ -146,7 +150,15 @@ class SetupStudy:
             self.observe(c,p,q,observed)
         report = self.db.get(c, 'setup_study:report', {})
         if now-report.get('at', 0) >= 30:
-            self.db.put(c, 'setup_study:report', report_for(c, now))
+            report = report_for(c, now)
+            self.db.put(c, 'setup_study:report', report)
+            groups = report['entry_variants']['groups']
+            logging.getLogger('uvicorn.error').info(
+                'Futures entry variants: version=%s cohorts=%s selected=%s unknown=%s unresolved=%s',
+                futures_variants.VERSION, len(groups),
+                {name:sum(g['selected'] for g in groups if g['variant']==name) for name in futures_variants.NAMES},
+                sum(g['unknown'] for g in groups if g['variant']=='first_per_trend'),
+                sum(g['unresolved'] for g in groups if g['variant']=='repeated'))
         self.db.put(c, 'setup_study:worker', {'at':now, 'version':VERSION})
 
     def observe(self, c, p, q, observed, recorded=False):
@@ -213,7 +225,7 @@ def report_for(c, now):
             mean_r=sum(p['r_multiple'] for p in closed)/len(closed) if closed else None,
             mean_seconds=sum(p['elapsed_seconds'] for p in closed)/len(closed) if closed else None))
     return {'at':now, 'version':VERSION, 'groups':groups, 'records':rows[:100], 'count':len(rows),
-        'truncated':truncated, 'window_days':30, 'limit':10000,
+        'truncated':truncated, 'window_days':30, 'limit':10000, 'entry_variants':futures_variants.report(rows),
         'basis':'Independent one-unit experiments grouped by contract, strategy, direction, version and alert cohort; overlapping results are not portfolio returns'}
 
 
@@ -221,4 +233,5 @@ def snapshot(db, c, cfg, now):
     return {**db.get(c, 'setup_study:report', {'groups':[], 'records':[], 'count':0}),
         'enabled':cfg.setup_study, 'activation':db.get(c, 'setup_study:activation'),
         'model_activation':db.get(c, 'setup_study:model_activation:'+VERSION),
+        'entry_variants_activation':db.get(c, futures_variants.PREFIX+'activation'),
         'worker':db.get(c, 'setup_study:worker'), 'max_entries':cfg.max_entries}
