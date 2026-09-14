@@ -28,6 +28,7 @@ from .futures import futures_session,selection
 from .scanner import snapshot as scanner_snapshot
 from .research import FEEDS
 from .projects import install as install_projects, run_sources, snapshot as projects_snapshot, records as project_records, PROJECTS
+from .secondary import Secondary, snapshot as secondary_snapshot, reviews as secondary_reviews
 
 def create_app(cfg=None):
     cfg=cfg or Config()
@@ -62,6 +63,7 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(run_sources(db,cfg)))
         if cfg.role in {"all","engine"}:
             tasks.extend([asyncio.create_task(Engine(db,cfg).run()),asyncio.create_task(deliver(db,cfg))])
+            tasks.append(asyncio.create_task(Secondary(db,cfg).run()))
         tasks.append(asyncio.create_task(heartbeat()))
         yield
         if collectors: await collectors.close()
@@ -175,6 +177,7 @@ def create_app(cfg=None):
                 "health":health,"workers":workers,"quotes":watch,
                 "scanner":scanner_snapshot(db,c,cfg,now),
                 "projects":projects_snapshot(db,c,cfg,now),
+                "secondary":secondary_snapshot(db,c,now),
                 "quote_checks":checks,"delivery":outbox_status(db,c,now),
                 "futures":{"session":futures_session(now),"selected":selection(cfg.futures,now),
                     "contracts":list(db.prefix(c,"contract:").values()),
@@ -199,6 +202,18 @@ def create_app(cfg=None):
     @app.get("/api/projects")
     def get_projects():
         with db.tx() as c: return projects_snapshot(db,c,cfg,time.time())
+
+    @app.get("/api/secondary")
+    def get_secondary():
+        with db.tx() as c: return secondary_snapshot(db,c,time.time())
+
+    @app.get("/api/secondary/record")
+    def get_secondary_record(id:str):
+        if not re.fullmatch(r"[a-f0-9]{64}",id): raise HTTPException(422,"Invalid review identity")
+        with db.tx() as c:
+            row=c.execute(select(secondary_reviews).where(secondary_reviews.c.id==id)).mappings().first()
+        if row is None: raise HTTPException(404,"Review not found")
+        return dict(row)
 
     @app.get("/api/projects/record")
     def get_project_record(project:str,id:str):
@@ -238,7 +253,7 @@ def create_app(cfg=None):
 
     @app.get("/api/events")
     def get_events(kind:str="alert",limit:int=100):
-        if kind not in {"alert","alert_delivery","signal","bar","daily","flow","vendor_flow","mapping","exposure","matrix_raw","research","opportunity","opportunity_update"}:
+        if kind not in {"alert","alert_delivery","signal","bar","daily","flow","vendor_flow","mapping","exposure","matrix_raw","research","opportunity","opportunity_update","secondary_review","secondary_error"}:
             raise HTTPException(400,"Unsupported event kind")
         with db.tx() as c: return db.recent(c,kind,limit=min(max(limit,1),1000))
 
@@ -308,6 +323,7 @@ def create_app(cfg=None):
         context['levels']={key:value for key,value in context['levels'].items() if key in scope or '@' in key}
         context['scanner']['opportunities']=context['scanner']['opportunities'][:20]
         context['projects']['records']=[r for r in context['projects']['records'] if not mentioned or r['symbol'] in scope][:15]
+        context['secondary']['reviews']=[r for r in context['secondary']['reviews'] if not mentioned or r['symbol'] in scope][:10]
         context['research']={}
         with db.tx() as c:
             context['technical_context']={symbol:db.get(c,'scanner_features:'+symbol) for symbol in scope}
@@ -347,6 +363,9 @@ def create_app(cfg=None):
             "External project observations are source signals, not verified broker executions. Keep their histories separate. "
             "Morning Algo checkpoints measure underlying moves; Smoothers WIN means its underlying target was reached, not option profit. "
             "Integration context is captured after source signals; historical imports have no reconstructed entry context. "
+            "Secondary reviews are frozen decisions after original signals and before their own secondary alerts. Originals remain independent. "
+            "Secondary supported is a versioned underlying-context filter, not a predicted win rate, option entry or broker order. "
+            "Its midpoint checkpoint comparisons are before costs, anchored at secondary decision time, and cannot establish option profitability. "
             "Explain triggered, watch, blocked, invalidated and expired setups distinctly. A scanner match is not a guaranteed trade. "
             "Vendor research with an unknown source time cannot establish a current market condition. "
             "Do not claim the prop-firm drawdown model is implemented: only configured simulation limits apply. "

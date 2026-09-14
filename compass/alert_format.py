@@ -101,6 +101,12 @@ def alert_identity(row, now=None):
     elif status == 'setup_triggered':
         event = 'EXPIRED SETUP' if now >= p.get('expires_at', 0) else 'SETUP'
         mode = '[SIMULATED SETUP] — no broker order'
+    elif status == 'secondary_review':
+        event = 'SECONDARY ' + clean(p.get('verdict', 'review')).replace('_', ' ').upper()
+        if now >= p.get('expires_at', 0):
+            event = 'SECONDARY HISTORICAL · ' + clean(p.get('verdict', 'review')).replace('_', ' ').upper()
+        mode = '[SECONDARY REVIEW] — underlying context; no broker order'
+        origin = 'Compass review of ' + clean(p.get('review_source'), 80)
     direction = clean(p.get('side', '')).upper()
     if direction in ('EXIT', 'FLAT'):
         direction = ''
@@ -123,6 +129,8 @@ def message_for(row, now=None):
     now = time.time() if now is None else now
     p = row['payload']
     identity = alert_identity(row, now)
+    if p.get('status') == 'secondary_review':
+        return secondary_message(row, identity, now)
     lines = [f"**{identity['title']}**", f"{identity['mode']} · {identity['horizon']}"]
     if p.get('status') == 'notification_test':
         lines[0] = '[TEST — NO TRADE] **SYSTEM | DELIVERY CHECK**'
@@ -186,3 +194,30 @@ def message_for(row, now=None):
     if evidence_lines:
         content += '\nEvidence: ' + '; '.join(evidence_lines[:5])
     return content[:1900 - len(footer)] + footer
+
+
+def secondary_message(row, identity, now):
+    p = row['payload']
+    lines = [f"**{identity['title']}**", identity['mode'],
+             'Original strategy continues independently.', 'Setup: ' + identity['setup'],
+             'Assessment: ' + clean(p.get('reason'), 600)]
+    if p.get('reference_price') is not None:
+        lines.append('Review reference: ' + number(p['reference_price']) + ' · ' + clean(p.get('market_symbol'), 80))
+    if p.get('price_basis') == 'linked_contract_context':
+        lines.append('Dated-contract context; original continuous-chart stop/target are not validated.')
+    lines.append('Option selection and account risk are not approved by this review.')
+    if p.get('optional_missing'):
+        lines.append('Context limits: ' + '; '.join(clean(v, 100) for v in p['optional_missing']))
+    if now >= p.get('expires_at', 0):
+        lines.append('HISTORICAL — delivery exceeded the review window. Do not treat as a current entry.')
+    if p.get('source_time') is not None:
+        lines.append('Original: ' + clock(p['source_time']))
+    if p.get('available_at') is not None and p['available_at'] != p.get('source_time'):
+        lines.append('Source candidate created: ' + clock(p['available_at']))
+    if p.get('quote_ts') is not None:
+        lines.append('Quote: ' + clock(p['quote_ts']))
+    footer = ('\nReview: ' + clock(row['ts']) + '\nSource: ' + identity['origin'] +
+              '\nOriginal ref: ' + clean(p.get('source_record_id'), 120) +
+              '\nReview ref: ' + clean(p.get('review_id'), 64) +
+              '\nRule: ' + clean(p.get('rule_version'), 60) + ' | Event #' + str(row['id']))
+    return '\n'.join(lines)[:1900 - len(footer)] + footer

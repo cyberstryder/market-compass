@@ -1,5 +1,10 @@
 # Project connections — September 14, 2026
 
+Update: [Secondary review](secondary-review.md) adds a separate Compass
+assessment after each new original candidate and before its own notification.
+The original services continue independently. Frozen reviews and paired
+observations do not modify their rules or execution routes.
+
 Market Compass observes Morning Algo, New Smoothers and the MNQ/MGC automated
 TradingView strategies. Original rules, source databases and execution routes
 remain independent. Integration downtime cannot prevent an original entry/exit.

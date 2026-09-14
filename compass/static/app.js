@@ -7,7 +7,7 @@ const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notati
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
 const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
-const titles={projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
+const titles={secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav,.tab').forEach(n=>n.classList.remove('active'));b.classList.add('active');$('#'+b.dataset.tab).classList.add('active');$('#title').textContent=titles[b.dataset.tab];});
 $('#logout').onclick=async()=>{await fetch('/logout',{method:'POST'});location.href='/login';};
 let lastState=null,first=true,testEvent=null;
@@ -56,6 +56,7 @@ function render(d){
  $('#matrix').innerHTML=vendorMatrix(Object.fromEntries(Object.entries(d.matrix).slice(0,6)));
  renderScanner(d.scanner);
  renderProjects(d.projects);
+ renderSecondary(d.secondary);
  renderStrikeMap(d.matrix);
  updateResearchChoices(d.scanner.feeds);
  $('#vendor-flows').innerHTML=vendorFlow(d.matrix['matrix:unusual_activity']);
@@ -164,4 +165,37 @@ function renderProjects(data){
 }
 $('#project-filter').onchange=()=>{if(lastState)renderProjects(lastState.projects);};
 if(location.hash==='#projects')document.querySelector('[data-tab="projects"]').click();
+
+function renderSecondary(data){
+ if(!data)return;
+ const names={morning:'Morning Algo',smoothers:'Smoothers',futures:'TradingView futures',compass_futures:'Compass futures'};
+ const labels={supported:'Supported',watch:'Watch',rejected:'Rejected',insufficient_data:'Insufficient data'};
+ const status=data.status||{}, count=data.counts||{};
+ const stale=!status.at||Date.now()/1000-status.at>25;
+ $('#secondary-status').textContent=(status.enabled?(stale?'Review worker update is stale. ':'Review worker active. '):'Awaiting review worker. ')+
+  'Originals run independently. Started '+when(data.activation?.at)+'. Last check '+when(status.at)+'. Comparison refreshed '+when(data.report_at)+'. '+data.version+
+  (data.window?.truncated?' · Comparison limited to the latest 5,000 reviews.':' · Rolling 30-day comparison.');
+ $('#secondary-stats').innerHTML=Object.entries(labels).map(([key,label])=>'<div class="stat"><div class="label">'+label+'</div><div class="value">'+num(count[key]||0,0)+'</div><div class="fine">'+(key==='supported'?'Selected by the secondary rules':key==='insufficient_data'?'Excluded from directional comparison':'Retained for comparison')+'</div></div>').join('');
+ const horizon=Number($('#secondary-horizon').value);
+ const groups=(data.comparisons||[]).filter(g=>$('#secondary-filter').value==='all'||g.project===$('#secondary-filter').value);
+ const pct=v=>v===null||v===undefined?'—':num(v,3)+'%';
+ $('#secondary-comparison').innerHTML=groups.length?table(['Source / symbol / strategy','Measured / eligible','Selected','All candidates: mean','Selected: mean','Filter per candidate','Missed positive / avoided negative','Pending / missing / session end'],groups.map(g=>{const h=g.horizons.find(h=>h.minutes===horizon);return [esc(g.label)+' · '+esc(g.symbol)+' · '+esc(g.side)+'<br><span class="fine">'+esc(g.strategy)+' · '+esc(g.source_version)+'</span>',num(h.measured,0)+' / '+num(h.eligible,0),num(h.selected,0),pct(h.original_mean_pct),pct(h.selected_mean_pct),pct(h.filter_per_candidate_pct),num(h.missed_positive,0)+' / '+num(h.avoided_negative,0),num(h.pending,0)+' / '+num(h.missing,0)+' / '+num(h.session_boundary,0)];})):empty('Waiting for forward candidates','Every supported, watch and rejected candidate is measured from the same review-time reference. The first comparison needs a completed checkpoint.');
+ const weekly=groups.filter(g=>g.project==='smoothers');
+ $('#secondary-weekly').innerHTML=weekly.length?'<h3>Smoothers weekly target outcomes</h3>'+table(['Symbol / strategy','All resolved: target hits','Selected resolved: target hits'],weekly.map(g=>[esc(g.symbol)+' · '+esc(g.side)+' · '+esc(g.strategy),num(g.weekly.target_hits,0)+' / '+num(g.weekly.resolved,0),num(g.weekly.selected_target_hits,0)+' / '+num(g.weekly.selected_resolved,0)]))+'<p class="fine">These are the original underlying target tests. Option observations remain available in each full record; a target hit is not an option profit.</p>':'';
+ const rows=data.reviews.filter(r=>$('#secondary-filter').value==='all'||r.project===$('#secondary-filter').value);
+ $('#secondary-reviews').innerHTML=rows.length?rows.map(r=>{
+  const d=r.decision,m=r.measurements;
+  return '<details data-key="secondary-'+esc(r.id)+'"><summary><strong>'+esc(names[r.project])+' | SECONDARY '+esc(labels[r.verdict].toUpperCase())+' | '+esc(r.symbol)+' · '+esc(r.side.toUpperCase())+'</strong> · '+when(r.decided_at)+'</summary>'+
+   '<p>'+esc(r.candidate.strategy)+' · '+esc(d.reasons.join('; '))+'</p><p class="fine">Original reference '+when(r.source_ts)+' · candidate available '+when(r.candidate.available_at??r.source_ts)+' · review delay '+num(d.latency_seconds,1)+'s · '+esc(r.version)+'</p>'+
+   '<p>Review reference '+num(m.anchor)+' · '+esc(m.market_symbol||'Independent quote unavailable')+'</p>'+
+   (d.support.length?'<p>Support: '+esc(d.support.join('; '))+'</p>':'')+(d.cautions.length?'<p>Watch points: '+esc(d.cautions.join('; '))+'</p>':'')+
+   '<p class="fine">'+esc(d.optional_missing.join('; '))+'</p>'+
+   table(['Checkpoint','Observation','Direction-adjusted move'],Object.entries(m.horizons||{}).map(([h,p])=>[h+'m',esc(p.status)+(p.source_ts?' · '+when(p.source_ts):''),pct(p.return_pct)]))+
+   '<p class="fine">'+esc(m.basis)+' · samples '+num(m.samples,0)+' · largest sampling gap '+num(m.max_gap_seconds,1)+'s. Sampled excursions are not tick-complete.</p>'+
+   '<p class="fine">Original ref: '+esc(r.source_id)+'</p><p><a href="/api/secondary/record?id='+encodeURIComponent(r.id)+'" target="_blank" rel="noreferrer">Frozen inputs and original outcome record</a></p></details>';
+ }).join(''):empty('No secondary assessments yet','New source candidates will receive a separately labeled review. Historical originals will not be turned into fresh trade alerts.');
+}
+$('#secondary-filter').onchange=()=>{if(lastState)renderSecondary(lastState.secondary);};
+$('#secondary-horizon').onchange=()=>{if(lastState)renderSecondary(lastState.secondary);};
+if(location.hash==='#secondary')document.querySelector('[data-tab="secondary"]').click();
 poll();

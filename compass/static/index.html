@@ -5,12 +5,22 @@
 <nav><button class="nav active" data-tab="overview">◈ Overview</button><button class="nav" data-tab="exposure">◎ Exposure</button>
 <button class="nav" data-tab="scanner">↗ Live scanner</button><button class="nav" data-tab="research">▤ Research desk</button>
 <button class="nav" data-tab="projects">▦ Connected projects</button>
+<button class="nav" data-tab="secondary">◇ Secondary review</button>
 <button class="nav" data-tab="flow">≋ Options flow</button><button class="nav" data-tab="trades">↗ Simulated trades</button>
 <button class="nav" data-tab="assistant">✧ Ask Compass</button><button class="nav" data-tab="health">◷ Feed health</button></nav>
 <div class="sidebar-foot"><span class="pill">SIMULATION ONLY</span><p>No broker execution</p><button id="logout" class="quiet">Sign out</button></div></aside>
 <main class="workspace"><header><div><p class="eyebrow">MARKET INTELLIGENCE</p><h1 id="title">Session overview</h1></div>
 <div class="header-right"><span id="market" class="pill">Checking session</span><p id="clock" class="mono"></p></div></header>
 <div id="connection" class="banner">Connecting to the shared market state…</div>
+<section id="secondary" class="tab">
+<div class="banner">Compass reviews each original candidate independently. Supported is a research assessment of the underlying direction. The original alerts and automation keep running.</div>
+<p id="secondary-status" class="fine"></p><div id="secondary-stats" class="stats"></div>
+<article class="panel"><div class="panel-head"><h2>Originals versus Compass selection</h2><label for="secondary-horizon">Checkpoint <select id="secondary-horizon"><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60" selected>60 minutes</option></select></label></div>
+<p class="fine">Both columns use the same quote at review time and the same later checkpoint. Returns are direction-adjusted underlying midpoint changes before costs. They are not option returns or broker P&amp;L. Missing data are excluded and counted.</p>
+<div id="secondary-comparison"></div><div id="secondary-weekly"></div>
+<p class="fine">Watch and rejected candidates remain in the comparison. A missed positive move is shown alongside an avoided negative move. The per-candidate filter result assigns zero exposure to unselected candidates; it is not portfolio performance. No automatic rule optimization runs.</p></article>
+<article class="panel"><div class="panel-head"><h2>Secondary assessments</h2><label for="secondary-filter">Source <select id="secondary-filter"><option value="all">All sources</option><option value="morning">Morning Algo</option><option value="smoothers">Smoothers</option><option value="futures">TradingView futures</option><option value="compass_futures">Compass futures</option></select></label></div><div id="secondary-reviews"></div></article>
+</section>
 <section id="projects" class="tab">
 <div class="banner">Signals and outcomes from Morning Algo, New Smoothers, and the automated futures strategies. Market context is captured separately; each project keeps its original rules and results.</div>
 <div id="project-status" class="stats"></div>

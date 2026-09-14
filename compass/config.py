@@ -39,6 +39,9 @@ class Config:
     smoothers_token: str = field(default_factory=lambda: env("SMOOTHERS_INTEGRATION_TOKEN"))
     futures_observer_token: str = field(default_factory=lambda: env("FUTURES_OBSERVER_TOKEN"))
     observer_streams: tuple = field(default_factory=lambda: tuple(s for s in env("FUTURES_OBSERVER_STREAMS").split(",") if s))
+    secondary: bool = field(default_factory=lambda: env("SECONDARY_REVIEW_ENABLED", "true") == "true")
+    secondary_alerts: bool = field(default_factory=lambda: env("SECONDARY_REVIEW_ALERTS", "true") == "true")
+    secondary_native: bool = field(default_factory=lambda: env("SECONDARY_REVIEW_COMPASS_FUTURES", "true") == "true")
 
     @property
     def watch_symbols(self):
