@@ -74,3 +74,79 @@ def vendor_clocks(db,c,now):
             item_clock_count=sum(i.get('source_ts') is not None for i in item.get('items',[])),
             item_count=len(item.get('items',[]))))
     return result
+
+
+def input_readiness(db,c,cfg,now):
+    from .futures import futures_session,lead_contract,risk_day
+    from .scanner import bars_from_window,features
+    from .universe import data_symbols
+    from .market import is_open,calendar,day,session
+    from .secondary import daily_context
+    import pandas as pd
+    quotes=db.prefix(c,'quote:')
+    windows=db.prefix(c,'bar_window:')
+    def history(symbol):
+        stamps=sorted({r[0] for r in windows.get('bar_window:'+symbol,[]) if r[0]+60<=now})
+        last=stamps[-1] if stamps else None
+        missing=[] if last is None else [t for t in range(int(last)-29*60,int(last)+1,60) if t not in stamps]
+        return dict(bars=len(stamps),last_completed_at=last+60 if last is not None else None,
+            last_30_complete=len(stamps)>=30 and not missing,missing_recent_minutes=len(missing),
+            minute_current=last is not None and 0<=now-last-60<=90)
+    stocks=[]
+    for symbol in data_symbols(db,c,cfg,now):
+        q=quotes.get('quote:'+symbol)
+        stocks.append(dict(symbol=symbol,quote_current=fresh(q,now),quote_ts=(q or {}).get('ts'),**history(symbol)))
+    stock_open=is_open(now)
+    coverage=db.get(c,'secondary:data_status',{})
+    daily=[{k:r.get(k) for k in ('symbol','daily_ready','daily_through','daily_reason','collection_enabled')}
+           for r in coverage.get('rows',[]) if 'smoothers' in r.get('projects',[])]
+    cal=calendar('XNYS')
+    next_label=cal.date_to_session(pd.Timestamp(day(now))+pd.Timedelta(days=1),direction='next')
+    next_open=cal.session_open(next_label).timestamp()
+    for item in daily:
+        future=daily_context(db,c,item['symbol'],next_open)
+        received=future.get('received')
+        hours=session(future['through']) if future.get('through') else None
+        item.update(next_session_history_ready=bool(future.get('status')=='ready' and hours and
+            received is not None and hours[1]<=received<=now),next_session_through=future.get('through'),
+            latest_daily_received=received)
+    dow=[]
+    for root in ('YM','MYM'):
+        raw=lead_contract(root,risk_day(now))['raw_symbol']
+        matching=[k[6:] for k in quotes if k.startswith('quote:'+raw+'@')]
+        symbol=max(matching,key=lambda s:quotes['quote:'+s].get('ts',0)) if matching else raw
+        q=quotes.get('quote:'+symbol)
+        rows=bars_from_window(windows.get('bar_window:'+symbol,[]))
+        h=history(symbol)
+        # Structural history is evaluated at its own last completed bar. It is
+        # never presented as fresh input for a current decision.
+        f=features(symbol,rows,h['last_completed_at']) if h['last_completed_at'] else {}
+        recent=[]
+        if q:
+            recent=c.execute(select(events.c.ts,events.c.received,events.c.payload).where(
+                events.c.kind=='quote',events.c.symbol==symbol,events.c.ts>=q['ts']-120,
+                events.c.ts<=q['ts'],events.c.received<=now).order_by(events.c.ts.desc()).limit(1201)).all()
+        usable=sorted(r.ts for r in recent[:1200] if quote_reason(r)=='usable')
+        dow.append(dict(symbol=symbol,expected_contract=raw,market_open=futures_session(now,symbol)['is_open'],
+            quote_ts=(q or {}).get('ts'),quote_current=fresh(q,now),**h,
+            history_status=f.get('status','missing'),history_reason=f.get('reason'),
+            htf15_completed_bars=f.get('htf15_completed_bars'),htf15_bias=f.get('htf15_bias'),
+            usable_recent_quotes=len(usable),quote_window_seconds=120,quote_window_truncated=len(recent)>1200,
+            quote_window_first=usable[0] if usable else None,quote_window_last=usable[-1] if usable else None,
+            max_recorded_gap=max((b-a for a,b in zip(usable,usable[1:])),default=None)))
+    report=db.get(c,'setup_study:report',{})
+    groups=[{k:g.get(k) for k in ('symbol','strategy','side','selected','closed','open','unresolved','excluded')}
+            for g in report.get('entry_variants',{}).get('groups',[]) if g.get('variant')=='repeated']
+    return dict(at=now,stocks_market_open=stock_open,stock_count=len(stocks),
+        stock_complete_recent_history=sum(r['last_30_complete'] for r in stocks),
+        stock_current_quotes=sum(r['quote_current'] for r in stocks),
+        stock_current_minutes=sum(r['minute_current'] for r in stocks),
+        stock_history_gaps=[r for r in stocks if not r['last_30_complete']],
+        stock_focus=[r for r in stocks if r['symbol'] in ('TGT','SBUX')],
+        smoother_coverage_at=coverage.get('at'),smoother_daily_count=len(daily),
+        next_stock_session=str(next_label.date()),
+        smoother_next_session_ready=sum(r['next_session_history_ready'] for r in daily),
+        smoother_daily_ready=sum(bool(r['daily_ready']) for r in daily),smoother_daily=daily,
+        dow=dow,futures_report_at=report.get('at'),futures_report_truncated=report.get('truncated'),
+        futures_groups=groups,futures_variant_activation=db.get(c,'futures-entry-variants-v1:activation'),
+        note='Closed-session quote/minute age is expected; structural history does not establish live readiness. Overnight acceptance requires new session observations.')

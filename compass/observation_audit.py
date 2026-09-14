@@ -11,7 +11,7 @@ from .secondary import reviews, comparisons, VERSION as REVIEW_VERSION
 from .store import events
 from .universe import data_symbols
 
-VERSION = 'stock-observation-audit-v2'
+VERSION = 'stock-observation-audit-v3'
 # First whole second after PR23 collector rollout completed. Earlier PR22
 # retained quotes may exist, but this conservative boundary has both fixes.
 CORRECTED_SINCE = 1789414991.0
@@ -91,14 +91,22 @@ def capture(db,cfg,now):
         if previous.get('version')==VERSION and now-previous.get('at',0)<600:
             return
         result = build(db,c,cfg,now)
-        from .feed_forensics import futures_gaps, vendor_clocks
+        from .feed_forensics import futures_gaps, vendor_clocks, input_readiness
         result['futures_gaps'] = futures_gaps(db,c,now)
         result['vendor_clocks'] = vendor_clocks(db,c,now)
+        result['input_readiness'] = input_readiness(db,c,cfg,now)
         db.put(c,'observation_audit:report',result)
     # Private operational logs contain only bounded measurement diagnostics,
     # never original webhook bodies, credentials, or broker/account details.
-    summary = {k:v for k,v in result.items() if k not in ('comparisons','checkpoints','focus','futures_gaps','vendor_clocks')}
+    summary = {k:v for k,v in result.items() if k not in ('comparisons','checkpoints','focus','futures_gaps','vendor_clocks','input_readiness')}
     LOG.info('Stock observation audit: %s',json.dumps(summary,sort_keys=True))
+    inputs=result['input_readiness']
+    LOG.info('Input readiness audit: %s',json.dumps({k:v for k,v in inputs.items() if k not in ('smoother_daily','stock_history_gaps')},sort_keys=True))
+    for section in ('smoother_daily','stock_history_gaps'):
+        for row in inputs[section][:200]:
+            LOG.info('Input readiness %s: %s',section,json.dumps(row,sort_keys=True))
+        if len(inputs[section])>200:
+            LOG.info('Input readiness log limit: section=%s total=%s',section,len(inputs[section]))
     LOG.info('Feed forensics futures: %s',json.dumps(result['futures_gaps'],sort_keys=True))
     for row in result['vendor_clocks']:
         LOG.info('Feed forensics vendor: %s',json.dumps(row,sort_keys=True))

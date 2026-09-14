@@ -57,3 +57,19 @@ source clocks despite missing aggregate clocks. They must be judged individually
 Unusual-flow's latest event had stopped before the cash close; subsequent
 post-close aging is not itself proof of feed failure. Intraday cached matrix
 delays remain a vendor issue pending an endpoint refresh guarantee.
+
+## Before-session input acceptance
+
+The operational audit now separates current quote/minute freshness from retained
+history structure during closed sessions. It checks the full collected stock
+universe for 30 consecutive recent minute slots; exposes TGT/SBUX input details
+and cached Smoothers daily readiness; and checks the expected December Dow
+contracts for archived two-sided quote samples, within-window source gaps,
+completed minute history and completed 15-minute context. Historical feature
+checks run at their last completed bar and never establish current eligibility.
+
+Futures outcome counts are the prospective repeated-entry cohort, with its
+activation clock and report time, so the old September gaps stay identifiable.
+The existing ten-minute audit continues across the overnight reopen. A closed
+session with stale quote timestamps is not called a live-feed failure, and no
+future-session trial or successful checkpoint is inferred before it occurs.
