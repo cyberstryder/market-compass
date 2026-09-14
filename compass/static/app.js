@@ -7,7 +7,7 @@ const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notati
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
 const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
-const titles={scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
+const titles={projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav,.tab').forEach(n=>n.classList.remove('active'));b.classList.add('active');$('#'+b.dataset.tab).classList.add('active');$('#title').textContent=titles[b.dataset.tab];});
 $('#logout').onclick=async()=>{await fetch('/logout',{method:'POST'});location.href='/login';};
 let lastState=null,first=true,testEvent=null;
@@ -55,6 +55,7 @@ function render(d){
  $('#exposures').innerHTML=ex.length?'<div class="exposure-grid">'+ex.map(([s,e])=>'<article class="panel"><div class="panel-head"><h2>'+esc(s)+'</h2>'+tag(e.status)+'</div><p>GEX '+compact(e.gex)+' · local vanna proxy '+compact(e.vex)+'</p><p class="fine">'+esc(e.source)+' · '+num((e.coverage??0)*100,1)+'% GEX input coverage · '+num(e.usable_gex,0)+' / '+num(e.contracts,0)+' contracts</p><p class="fine">Missing/invalid OI '+num(e.missing_oi,0)+' · gamma '+num(e.missing_gamma,0)+' · contract metadata '+num(e.invalid_contract,0)+' (counts may overlap)</p><p class="fine">Chain checked '+when(e.asof)+' · underlying source '+when(e.spot_asof)+'</p><p class="fine">'+esc(e.reason)+'</p><details data-key="local-'+esc(s)+'"><summary>Strike exposure & methodology</summary><p class="fine">'+esc(e.sign_model)+'. '+esc(e.gex_units)+'; '+esc(e.vex_units)+'. Vanna input coverage '+num((e.vex_coverage??0)*100,1)+'%. OI dates: '+esc((e.oi_dates||[]).join(', ')||'provider date unavailable')+'</p>'+table(['Strike','GEX','Vanna proxy'],(e.strikes||[]).slice(0,200).map(r=>[num(r.strike),compact(r.gex),compact(r.vex)]))+'</details></article>').join('')+'</div>':empty('Exposure is waiting for input','A fresh underlying price, chain, Greeks and open interest are required.');
  $('#matrix').innerHTML=vendorMatrix(Object.fromEntries(Object.entries(d.matrix).slice(0,6)));
  renderScanner(d.scanner);
+ renderProjects(d.projects);
  renderStrikeMap(d.matrix);
  updateResearchChoices(d.scanner.feeds);
  $('#vendor-flows').innerHTML=vendorFlow(d.matrix['matrix:unusual_activity']);
@@ -148,4 +149,19 @@ $('#scanner-filter').onchange=()=>{if(lastState)renderScanner(lastState.scanner)
 $('#research-source').onchange=loadResearch;
 $('#map-symbol').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};
 $('#map-metric').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};
+function renderProjects(data){
+ if(!data)return;
+ const names=Object.fromEntries(data.projects.map(p=>[p.project,p.name]));
+ $('#project-status').innerHTML=data.projects.map(p=>'<div class="stat"><div class="label">'+esc(p.name)+'</div><p>'+tag(p.status)+'</p><div class="value">'+num(p.record_count,0)+'</div><div class="fine">Saved source records</div><p class="fine">'+(p.project==='futures'?(p.streams||[]).map(s=>esc(s.stream.toUpperCase())+' · '+tag(s.status)+'<br>'+when(s.last_received)).join('<br>'):('Source checked '+when(p.checked_at)+'<br>Last scan '+num(p.cycle_seconds,2)+'s · target 5s'))+'</p></div>').join('');
+ const filter=$('#project-filter').value;
+ const rows=data.records.filter(r=>filter==='all'||r.project===filter);
+ $('#project-records').innerHTML=rows.length?rows.map(r=>{
+  const ctx=r.context||{},o=r.outcome||{};
+  const result=r.project==='morning'?(o.return_pct==null?'Awaiting checkpoints':num(o.return_pct)+'% underlying'):
+    r.project==='smoothers'?String(o.status||r.status)+' · underlying target test':String(o.prev_position||'')+' → '+String(o.position||'')+' · emulator';
+  return '<details data-key="project-'+esc(r.project+'-'+r.id)+'"><summary><strong>'+esc(r.symbol)+'</strong> · '+esc(names[r.project])+' · '+tag(r.status)+' · '+when(r.source_ts)+'</summary><p>'+esc(r.strategy)+' v'+esc(r.version)+' · '+esc(r.stream)+' · '+esc(r.side)+'</p>'+table([r.project==='futures'?'Emulator fill':'Entry / target','Latest outcome','Context captured'],[[r.project==='futures'?num(r.fill_price):num(r.entry)+' / '+num(r.target),esc(result),when(ctx.captured_at)]])+'<p class="fine">'+esc(ctx.timing_note)+'</p><h3>Recorded context</h3><pre>'+esc(JSON.stringify(ctx,null,2))+'</pre><h3>Source measurements</h3><pre>'+esc(JSON.stringify({outcome:o,option:r.option,checkpoints:r.checkpoints,option_sample_count:r.option_sample_count,original:r.original},null,2))+'</pre><p><a href="/api/projects/record?project='+encodeURIComponent(r.project)+'&amp;id='+encodeURIComponent(r.id)+'" target="_blank" rel="noreferrer">Full source record</a></p></details>';
+ }).join(''):empty('No matching source observations','Connected sources can be healthy while no strategy signal has fired.');
+}
+$('#project-filter').onchange=()=>{if(lastState)renderProjects(lastState.projects);};
+if(location.hash==='#projects')document.querySelector('[data-tab="projects"]').click();
 poll();
