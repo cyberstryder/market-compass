@@ -351,8 +351,10 @@ class Scanner:
             if item['status'] in ('triggered','watch'):
                 for candidate_id in item['candidate_ids']:
                     trial_signal={**candidate_map[candidate_id],'context':f}
-                    engine.study.start(c,trial_signal,now,engine.specification(symbol),
+                    trial_id=engine.study.start(c,trial_signal,now,engine.specification(symbol),
                         alerted=item['status']=='triggered',primary=candidate_id==item['id'])
+                    if candidate_id==item['id']:
+                        item['setup_trial_id']=trial_id
             if item['status']=='triggered':
                 db.put(c,'scanner_cooldown:'+symbol+':'+item['side'],now)
                 # Preserve price invalidation even if the executable quote moved.
@@ -372,7 +374,6 @@ class Scanner:
                         item['paper_status']='entered' if filled else 'risk_or_position_blocked'
                         if symbol in cfg.watch_symbols:
                             db.put(c,'pending_options:'+item['id'],{'signal':signal,'expires_at':item['expires_at'],'status':'waiting'})
-                    item['setup_trial_id']=identity('setup-outcomes-v1',item['id']) if cfg.setup_study else None
                     db.append(c,'alert','scanner',symbol,now,{**item,'status':'setup_triggered'},'setup:'+item['id'])
             current=db.get(c,'opportunity:'+symbol+':'+item['side'],{})
             if not (current.get('status')=='triggered' and now<current.get('expires_at',0) and item['status'] in ('watch','blocked')):

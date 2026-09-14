@@ -46,6 +46,29 @@ trials, disclose truncation and show the latest 100 individual records; all rows
 remain retained. Owner-authenticated full-record endpoints expose each trial.
 Primary alerted experiments emit separate **SETUP RESULT** notifications.
 
+## September 14 reliability release
+
+New trials use `setup-outcomes-v2`. They inspect retained live quotes in source-time
+order, so a slow engine cycle can still observe a target before a later reversal.
+A quote must have been fresh when the collector stored it. The engine reads at
+most 1,200 records per symbol per pass and carries a backlog forward. It does not
+reconstruct fills from bars, delayed historical quotes, or another session. A
+true gap over 15 seconds remains unresolved, with the last/next timestamps and
+gap reason saved. Records expose replayed-sample counts, observed exit time and
+actual processing time. Older unresolved trials are not retroactively rescored.
+
+New portfolio entries and independent trials share `sampled-bracket-v2`: the same
+tick-rounded entry, explicit invalidation, outward stop and 2R target. Both cap
+target fills at that target and charge an adverse tick on market/stop exits.
+The portfolio retains its position/size/loss constraints and conservative bar-stop
+fallback; the independent study has one unit, overlapping trials and a recorded
+quote path. These are still different experiments, not interchangeable account
+returns. Historical closed records and open legacy models are preserved.
+
+Source IDs prevent deployment from opening the same historical candidate again.
+Model activation is retained separately from the original study start. No research
+entry limit or original-project strategy is changed by this release.
+
 ## Additional futures
 
 Optional `EXTRA_FUTURES_SYMBOLS` defaults to MGC/GC, SIL/SI, MCL/CL and YM/MYM, using

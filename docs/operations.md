@@ -1,5 +1,35 @@
 # Operations: first test session
 
+## September 14 data and observation fixes
+
+- Index-overview objects now retain their individual `lastUpdated` clocks.
+  A current SPY row cannot make an older USO row current. The aggregate clock
+  stays unknown when the vendor does not supply one; Research coverage shows
+  each row's clock and reports mixed freshness explicitly. Generic update dates
+  on calendars or disclosures are not interpreted as market observation times.
+- Core SPY/QQQ/IWM matrices are selected independently of the bounded option
+  focus list. Core and held-position matrices target 60 seconds, focused names
+  180 seconds, and background names 30 minutes during cash hours. These are
+  goals under the existing shared 2.6-second request spacing, not latency SLAs.
+  Matrices, unusual flow and research have separate supervised loops. A failing
+  matrix symbol backs off without starving other symbols. Scheduling reads use
+  bulk metadata rather than hundreds of per-symbol database calls.
+- Flow health distinguishes successful retrieval, newest event age and daily ID
+  reconciliation. Live confirmation requires an event no older than 120 seconds
+  and a poll no older than 60 seconds. First discovery, corrections and original
+  vendor tradeTime are retained separately. Old tradeTime values alone do not
+  establish a paid-plan delay or transport fault. The dashboard displays the
+  distinction; old events do not become new signals after a correction or poll.
+- Secondary quote eligibility uses a local clock sampled after its input reads.
+  Future source timestamps still fail; the five-second quote and 90-second
+  minute-context limits remain. Capture start/end and unchanged source clocks
+  are recorded. Frozen earlier reviews, including missing-data outcomes, remain.
+- Forward setup trials use the recorded quote path and versioned shared fill
+  rules described in `setup-outcomes.md`. Originals keep running independently;
+  no broker execution or strategy-entry changes are introduced. Repeated-entry
+  strategy variants require a separate forward comparison after reliable
+  observations accumulate.
+
 ## Activation
 
 All required code and service roles can be deployed without buying another server. GitHub stores versioned code; Railway runs the processes continuously.

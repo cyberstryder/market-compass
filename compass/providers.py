@@ -20,6 +20,7 @@ from .instruments import future_root
 from .futures_replay import ReplayBars
 from .universe import focus_symbols, data_symbols
 from .research import collect as collect_research
+from .vendor_schedule import matrix_target, matrix_health
 from .stock_stream import consume as consume_stocks, StockStreamError
 
 class FeedError(Exception):
@@ -89,7 +90,8 @@ class Collectors:
             self.supervise("option_chain",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.chains,2),
             self.supervise("option_stream",bool(c.massive),self.options),
             self.supervise("option_subscriptions",bool(c.massive),self.refresh_option_subscriptions,2),
-            self.supervise("tradermatrix",bool(c.matrix),self.matrix,10),
+            self.supervise("tradermatrix",bool(c.matrix),self.matrix,2),
+            self.supervise("tradermatrix_flow",bool(c.matrix),lambda:collect_flow(self,time.time(),page_cap=2),10),
             self.supervise("research",bool(c.matrix and c.research),lambda:collect_research(self),1)]+extra_tasks(self)
 
     @property
@@ -504,25 +506,31 @@ class Collectors:
         return data,now
 
     async def matrix(self):
-        try: await collect_flow(self,time.time(),page_cap=2)
-        except ValueError as e: raise FeedError(str(e)) from None
         now=time.time()
         with self.db.tx() as c:
-            focus=focus_symbols(self.db,c,self.cfg,now,self.cfg.option_focus)
-            candidates=list(dict.fromkeys(focus+list(self.cfg.watch_symbols)))
-            stamps={s:self.db.get(c,"matrix:"+s,{}).get("received",0) for s in candidates}
-            due=[s for s in candidates if now-stamps[s]>=(60 if s in focus else 1800)]
-        if due:
-            focused=[s for s in due if s in focus]
-            background=[s for s in due if s not in focus]
-            pool=background if self.matrix_cursor%4==3 and background else focused or background
-            symbol=min(pool,key=lambda s:stamps[s])
+            symbol=matrix_target(self.db,c,self.cfg,now,self.matrix_cursor)
+            if symbol:
+                job=self.db.get(c,'matrix_job:'+symbol,{})
+                self.db.put(c,'matrix_job:'+symbol,{**job,'attempted_at':now})
+        if symbol:
             self.matrix_cursor+=1
-            data,received=await self.matrix_request("/gex/"+symbol+"/matrix",symbol)
-            try: result=matrix_summary(data,received)
-            except ValueError as e: raise FeedError(str(e)) from None
-            if result["symbol"]!=symbol: raise FeedError("TraderMatrix returned a different symbol")
+            try:
+                data,received=await self.matrix_request("/gex/"+symbol+"/matrix",symbol)
+                result=matrix_summary(data,received)
+                if result['symbol']!=symbol:
+                    raise FeedError('TraderMatrix returned a different symbol')
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                failures=min(8,job.get('failures',0)+1)
+                detail=str(error)[:180] if isinstance(error,(FeedError,ValueError)) else type(error).__name__
+                with self.db.tx() as c:
+                    self.db.put(c,'matrix_job:'+symbol,{'attempted_at':now,'failures':failures,
+                        'error':detail,'retry_at':time.time()+min(900,30*2**(failures-1))})
+                self.db.health('tradermatrix','partial',symbol+': '+detail+'; other symbols continue')
+                return
             with self.db.tx() as c:
+                self.db.put(c,'matrix_job:'+symbol,{'attempted_at':now,'succeeded_at':received,'failures':0})
                 previous=self.db.get(c,'matrix_levels:'+symbol,{})
                 known={(r['kind'],r['price']):r.get('known_at',received) for r in previous.get('levels',[])}
                 concentrations=[]
@@ -538,7 +546,13 @@ class Collectors:
                     'source_ts':result['source_ts'],'received':received,'levels':concentrations,
                     'method':'Relative concentration within vendor GEX/VEX totals; not a dealer-inventory or direction claim'})
                 self.db.put(c,"matrix:"+symbol,result)
-        self.db.health("tradermatrix","available","Shared-rate vendor matrices and unusual activity; per-source clocks retained",poll_ts=time.time())
+        now=time.time()
+        with self.db.tx() as c:
+            core=matrix_health(self.db,c,self.cfg,now)
+        ready=all(r['status']=='current' for r in core) and bool(core)
+        self.db.health('tradermatrix','available' if ready else 'partial',
+            'Core matrices: '+', '.join(r['symbol']+' '+r['status'] for r in core)+
+            '; flow refreshes independently. Shared request spacing remains 2.6s.',poll_ts=now,core=core)
 
 
 def select_contracts(contracts,reference,limit):
