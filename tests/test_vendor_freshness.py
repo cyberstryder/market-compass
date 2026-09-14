@@ -175,3 +175,14 @@ def test_documented_refresh_metadata_is_preserved_without_extending_eligibility(
     assert check['vendor_refresh_overdue_seconds']==1
     assert not check['eligible_for_live_confirmation']
     assert metadata({'freshness':{'computedAt':'2026-09-14','nextRefreshAt':'invalid'}})['vendor_computed_ts'] is None
+
+
+def test_response_timestamp_is_preserved_without_promoting_market_freshness():
+    from compass.vendor_freshness import metadata, confirmation
+    result=metadata({'timestamp':'2026-09-14T20:00:00Z'})
+    at=result['vendor_envelope_ts']
+    assert at is not None
+    check=confirmation(dict(result,received=at),at)
+    assert check['vendor_envelope_ts']==at
+    assert check['status']=='source_time_unknown'
+    assert not check['eligible_for_live_confirmation']
