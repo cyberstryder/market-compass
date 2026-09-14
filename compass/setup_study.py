@@ -24,8 +24,9 @@ Index('setup_trials_started', trials.c.started)
 
 
 class SetupStudy:
-    def __init__(self, db, cfg):
+    def __init__(self, db, cfg, clock=None):
         self.db, self.cfg = db, cfg
+        self.clock = clock
 
     def start(self, c, signal, now, spec, alerted=True, primary=True):
         if not self.cfg.setup_study or spec['asset'] not in ('future', 'stock') or signal.get('track') == 'swing':
@@ -38,6 +39,8 @@ class SetupStudy:
             activation = {'at':now, 'version':VERSION}
             self.db.put(c, 'setup_study:activation', activation)
         q = self.db.get(c, 'quote:'+signal['symbol'])
+        if self.clock:
+            now = self.clock()
         future = spec['asset'] == 'future'
         hours = futures_session(now, signal['symbol']) if future else None
         cash = session(day(now)) if not future else None
@@ -115,15 +118,16 @@ class SetupStudy:
             if symbol not in quotes:
                 quotes[symbol] = self.db.get(c, 'quote:'+symbol)
             q = quotes[symbol]
+            observed = self.clock() if self.clock else now
             last = p['last_quote_ts']
-            if not fresh(q, now) or q['ts'] > now or q['ts'] <= last:
-                if now-last > MAX_GAP:
-                    self.finish(c, p, now, 'observation_gap')
+            if not fresh(q, observed) or q['ts'] > observed or q['ts'] <= last:
+                if observed-last > MAX_GAP:
+                    self.finish(c, p, observed, 'observation_gap')
                 continue
             gap = q['ts']-last
             p['max_gap_seconds'] = max(p['max_gap_seconds'], gap)
             if gap > MAX_GAP or q['ts'] > p['flatten_at']+5:
-                self.finish(c, p, now, 'session_quote_missing' if now >= p['flatten_at'] else 'observation_gap')
+                self.finish(c, p, observed, 'session_quote_missing' if observed >= p['flatten_at'] else 'observation_gap')
                 continue
             p['last_quote_ts'] = q['ts']
             p['samples'] += 1
@@ -134,12 +138,12 @@ class SetupStudy:
             p['mae_r'] = min(p['mae_r'], marked/p['initial_risk'])
             stopped = executable <= p['stop'] if long else executable >= p['stop']
             target = executable >= p['target'] if long else executable <= p['target']
-            reason = 'stop' if stopped else 'target' if target else 'session_flatten' if now >= p['flatten_at'] else None
+            reason = 'stop' if stopped else 'target' if target else 'session_flatten' if observed >= p['flatten_at'] else None
             if reason:
                 # Never award a favorable gap beyond a resting target price.
                 price = p['target'] if reason == 'target' else tick_price(
                     executable+(-p['tick'] if long else p['tick']), p['tick'], not long)
-                self.finish(c, p, now, reason, price, q['ts'])
+                self.finish(c, p, observed, reason, price, q['ts'])
             else:
                 self.save(c, p)
         report = self.db.get(c, 'setup_study:report', {})

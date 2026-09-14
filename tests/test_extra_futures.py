@@ -5,7 +5,7 @@ import pytest
 from compass.store import Store
 from compass.config import Config
 from compass.providers import Collectors
-from compass.extra_futures import collect_group
+from compass.extra_futures import collect_group, mapping_window
 from compass.futures import selection, risk_day
 from compass.readiness import decorate_health
 from compass.secondary import capture
@@ -13,12 +13,14 @@ from test_setup_study import NOW
 
 
 @pytest.mark.parametrize('denied',[False,True])
-def test_optional_live_access_mapping_quotes_and_rejection_isolation(tmp_path,monkeypatch,denied):
+@pytest.mark.parametrize('unspecified',[False,True])
+def test_optional_live_access_mapping_quotes_and_rejection_isolation(tmp_path,monkeypatch,denied,unspecified):
     db=Store('sqlite:///'+str(tmp_path/'optional.db'));db.initialize()
     class Mapping:
         instrument_id=123
         stype_in_symbol='MGC.v.0';stype_out_symbol='MGCZ6'
-        start_ts=int((NOW-86400)*1e9);end_ts=int((NOW+86400)*1e9)
+        start_ts=18446744073709551615 if unspecified else int((NOW-86400)*1e9)
+        end_ts=18446744073709551615 if unspecified else int((NOW+86400)*1e9)
     class Error:
         err='exchange entitlement missing'
     class Bar: pass
@@ -63,6 +65,19 @@ def test_optional_live_access_mapping_quotes_and_rejection_isolation(tmp_path,mo
     assert len(subscriptions)==2
     assert all(s['stype_in']=='continuous' for s in subscriptions)
     db.engine.dispose()
+
+
+def test_unspecified_live_mapping_needs_fresh_quote_and_expires_without_renewal():
+    undef=18446744073709551615
+    assert mapping_window(undef,undef,NOW,NOW) is None
+    assert mapping_window(undef,undef,NOW,NOW,NOW-6) is None
+    assert mapping_window(undef,undef,NOW,NOW,NOW+1) is None
+    start,end,unspecified=mapping_window(undef,undef,NOW,NOW,NOW)
+    assert (start,end,unspecified)==(NOW,NOW+30,True)
+    mapping={'contract:MGC':dict(configured_symbol='MGC.v.0',raw_symbol='MGCZ6',mapping_start=start,mapping_end=end)}
+    assert selection(('MGC.v.0',),NOW,mapping)[0]['resolved']
+    assert not selection(('MGC.v.0',),NOW+31,mapping)[0]['resolved']
+    assert mapping_window(int((NOW-86400)*1e9),int((NOW-1)*1e9),NOW,NOW,NOW) is None
 
 
 def test_optional_portfolio_positions_do_not_join_primary_stream(tmp_path):
