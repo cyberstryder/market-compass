@@ -68,6 +68,25 @@ def test_dedup_does_not_change_frozen_trial_or_cohort(db,cfg):
         study.start(c,{**signal(),'stop_distance':10},NOW+1,spec('MESZ6@1'))
         assert rows(c)==[before]
 
+
+def test_live_study_uses_observation_clock_after_database_read(db,cfg):
+    clock=[NOW+2]
+    study=SetupStudy(db,cfg,clock=lambda:clock[0])
+    with db.tx() as c:
+        # The collector updated this quote after the engine's loop began.
+        db.put(c,'quote:MESZ6@1',quote(NOW+1))
+        study.start(c,signal(),NOW,spec('MESZ6@1'))
+        p=rows(c)[0]
+        assert p['status']=='open' and p['started']==NOW+2
+        db.put(c,'quote:MESZ6@1',quote(NOW+3,p['target'],p['target']+.25))
+        clock[0]=NOW+4
+        study.tick(c,NOW+2)
+        assert rows(c)[0]['exit_reason']=='target'
+        # Actual future timestamps still cannot open a trial.
+        db.put(c,'quote:MESZ6@1',quote(NOW+5))
+        study.start(c,signal('b'),NOW+2,spec('MESZ6@1'))
+        assert rows(c)[1]['status']=='excluded'
+
 @pytest.mark.parametrize('side',['long','short'])
 def test_target_result_capped_at_limit_and_net_costs(db,cfg,side):
     study=SetupStudy(db,cfg)

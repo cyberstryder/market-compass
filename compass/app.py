@@ -64,7 +64,7 @@ def create_app(cfg=None):
             tasks.extend(asyncio.create_task(t) for t in collectors.tasks())
             tasks.append(asyncio.create_task(run_sources(db,cfg)))
         if cfg.role in {"all","engine"}:
-            tasks.extend([asyncio.create_task(Engine(db,cfg).run()),asyncio.create_task(deliver(db,cfg))])
+            tasks.extend([asyncio.create_task(Engine(db,cfg,clock=time.time).run()),asyncio.create_task(deliver(db,cfg))])
             tasks.append(asyncio.create_task(Secondary(db,cfg).run()))
         tasks.append(asyncio.create_task(heartbeat()))
         yield

@@ -39,12 +39,12 @@ def candidate(symbol,previous,bar,context,now):
         "context":context,"bar_event":bar["id"],"status":"candidate","track":"intraday"}
 
 class Engine:
-    def __init__(self,db,cfg):
+    def __init__(self,db,cfg,clock=None):
         self.db,self.cfg=db,cfg
         self.owner=uuid.uuid4().hex
         from .scanner import Scanner
         self.scanner=Scanner(db,cfg)
-        self.study=SetupStudy(db,cfg)
+        self.study=SetupStudy(db,cfg,clock)
 
     specification=staticmethod(spec)
 

@@ -61,7 +61,10 @@ reconnect and keeps replay work from delaying live quote processing.
 Data access is confirmed only by received per-contract quotes. A configured
 symbol or mapping alone does not establish entitlement or trading readiness.
 Use Feed health for the live evidence. Each resolved raw contract and instrument
-ID is stored; expired mappings cannot be used for new signals. Index contracts
+ID is stored; expired mappings cannot be used for new signals. When the live
+provider sends undefined interval bounds, a fresh quote activates a 30-second
+mapping lease that must be renewed by further live quotes. Known expired
+intervals remain invalid. Index contracts
 keep their original quarterly roll policy. New commodity contracts use their
 provider mapping instead of applying an index quarterly calendar.
 

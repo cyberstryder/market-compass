@@ -13,6 +13,22 @@ from .diagnostics import redacted_detail
 from .futures_replay import ReplayBars
 
 
+def mapping_window(start_ns, end_ns, observed_at, now, quote_ts=None):
+    undefined = 18446744073709551615
+    start = None if start_ns == undefined else start_ns/1e9
+    end = None if end_ns == undefined else end_ns/1e9
+    unspecified = start is None or end is None
+    if unspecified:
+        # Missing provider bounds require a short lease renewed by live quotes.
+        if quote_ts is None or not 0 <= now-quote_ts <= 5:
+            return None
+        start = observed_at if start is None else start
+        end = min(end, quote_ts+30) if end is not None else quote_ts+30
+    if not start <= now < end:
+        return None
+    return start, end, unspecified
+
+
 async def collect_group(collector, exchange, aliases):
     import databento as sdk
     name = 'databento_'+exchange.lower()
@@ -24,9 +40,24 @@ async def collect_group(collector, exchange, aliases):
             client = sdk.Live(key=cfg.databento, heartbeat_interval_s=15, reconnect_policy='none', slow_reader_behavior='warn')
             collector.extra_live[exchange] = client
             last = {}
-            active = {}
+            mappings = {}
             replay = ReplayBars(collector)
             db.health(name, 'connecting', 'Checking live access: '+', '.join(aliases))
+
+            def activate(root, now, quote_ts=None):
+                mapping = mappings[root]
+                window = mapping_window(mapping['start_ns'], mapping['end_ns'], mapping['observed_at'], now, quote_ts)
+                if window is None:
+                    return False
+                start, end, unspecified = window
+                raw, iid, alias = mapping['raw'], mapping['iid'], mapping['alias']
+                with db.tx() as c:
+                    db.put(c, 'contract:'+root, {'root':root, 'raw_symbol':raw,
+                        'configured_symbol':alias, 'instrument_id':iid,
+                        'resolved_symbol':f'{raw}@{iid}', 'trading_day':risk_day(now),
+                        'mapping_start':start, 'mapping_end':end, 'provider_interval_unspecified':unspecified,
+                        'mapping_source':'databento live volume mapping'+('; fresh-quote lease' if unspecified else ''), 'at':now})
+                return True
 
             def callback(r):
                 replay.flush_due()
@@ -42,15 +73,11 @@ async def collect_group(collector, exchange, aliases):
                     if alias not in aliases or not DATED.fullmatch(raw): return
                     root = alias.split('.')[0]
                     if DATED.fullmatch(raw).group(1) != root: return
-                    start, end = r.start_ts/1e9, r.end_ts/1e9
                     now = time.time()
-                    if not start <= now < end: return
-                    active[root] = r.instrument_id
+                    mappings[root] = {'alias':alias, 'raw':raw, 'iid':r.instrument_id,
+                        'start_ns':r.start_ts, 'end_ns':r.end_ts, 'observed_at':now}
+                    activate(root, now)
                     with db.tx() as c:
-                        db.put(c, 'contract:'+root, {'root':root, 'raw_symbol':raw,
-                            'configured_symbol':alias, 'instrument_id':r.instrument_id,
-                            'resolved_symbol':f'{raw}@{r.instrument_id}', 'trading_day':risk_day(now),
-                            'mapping_start':start, 'mapping_end':end, 'mapping_source':'databento live volume mapping', 'at':now})
                         db.append(c, 'mapping', 'databento', raw, now,
                             {'instrument_id':r.instrument_id, 'input':alias, 'output':raw})
                     return
@@ -68,9 +95,10 @@ async def collect_group(collector, exchange, aliases):
                     if level.bid_px<9e18 and level.ask_px<9e18:
                         collector.quote('databento',symbol,{'ts':stamp,'bid':level.bid_px/1e9,'ask':level.ask_px/1e9,
                             'bid_size':level.bid_sz,'ask_size':level.ask_sz},iid)
-                        if active.get(root)==iid and time.monotonic()-last.get('health:'+root,0)>5:
-                            db.health(name+'_'+root, 'receiving', 'Live access confirmed: '+symbol, stamp, monotonic_source=True)
-                            last['health:'+root] = time.monotonic()
+                        if mappings.get(root,{}).get('iid')==iid and time.monotonic()-last.get('health:'+root,0)>5:
+                            if activate(root, time.time(), stamp):
+                                db.health(name+'_'+root, 'receiving', 'Live access confirmed: '+symbol, stamp, monotonic_source=True)
+                                last['health:'+root] = time.monotonic()
                     last[symbol] = time.monotonic()
                 if time.monotonic()-last.get('health',0)>5:
                     db.health(name, 'receiving', 'Independent optional futures stream; check each contract quote age', stamp, monotonic_source=True)
