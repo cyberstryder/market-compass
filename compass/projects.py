@@ -128,8 +128,12 @@ def ingest(db, c, project, row, now=None, notify=False):
         if notify:
             db.append(c, "alert", "project:" + project, row["symbol"], row["source_ts"],
                 {"status": "project_observation", "strategy": row.get("strategy"), "side": row.get("side"),
-                 "fill_price": row.get("fill_price"), "qty": row.get("qty"), "project": project,
-                 "reason": "TradingView strategy emulator event recorded. Broker execution is unverified; Compass sends no order.",
+                 **{k: row[k] for k in ("fill_price", "source_price", "qty", "stop", "target") if row.get(k) is not None},
+                 "project": project, "source_event": row.get("status"),
+                 "reason": ("Pine " + row["status"].replace("_", " ") + ": " + row["outcome"]["reason"] +
+                    ". Broker execution is unverified; bracket fills are not reported by this stream."
+                    if row.get("source_format") == "pine_alert_v1" else
+                    "TradingView strategy emulator event recorded. Broker execution is unverified; Compass sends no order."),
                  "source_record_id": row["id"]}, key="project-alert:" + key)
     return True
 
@@ -240,8 +244,87 @@ def snapshot(db, c, cfg, now):
          "context": r["context"]} for r in recent]}
 
 
+def script_alert_record(stream, data, now):
+    """Observe the existing scripts' alert() JSON; never interpret it as an order.
+
+    Both scripts use disable_alert=true on their strategy orders. Their custom
+    entry messages include an emulator price and proposed bracket. Bracket fills
+    have no custom exit message, and a session-cutoff message may arrive flat.
+    Consequently this stream cannot reconstruct positions or realized P&L.
+    """
+    root, name, version = STREAMS[stream]
+    extra = data.get("extras")
+    if not isinstance(extra, dict) or extra.get("version") != root + version:
+        raise ValueError("Unexpected script alert version")
+    symbol = data.get("ticker")
+    if not isinstance(symbol, str) or not re.fullmatch(root + r"(?:[12]!|[FGHJKMNQUVXZ]\d{4})", symbol):
+        raise ValueError("Unexpected script symbol")
+    if str(data.get("interval")) != "3" or data.get("orderType") != "market":
+        raise ValueError("Unexpected script timeframe or message type")
+    reason = extra.get("reason")
+    if not isinstance(reason, str) or not 1 <= len(reason) <= 128 or not reason.isprintable():
+        raise ValueError("Invalid script reason")
+    stamp = datetime.fromisoformat(str(data["time"]).replace("Z", "+00:00"))
+    if stamp.tzinfo is None:
+        raise ValueError("Source timestamp requires timezone")
+    source_ts = stamp.timestamp()
+    if not now - 7 * 86400 <= source_ts <= now + 60:
+        raise ValueError("Source clock outside recovery window")
+
+    def positive(value):
+        if isinstance(value, bool): raise ValueError("Invalid script price or quantity")
+        value = float(value)
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("Invalid script price or quantity")
+        return value
+
+    price = positive(data["price"])
+    action = data.get("action")
+    qty = stop = target = None
+    if action in {"buy", "sell"}:
+        side = "long" if action == "buy" else "short"
+        if (reason != "entry" or data.get("sentiment") != side or
+            data.get("quantityType") != "fixed_quantity" or data.get("cancel") is not False or
+            (stream == "mgc" and side != "short")):
+            raise ValueError("Invalid script entry")
+        qty = positive(data["quantity"])
+        if qty != 1: raise ValueError("Unexpected script contract count")
+        bracket = data.get("stopLoss")
+        profit = data.get("takeProfit")
+        if not isinstance(bracket, dict) or bracket.get("type") != "stop" or not isinstance(profit, dict):
+            raise ValueError("Missing script bracket")
+        stop, target = positive(bracket["stopPrice"]), positive(profit["limitPrice"])
+        if not (stop < price < target if side == "long" else target < price < stop):
+            raise ValueError("Invalid script bracket direction")
+        status, basis = "entry_alert", "Pine emulator entry reference; broker fill unverified"
+    elif action == "exit":
+        if (reason == "entry" or data.get("cancel") is not True or
+            data.get("ignoreTradingWindows") is not True or
+            any(k in data for k in ("sentiment", "quantity", "stopLoss", "takeProfit"))):
+            raise ValueError("Invalid script exit")
+        side = "exit"
+        status = "flatten_alert" if reason == "session_cutoff" else "exit_alert"
+        basis = "Pine exit instruction reference; not a confirmed fill or position close"
+    else:
+        raise ValueError("Unknown script action")
+    canonical = {k: data[k] for k in ("ticker", "action", "sentiment", "quantity", "quantityType",
+        "orderType", "cancel", "ignoreTradingWindows", "price", "time", "interval", "stopLoss", "takeProfit") if k in data}
+    canonical["extras"] = {"version": extra["version"], "reason": reason}
+    return {"id": identity("pine_alert_v1", stream, canonical), "symbol": symbol, "source_ts": source_ts,
+        "strategy": name, "version": version, "stream": stream, "side": side, "status": status,
+        "source_format": "pine_alert_v1", "source_price": price, "source_price_basis": basis,
+        "entry": price if status == "entry_alert" else None, "fill_price": None,
+        "qty": qty, "stop": stop, "target": target,
+        "outcome": {"basis": basis, "action": action, "reason": reason,
+            "position": "unverified", "broker_pnl": None, "bracket_fills_observed": False,
+            "complete_trade_history": False, "timestamp_basis": "Pine alert dispatch time"},
+        "original": canonical}
+
+
 def futures_record(stream, data, now):
     if stream not in STREAMS or not isinstance(data, dict): raise ValueError("Unknown futures stream")
+    if "extras" in data:
+        return script_alert_record(stream, data, now)
     root, name, version = STREAMS[stream]
     symbol = str(data.get("ticker", "")).split(":")[-1]
     if symbol != root + "1!" or str(data.get("version")) != version or str(data.get("interval")) != "3":

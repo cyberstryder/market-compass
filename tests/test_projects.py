@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import time
 from datetime import datetime, timezone
 
@@ -158,3 +159,96 @@ def test_scoped_webhook_auth_dedup_and_no_order_route(tmp_path):
             assert not app.state.db.prefix(c, "position:")
             assert c.execute(select(func.count()).select_from(records)).scalar_one() == 1
         assert not any("/orders" in r.path for r in app.routes)
+
+
+def pine_alert(now, stream="mnq", action="buy", reason="entry"):
+    # JSON contract of the saved v0.10.3/v0.7.3 tpEntry/tpExit functions.
+    # All order-generating Pine calls disable fill alerts; alert() emits this.
+    root, version = ("MNQ", "0.10.3") if stream == "mnq" else ("MGC", "0.7.3")
+    price = 24000.25 if stream == "mnq" else 3600.1
+    event = {"ticker": root + "1!", "action": action, "orderType": "market", "price": price,
+        "time": datetime.fromtimestamp(now, timezone.utc).isoformat(), "interval": "3",
+        "extras": {"version": root + version, "reason": reason}}
+    if action == "exit":
+        event.update(cancel=True, ignoreTradingWindows=True)
+    else:
+        direction = 1 if action == "buy" else -1
+        event.update(sentiment="long" if direction == 1 else "short", quantity=1,
+            quantityType="fixed_quantity", cancel=False,
+            stopLoss={"type": "stop", "stopPrice": price - direction * 10},
+            takeProfit={"limitPrice": price + direction * 15})
+    return event
+
+
+@pytest.mark.parametrize("stream,action", [("mnq", "buy"), ("mnq", "sell"), ("mgc", "sell")])
+def test_actual_pine_entry_contract_preserves_bracket_without_claiming_broker_fill(stream, action):
+    now = time.time()
+    event = pine_alert(now, stream, action)
+    row = futures_record(stream, event, now)
+    assert row["status"] == "entry_alert" and row["qty"] == 1
+    assert row["entry"] == row["source_price"] == event["price"]
+    assert row["stop"] == event["stopLoss"]["stopPrice"]
+    assert row["target"] == event["takeProfit"]["limitPrice"]
+    assert row["fill_price"] is None and row["outcome"]["broker_pnl"] is None
+    assert row["outcome"]["complete_trade_history"] is False
+    assert row["original"] == event
+    dated = {**event, "ticker": ("MNQ" if stream == "mnq" else "MGC") + "Z2026"}
+    assert futures_record(stream, dated, now)["symbol"] == dated["ticker"]
+
+
+@pytest.mark.parametrize("stream", ["mnq", "mgc"])
+@pytest.mark.parametrize("reason,status", [("session_cutoff", "flatten_alert"), ("60-bar timeout", "exit_alert"),
+    ("Time exit", "exit_alert"), ("entry_context_guard", "exit_alert")])
+def test_custom_exit_is_an_instruction_even_without_a_prior_entry(stream, reason, status):
+    now = time.time()
+    row = futures_record(stream, pine_alert(now, stream, "exit", reason), now)
+    assert row["status"] == status
+    assert row["qty"] is None and row["entry"] is None and row["fill_price"] is None
+    assert row["outcome"]["position"] == "unverified"
+    assert row["outcome"]["bracket_fills_observed"] is False
+
+
+@pytest.mark.parametrize("update", [
+    {"ticker": "MES1!"}, {"ticker": "MNQZ26"}, {"interval": "5"},
+    {"extras": {"version": "MGC0.7.3", "reason": "entry"}},
+    {"extras": {"version": "MNQ0.10.3", "reason": ""}},
+    {"price": True}, {"price": "nan"}, {"quantity": True}, {"quantity": 2},
+    {"sentiment": "short"}, {"stopLoss": {"type": "stop", "stopPrice": 25000}},
+    {"takeProfit": {"limitPrice": 23000}}, {"orderType": "limit"}, {"cancel": True},
+    {"time": "2026-09-14T09:30:00"}, {"time": "2020-01-01T00:00:00Z"},
+])
+def test_invalid_custom_alerts_fail_closed(update):
+    now = time.time()
+    event = copy.deepcopy(pine_alert(now))
+    event.update(update)
+    with pytest.raises(ValueError): futures_record("mnq", event, now)
+
+
+def test_mgc_has_no_long_entry_and_exit_cannot_claim_position_size():
+    now = time.time()
+    with pytest.raises(ValueError): futures_record("mgc", pine_alert(now, "mgc", "buy"), now)
+    event = pine_alert(now, action="exit", reason="session_cutoff")
+    with pytest.raises(ValueError): futures_record("mnq", {**event, "quantity": 1}, now)
+
+
+def test_custom_alert_ingress_deduplicates_notifications_without_opening_or_closing_positions(tmp_path):
+    cfg = Config(local=True, role="web", db="sqlite:///" + str(tmp_path / "pine.db"),
+        password="private-owner-password", futures_observer_token=TOKEN)
+    app = create_app(cfg)
+    path = "/hooks/projects/futures/" + TOKEN + "/mnq"
+    with TestClient(app) as client:
+        entry = pine_alert(time.time() - 1)
+        assert client.post(path, json=entry).json()["broker_order_sent"] is False
+        assert client.post(path, json=entry).json()["status"] == "duplicate"
+        cutoff = pine_alert(time.time() - 1, action="exit", reason="session_cutoff")
+        assert client.post(path, json=cutoff).status_code == 202
+        assert client.post(path, json=cutoff).json()["status"] == "duplicate"
+        with app.state.db.tx() as c:
+            assert c.execute(select(func.count()).select_from(records)).scalar_one() == 2
+            alerts = app.state.db.recent(c, "alert")
+            assert len(alerts) == 2
+            assert {a["payload"]["source_event"] for a in alerts} == {"entry_alert", "flatten_alert"}
+            assert all("fill_price" not in a["payload"] for a in alerts)
+            assert not app.state.db.prefix(c, "position:") and not app.state.db.prefix(c, "risk:")
+            state = app.state.db.get(c, "project_stream:mnq")
+            assert state["last_source_ts"] > time.time() - 10

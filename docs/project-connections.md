@@ -10,8 +10,8 @@ remain independent. Integration downtime cannot prevent an original entry/exit.
 | --- | --- | --- |
 | Morning Algo | Compass collector reads scoped `/api/compass/feed` | Original signal/version/settings, 5/15/30/60-minute checkpoints, selected option and original option samples |
 | New Smoothers | Same authenticated read-only feed | Official weekly signal, selected contract, target status, native one-minute exit time, premium observations and original ranking fields |
-| Automated MNQ | Separate TradingView alert clone → Compass webhook | v0.10.3, three-minute strategy emulator order fills |
-| Automated MGC | Separate TradingView alert clone → Compass webhook | v0.7.3, three-minute strategy emulator order fills |
+| Automated MNQ | Separate TradingView alert clone → Compass webhook | v0.10.3 custom `alert()` entry/exit instructions |
+| Automated MGC | Separate TradingView alert clone → Compass webhook | v0.7.3 custom `alert()` entry/exit instructions |
 
 The collector targets a five-second full scan of a rolling 14-day window. All
 OPEN Smoothers records and recently resolved older records are included. Pages
@@ -26,8 +26,13 @@ Outages longer than that window require a bounded historical reconciliation.
 Project identity is part of every key. No source outcome is added to Compass's
 own simulation win rate or P&L. Morning's expiry policy continues to exclude
 same-day options. Smoothers WIN indicates an underlying target touch, not a
-profitable option exit. Futures observations are emulator fills, not broker
+profitable option exit. Futures observations are source instructions, not broker
 confirmations; actual TradersPost execution and P&L are not reconciled here.
+Entries contain a Pine emulator reference price and proposed bracket. Both scripts
+explicitly silence strategy order-fill alerts with `disable_alert=true`. Their
+custom messages omit bracket-fill exits; a cutoff message can be sent while the
+emulator is already flat. This stream does not establish a complete trade history,
+current broker position, win rate, or realized P&L.
 
 ## Context
 
@@ -60,19 +65,26 @@ Never put credentials in source control, alert text or documentation.
 
 Webhook: `/hooks/projects/futures/{observer-token}/{mnq|mgc}` on the dashboard.
 Keep the original TradersPost alerts active. Clone them while paused; change
-only the clone to **Order fills only**, its name, message and notification URL.
+only the clone to **alert() function calls only**, its name and notification URL.
 Use Webhook only for the clone; original app notifications remain unchanged.
 Verify the Compass destination before restarting the clone. Uvicorn access
 logging is disabled so capability URLs are not printed by the app.
 
-The mirror JSON uses these TradingView placeholders, all as JSON strings:
+The scripts produce the entire JSON message. Do not substitute a placeholder
+template: the alert dialog's order-fill message is not the custom `alert()` body.
+A representative MNQ entry has this shape (illustrative values only):
 
 ```json
-{"ticker":"{{ticker}}","action":"{{strategy.order.action}}","position":"{{strategy.market_position}}","prev_position":"{{strategy.prev_market_position}}","quantity":"{{strategy.order.contracts}}","price":"{{strategy.order.price}}","order_id":"{{strategy.order.id}}","time":"{{timenow}}","bar_time":"{{time}}","interval":"{{interval}}","version":"0.10.3"}
+{"ticker":"MNQ1!","action":"buy","sentiment":"long","quantity":1,"quantityType":"fixed_quantity","orderType":"market","cancel":false,"price":24000.25,"time":"2026-09-14T01:00:00Z","interval":"3","stopLoss":{"type":"stop","stopPrice":23990.25},"takeProfit":{"limitPrice":24015.25},"extras":{"version":"MNQ0.10.3","reason":"entry"}}
 ```
 
-Use version `0.7.3` for MGC. The receiver validates symbol, version, timeframe,
-clocks and finite positive fill values. It commits before acknowledgement and
+MGC emits `extras.version=MGC0.7.3` and short entries only. Exit instructions use
+`action=exit`, `cancel=true`, `ignoreTradingWindows=true`, price, time, interval
+and extras; quantity, sentiment and brackets are absent. The receiver validates
+symbol, version, timeframe, clock, one-contract quantity and bracket direction.
+It records entry, exit and session-flatten alerts with explicit reference-price
+labels. The legacy placeholder format remains accepted for compatibility, but
+cannot fire from these saved scripts. It commits before acknowledgement and
 deduplicates delivery. A new timely futures event queues a clearly labeled
 strategy-observation Discord message; historic imports never alert. Original
 Morning/Smoothers Discord notifications continue without a second Compass copy.
@@ -90,7 +102,7 @@ checks; verify active saved TradingView mirror settings independently.
 
 At the cash open, compare the first Morning signal and checkpoint against its
 source dashboard. At the scheduled weekly run, compare each Smoothers signal and
-target result. For each futures stream, compare the next actual order-fill log
+target result. For each futures stream, compare the next actual custom-alert log
 entry to the Compass source ID and notification receipt. Observe actual scan and
 delivery latency; five seconds is the polling target, not an end-to-end guarantee.
 
