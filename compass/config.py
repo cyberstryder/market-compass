@@ -33,6 +33,11 @@ class Config:
     research: bool = field(default_factory=lambda: env("RESEARCH_FEEDS_ENABLED","true")=="true")
     option_focus: int = field(default_factory=lambda: int(env("OPTION_FOCUS_SYMBOLS","12")))
     chain_dte: int = field(default_factory=lambda: int(env("OPTION_CHAIN_MAX_DTE","90")))
+    morning_url: str = field(default_factory=lambda: env("MORNING_SOURCE_URL"))
+    morning_token: str = field(default_factory=lambda: env("MORNING_INTEGRATION_TOKEN"))
+    smoothers_url: str = field(default_factory=lambda: env("SMOOTHERS_SOURCE_URL"))
+    smoothers_token: str = field(default_factory=lambda: env("SMOOTHERS_INTEGRATION_TOKEN"))
+    futures_observer_token: str = field(default_factory=lambda: env("FUTURES_OBSERVER_TOKEN"))
 
     @property
     def watch_symbols(self):
@@ -55,3 +60,7 @@ class Config:
             raise ValueError("Invalid options focus or expiration horizon")
         if not self.watch_symbols or len(self.watch_symbols)>500:
             raise ValueError("Watchlist must contain 1–500 symbols")
+        for token in (self.morning_token, self.smoothers_token, self.futures_observer_token):
+            if token and len(token) < 32: raise ValueError("Integration tokens require 32 or more characters")
+        for url in (self.morning_url, self.smoothers_url):
+            if url and not url.startswith("https://"): raise ValueError("Source connections require HTTPS")

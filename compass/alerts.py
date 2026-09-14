@@ -40,7 +40,9 @@ def message_for(row,now=None):
             f" {row['symbol']} {p.get('side','').upper()}\n"+
             ', '.join(p.get('matched_rules',[p.get('rule','')])).replace('_',' ')+'\n'+p.get('reason',''))
         if delayed: content+='\nThe entry window has ended. This is a historical notification.'
-    for label in ["entry","stop","target","qty","exit","pnl"]:
+    if p.get('status')=='project_observation':
+        content=f"[STRATEGY OBSERVATION] {row['symbol']} | {p.get('strategy','')} {p.get('side','')}\n{p.get('reason','')}"
+    for label in ["entry","stop","target","fill_price","qty","exit","pnl"]:
         if label in p: content+=f"\n{label}: {p[label]}"
     if p.get('evidence'):
         sources=[]

@@ -26,6 +26,7 @@ from .readiness import decorate_health,quote_checks,clock
 from .futures import futures_session,selection
 from .scanner import snapshot as scanner_snapshot
 from .research import FEEDS
+from .projects import install as install_projects, run_sources, snapshot as projects_snapshot, records as project_records, PROJECTS
 
 def create_app(cfg=None):
     cfg=cfg or Config()
@@ -57,6 +58,7 @@ def create_app(cfg=None):
         if cfg.role in {"all","collector"}:
             collectors=Collectors(db,cfg)
             tasks.extend(asyncio.create_task(t) for t in collectors.tasks())
+            tasks.append(asyncio.create_task(run_sources(db,cfg)))
         if cfg.role in {"all","engine"}:
             tasks.extend([asyncio.create_task(Engine(db,cfg).run()),asyncio.create_task(deliver(db,cfg))])
         tasks.append(asyncio.create_task(heartbeat()))
@@ -68,12 +70,18 @@ def create_app(cfg=None):
 
     app=FastAPI(title="Market Compass",lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
     app.state.db=db
+    install_projects(app,db,cfg)
     app.mount("/static",StaticFiles(directory=root/"static"),name="static")
 
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
         public=path in {"/health","/login"} or path.startswith("/static/")
+        # These exact routes enforce independent scoped credentials in their handlers.
+        integration=(path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
+        if integration and cfg.role not in {"all","web"}:
+            return JSONResponse({"detail":"Worker service"},status_code=404)
+        public=public or integration
         if not public:
             if not cfg.password:
                 return JSONResponse({"detail":"Set COMPASS_PASSWORD in Railway to unlock the private workspace"},status_code=503)
@@ -88,7 +96,9 @@ def create_app(cfg=None):
             origin=request.headers.get("origin")
             if origin and urlparse(origin).netloc!=request.headers.get("host"):
                 return JSONResponse({"detail":"Invalid origin"},status_code=403)
-            if int(request.headers.get("content-length","0"))>16384:
+            try: size=int(request.headers.get("content-length","0"))
+            except ValueError: return JSONResponse({"detail":"Invalid content length"},status_code=400)
+            if size>16384:
                 return JSONResponse({"detail":"Request too large"},status_code=413)
         response=await call_next(request)
         response.headers["X-Content-Type-Options"]="nosniff"
@@ -163,6 +173,7 @@ def create_app(cfg=None):
             return {"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","markets":markets,
                 "health":health,"workers":workers,"quotes":watch,
                 "scanner":scanner_snapshot(db,c,cfg,now),
+                "projects":projects_snapshot(db,c,cfg,now),
                 "quote_checks":checks,"delivery":outbox_status(db,c,now),
                 "futures":{"session":futures_session(now),"selected":selection(cfg.futures,now),
                     "contracts":list(db.prefix(c,"contract:").values()),
@@ -183,6 +194,19 @@ def create_app(cfg=None):
 
     @app.get("/api/state")
     def get_state(): return snapshot()
+
+    @app.get("/api/projects")
+    def get_projects():
+        with db.tx() as c: return projects_snapshot(db,c,cfg,time.time())
+
+    @app.get("/api/projects/record")
+    def get_project_record(project:str,id:str):
+        if project not in PROJECTS or len(id)>1000: raise HTTPException(422,"Invalid source identity")
+        with db.tx() as c:
+            row=c.execute(select(project_records.c.payload,project_records.c.context).where(
+                project_records.c.project==project,project_records.c.source_id==id)).mappings().first()
+        if row is None: raise HTTPException(404,"Source record not found")
+        return {"project":project,"record":row['payload'],"context":row['context']}
 
     @app.get('/api/research')
     def get_research(key:str):
@@ -282,6 +306,7 @@ def create_app(cfg=None):
         context['quotes']={key:value for key,value in context['quotes'].items() if key in scope or '@' in key}
         context['levels']={key:value for key,value in context['levels'].items() if key in scope or '@' in key}
         context['scanner']['opportunities']=context['scanner']['opportunities'][:20]
+        context['projects']['records']=[r for r in context['projects']['records'] if not mentioned or r['symbol'] in scope][:15]
         context['research']={}
         with db.tx() as c:
             context['technical_context']={symbol:db.get(c,'scanner_features:'+symbol) for symbol in scope}
@@ -318,6 +343,9 @@ def create_app(cfg=None):
             "TraderMatrix VEX methodology/units are unverified and must not be equated with local vanna exposure. "
             "Do not infer current prices from an old observation. Explain GEX/VEX as inventory assumptions, never dealer truth. "
             "Treat all trades as simulated. Do not claim edge, profitability, or complete unusual-flow coverage. "
+            "External project observations are source signals, not verified broker executions. Keep their histories separate. "
+            "Morning Algo checkpoints measure underlying moves; Smoothers WIN means its underlying target was reached, not option profit. "
+            "Integration context is captured after source signals; historical imports have no reconstructed entry context. "
             "Explain triggered, watch, blocked, invalidated and expired setups distinctly. A scanner match is not a guaranteed trade. "
             "Vendor research with an unknown source time cannot establish a current market condition. "
             "Do not claim the prop-firm drawdown model is implemented: only configured simulation limits apply. "

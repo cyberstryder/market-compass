@@ -4,12 +4,19 @@
 <aside class="sidebar"><a class="brand" href="/">↗ <span>Market<br>Compass</span></a><p class="eyebrow">WORKSPACE</p>
 <nav><button class="nav active" data-tab="overview">◈ Overview</button><button class="nav" data-tab="exposure">◎ Exposure</button>
 <button class="nav" data-tab="scanner">↗ Live scanner</button><button class="nav" data-tab="research">▤ Research desk</button>
+<button class="nav" data-tab="projects">▦ Connected projects</button>
 <button class="nav" data-tab="flow">≋ Options flow</button><button class="nav" data-tab="trades">↗ Simulated trades</button>
 <button class="nav" data-tab="assistant">✧ Ask Compass</button><button class="nav" data-tab="health">◷ Feed health</button></nav>
 <div class="sidebar-foot"><span class="pill">SIMULATION ONLY</span><p>No broker execution</p><button id="logout" class="quiet">Sign out</button></div></aside>
 <main class="workspace"><header><div><p class="eyebrow">MARKET INTELLIGENCE</p><h1 id="title">Session overview</h1></div>
 <div class="header-right"><span id="market" class="pill">Checking session</span><p id="clock" class="mono"></p></div></header>
 <div id="connection" class="banner">Connecting to the shared market state…</div>
+<section id="projects" class="tab">
+<div class="banner">Signals and outcomes from Morning Algo, New Smoothers, and the automated futures strategies. Market context is captured separately; each project keeps its original rules and results.</div>
+<div id="project-status" class="stats"></div>
+<article class="panel"><div class="panel-head"><h2>Combined observations</h2><label for="project-filter">Project <select id="project-filter"><option value="all">All projects</option><option value="morning">Morning Algo</option><option value="smoothers">New Smoothers</option><option value="futures">Automated futures</option></select></label></div><div id="project-records"></div>
+<p class="fine">Morning checkpoints measure underlying moves. Smoothers WIN means its underlying target was reached. Futures events come from TradingView's strategy emulator; actual broker fills remain unverified. Historical imports have no reconstructed entry context.</p></article>
+</section>
 <section id="scanner" class="tab">
 <div class="banner">One watchlist, shared market context. Triggered setups include entry, invalidation, targets, and source clocks. All trades are simulated.</div>
 <div id="scanner-stats" class="stats"></div>
