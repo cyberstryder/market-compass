@@ -4,7 +4,8 @@ from .market import fresh, CT
 
 
 STREAMS = {"alpaca_stocks": "equities", "databento_futures": "futures", "option_stream": "equities"}
-COLLECTORS = set(STREAMS) | {"alpaca_history", "futures_history", "option_chain", "tradermatrix", "tradermatrix_flow"}
+COLLECTORS = set(STREAMS) | {"alpaca_history", "futures_history", "option_chain", "tradermatrix", "tradermatrix_flow",
+    "project_morning", "project_smoothers", "research"}
 
 
 def clock(value):
@@ -20,11 +21,11 @@ def decorate_health(items, workers, markets, now):
         h["source_asof"] = clock(h.get("source_ts"))
         h["age"] = round(now - h["source_ts"], 1) if h.get("source_ts") is not None else None
         h["check_age"] = round(now - h.get("checked_at", 0), 1)
-        role = "collector" if h["name"] in COLLECTORS else "engine" if h["name"] in {"engine", "discord"} else "web"
+        role = "collector" if h["name"] in COLLECTORS else "engine" if h["name"] in {"engine", "discord", "secondary"} else "web"
         worker = workers.get("worker:" + role) or workers.get("worker:all")
         h["heartbeat_age"] = round(now - worker["at"], 1) if worker else None
         h["recorded_status"] = h["status"]
-        if h["status"] == "not_configured":
+        if h["status"] in {"not_configured", "disabled"}:
             result.append(h)
             continue
         if not worker or h["heartbeat_age"] > 20:
@@ -38,8 +39,9 @@ def decorate_health(items, workers, markets, now):
                 h.update(status="waiting", detail="Session open; no source event observed yet. " + h["detail"])
             elif h["age"] > 20 or h["age"] < -1:
                 h.update(status="stale", detail="Session open; source events are not current. " + h["detail"])
-        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine"}:
-            limit = {"alpaca_history": 3900,"futures_history":3900, "option_chain": 300, "tradermatrix": 180,"tradermatrix_flow":180, "engine": 20}[h["name"]]
+        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine", "secondary", "project_morning", "project_smoothers"}:
+            limit = {"alpaca_history": 3900,"futures_history":3900, "option_chain": 300, "tradermatrix": 180,"tradermatrix_flow":180, "engine": 20,
+                "secondary": 20, "project_morning": 25, "project_smoothers": 25}[h["name"]]
             if h["check_age"] > limit:
                 h.update(status="stale", detail="Worker is alive but this task has stopped reporting. " + h["detail"])
         result.append(h)
