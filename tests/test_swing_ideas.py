@@ -10,7 +10,7 @@ from compass.store import flow_records
 from compass.providers import Collectors
 from compass.option_ideas import OptionIdeas
 from compass.swing_ideas import SwingIdeas, swings, snapshot, stream_requests, active_underlyings
-from compass.swing_signals import daily_context, technical_setups, summarize_flow, confirms, trading_seconds, hold_deadline, sessions_between
+from compass.swing_signals import daily_context, minute_context, technical_setups, summarize_flow, confirms, trading_seconds, hold_deadline, sessions_between
 from compass.alert_format import alert_identity, message_for
 from test_scanner import db
 from test_option_ideas import seed as seed_intraday, signal as intraday_signal
@@ -118,6 +118,15 @@ def test_missing_daily_session_blocks_instead_of_looking_through_gap():
     rows=history()
     assert daily_context(rows[:-3]+rows[-2:],NOW)['status']=='warming_up'
     assert daily_context(rows[-40:],NOW)['status']=='warming_up'
+
+
+def test_two_completed_minutes_can_trigger_swing_without_intraday_warmup():
+    bars=[dict(id=1,ts=NOW-120,payload=dict(c=99.9)),dict(id=2,ts=NOW-60,payload=dict(c=100.1)),
+          dict(id=3,ts=NOW,payload=dict(c=105))]
+    minute=minute_context(bars,NOW)
+    assert minute['bar']['c']==100.1 and technical_setups('SPY',daily(),minute,NOW)
+    assert minute_context([bars[0],bars[2]],NOW)['status']=='waiting_for_price'
+    assert minute_context(bars,NOW+181)['status']=='waiting_for_price'
 
 
 @pytest.mark.parametrize('side',['long','short'])

@@ -9,7 +9,7 @@ from sqlalchemy import Table, Column, String, Float, JSON, Index, select, update
 from .store import meta, identity, flow_records
 from .market import day, session, number
 from .option_ideas import current, liquid, eligible_contracts, FEE, SLIPPAGE
-from .swing_signals import daily_context, technical_setups, summarize_flow, confirms, trading_seconds, hold_deadline
+from .swing_signals import daily_context, minute_context, technical_setups, summarize_flow, confirms, trading_seconds, hold_deadline
 
 VERSION = 'swing-ideas-v1'
 MAX_GAP = 60  # Seconds of open exchange time, excluding scheduled closures.
@@ -253,6 +253,9 @@ class SwingIdeas:
                 self.db.put(c,'swing_daily:'+symbol,daily)
             minute = self.db.get(c,'scanner_features:'+symbol,{})
             price_ready = minute.get('status')=='ready' and 0 <= now-minute.get('asof',0) <= 90
+            if not price_ready:
+                minute = minute_context(self.db.recent(c,'bar',symbol,limit=8),now)
+                price_ready = minute.get('status')=='ready'
             signals = technical_setups(symbol,daily,minute,now) if entry_open else []
             flow = self.flow_cache.get(symbol,{})
             qualified = [s for s in signals if confirms(flow,s['side'],now)]
