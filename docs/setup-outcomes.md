@@ -54,6 +54,9 @@ access through the existing Databento key. Rejections are reported per exchange;
 they cannot add instruments to, terminate or replace the original index stream.
 The existing historical-download budget and core history scope are unchanged.
 Optional products warm up from the live service's intraday replay and ongoing bars.
+Replayed minute bars are written in bounded batches; current bars publish
+immediately. This avoids a separate database round trip for every old bar during
+reconnect and keeps replay work from delaying live quote processing.
 
 Data access is confirmed only by received per-contract quotes. A configured
 symbol or mapping alone does not establish entitlement or trading readiness.

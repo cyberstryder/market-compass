@@ -4,11 +4,13 @@ Subscriptions themselves verify exchange/schema entitlement. A rejected group
 cannot stop ES/MES/NQ/MNQ. No historical API download or new plan purchase.
 """
 import asyncio
+import logging
 import time
 from datetime import datetime, timezone, timedelta
 from .instruments import FUTURES, DATED
 from .futures import risk_day
 from .diagnostics import redacted_detail
+from .futures_replay import ReplayBars
 
 
 async def collect_group(collector, exchange, aliases):
@@ -23,15 +25,20 @@ async def collect_group(collector, exchange, aliases):
             collector.extra_live[exchange] = client
             last = {}
             active = {}
+            replay = ReplayBars(collector)
             db.health(name, 'connecting', 'Checking live access: '+', '.join(aliases))
 
             def callback(r):
+                replay.flush_due()
                 if isinstance(r, sdk.ErrorMsg):
                     errors.append(redacted_detail(r.err, (cfg.databento,), 200))
                     client.terminate()
                     return
                 if isinstance(r, sdk.SymbolMappingMsg):
                     alias, raw = str(r.stype_in_symbol), str(r.stype_out_symbol)
+                    logging.getLogger('uvicorn.error').info(
+                        'Optional futures mapping: %s -> %s id=%s start_ns=%s end_ns=%s',
+                        alias, raw, r.instrument_id, r.start_ts, r.end_ts)
                     if alias not in aliases or not DATED.fullmatch(raw): return
                     root = alias.split('.')[0]
                     if DATED.fullmatch(raw).group(1) != root: return
@@ -54,8 +61,8 @@ async def collect_group(collector, exchange, aliases):
                 root, symbol = match.group(1), f'{raw}@{iid}'
                 stamp = r.ts_event/1e9
                 if isinstance(r, sdk.OHLCVMsg):
-                    collector.bars('databento', [(symbol,stamp,{'o':r.open/1e9,'h':r.high/1e9,
-                        'l':r.low/1e9,'c':r.close/1e9,'v':r.volume,'instrument_id':iid,'alias':str(raw)})])
+                    replay.add((symbol,stamp,{'o':r.open/1e9,'h':r.high/1e9,
+                        'l':r.low/1e9,'c':r.close/1e9,'v':r.volume,'instrument_id':iid,'alias':str(raw)}))
                 elif isinstance(r, sdk.MBP1Msg) and time.monotonic()-last.get(symbol,0)>.25:
                     level = r.levels[0]
                     if level.bid_px<9e18 and level.ask_px<9e18:
@@ -84,6 +91,7 @@ async def collect_group(collector, exchange, aliases):
                     client.block_for_close()
                 finally:
                     client.stop()
+                    replay.flush()
 
             await asyncio.to_thread(run)
             if errors:
