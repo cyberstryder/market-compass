@@ -16,6 +16,7 @@ from .greek_diagnostics import diagnose
 from .flow_recovery import collect as collect_flow
 from .futures import selection
 from .instruments import future_root
+from .futures_replay import ReplayBars
 from .universe import focus_symbols
 from .research import collect as collect_research
 
@@ -201,7 +202,9 @@ class Collectors:
             client=db.Live(key=self.cfg.databento,heartbeat_interval_s=15,reconnect_policy="none",slow_reader_behavior="warn")
             self.live=client
             last={}
+            replay=ReplayBars(self)
             def callback(r):
+                replay.flush_due()
                 if isinstance(r,db.ErrorMsg):
                     raise FeedError("Databento stream: "+redacted_detail(r.err,(self.cfg.databento,)))
                 if isinstance(r,db.SymbolMappingMsg):
@@ -220,7 +223,7 @@ class Collectors:
                 symbol=f"{alias}@{iid}"
                 t=r.ts_event/1e9
                 if isinstance(r,db.OHLCVMsg):
-                    self.bars("databento",[(symbol,t,{"o":r.open/1e9,"h":r.high/1e9,"l":r.low/1e9,"c":r.close/1e9,"v":r.volume,"instrument_id":iid,"alias":str(alias)})])
+                    replay.add((symbol,t,{"o":r.open/1e9,"h":r.high/1e9,"l":r.low/1e9,"c":r.close/1e9,"v":r.volume,"instrument_id":iid,"alias":str(alias)}))
                 elif isinstance(r,db.MBP1Msg) and time.monotonic()-last.get(symbol,0)>.25:
                     level=r.levels[0]
                     if level.bid_px<9e18 and level.ask_px<9e18:
@@ -241,7 +244,9 @@ class Collectors:
             client.start()
             self.db.health("databento_futures","connected","Waiting for CME market events: "+", ".join(symbols))
             try: client.block_for_close()
-            finally: client.stop()
+            finally:
+                client.stop()
+                replay.flush()
             if errors: raise FeedError("Databento callback failure: "+errors[0])
         try:
             task=asyncio.create_task(asyncio.to_thread(run))
