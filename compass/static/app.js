@@ -55,7 +55,8 @@ function render(d){
  $('#journal').innerHTML=d.alerts.length?d.alerts.slice(0,7).map(a=>{const p=a.presentation||{};return '<div class="journal-item"><strong>'+esc(p.title||a.symbol)+'</strong><p>'+esc(p.mode||'SIMULATED')+' · '+esc(p.horizon||'')+'</p><p>'+esc(a.payload.exit_reason||a.payload.reason||p.setup||a.payload.strategy)+'</p><span class="time">'+esc(p.origin||'Compass')+' · #'+a.id+' · '+when(a.ts)+'</span></div>';}).join(''):empty('No decisions recorded yet','Signals, entries, exits and data-related skips will appear here.');
  const ex=Object.entries(d.exposure).slice(0,6);
  $('#exposures').innerHTML=ex.length?'<div class="exposure-grid">'+ex.map(([s,e])=>'<article class="panel"><div class="panel-head"><h2>'+esc(s)+'</h2>'+tag(e.status)+'</div><p>GEX '+compact(e.gex)+' · local vanna proxy '+compact(e.vex)+'</p><p class="fine">'+esc(e.source)+' · '+num((e.coverage??0)*100,1)+'% GEX input coverage · '+num(e.usable_gex,0)+' / '+num(e.contracts,0)+' contracts</p><p class="fine">Missing/invalid OI '+num(e.missing_oi,0)+' · gamma '+num(e.missing_gamma,0)+' · contract metadata '+num(e.invalid_contract,0)+' (counts may overlap)</p><p class="fine">Chain checked '+when(e.asof)+' · underlying source '+when(e.spot_asof)+'</p><p class="fine">'+esc(e.reason)+'</p><details data-key="local-'+esc(s)+'"><summary>Strike exposure & methodology</summary><p class="fine">'+esc(e.sign_model)+'. '+esc(e.gex_units)+'; '+esc(e.vex_units)+'. Vanna input coverage '+num((e.vex_coverage??0)*100,1)+'%. OI dates: '+esc((e.oi_dates||[]).join(', ')||'provider date unavailable')+'</p>'+table(['Strike','GEX','Vanna proxy'],(e.strikes||[]).slice(0,200).map(r=>[num(r.strike),compact(r.gex),compact(r.vex)]))+'</details></article>').join('')+'</div>':empty('Exposure is waiting for input','A fresh underlying price, chain, Greeks and open interest are required.');
- $('#matrix').innerHTML=vendorMatrix(Object.fromEntries(Object.entries(d.matrix).slice(0,6)));
+ const coreMatrices=['matrix:SPY','matrix:QQQ','matrix:IWM'];
+ $('#matrix').innerHTML=vendorMatrix(Object.fromEntries(Object.entries(d.matrix).sort(([a],[b])=>Number(coreMatrices.includes(b))-Number(coreMatrices.includes(a))).slice(0,6)));
  renderScanner(d.scanner);
  renderProjects(d.projects);
  renderSecondary(d.secondary);
@@ -149,7 +150,7 @@ function renderStrikeMap(matrices){
  const values=near.flatMap(r=>(r[metric+'_cells']||[]).slice(0,8)).filter(v=>v!==null);
  const maximum=Math.max(1,...values.map(Math.abs));
  const rows=near.map(r=>[num(r.strike),...(r[metric+'_cells']||[]).slice(0,8).map(v=>v===null?'—':'<span class="exposure-cell '+(v>=0?'positive':'negative')+' strength-'+Math.min(4,Math.ceil(Math.abs(v)/maximum*4))+'" title="'+esc(num(v))+'">'+compact(v)+'</span>')]);
- $('#strike-map').innerHTML='<p class="fine">'+esc(m.symbol)+' · '+metric.toUpperCase()+' · Source '+when(m.source_ts)+' · nearest 25 strikes / first 8 expirations · vendor units</p>'+table(['Strike',...m.expirations.slice(0,8).map(e=>e.expiry)],rows);
+ $('#strike-map').innerHTML='<p class="fine">'+esc(m.symbol)+' · '+metric.toUpperCase()+' · Source '+when(m.source_ts)+' · Fetched '+when(m.received)+(m.cached?' · vendor cache':'')+' · nearest 25 strikes / first 8 expirations · vendor units</p>'+table(['Strike',...m.expirations.slice(0,8).map(e=>e.expiry)],rows);
 }
 $('#scanner-filter').onchange=()=>{if(lastState)renderScanner(lastState.scanner);};
 $('#research-source').onchange=loadResearch;
