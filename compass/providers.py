@@ -21,6 +21,7 @@ from .futures_replay import ReplayBars
 from .universe import focus_symbols, data_symbols
 from .research import collect as collect_research
 from .vendor_schedule import matrix_target, matrix_health
+from .vendor_freshness import progress, log_observation
 from .stock_stream import consume as consume_stocks, StockStreamError
 
 class FeedError(Exception):
@@ -531,6 +532,7 @@ class Collectors:
                 return
             with self.db.tx() as c:
                 self.db.put(c,'matrix_job:'+symbol,{'attempted_at':now,'succeeded_at':received,'failures':0})
+                result['source_progress'] = progress(self.db.get(c,'matrix:'+symbol,{}),result)
                 previous=self.db.get(c,'matrix_levels:'+symbol,{})
                 known={(r['kind'],r['price']):r.get('known_at',received) for r in previous.get('levels',[])}
                 concentrations=[]
@@ -544,8 +546,10 @@ class Collectors:
                                 'known_at':known.get((kind,row['strike']),received)})
                 self.db.put(c,'matrix_levels:'+symbol,{'symbol':symbol,'source':'tradermatrix',
                     'source_ts':result['source_ts'],'received':received,'levels':concentrations,
+                    **{k:result.get(k) for k in ('cached','vendor_stale','vendor_refresh_seconds')},
                     'method':'Relative concentration within vendor GEX/VEX totals; not a dealer-inventory or direction claim'})
                 self.db.put(c,"matrix:"+symbol,result)
+            log_observation('matrix:'+symbol,result,received)
         now=time.time()
         with self.db.tx() as c:
             core=matrix_health(self.db,c,self.cfg,now)

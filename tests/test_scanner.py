@@ -197,7 +197,7 @@ def test_setup_dedup_survives_restart_and_has_no_order_route(db):
     with db.tx() as c:
         db.put(c,'scanner_features:SPY',f)
         db.put(c,'quote:SPY',quote())
-        db.put(c,'matrix:unusual_activity',{'rows':[{'symbol':'SPY','source_ts':NOW-1,'premium':200000,'score':90,'sentiment':'Bullish','vendor_id':'one'}]})
+        db.put(c,'matrix:unusual_activity',{'source_ts':NOW-1,'received':NOW,'rows':[{'symbol':'SPY','source_ts':NOW-1,'premium':200000,'score':90,'sentiment':'Bullish','vendor_id':'one'}]})
     for _ in range(2):
         with db.tx() as c: Scanner(db,cfg).scan(c,NOW,Engine(db,cfg))
     with db.tx() as c:

@@ -10,6 +10,7 @@ from .store import meta, identity, flow_records
 from .market import day, session, number
 from .option_ideas import current, liquid, eligible_contracts, FEE, SLIPPAGE
 from .swing_signals import daily_context, minute_context, technical_setups, summarize_flow, confirms, trading_seconds, hold_deadline
+from .flow_recovery import freshness as flow_freshness
 
 VERSION = 'swing-ideas-v1'
 MAX_GAP = 60  # Seconds of open exchange time, excluding scheduled closures.
@@ -61,7 +62,8 @@ class SwingIdeas:
         hours = session(day(now))
         if (not self.cfg.swing_ideas or signal['symbol'] not in self.cfg.watch_symbols
                 or not hours or not hours[0] <= now < hours[1]-1800
-                or not 0 <= now-signal['signal_time'] <= 90 or not confirms(flow,signal['side'],now)):
+                or not 0 <= now-signal['signal_time'] <= 90 or not confirms(flow,signal['side'],now)
+                or not flow_freshness(self.db.get(c,'matrix:unusual_activity',{}),now,300)['eligible_for_live_confirmation']):
             return
         key = identity(VERSION, signal['symbol'], signal['side'], signal['rule'], signal['signal_time'])
         p = dict(id=key,version=VERSION,underlying=signal['symbol'],underlying_side=signal['side'],
@@ -96,6 +98,10 @@ class SwingIdeas:
             return self.exclude(c,p,now,'New swings disabled' if not self.cfg.swing_ideas else p['waiting_reason'])
         if not confirms(p['flow'],p['underlying_side'],now):
             return self.exclude(c,p,now,'Supporting flow exceeded its five-minute source-age limit')
+        check = flow_freshness(self.db.get(c,'matrix:unusual_activity',{}),now,300)
+        if not check['eligible_for_live_confirmation']:
+            p['waiting_reason'] = 'Supporting flow collection is not current: '+check['status']
+            return self.save(c,p,now)
         if not current(q,now) or q['ts'] < p['signal_time']:
             p['waiting_reason'] = 'Fresh underlying quote required'
             return self.save(c,p,now)
@@ -240,7 +246,11 @@ class SwingIdeas:
                 flow_records.c.first_seen<=now).order_by(flow_records.c.source_ts.desc()).limit(5001)).mappings().all()
             self.flow_cache = summarize_flow(rows[:5000],now,self.cfg.swing_min_dte,self.cfg.swing_max_dte)
             matrix = self.db.get(c,'matrix:unusual_activity',{})
+            check = flow_freshness(matrix,now,300)
+            if not check['eligible_for_live_confirmation']:
+                self.flow_cache = {}
             self.flow_coverage = dict(query_truncated=len(rows)>5000,vendor_status=matrix.get('status'),
+                freshness=check,
                 vendor_limited=matrix.get('limited'),recovery=self.db.get(c,'recovery:flow:'+day(now),{}),
                 note='Observed filtered records only; missing or unclassified flow cannot confirm a swing')
             self.flow_at = now

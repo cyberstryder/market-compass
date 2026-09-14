@@ -5,6 +5,7 @@ Reference: https://www.tradermatrix.pro/developers (REST reference).
 """
 from datetime import datetime
 from .market import number
+from .vendor_freshness import metadata
 
 
 def source_time(value):
@@ -58,7 +59,7 @@ def matrix_summary(payload, received):
         for field in ("gex", "vex", "vexGross")}
     stamp = source_time(data.get("snapshotTime"))
     return {"symbol": data.get("underlyingSymbol"), "source": "tradermatrix",
-        "source_ts": stamp, "received": received, "cached": payload.get("cached"),
+        "source_ts": stamp, "received": received, **metadata(payload),
         "spot": number(data.get("spotPrice")), "status": "available" if stamp and coverage["gex"] else "partial",
         "gex": observed_sum(row["gex"] for row in strikes),
         "vex": observed_sum(row["vex"] for row in strikes),
@@ -68,7 +69,7 @@ def matrix_summary(payload, received):
 
 
 def flow_page(payload, received):
-    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+    if not isinstance(payload, dict) or payload.get('success') is False or payload.get('error') or not isinstance(payload.get("data"), list):
         raise ValueError("TraderMatrix flow envelope changed")
     total, page, size = (number(payload.get(k)) for k in ("total", "page", "pageSize"))
     if any(n is None or n != int(n) for n in (total, page, size)) or total < 0 or page < 1 or not 1 <= size <= 100:
@@ -93,7 +94,7 @@ def flow_page(payload, received):
             "is_repeat": raw.get("isRepeatFlow"), "oi_confirmation": raw.get("oiConfirmation"),
             "classification_source": "TraderMatrix; not independently verified"})
     aggregates = payload.get("aggregates") if isinstance(payload.get("aggregates"), dict) else {}
-    return {"source": "tradermatrix", "received": received, "rows": rows,
+    return {"source": "tradermatrix", "received": received, "rows": rows, **metadata(payload),
         "total": int(total), "page": int(page), "page_size": int(size),
         "raw_count": len(payload["data"]), "rejected": rejected,
         "filters": payload.get("filters", {}),

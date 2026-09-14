@@ -69,6 +69,7 @@ def records(c):
 
 def seed(db,c,now=NOW,side='long'):
     o=contract(side)
+    db.put(c,'matrix:unusual_activity',dict(source_ts=now,received=now))
     db.put(c,'quote:SPY',quote(now))
     db.put(c,'quote:'+o['symbol'],quote(now,2,2.05))
     db.put(c,'chain:SPY',dict(asof=now,source='massive',complete=True,contracts=[o]))
@@ -361,6 +362,7 @@ def test_discovery_from_daily_history_and_durable_flow_to_quoted_entry(db,cfg,mo
     price=context['high20']+.1;strike=round(price)
     symbol=f'O:SPY261016C{strike*1000:08d}'
     with db.tx() as c:
+        db.put(c,'matrix:unusual_activity',dict(source_ts=NOW,received=NOW))
         for row in rows:db.append(c,'daily','alpaca','SPY',row['ts'],row['payload'])
         db.put(c,'scanner_features:SPY',dict(status='ready',asof=NOW,bar_start=NOW-60,
             previous_bar=dict(c=context['high20']-.1),bar=dict(c=price)))

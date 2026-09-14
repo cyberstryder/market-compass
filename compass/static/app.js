@@ -5,12 +5,13 @@ const when=x=>x?new Date(x*1000).toLocaleString('en-US',{timeZone:'America/Chica
 const age=x=>x===null||x===undefined?'—':x<120?num(x,1)+'s':x<7200?num(x/60,1)+'m':num(x/3600,1)+'h';
 const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notation:'compact',maximumFractionDigits:2}).format(x);
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
-const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated','event_stale','poll_stale','mixed'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
+const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated','event_stale','poll_stale','vendor_stale','mixed'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
 const titles={'swing-ideas':'Swing ideas','option-ideas':'Options ideas','setup-study':'Setup results',secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav,.tab').forEach(n=>n.classList.remove('active'));b.classList.add('active');$('#'+b.dataset.tab).classList.add('active');$('#title').textContent=titles[b.dataset.tab];});
 $('#logout').onclick=async()=>{await fetch('/logout',{method:'POST'});location.href='/login';};
 let lastState=null,first=true,testEvent=null;
+let secondaryReport=null,secondaryReportRequest=0;
 function vendorMatrix(items){
  const matrices=Object.entries(items).filter(([key,item])=>key!=='matrix:unusual_activity'&&Array.isArray(item.strikes));
  if(!matrices.length)return empty('Waiting for vendor matrices','The source snapshot time and returned strike concentrations will appear here.');
@@ -44,7 +45,7 @@ function render(d){
  $('#market').textContent=d.markets.equities?'EQUITY SESSION OPEN':d.markets.futures?'FUTURES SESSION OPEN':'MARKETS CLOSED';
  $('#clock').textContent=when(d.asof);
  $('#updated').textContent='Refreshed '+when(d.asof);
- const missing=d.health.filter(h=>['not_configured','error','stale','waiting','partial','blocked','poll_stale','event_stale','clock_error','no_events'].includes(h.status));
+ const missing=d.health.filter(h=>['not_configured','error','stale','waiting','partial','blocked','poll_stale','event_stale','clock_error','no_events','vendor_stale'].includes(h.status));
  const populated=Object.keys(d.quotes).length;
  $('#connection').textContent=missing.length?missing.length+' components need attention. Open Feed health for configuration and freshness details.':!d.markets.equities&&!d.markets.futures?'Markets are closed. Feed health distinguishes worker activity from the age of the last market observation.':populated?'Source timestamps and quote checks determine which observations can be used.':'Infrastructure is running. Waiting for market observations.';
  const open=d.trades.filter(p=>p.status==='open').length;
@@ -102,7 +103,7 @@ function renderScanner(scanner){
  $('#scanner-stats').innerHTML=metrics.map(([label,value,note])=>'<div class="stat"><div class="label">'+esc(label)+'</div><div class="value">'+esc(value)+'</div><div class="fine">'+esc(note)+'</div></div>').join('');
  $('#opportunities').innerHTML=rows.length?rows.map(o=>'<article class="setup-card"><div class="panel-head"><h2>'+esc(o.symbol)+' · '+esc(o.side.toUpperCase())+'</h2>'+tag(o.status)+'</div><p>'+esc(o.reason)+'</p><p class="fine">'+esc((o.matched_rules||[o.rule]).join(' · ').replaceAll('_',' '))+' · '+when(o.decided_at)+'</p><div class="setup-prices"><div><span>Modeled entry</span><strong>'+num(o.entry??o.signal_price)+'</strong></div><div><span>Invalidation</span><strong>'+num(o.invalidation)+'</strong></div><div><span>Target</span><strong>'+num(o.target)+'</strong></div></div>'+(o.blocked_reason?'<p class="fine">'+esc(o.blocked_reason)+'</p>':'')+'<p class="fine">Paper position: '+esc(o.paper_status||'No position confirmed')+' · Entry window ends '+when(o.expires_at)+'</p><details data-key="setup-'+esc(o.id)+'"><summary>Supporting observations</summary>'+table(['Source','Observation','As of'],(o.evidence||[]).map(e=>[esc(e.source),esc(e.kind.replaceAll('_',' '))+(e.symbol?' '+esc(e.symbol):'')+(e.agreement?' · '+esc(e.agreement):'')+(e.level?' · '+num(e.level):''),when(e.source_ts)]))+'</details></article>').join(''):empty('No active setup has qualified','The scanner waits for a fresh trigger, defined invalidation, and usable price data. Use All recent decisions to review expired or blocked setups.');
  $('#scanner-focus').innerHTML=scanner.focus.length?table(['Symbol','Reason','Requested'],scanner.focus.map(f=>[esc(f.symbol),esc(f.reason),when(f.at)])):empty('No additional symbols prioritized','Core index coverage continues while the full watchlist is scanned.');
- $('#scanner-coverage').innerHTML=table(['Research feed','State','Source age','Retrieved','Target cadence'],scanner.feeds.map(f=>[esc(f.label),tag(f.status),f.source_age!=null?age(f.source_age):(f.item_clocks||[]).some(r=>r.source_ts!=null)?'<details data-key="clocks-'+esc(f.key)+'"><summary>Per-item clocks</summary>'+table(['Symbol','State','Source time','Age'],f.item_clocks.map(r=>[esc(r.symbol||'Unspecified'),tag(r.status),when(r.source_ts),age(r.source_age)]))+'</details>':age(null),when(f.received),age(f.target_interval)]))+'<p class="fine">Target cadence is a scheduling goal. Provider caching, quotas, and failures can delay a refresh. Unknown source times are not treated as current. Mixed feeds retain each item’s clock.</p>';
+ $('#scanner-coverage').innerHTML=table(['Research feed','State','Source age','Retrieved','Target cadence','Cache / live eligibility'],scanner.feeds.map(f=>[esc(f.label),tag(f.status),f.source_age!=null?age(f.source_age):(f.item_clocks||[]).some(r=>r.source_ts!=null)?'<details data-key="clocks-'+esc(f.key)+'"><summary>Per-item clocks</summary>'+table(['Symbol','State','Source time','Age'],f.item_clocks.map(r=>[esc(r.symbol||'Unspecified'),tag(r.status),when(r.source_ts),age(r.source_age)]))+'</details>':age(null),when(f.received),age(f.target_interval),esc((f.cached===true?'Cached':f.cached===false?'Not cached':'Cache unknown')+' · '+(f.usage==='context_only'?'Context only':f.eligible_for_live_confirmation?'Clocks current; price confirmation required':'Not current confirmation'))]))+'<p class="fine">Target cadence is a scheduling goal. Provider caching, quotas, and failures can delay a refresh. Unknown source times are not treated as current. Mixed feeds retain each item’s clock.</p>';
 }
 let researchKey='',researchLoaded=0;
 function updateResearchChoices(feeds){
@@ -174,6 +175,7 @@ if(location.hash==='#projects')document.querySelector('[data-tab="projects"]').c
 
 function renderSecondary(data){
  if(!data)return;
+ if(secondaryReport)data={...data,comparisons:secondaryReport.comparisons,window:secondaryReport.window,report_at:secondaryReport.at};
  const names={morning:'Morning Algo',smoothers:'Smoothers',futures:'TradingView futures',compass_futures:'Compass futures'};
  const labels={supported:'Supported',watch:'Watch',rejected:'Rejected',insufficient_data:'Insufficient data'};
  const status=data.status||{}, filter=$('#secondary-filter').value;
@@ -182,7 +184,8 @@ function renderSecondary(data){
  const stale=!status.at||Date.now()/1000-status.at>25;
  $('#secondary-status').textContent=(status.enabled?(stale?'Review worker update is stale. ':'Review worker active. '):'Awaiting review worker. ')+
   'Originals run independently. Started '+when(data.activation?.at)+'. Last check '+when(status.at)+'. Comparison refreshed '+when(data.report_at)+'. '+data.version+
-  (data.window?.truncated?' · Comparison limited to the latest 5,000 reviews.':' · Rolling 30-day comparison.');
+  (secondaryReport?' · Selected review period '+when(data.window.since)+' through '+when(data.window.through)+'.':' · Rolling 30-day comparison.')+
+  (data.window?.truncated?' · Comparison limited to the latest 5,000 reviews.':'');
  $('#secondary-stats').innerHTML=Object.entries(labels).map(([key,label])=>'<div class="stat"><div class="label">'+label+'</div><div class="value">'+num(count[key]||0,0)+'</div><div class="fine">'+(key==='supported'?'Selected by the secondary rules':key==='insufficient_data'?'Excluded from directional comparison':'Retained for comparison')+'</div></div>').join('');
  const horizon=Number($('#secondary-horizon').value);
  const readiness=data.data_readiness||{}, readinessStale=!readiness.at||Date.now()/1000-readiness.at>45;
@@ -193,7 +196,7 @@ function renderSecondary(data){
  const waiting=(data.pending||[]).filter(r=>filter==='all'||r.project===filter);
  $('#secondary-pending').innerHTML=waiting.length?'<h3>Waiting for current data</h3>'+table(['Source / symbol','Deadline','Attempts','Missing inputs'],waiting.map(r=>[esc(names[r.project])+' · '+esc(r.symbol),when(r.deadline),num(r.attempts,0),esc(r.missing.join('; '))])):'<p class="fine">No reviews waiting for data. A pending review can retry only within 60 seconds of original candidate availability.</p>';
  const pct=v=>v===null||v===undefined?'—':num(v,3)+'%';
- $('#secondary-comparison').innerHTML=groups.length?table(['Source / symbol / strategy','Measured / eligible','Selected','All candidates: mean','Selected: mean','Filter per candidate','Missed positive / avoided negative','Pending / missing / session end'],groups.map(g=>{const h=g.horizons.find(h=>h.minutes===horizon);return [esc(g.label)+' · '+esc(g.symbol)+' · '+esc(g.side)+'<br><span class="fine">'+esc(g.strategy)+' · '+esc(g.source_version)+'</span>',num(h.measured,0)+' / '+num(h.eligible,0),num(h.selected,0),pct(h.original_mean_pct),pct(h.selected_mean_pct),pct(h.filter_per_candidate_pct),num(h.missed_positive,0)+' / '+num(h.avoided_negative,0),num(h.pending,0)+' / '+num(h.missing,0)+' / '+num(h.session_boundary,0)];})):empty('Waiting for forward candidates','Every supported, watch and rejected candidate is measured from the same review-time reference. The first comparison needs a completed checkpoint.');
+ $('#secondary-comparison').innerHTML=groups.length?table(['Source / symbol / strategy','Measured / eligible','Selected','Supported positive / negative','All candidates: mean','Selected: mean','Filter per candidate','Missed positive / avoided negative','Pending / missing / session end'],groups.map(g=>{const h=g.horizons.find(h=>h.minutes===horizon);return [esc(g.label)+' · '+esc(g.symbol)+' · '+esc(g.side)+'<br><span class="fine">'+esc(g.strategy)+' · '+esc(g.source_version)+'</span>',num(h.measured,0)+' / '+num(h.eligible,0),num(h.selected,0),num(h.supported_positive,0)+' / '+num(h.supported_negative,0),pct(h.original_mean_pct),pct(h.selected_mean_pct),pct(h.filter_per_candidate_pct),num(h.missed_positive,0)+' / '+num(h.avoided_negative,0),num(h.pending,0)+' / '+num(h.missing,0)+' / '+num(h.session_boundary,0)];})):empty('Waiting for forward candidates','Every supported, watch and rejected candidate is measured from the same review-time reference. The first comparison needs a completed checkpoint.');
  const weekly=groups.filter(g=>g.project==='smoothers');
  $('#secondary-weekly').innerHTML=weekly.length?'<h3>Smoothers weekly target outcomes</h3>'+table(['Symbol / strategy','All resolved: target hits','Selected resolved: target hits'],weekly.map(g=>[esc(g.symbol)+' · '+esc(g.side)+' · '+esc(g.strategy),num(g.weekly.target_hits,0)+' / '+num(g.weekly.resolved,0),num(g.weekly.selected_target_hits,0)+' / '+num(g.weekly.selected_resolved,0)]))+'<p class="fine">These are the original underlying target tests. Option observations remain available in each full record; a target hit is not an option profit.</p>':'';
  const rows=data.reviews.filter(r=>filter==='all'||r.project===filter).slice(0,100);
@@ -216,6 +219,25 @@ function renderSecondary(data){
 }
 $('#secondary-filter').onchange=()=>{if(lastState)renderSecondary(lastState.secondary);};
 $('#secondary-horizon').onchange=()=>{if(lastState)renderSecondary(lastState.secondary);};
+$('#secondary-period-apply').onclick=async()=>{
+ const request=++secondaryReportRequest, since=new Date($('#secondary-since').value).getTime()/1000;
+ if(!Number.isFinite(since)){$('#secondary-period-note').textContent='Choose a valid start date and time.';return;}
+ $('#secondary-period-note').textContent='Loading selected review period…';
+ try{
+  const response=await fetch('/api/secondary/report?since='+encodeURIComponent(since));
+  const report=await response.json();
+  if(!response.ok)throw new Error(typeof report.detail==='string'?report.detail:'Could not load this period.');
+  if(request!==secondaryReportRequest)return;
+  secondaryReport=report;
+  $('#secondary-period-note').textContent='Loaded '+when(report.at)+'. Click Load period again to include newer measurements. Missing observations remain excluded from returns.';
+  if(lastState)renderSecondary(lastState.secondary);
+ }catch(error){if(request===secondaryReportRequest)$('#secondary-period-note').textContent=error.message;}
+};
+$('#secondary-period-reset').onclick=()=>{
+ secondaryReportRequest++;secondaryReport=null;$('#secondary-since').value='';
+ $('#secondary-period-note').textContent='Rolling 30-day comparison restored.';
+ if(lastState)renderSecondary(lastState.secondary);
+};
 if(location.hash==='#secondary')document.querySelector('[data-tab="secondary"]').click();
 poll();
 

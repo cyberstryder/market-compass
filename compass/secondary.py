@@ -20,8 +20,10 @@ from .scanner import ema, features, bars_from_window
 from .store import events, identity, meta
 from .projects import records as originals
 from .quote_path import recorded_path
+from .vendor_freshness import confirmation
+from .flow_recovery import freshness as flow_freshness
 
-VERSION = "secondary-context-v2"
+VERSION = "secondary-context-v3"
 LABELS = {"morning": "Morning Algo", "smoothers": "Smoothers",
           "futures": "TradingView futures", "compass_futures": "Compass futures"}
 VERDICTS = ("supported", "watch", "rejected", "insufficient_data")
@@ -158,9 +160,11 @@ def capture(db, c, candidate, cfg, now):
     concentrations = sorted(matrix.get("strikes", []), key=lambda r: abs(r.get("gex") or 0), reverse=True)[:5]
     vex = sorted(matrix.get("strikes", []), key=lambda r: abs(r.get("vex") or 0), reverse=True)[:5]
     equity_open = is_open(now)
-    matrix_live = bool(equity_open and current(matrix.get("source_ts"), now, 180)
-                       and not matrix.get("vendor_stale") and not matrix.get("stale"))
-    flow = db.get(c, "matrix:unusual_activity", {}).get("rows", [])
+    matrix_check = confirmation(matrix,now)
+    matrix_live = bool(equity_open and matrix_check['eligible_for_live_confirmation'])
+    flow_summary = db.get(c, "matrix:unusual_activity", {})
+    flow_check = flow_freshness(flow_summary,now)
+    flow = flow_summary.get("rows", []) if flow_check['eligible_for_live_confirmation'] else []
     recent = [r for r in flow if r.get("symbol") == exposure_symbol
         and current(r.get("source_ts"), now, 120) and (r.get("score") or 0) >= 85
         and (r.get("premium") or 0) >= 100000] if equity_open and exposure_symbol else []
@@ -182,13 +186,14 @@ def capture(db, c, candidate, cfg, now):
     if matrix_live and not root:
         for prefix in ("apex:", "matrix_levels:"):
             obj = db.get(c, prefix + symbol, {})
-            if current(obj.get("source_ts"), now, 180) and not obj.get("vendor_stale"):
+            if confirmation(obj,now)['eligible_for_live_confirmation']:
                 levels.extend({"price": r.get("price"), "kind": r.get("kind"), "source_ts": obj["source_ts"]}
                     for r in obj.get("levels", []) if numeric(r.get("known_at", obj.get("received")))
                     and r.get("known_at", obj.get("received")) <= now)
     return {"captured_at": now, "market_symbol": symbol, "price_basis": basis, "quote": quote,
         "technical": technical, "daily": daily_context(db, c, symbol, now) if candidate["project"] == "smoothers" and symbol else {},
         "peers": peers, "flow": flow_rows[:8], "levels": levels[:12],
+        "vendor_checks": {"matrix":matrix_check,"flow":flow_check},
         "exposure": {"symbol": exposure_symbol, "relationship": "cross_asset_context" if root else "same_underlying",
             "status": "current" if matrix_live else "cash_market_closed" if not equity_open else "missing_or_stale",
             "source_ts": matrix.get("source_ts"), "received": matrix.get("received"),
@@ -628,6 +633,12 @@ def comparisons(rows):
                 "original_mean_pct": sum(v for _, v in measured) / len(measured) if measured else None,
                 "selected_mean_pct": sum(v for _, v in selected) / len(selected) if selected else None,
                 "filter_per_candidate_pct": sum(v for _, v in selected) / len(measured) if measured else None,
+                "supported_positive": sum(v > 0 for _, v in selected),
+                "supported_negative": sum(v < 0 for _, v in selected),
+                "supported_flat": sum(v == 0 for _, v in selected),
+                "skipped_flat": sum(v == 0 for _, v in skipped),
+                "retained_quote_measurements": sum(p.get('status')=='observed' and p.get('observation_source')=='retained_quote' for _,p in observed),
+                "live_quote_measurements": sum(p.get('status')=='observed' and p.get('observation_source')=='live_quote' for _,p in observed),
                 "missed_positive": sum(v > 0 for _, v in skipped), "avoided_negative": sum(v < 0 for _, v in skipped),
                 "pending": sum(p.get("status") == "pending" for _, p in observed),
                 "missing": sum(p.get("status") in (None, "missing") for _, p in observed),
@@ -644,10 +655,12 @@ def comparisons(rows):
     return result
 
 
-def build_report(db, c, now):
-    since = now - 30 * 86400
+def build_report(db, c, now, since=None):
+    since = now - 30 * 86400 if since is None else since
+    if not math.isfinite(since) or not now-30*86400 <= since <= now:
+        raise ValueError('Report start must be within the last 30 days and no later than now')
     columns = [reviews.c[k] for k in ("project", "candidate", "version", "verdict", "decision", "measurements", "source_outcome")]
-    rows = c.execute(select(*columns).where(reviews.c.decided_at >= since)
+    rows = c.execute(select(*columns).where(reviews.c.decided_at >= since,reviews.c.decided_at <= now)
         .order_by(reviews.c.decided_at.desc(), reviews.c.id).limit(5001)).mappings().all()
     truncated = len(rows) > 5000
     rows = [dict(r) for r in rows[:5000]]

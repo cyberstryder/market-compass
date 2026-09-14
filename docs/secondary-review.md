@@ -1,6 +1,10 @@
 # Secondary review: originals versus Compass
 
-Requested September 14, 2026. Current rule version: `secondary-context-v2`.
+Requested September 14, 2026. Current rule version: `secondary-context-v3`.
+
+Version 3 checks vendor source and retrieval clocks together and retains stale
+flags. The comparison also supports a chosen start time and explicit selected
+positive/negative counts. See [freshness and review periods](vendor-freshness-and-review-periods.md).
 
 ## September 14 data recovery fix
 

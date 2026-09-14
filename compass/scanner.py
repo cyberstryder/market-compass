@@ -11,6 +11,8 @@ from .store import identity
 from .instruments import future_root
 from .alert_format import alert_context
 from .research import FEEDS, catalog
+from .vendor_freshness import confirmation
+from .flow_recovery import freshness as flow_freshness
 
 VERSION='compass-scanner-v2'
 
@@ -167,7 +169,7 @@ def exposure_candidates(f,apex,now,tick):
     if not apex or f.get('status')!='ready' or not 0<=now-f.get('asof',0)<=90 or not f.get('atr14') or apex.get('vendor_stale'):
         return []
     stamp=apex.get('source_ts')
-    if stamp is None or not 0<=now-stamp<=600:
+    if not confirmation(apex,now,600,600)['eligible_for_live_confirmation']:
         return []
     b,p=f['bar'],f['previous_bar']
     result=[]
@@ -250,7 +252,7 @@ def context_evidence(f,flow,apex,quotes,features_by_symbol,now):
         evidence.append({'source':'tradermatrix','kind':'unusual_flow','source_ts':row['source_ts'],
             'premium':row.get('premium'),'score':row.get('score'),'sentiment':row.get('sentiment'),
             'vendor_id':row.get('vendor_id')})
-    if apex and apex.get('source_ts') is not None and 0<=now-apex['source_ts']<=600 and not apex.get('vendor_stale'):
+    if apex and confirmation(apex,now,600,600)['eligible_for_live_confirmation']:
         evidence.append({'source':'tradermatrix','kind':'apex_context','source_ts':apex['source_ts'],
             'levels':apex.get('levels',[])[:8]})
     return evidence
@@ -265,7 +267,8 @@ class Scanner:
         quotes={key[6:]:value for key,value in db.prefix(c,'quote:').items()}
         latest=db.prefix(c,'latestbar:')
         facts={key[17:]:value for key,value in db.prefix(c,'scanner_features:').items()}
-        flow=db.get(c,'matrix:unusual_activity',{}).get('rows',[])
+        flow_summary=db.get(c,'matrix:unusual_activity',{})
+        flow=flow_summary.get('rows',[]) if flow_freshness(flow_summary,now)['eligible_for_live_confirmation'] else []
         apexes={key[5:]:value for key,value in db.prefix(c,'apex:').items()}
         concentrations={key[14:]:value for key,value in db.prefix(c,'matrix_levels:').items()}
         selected={item['raw_symbol'] for item in active_selection(db,c,cfg,now)}
@@ -333,7 +336,7 @@ class Scanner:
                 stamp=match.get('source_ts')
                 item['evidence'].append({'source':'tradermatrix','kind':'vendor_research_match',
                     'label':match['label'],'source_ts':stamp,'received':match['received'],
-                    'usage':'dated_context' if stamp is not None and 0<=now-stamp<=600 else 'context_only_not_current_confirmation'})
+                    'usage':'dated_context' if confirmation(match,now,600,600)['eligible_for_live_confirmation'] else 'context_only_not_current_confirmation'})
             for evidence in item['evidence']:
                 if evidence.get('kind')=='cross_market':
                     bias=evidence.get('htf15_bias')

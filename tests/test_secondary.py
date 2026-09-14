@@ -337,8 +337,14 @@ def test_review_api_requires_owner_auth_and_dashboard_reports_no_comparison_yet(
     app = create_app(cfg)
     with TestClient(app) as client:
         assert client.get("/api/secondary").status_code == 401
+        assert client.get('/api/secondary/report?since=0').status_code == 401
         assert client.get("/api/secondary/record?id=" + "a" * 64).status_code == 401
         assert client.post("/login", json={"password": cfg.password}).status_code == 200
+        import time
+        report=client.get('/api/secondary/report',params={'since':time.time()-60})
+        assert report.status_code==200 and report.json()['window']['reviewed']==0
+        assert client.get('/api/secondary/report?since=nan').status_code==422
+        assert client.get('/api/secondary/report?since=0').status_code==422
         data = client.get("/api/secondary").json()
         assert data["comparisons"] == [] and not data["originals_changed"]
         assert client.get("/api/secondary/record?id=bad").status_code == 422
