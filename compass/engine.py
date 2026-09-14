@@ -9,6 +9,7 @@ from .alert_format import alert_context
 from .futures import futures_session,risk_day,future_levels,active_selection,prior_rth
 from .instruments import future_spec, tick_price
 from .setup_study import SetupStudy
+from .option_ideas import OptionIdeas
 
 VERSION="orb15-breakout-v1"
 
@@ -45,6 +46,7 @@ class Engine:
         from .scanner import Scanner
         self.scanner=Scanner(db,cfg)
         self.study=SetupStudy(db,cfg,clock)
+        self.ideas=OptionIdeas(db,cfg,clock)
 
     specification=staticmethod(spec)
 
@@ -232,6 +234,7 @@ class Engine:
             self.swings(c,now)
             if self.cfg.scanner:
                 self.scanner.scan(c,now,self)
+            self.ideas.tick(c,now)
             self.db.put(c,"worker:engine",{"at":now,"mode":"SIMULATED","strategy_version":VERSION})
 
     async def run(self):

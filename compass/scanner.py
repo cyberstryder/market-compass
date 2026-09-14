@@ -365,6 +365,7 @@ class Scanner:
                 if (item['side']=='long' and entry<=item['stop']) or (item['side']=='short' and entry>=item['stop']):
                     item.update(status='blocked',blocked_reason='Trigger already invalidated')
                 else:
+                    engine.ideas.queue(c,item,now)
                     if cfg.scanner_paper:
                         signal={k:v for k,v in item.items() if k not in ('entry','stop','target')}
                         filled=engine.enter(c,signal,now,quiet=True)

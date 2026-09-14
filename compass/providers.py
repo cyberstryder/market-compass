@@ -29,6 +29,7 @@ class Collectors:
     def __init__(self,db,cfg):
         self.db,self.cfg=db,cfg
         self.option_symbols=set()
+        self.background_option_symbols=[]
         self.client=httpx.AsyncClient(timeout=20,follow_redirects=False)
         self.live=None
         self.extra_live={}
@@ -79,6 +80,7 @@ class Collectors:
             self.supervise("futures_history",bool(c.databento),self.future_history,3600),
             self.supervise("option_chain",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.chains,2),
             self.supervise("option_stream",bool(c.massive),self.options),
+            self.supervise("option_subscriptions",bool(c.massive),self.refresh_option_subscriptions,2),
             self.supervise("tradermatrix",bool(c.matrix),self.matrix,10),
             self.supervise("research",bool(c.matrix and c.research),lambda:collect_research(self),1)]+extra_tasks(self)
 
@@ -329,9 +331,31 @@ class Collectors:
         choices=[self.chain_selected.get(s,[]) for s in focus]
         for i in range(max((len(rows) for rows in choices),default=0)):
             selected.extend(rows[i] for rows in choices if i<len(rows))
-        self.option_symbols=set(held+selected[:max(0,self.cfg.stream_limit-len(held))])
+        self.background_option_symbols=selected
+        await self.refresh_option_subscriptions()
         self.db.health("option_chain","available",source+"; focused chains target 45s, background target 15m; daily OI; actual source ages shown",
             stream_contracts=len(self.option_symbols),contracts=contract_count,focus_symbols=focus,watch_symbols=len(self.cfg.watch_symbols),poll_ts=time.time(),source_ts=None)
+
+
+    async def refresh_option_subscriptions(self):
+        """Reconcile tracked ideas every two seconds, independently of chain HTTP work."""
+        from .option_ideas import stream_requests, choose_streams
+        def reconcile():
+            now=time.time()
+            with self.db.tx() as c:
+                held=[p["symbol"] for p in self.db.prefix(c,"position:").values()
+                      if p.get("status")=="open" and p.get("asset")=="option"]
+                requested=stream_requests(c,now)
+                selected=choose_streams(held,requested,self.background_option_symbols,self.cfg.stream_limit)
+                self.option_symbols=set(selected)
+                # This is requested subscription state; opening still requires actual fresh quotes.
+                self.db.put(c,'options:subscriptions',dict(at=now,symbols=selected,
+                    requested_ideas=len(requested),waiting_ideas=len(set(requested)-set(selected))))
+            self.db.health('option_subscriptions','running',
+                'Pinned options ideas and existing positions; actual quotes verify access',
+                selected_contracts=len(selected),requested_ideas=len(requested),
+                waiting_ideas=len(set(requested)-set(selected)),poll_ts=now)
+        await asyncio.to_thread(reconcile)
 
     async def massive_chain(self,symbol):
         url="https://api.massive.com/v3/snapshot/options/"+symbol
