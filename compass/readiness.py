@@ -46,7 +46,7 @@ def decorate_health(items, workers, markets, now):
                 h.update(status="stale", detail="Worker is alive but this task has stopped reporting. " + h["detail"])
             elif h['name'] == 'tradermatrix_flow':
                 from .flow_recovery import freshness
-                flow = freshness({'source_ts':h.get('source_ts'),'received':h.get('poll_ts')},now)
+                flow = freshness({**h.get('freshness',{}),'source_ts':h.get('source_ts'),'received':h.get('poll_ts')},now)
                 if flow['status'] != 'current':
                     h.update(status=flow['status'], detail='Live flow confirmation unavailable. '+h['detail'])
         result.append(h)

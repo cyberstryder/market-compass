@@ -229,7 +229,7 @@ def test_actual_scanner_queues_stock_idea_without_portfolio_entry(db,cfg):
     with db.tx() as c:
         db.put(c,'scanner_features:SPY',f)
         db.put(c,'quote:SPY',q(NOW,101.1,101.11))
-        db.put(c,'matrix:unusual_activity',dict(rows=[dict(symbol='SPY',source_ts=NOW-1,
+        db.put(c,'matrix:unusual_activity',dict(source_ts=NOW-1,received=NOW,rows=[dict(symbol='SPY',source_ts=NOW-1,
             premium=200000,score=90,sentiment='Bullish',vendor_id='one')]))
         Scanner(db,cfg).scan(c,NOW,Engine(db,cfg))
         assert len(rows(c))==1 and rows(c)[0]['status']=='pending'

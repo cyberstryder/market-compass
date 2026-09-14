@@ -5,18 +5,14 @@ from sqlalchemy import select,func
 from .market import day
 from .store import flow_records,identity
 from .vendor import flow_page
+from .vendor_freshness import confirmation, progress, log_observation
 
 
-def freshness(summary, now):
+def freshness(summary, now, max_event_age=120):
     """Event age is eligibility evidence, not proof of transport latency."""
-    stamp, received = summary.get('source_ts'), summary.get('received')
-    event_age = now-stamp if stamp is not None else None
-    poll_age = now-received if received is not None else None
-    status = ('poll_stale' if poll_age is None or not 0 <= poll_age <= 60 else
-              'no_events' if event_age is None else 'clock_error' if event_age < 0 else
-              'event_stale' if event_age > 120 else 'current')
-    return dict(status=status, event_age=event_age, poll_age=poll_age,
-        eligible_for_live_confirmation=status == 'current', max_event_age=120,
+    result = confirmation(summary,now,max_event_age,60)
+    status = {'source_time_unknown':'no_events','stale':'event_stale'}.get(result['status'],result['status'])
+    return dict(**{**result,'status':status}, event_age=result['source_age'], max_event_age=max_event_age,
         note='Latest vendor tradeTime and successful retrieval are separate clocks. An old event may reflect quiet filtered activity, grouping, corrections or delayed delivery; event age alone cannot identify the cause.')
 
 
@@ -107,7 +103,8 @@ async def collect(collector,now,page_cap=5):
             select(flow_records.c.payload,flow_records.c.first_seen,flow_records.c.last_seen).where(flow_records.c.day==today)
             .order_by(flow_records.c.source_ts.desc()).limit(100))]
         recovery={k[14:]:v for k,v in db.prefix(c,"recovery:flow:").items()}
-        summary={"source":"tradermatrix","received":cp["at"],"day":today,
+        summary={"source":"tradermatrix","received":first['received'],"day":today,
+            **{k:first.get(k) for k in ('cached','vendor_stale','vendor_refresh_seconds')},
             "source_ts":max((r["source_ts"] for r in rows),default=None),"rows":rows,
             "total":cp["total"],"pages":requests,"page_cap":page_cap,"fetched_rows":current_rows,
             "unique_rows":cp["unique_rows"],"rejected":rejected,
@@ -116,9 +113,11 @@ async def collect(collector,now,page_cap=5):
             "prior_gaps":[v for k,v in recovery.items() if k!=today and v.get("status")!="reconciled"][-7:],
             "coverage_note":"$50k vendor-filtered feed. Page 1 refreshes each cycle; deeper pages resume durably with overlap. Daily unique IDs and corrections are retained. Estimated gaps compare vendor count with stored IDs; moving pages, deletions or vendor omissions can still leave gaps after a full pass.",
             "schema_validation":"Live rows accepted against documented fields; classifications remain vendor supplied" if rows else "No live row received for this day yet"}
+        summary['source_progress'] = progress(db.get(c,'matrix:unusual_activity',{}),summary)
         summary['freshness'] = freshness(summary, cp['at'])
         db.put(c,"matrix:unusual_activity",summary)
     state = summary['freshness']['status']
+    log_observation('unusual_activity',summary,cp['at'],120,60)
     db.health("tradermatrix_flow",summary['status'] if state == 'current' else state,
         f"{today}: {cp['unique_rows']} unique rows / {cp['total']} vendor count; estimated gap {cp['estimated_gap']}; resume page {cp['next_page']}; event freshness {state}",
         summary["source_ts"], poll_ts=summary['received'], freshness=summary['freshness'])

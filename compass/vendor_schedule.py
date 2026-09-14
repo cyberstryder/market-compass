@@ -3,6 +3,7 @@ from .market import is_open
 from .universe import focus_symbols
 from sqlalchemy import select
 from .store import state
+from .vendor_freshness import confirmation
 
 
 def matrix_target(db, c, cfg, now, cursor=0):
@@ -35,18 +36,14 @@ def matrix_target(db, c, cfg, now, cursor=0):
 
 def matrix_health(db, c, cfg, now):
     rows = []
-    clocks = {key[7:]:(stamp,received) for key,stamp,received in c.execute(select(state.c.key,
-        state.c.value['source_ts'].as_float(),state.c.value['received'].as_float())
-        .where(state.c.key.in_(['matrix:SPY','matrix:QQQ','matrix:IWM'])))}
     jobs = db.prefix(c,'matrix_job:')
     for symbol in ('SPY', 'QQQ', 'IWM'):
         if symbol not in cfg.watch_symbols:
             continue
-        stamp,received = clocks.get(symbol,(None,None))
-        age = now-stamp if stamp is not None else None
+        item = db.get(c,'matrix:'+symbol,{})
+        check = confirmation(item,now)
         job = jobs.get('matrix_job:' + symbol, {})
-        status = ('error' if job.get('error') else 'waiting' if age is None else
-                  'clock_error' if age < -1 else 'stale' if age > 180 else 'current')
-        rows.append(dict(symbol=symbol, status=status, source_ts=stamp, source_age=age,
-                         received=received, retry_at=job.get('retry_at')))
+        status = 'error' if job.get('error') else 'waiting' if not item else check['status']
+        rows.append(dict(**{**check,'status':status,'eligible_for_live_confirmation':status=='current'},
+            symbol=symbol, source_progress=item.get('source_progress'), retry_at=job.get('retry_at')))
     return rows

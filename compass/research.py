@@ -11,6 +11,7 @@ from .market import is_open, number
 from .store import identity
 from .universe import focus_symbols
 from .vendor import source_time
+from .vendor_freshness import metadata, confirmation, progress, log_observation
 
 
 @dataclass(frozen=True)
@@ -132,8 +133,7 @@ def normalize(feed, payload, now):
     # coexist. Each item retains its own clock and unknown clocks remain unknown.
     return {'key': feed.key, 'label': feed.label, 'category': feed.category,
         'source': 'tradermatrix', 'path': feed.path, 'received': now, 'source_ts': stamp,
-        'target_interval': feed.interval, 'vendor_refresh_seconds': number(freshness.get('refreshSeconds')),
-        'vendor_stale': freshness.get('stale') is True, 'cached': bool(payload.get('cached')) if isinstance(payload, dict) else False,
+        'target_interval': feed.interval, **metadata(payload),
         'items': items, 'data': raw, 'status': 'available' if stamp is not None else 'per_item_clocks' if any(r['source_ts'] is not None for r in items) else 'source_time_unknown',
         'coverage': 'Vendor-returned results; not proof of complete market coverage',
         'timestamp_note': 'Calculation or event clock supplied by vendor; fetch time is separate. Disclosures describe past activity.'}
@@ -163,8 +163,7 @@ def apex_levels(payload, symbol, now):
         levels.append({'price': flip, 'score': None, 'kind': 'gamma_flip'})
     return {'symbol': symbol, 'source': 'tradermatrix', 'source_ts': stamp, 'received': now,
         'spot': number(body.get('spotPrice')), 'levels': levels, 'mode': body.get('mode'),
-        'expirations': body.get('expirationsUsed', []), 'vendor_stale': freshness.get('stale') is True,
-        'vendor_refresh_seconds': number(freshness.get('refreshSeconds')),
+        'expirations': body.get('expirationsUsed', []), **metadata(payload),
         'method': 'Vendor Apex ranking and flip; no assumption that a level predicts direction.'}
 
 
@@ -182,21 +181,24 @@ def catalog(db, c, cfg, now):
             'source_age': now-r['source_ts'] if r.get('source_ts') is not None else None}
             for r in (item or {}).get('items', [])]
         for row in item_clocks:
-            row['status'] = ('source_time_unknown' if row['source_age'] is None else
-                'clock_error' if row['source_age'] < -1 else
-                'stale' if row['source_age'] > max(feed.interval*2, 180) else 'current')
+            row.update(confirmation({**(item or {}),'source_ts':row['source_ts']},now,
+                max(feed.interval*2,180),max(feed.interval*2,180)))
         states = {r['status'] for r in item_clocks}
         row_status = ('current' if states == {'current'} else 'stale' if states == {'stale'} else
                       'mixed' if states and states != {'source_time_unknown'} else 'source_time_unknown')
+        check = confirmation(item or {},now,max(feed.interval*2,180),max(feed.interval*2,180))
         status=('not_configured' if unconfigured else 'disabled' if not cfg.research else
                 'error' if job.get('error') else 'waiting' if not item else
-                'clock_error' if age is not None and age < -1 else
-                'stale' if item.get('vendor_stale') or (age is not None and age>max(feed.interval*2, 180)) else
+                check['status'] if check['status'] not in ('current','source_time_unknown') else
                 row_status if stamp is None else 'current')
         result.append({'key': feed.key, 'label': feed.label, 'category': feed.category,
             'status': status, 'source_ts': stamp, 'source_age': age,
             'received': item.get('received') if item else None,
             'target_interval': feed.interval, 'last_error': job.get('error'),
+            'poll_age':check['poll_age'],'cached':check['cached'],'vendor_stale':check['vendor_stale'],
+            'source_progress':(item or {}).get('source_progress'),
+            'usage':'context_only' if feed.category in ('events','disclosures','fundamentals','positioning') else 'timestamped_market_context',
+            'eligible_for_live_confirmation':status=='current' and feed.category not in ('events','disclosures','fundamentals','positioning'),
             'rows': len(item.get('items', [])) if item else 0,
             'clock_basis': 'snapshot' if stamp is not None else 'per_item', 'item_clocks': item_clocks})
     return result
@@ -230,6 +232,7 @@ async def collect(collector, now=None):
         result=normalize(feed,payload,received)
         apex=apex_levels(payload,feed.key[5:],received) if feed.key.startswith('apex_') else None
         with db.tx() as c:
+            result['source_progress']=progress(db.get(c,'research:'+feed.key,{}),result)
             db.put(c,'research:'+feed.key,result)
             db.append(c,'research','tradermatrix',feed.key,received,result,
                 identity('research',feed.key,result['data']))
@@ -245,6 +248,7 @@ async def collect(collector, now=None):
                     matches[feed.key]={'key':feed.key,'label':feed.label,'category':feed.category,
                         'source':'tradermatrix','source_ts':row['source_ts'] or result['source_ts'],
                         'received':received,'digest':digest,
+                        **{k:result.get(k) for k in ('cached','vendor_stale','vendor_refresh_seconds')},
                         'interpretation':'Vendor research match; price confirmation remains necessary'}
                     db.put(c,'research_matches:'+symbol,matches)
                     if feed.category=='setups' and old_match.get('digest')!=digest:
@@ -258,6 +262,7 @@ async def collect(collector, now=None):
                 for level in apex['levels']:
                     level['known_at']=known.get((level['kind'],level['price']),received)
                 db.put(c,'apex:'+apex['symbol'],apex)
+        log_observation(feed.key,result,received,max(feed.interval*2,180),max(feed.interval*2,180))
         db.health('research','receiving','Independent vendor research jobs; source clocks and per-feed failures retained',
                   last_feed=feed.key,last_success=received)
         return result

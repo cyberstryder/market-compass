@@ -181,7 +181,9 @@ def create_app(cfg=None):
                 item["source_asof"]=clock(stamp)
                 item["fetched_at"]=clock(item.get("received"))
                 item["source_age"]=round(now-stamp,1) if stamp is not None else None
-                item["freshness"]="no_source_event" if stamp is None else "clock_error" if stamp>now+1 else "current" if now-stamp<=180 else "previous_snapshot" if not markets["equities"] else "stale"
+                from .vendor_freshness import confirmation
+                item['confirmation']=confirmation(item,now)
+                item["freshness"]=item['confirmation']['status']
                 if 'recovery' in item:
                     from .flow_recovery import freshness as flow_freshness
                     item['flow_freshness']=flow_freshness(item,now)
@@ -242,6 +244,15 @@ def create_app(cfg=None):
             row=c.execute(select(secondary_reviews).where(secondary_reviews.c.id==id)).mappings().first()
         if row is None: raise HTTPException(404,"Review not found")
         return dict(row)
+
+    @app.get('/api/secondary/report')
+    def get_secondary_report(since:float):
+        from .secondary import build_report
+        try:
+            with db.tx() as c:
+                return build_report(db,c,time.time(),since=since)
+        except ValueError as error:
+            raise HTTPException(422,str(error)) from error
 
     @app.get("/api/projects/record")
     def get_project_record(project:str,id:str):
