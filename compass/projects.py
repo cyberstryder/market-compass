@@ -218,14 +218,19 @@ def snapshot(db, c, cfg, now):
         if project != "futures" and state == "connected" and now - (checked or 0) > 25:
             state = "stale"
         if project == "futures":
-            state = "awaiting_first_event" if cfg.futures_observer_token else "not_configured"
-            streams = [db.get(c, "project_stream:" + stream, {"stream": stream, "status": "awaiting_first_event"})
-                       for stream in STREAMS]
-            if all(s.get("last_received") for s in streams): state = "events_received"
-            elif any(s.get("last_received") for s in streams): state = "partial"
+            streams = []
+            for stream in STREAMS:
+                saved = db.get(c, "project_stream:" + stream, {"stream": stream})
+                configured = bool(cfg.futures_observer_token) and stream in cfg.observer_streams
+                streams.append({**saved,"configured":configured,"status":
+                    "configuration_pending" if not configured else "events_received" if saved.get("last_received") else "awaiting_first_event"})
+            state = "not_configured" if not cfg.futures_observer_token else "configuration_pending"
+            if all(s["configured"] for s in streams):
+                state = "events_received" if all(s.get("last_received") for s in streams) else "awaiting_first_event"
+            elif any(s["configured"] for s in streams): state = "partial"
         else: streams = []
         count = c.execute(select(func.count()).select_from(records).where(records.c.project == project)).scalar_one()
-        status.append({"project": project, "name": name, **health, "status": state, "record_count": count,
+        status.append({**health,"project": project, "name": name, "status": state, "record_count": count,
             "streams": streams, "strategy_behavior_changed": False})
     recent = c.execute(select(records).order_by(records.c.source_ts.desc()).limit(200)).mappings().all()
     return {"mode": "observe_only", "projects": status, "records": [

@@ -38,6 +38,7 @@ class Config:
     smoothers_url: str = field(default_factory=lambda: env("SMOOTHERS_SOURCE_URL"))
     smoothers_token: str = field(default_factory=lambda: env("SMOOTHERS_INTEGRATION_TOKEN"))
     futures_observer_token: str = field(default_factory=lambda: env("FUTURES_OBSERVER_TOKEN"))
+    observer_streams: tuple = field(default_factory=lambda: tuple(s for s in env("FUTURES_OBSERVER_STREAMS").split(",") if s))
 
     @property
     def watch_symbols(self):
@@ -64,3 +65,4 @@ class Config:
             if token and len(token) < 32: raise ValueError("Integration tokens require 32 or more characters")
         for url in (self.morning_url, self.smoothers_url):
             if url and not url.startswith("https://"): raise ValueError("Source connections require HTTPS")
+        if not set(self.observer_streams)<= {"mnq","mgc"}: raise ValueError("Unknown configured observer stream")

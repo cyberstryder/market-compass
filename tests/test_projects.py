@@ -121,6 +121,16 @@ def test_connection_goes_stale_without_deleting_observations(db):
         assert result["projects"][0]["record_count"] == 1
 
 
+def test_receiving_endpoint_does_not_claim_unsaved_mirror_is_active(db):
+    with db.tx() as c:
+        result = snapshot(db,c,Config(local=True,futures_observer_token=TOKEN,observer_streams=("mnq",)),time.time())
+        future = result["projects"][2]
+        assert future["status"] == "partial"
+        assert future["streams"][0]["status"] == "awaiting_first_event"
+        assert future["streams"][1]["status"] == "configuration_pending"
+        assert result["projects"][0]["name"] == "Morning Algo"
+
+
 @pytest.mark.parametrize("updates", [{"ticker": "MES1!"}, {"version": "0.10.2"}, {"interval": "5"},
     {"price": "nan"}, {"quantity": "inf"}, {"time": "2026-09-14T09:30:00"}, {"order_id": ""}])
 def test_invalid_futures_observation_rejected(updates):
