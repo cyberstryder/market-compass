@@ -3,7 +3,7 @@ from collections import defaultdict
 import re
 from datetime import date, timedelta
 from functools import lru_cache
-from .market import day, session, number, calendar
+from .market import day, session, number, calendar, dedup
 
 
 @lru_cache(maxsize=512)
@@ -86,6 +86,18 @@ def daily_context(rows, now):
         weekly_close=weekly[-1], weekly_sma10=weekly10, weekly_through=weeks[complete_weeks[-1]][-1],
         weekly_bias='bullish' if weekly[-1]>weekly10 else 'bearish' if weekly[-1]<weekly10 else 'neutral',
         basis='Alpaca split-adjusted daily bars; completed sessions and completed weeks only')
+
+
+def minute_context(rows, now):
+    """A daily-level cross needs two real completed minutes, not an intraday warmup."""
+    bars = dedup(rows,now)
+    if len(bars)<2 or bars[-1]['ts']-bars[-2]['ts']!=60 or not 0 <= now-bars[-1]['ts']-60 <= 90:
+        return dict(status='waiting_for_price')
+    for b in bars[-2:]:
+        if (number(b['payload'].get('c')) or 0)<=0:
+            return dict(status='waiting_for_price')
+    return dict(status='ready',asof=bars[-1]['ts']+60,bar_start=bars[-1]['ts'],
+        bar=bars[-1]['payload'],previous_bar=bars[-2]['payload'])
 
 
 def technical_setups(symbol, daily, minute, now):

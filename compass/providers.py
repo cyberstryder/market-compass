@@ -7,6 +7,7 @@ from datetime import datetime,timedelta,timezone
 from urllib.parse import urlparse,parse_qsl
 import httpx
 import websockets
+from websockets.exceptions import ConnectionClosed
 from .market import ts,number,day
 from .store import identity
 from .exposure import calculate
@@ -19,6 +20,7 @@ from .instruments import future_root
 from .futures_replay import ReplayBars
 from .universe import focus_symbols
 from .research import collect as collect_research
+from .stock_stream import consume as consume_stocks, StockStreamError
 
 class FeedError(Exception):
     def __init__(self,message,status_code=None):
@@ -66,6 +68,10 @@ class Collectors:
             except asyncio.CancelledError: raise
             except Exception as e:
                 detail=str(e) if isinstance(e,FeedError) else type(e).__name__
+                if isinstance(e,ConnectionClosed):
+                    frame=e.rcvd or e.sent
+                    detail='Connection closed '+str(frame.code if frame else 'without status')+': '+redacted_detail(
+                        frame.reason if frame else 'No close frame',(self.cfg.alpaca_key,self.cfg.alpaca_secret,self.cfg.massive),160)
                 self.db.health(name,"error",detail+f"; retry in {delay}s")
                 await asyncio.sleep(delay)
                 delay=min(delay*2,120)
@@ -131,25 +137,10 @@ class Collectors:
         self.db.health("alpaca_stocks","connecting",self.cfg.feed.upper()+" stream")
         async with websockets.connect("wss://stream.data.alpaca.markets/v2/"+self.cfg.feed,ping_interval=20,max_queue=4096) as ws:
             await ws.send(json.dumps({"action":"auth","key":self.cfg.alpaca_key,"secret":self.cfg.alpaca_secret}))
-            last={}
-            async for raw in ws:
-                batch=[]
-                for x in json.loads(raw):
-                    if x.get("T")=="error": raise FeedError("Alpaca stream error code "+str(x.get("code")))
-                    if x.get("T")=="success" and x.get("msg")=="authenticated":
-                        await ws.send(json.dumps({"action":"subscribe","quotes":list(self.cfg.watch_symbols),"bars":list(self.cfg.watch_symbols)}))
-                    if x.get("T")=="subscription":
-                        self.db.health("alpaca_stocks","connected","Subscribed; waiting for market events",feed=self.cfg.feed)
-                    symbol,t=x.get("S"),ts(x.get("t"))
-                    if x.get("T")=="q" and time.monotonic()-last.get(symbol,0)>=(.25 if symbol in self.cfg.stocks else 1):
-                        batch.append((symbol,{"ts":t,"bid":x["bp"],"ask":x["ap"],"bid_size":x["bs"],"ask_size":x["as"]},symbol in self.cfg.stocks))
-                        last[symbol]=time.monotonic()
-                    if x.get("T") in {"b","u"}:
-                        await asyncio.to_thread(self.bars,"alpaca",[(symbol,t,{k:x[k] for k in ["o","h","l","c","v","vw"] if k in x})])
-                    if t and symbol and time.monotonic()-last.get("health",0)>5:
-                        self.db.health("alpaca_stocks","receiving","Core quotes up to 4 Hz; full watchlist latest quotes up to 1 Hz; closed minute bars",t,watch_symbols=len(self.cfg.watch_symbols))
-                        last["health"]=time.monotonic()
-                if batch: await asyncio.to_thread(self.quote_batch,'alpaca',batch)
+            try:
+                await consume_stocks(ws,self)
+            except StockStreamError as error:
+                raise FeedError(str(error)) from None
 
     async def history(self):
         newest=None
@@ -477,19 +468,22 @@ class Collectors:
                         self.db.health("option_stream","connected","Authenticated; waiting for selected-contract events")
                     symbol,t=x.get("sym"),ts(x.get("t"))
                     if x.get("ev")=="Q" and time.monotonic()-last.get(symbol,0)>1:
-                        self.quote("massive",symbol,{"ts":t,"bid":x.get("bp"),"ask":x.get("ap"),"bid_size":x.get("bs",0),"ask_size":x.get("as",0)})
+                        await asyncio.to_thread(self.quote,"massive",symbol,{"ts":t,"bid":x.get("bp"),"ask":x.get("ap"),"bid_size":x.get("bs",0),"ask_size":x.get("as",0)})
                         last[symbol]=time.monotonic()
                     if x.get("ev")=="T" and t:
-                        with self.db.tx() as c:
-                            key=identity("option_trade",symbol,t,x.get("i"),x.get("q"),x)
-                            added=self.db.append(c,"option_trade","massive",symbol,t,x,key)
-                            premium=float(x.get("p",0))*float(x.get("s",0))*100
-                            if added and premium>=100000:
-                                self.db.append(c,"flow","massive",symbol,t,{"premium":premium,"size":x.get("s"),"price":x.get("p"),
-                                    "classification":"Large print; opening/closing and intent unknown","scope":"Selected contracts only","raw":x},"flow:"+key)
+                        await asyncio.to_thread(self.option_trade,symbol,t,x)
                     if t and time.monotonic()-last.get("health",0)>5:
-                        self.db.health("option_stream","receiving","Selected-contract trades; $100k large-print filter; not full-market unusual activity",t,contracts=len(subscribed))
+                        await asyncio.to_thread(self.db.health,"option_stream","receiving","Selected-contract trades; $100k large-print filter; not full-market unusual activity",t,contracts=len(subscribed))
                         last["health"]=time.monotonic()
+
+    def option_trade(self,symbol,t,x):
+        with self.db.tx() as c:
+            key=identity("option_trade",symbol,t,x.get("i"),x.get("q"),x)
+            added=self.db.append(c,"option_trade","massive",symbol,t,x,key)
+            premium=float(x.get("p",0))*float(x.get("s",0))*100
+            if added and premium>=100000:
+                self.db.append(c,"flow","massive",symbol,t,{"premium":premium,"size":x.get("s"),"price":x.get("p"),
+                    "classification":"Large print; opening/closing and intent unknown","scope":"Selected contracts only","raw":x},"flow:"+key)
 
     async def matrix_request(self,path,label):
         # A shared lock spaces request starts across flow, matrices and research.

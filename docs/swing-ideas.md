@@ -23,7 +23,7 @@ This scanner looks across the saved 144-symbol stock/ETF watchlist for daily ran
 | Time exit | At most 10 trading sessions including entry, or the session before expiry, whichever is earlier; exit 15 minutes before that session closes |
 | Entry window | Cash session until 30 minutes before close |
 
-The entry model buys one option at the observed ask plus $0.01. Exits use the observed bid minus $0.01 (minimum zero), with $0.65 per contract per side. Favorable target exits are capped at the premium target. Adverse gaps use the observed bid and can exceed the planned stop. Returns include these modeled costs. There are no actual orders and no portfolio entry, position, or daily-loss gate on independent swing research.
+The daily-level crossing test requires two consecutive completed minute bars, independently of the intraday scanner's 30-minute indicator warmup. The entry model buys one option at the observed ask plus $0.01. Exits use the observed bid minus $0.01 (minimum zero), with $0.65 per contract per side. Favorable target exits are capped at the premium target. Adverse gaps use the observed bid and can exceed the planned stop. Returns include these modeled costs. There are no actual orders and no portfolio entry, position, or daily-loss gate on independent swing research.
 
 Separate trigger bars are separate experiments. Repeated evaluation of the same symbol, side, rule and trigger timestamp is deduplicated. Overlapping observations, including ones in the same option, are not an investable portfolio or independent statistical samples.
 
@@ -52,6 +52,8 @@ No earnings-avoidance rule or fundamental valuation model is asserted by this fi
 ## Operations
 
 The existing engine service runs a separately leased swing worker; collection stays in the collector service and the owner-only dashboard reads shared PostgreSQL state. New table creation uses the existing startup advisory lock. No schema changes to original ledgers are required.
+
+Alpaca's socket reader is independent of database flushing. Quote bursts coalesce to the latest source timestamp per symbol while maintaining existing 4 Hz core / 1 Hz broad sampling limits. Completed bars and corrections are batched by symbol and minute. A bounded bar overflow is an explicit feed error, never a silent missing-history success. Quote freshness is measured at stored source time; an active socket alone does not make a quote usable. Massive option quote writes also run outside the collector event loop.
 
 Configuration: `SWING_IDEAS_ENABLED=true`, `SWING_IDEAS_ALERTS=true`, `SWING_MIN_DTE=14`, `SWING_MAX_DTE=60`, `SWING_TARGET_DTE=30`, `SWING_MAX_HOLD_SESSIONS=10`. `OPTION_CHAIN_MAX_DTE` must cover the maximum swing DTE (existing default 90). Disabling new swing ideas still manages existing open observations. Disabling swing alerts suppresses new swing messages while retaining the ledger.
 
