@@ -11,6 +11,7 @@ from .instruments import FUTURES, DATED
 from .futures import risk_day, lead_contract
 from .diagnostics import redacted_detail
 from .futures_replay import ReplayBars
+from .futures_ingress import IngressProbe
 
 
 def subscription_plan(db,c,aliases,now):
@@ -61,6 +62,7 @@ async def collect_group(collector, exchange, aliases):
             last = {}
             mappings = {}
             replay = ReplayBars(collector)
+            probe = IngressProbe(exchange)
             with db.tx() as c:
                 stype,requested,targets=subscription_plan(db,c,aliases,time.time())
             db.health(name, 'connecting', 'Checking live access: '+', '.join(requested))
@@ -119,14 +121,16 @@ async def collect_group(collector, exchange, aliases):
                 if targets and str(raw) not in requested: return
                 root, symbol = match.group(1), f'{raw}@{iid}'
                 stamp = r.ts_event/1e9
+                if isinstance(r, sdk.MBP1Msg):
+                    probe.quote(symbol,r)
                 if isinstance(r, sdk.OHLCVMsg):
                     replay.add((symbol,stamp,{'o':r.open/1e9,'h':r.high/1e9,
                         'l':r.low/1e9,'c':r.close/1e9,'v':r.volume,'instrument_id':iid,'alias':str(raw)}))
                 elif isinstance(r, sdk.MBP1Msg) and time.monotonic()-last.get(symbol,0)>.25:
                     level = r.levels[0]
                     if level.bid_px<9e18 and level.ask_px<9e18:
-                        collector.quote('databento',symbol,{'ts':stamp,'bid':level.bid_px/1e9,'ask':level.ask_px/1e9,
-                            'bid_size':level.bid_sz,'ask_size':level.ask_sz},iid)
+                        probe.writing(symbol,lambda: collector.quote('databento',symbol,{'ts':stamp,'bid':level.bid_px/1e9,'ask':level.ask_px/1e9,
+                            'bid_size':level.bid_sz,'ask_size':level.ask_sz},iid))
                         if mappings.get(root,{}).get('iid')==iid and time.monotonic()-last.get('health:'+root,0)>5:
                             if activate(root, time.time(), stamp):
                                 db.health(name+'_'+root, 'receiving', 'Live access confirmed: '+symbol, stamp, monotonic_source=True)
@@ -140,7 +144,7 @@ async def collect_group(collector, exchange, aliases):
                 errors.append(type(error).__name__)
                 client.terminate()
 
-            client.add_callback(callback, exception_callback=on_error)
+            client.add_callback(probe.wrap(callback), exception_callback=on_error)
 
             def run():
                 try:

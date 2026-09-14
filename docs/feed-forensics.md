@@ -73,3 +73,22 @@ activation clock and report time, so the old September gaps stay identifiable.
 The existing ten-minute audit continues across the overnight reopen. A closed
 session with stale quote timestamps is not called a live-feed failure, and no
 future-session trial or successful checkpoint is inferred before it occurs.
+
+## Overnight ES/MCL investigation — September 14
+
+The archived ESZ6 gap near 22:45 UTC and MCLV6 gaps near 22:53, 22:58 and
+23:25 UTC show usable quotes resuming approximately 17–22 seconds after the
+prior usable quote. The next quotes were received near their source timestamps.
+The 15-second research continuity limit therefore marked these trials unresolved.
+Collector vendor logs continued, but those logs do not prove that the independent
+Databento callback streams were continuously processing quotes. Retained events
+alone cannot establish whether raw quotes were absent, skipped or delayed.
+
+`Futures ingress` private logs now provide cumulative per-connection counts and
+maxima every 30 seconds when callbacks run: incoming MBP1 records before sampling,
+valid/invalid BBO counts, source and local callback gaps, event/SDK receive ages,
+selected quote writes, completed write calls, and callback/write duration. SDK
+receive time is a provider clock, not local socket receipt. A completed write call
+does not establish a committed insert. An absent log during silence is not proof
+of disconnect; the next callback can report the gap. These counters are bounded to
+32 instruments per stream and never synthesize quotes or alter historical results.
