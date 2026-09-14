@@ -121,7 +121,8 @@ class SetupStudy:
                 if symbol not in paths:
                     after = min(r['last_quote_ts'] for r in rows if r['symbol'] == symbol)
                     paths[symbol] = recorded_path(self.db,c,symbol,after,observed)
-                path, truncated = paths[symbol]
+                path, truncated, archive_check = paths[symbol]
+                p['archive_check'] = archive_check
                 if truncated and not path:
                     p['gap_detail'] = {'reason':'recorded_batch_contains_no_usable_quotes','checked_at':observed}
                     self.finish(c,p,observed,'observation_gap')
