@@ -101,6 +101,10 @@ def alert_identity(row, now=None):
     elif status == 'setup_triggered':
         event = 'EXPIRED SETUP' if now >= p.get('expires_at', 0) else 'SETUP'
         mode = '[SIMULATED SETUP] — no broker order'
+    elif status == 'setup_result':
+        event = 'SETUP RESULT · ' + clean(p.get('outcome','unresolved')).upper()
+        mode = '[INDEPENDENT SETUP TEST] — one unit; no broker order'
+        origin = 'Compass setup study'
     elif status == 'secondary_review':
         event = 'SECONDARY ' + clean(p.get('verdict', 'review')).replace('_', ' ').upper()
         if now >= p.get('expires_at', 0):
@@ -157,13 +161,18 @@ def message_for(row, now=None):
     if p.get('initial_risk') is not None:
         lines.append('Modeled initial risk: $' + number(p['initial_risk']))
     if p.get('pnl') is not None:
-        lines.append('Simulated P&L: $' + number(p['pnl']) + ' (after modeled fees)')
+        lines.append(('Trial P&L: $' if p.get('status')=='setup_result' else 'Simulated P&L: $') + number(p['pnl']) + ' (after modeled fees)')
+    if p.get('status')=='setup_result':
+        lines.append('Independent experiment; overlaps other trials. Not account performance.')
+        if p.get('r_multiple') is not None: lines.append('Result: '+number(p['r_multiple'])+'R | Duration: '+number(p.get('elapsed_seconds',0)/60)+' minutes')
     if p.get('status') == 'setup_triggered':
         if identity['event'] == 'EXPIRED SETUP':
             lines.append('EXPIRED SETUP — DELAYED DELIVERY. The entry window has ended. This is a historical notification.')
         else:
             lines.append('Entry window ends: ' + clock(p['expires_at']))
-        lines.append('Paper position: ' + clean(p.get('paper_status', 'not entered')).replace('_', ' ') + '. Option selection is reported separately.')
+        lines.append('Portfolio simulation: ' + clean(p.get('paper_status', 'not entered')).replace('_', ' ') + '.')
+        if p.get('setup_trial_id'): lines.append('Independent setup outcome tracking active; portfolio limits do not stop measurement.')
+        if identity['category']!='futures': lines.append('Option selection is reported separately.')
     # An exit reason must take precedence over the original entry thesis.
     reason = p.get('exit_reason') or p.get('reason')
     if reason:

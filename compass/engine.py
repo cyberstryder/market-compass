@@ -6,15 +6,15 @@ import re
 from .market import levels,fresh,day,session,dedup
 from .store import identity
 from .alert_format import alert_context
-from .futures import futures_session,risk_day,future_levels,selection,prior_rth
+from .futures import futures_session,risk_day,future_levels,active_selection,prior_rth
+from .instruments import future_spec, tick_price
+from .setup_study import SetupStudy
 
 VERSION="orb15-breakout-v1"
 
 def spec(symbol):
-    if symbol.startswith("MES"): return {"tick":.25,"multiplier":5,"fee":1.5,"max_qty":2,"asset":"future"}
-    if symbol.startswith("MNQ"): return {"tick":.25,"multiplier":2,"fee":1.5,"max_qty":2,"asset":"future"}
-    if re.fullmatch(r'ES[HMUZ]\d{1,4}(?:@\d+)?',symbol): return {"tick":.25,"multiplier":50,"fee":2.5,"max_qty":1,"asset":"future"}
-    if re.fullmatch(r'NQ[HMUZ]\d{1,4}(?:@\d+)?',symbol): return {"tick":.25,"multiplier":20,"fee":2.5,"max_qty":1,"asset":"future"}
+    future = future_spec(symbol)
+    if future: return future
     if symbol.startswith("O:") or (len(symbol)>15 and any(x.isdigit() for x in symbol)):
         return {"tick":.01,"multiplier":100,"fee":.65,"max_qty":1,"asset":"option"}
     return {"tick":.01,"multiplier":1,"fee":0,"max_qty":100,"asset":"stock"}
@@ -44,6 +44,7 @@ class Engine:
         self.owner=uuid.uuid4().hex
         from .scanner import Scanner
         self.scanner=Scanner(db,cfg)
+        self.study=SetupStudy(db,cfg)
 
     specification=staticmethod(spec)
 
@@ -57,7 +58,7 @@ class Engine:
         hours=session(day(now))
         reason=None
         if s["asset"]=="future":
-            if not futures_session(now)["entry_open"]: reason="Outside futures entry session or exchange pause"
+            if not futures_session(now,symbol)["entry_open"]: reason="Outside futures entry session or exchange pause"
         elif not hours or not hours[0]<=now<hours[1]-1800: reason="Outside research entry session"
         if reason: return reason,None
         if self.db.get(c,"position:"+symbol,{}).get("status")=="open": reason="Existing simulated position"
@@ -66,7 +67,8 @@ class Engine:
         elif q["ask"]-q["bid"]>max(s["tick"]*8,(q["ask"]+q["bid"])/2*(.08 if s["asset"]=="option" else .002)):
             reason="Spread exceeds simulation liquidity limit"
         risk=self.db.get(c,"risk:"+risk_day(now),{"realized":0,"entries":0})
-        if risk["realized"]<=-self.cfg.daily_loss or risk["entries"]>=10: reason="Daily simulated loss or 10-entry cap"
+        if risk["realized"]<=-self.cfg.daily_loss: reason="Daily simulated loss limit"
+        if self.cfg.max_entries and risk["entries"]>=self.cfg.max_entries: reason="Configured simulated entry limit"
         if sum(p.get("status")=="open" for p in self.db.prefix(c,"position:").values())>=3:
             reason="Portfolio cap: three simultaneous simulated positions"
         if reason:
@@ -81,6 +83,7 @@ class Engine:
         return None,{"spec":s,"quote":q,"price":price,"distance":distance,"per_unit":per_unit,"qty":qty,"risk":risk,"flatten_at":flatten}
 
     def enter(self,c,signal,now,quiet=False):
+        self.study.start(c,signal,now,spec(signal["symbol"]))
         reason,plan=self.entry_check(c,signal,now)
         symbol,side=signal["symbol"],signal["side"]
         if reason:
@@ -203,8 +206,9 @@ class Engine:
         now=now or time.time()
         with self.db.tx() as c:
             if not self.db.lease(c,"engine",self.owner,30): return
+            self.study.tick(c,now)
             self.exits(c,now)
-            active={p["raw_symbol"] for p in selection(self.cfg.futures,now)}
+            active={p["raw_symbol"] for p in active_selection(self.db,c,self.cfg,now)}
             future_symbols={k[6:] for k in self.db.prefix(c,"quote:") if "@" in k and k[6:].split("@")[0] in active}
             future_symbols|={k[10:] for k in self.db.prefix(c,"latestbar:") if "@" in k and k[10:].split("@")[0] in active}
             symbols=list(self.cfg.stocks)+sorted(future_symbols)
@@ -217,7 +221,7 @@ class Engine:
                 if bar["ts"]<=self.db.get(c,"cursor:"+symbol,0): continue
                 future=spec(symbol)["asset"]=="future"
                 coverage=self.db.get(c,"historycoverage:"+symbol+":"+prior_rth(risk_day(now))[0]) if future else None
-                context=future_levels(rows,now,coverage) if future else levels(rows,bar["ts"]+60)
+                context=future_levels(rows,now,coverage,symbol) if future else levels(rows,bar["ts"]+60)
                 self.db.put(c,"levels:"+symbol,context)
                 s=candidate(symbol,rows[-2],bar,context,now)
                 if s:

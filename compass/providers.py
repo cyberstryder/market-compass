@@ -15,6 +15,7 @@ from .vendor import matrix_summary
 from .greek_diagnostics import diagnose
 from .flow_recovery import collect as collect_flow
 from .futures import selection
+from .instruments import future_root
 from .universe import focus_symbols
 from .research import collect as collect_research
 
@@ -29,6 +30,7 @@ class Collectors:
         self.option_symbols=set()
         self.client=httpx.AsyncClient(timeout=20,follow_redirects=False)
         self.live=None
+        self.extra_live={}
         self.matrix_last=0
         self.matrix_next=0
         self.matrix_lock=asyncio.Lock()
@@ -40,6 +42,7 @@ class Collectors:
 
     async def close(self):
         if self.live: self.live.stop()
+        for client in list(self.extra_live.values()): client.terminate()
         await self.client.aclose()
 
     async def get(self,url,headers=None,params=None):
@@ -67,6 +70,7 @@ class Collectors:
 
     def tasks(self):
         c=self.cfg
+        from .extra_futures import tasks as extra_tasks
         return [
             self.supervise("alpaca_stocks",bool(c.alpaca_key and c.alpaca_secret),self.stocks),
             self.supervise("alpaca_history",bool(c.alpaca_key and c.alpaca_secret),self.history,3600),
@@ -75,7 +79,7 @@ class Collectors:
             self.supervise("option_chain",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.chains,2),
             self.supervise("option_stream",bool(c.massive),self.options),
             self.supervise("tradermatrix",bool(c.matrix),self.matrix,10),
-            self.supervise("research",bool(c.matrix and c.research),lambda:collect_research(self),1)]
+            self.supervise("research",bool(c.matrix and c.research),lambda:collect_research(self),1)]+extra_tasks(self)
 
     @property
     def alpaca_headers(self):
@@ -186,7 +190,7 @@ class Collectors:
         symbols={t["raw_symbol"] for t in targets}
         with self.db.tx() as c:
             for p in self.db.prefix(c,"position:").values():
-                if p.get("status")=="open" and p.get("asset")=="future": symbols.add(p["symbol"].split("@")[0])
+                if p.get("status")=="open" and p.get("asset")=="future" and future_root(p["symbol"]) in ("MES","MNQ","ES","NQ"): symbols.add(p["symbol"].split("@")[0])
         return targets,sorted(symbols)
 
     async def futures(self):

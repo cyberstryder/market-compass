@@ -24,7 +24,9 @@ from .alert_format import alert_identity
 from .market import is_open
 from .diagnostics import assistant_error
 from .readiness import decorate_health,quote_checks,clock
-from .futures import futures_session,selection
+from .futures import futures_session,active_selection
+from .instruments import configured
+from .setup_study import snapshot as study_snapshot, trials as setup_trials
 from .scanner import snapshot as scanner_snapshot
 from .research import FEEDS
 from .projects import install as install_projects, run_sources, snapshot as projects_snapshot, records as project_records, PROJECTS
@@ -160,8 +162,8 @@ def create_app(cfg=None):
             watch={k[6:]:{**q,"age":round(now-q["ts"],2)} for k,q in quotes.items()
                 if k[6:] in cfg.watch_symbols or "@" in k}
             health=decorate_health(health,workers,markets,now)
-            checks=quote_checks(cfg.watch_symbols,cfg.futures,{k[6:]:q for k,q in quotes.items()},
-                db.recent(c,"mapping",limit=100),markets,now,selection(cfg.futures,now))
+            checks=quote_checks(cfg.watch_symbols,configured(cfg),{k[6:]:q for k,q in quotes.items()},
+                db.recent(c,"mapping",limit=100),markets,now,active_selection(db,c,cfg,now))
             matrix={k:{field:value for field,value in v.items() if field!="data"} for k,v in db.prefix(c,"matrix:").items()}
             for item in matrix.values():
                 if 'strikes' in item:
@@ -178,8 +180,9 @@ def create_app(cfg=None):
                 "scanner":scanner_snapshot(db,c,cfg,now),
                 "projects":projects_snapshot(db,c,cfg,now),
                 "secondary":secondary_snapshot(db,c,now),
+                "setup_study":study_snapshot(db,c,cfg,now),
                 "quote_checks":checks,"delivery":outbox_status(db,c,now),
-                "futures":{"session":futures_session(now),"selected":selection(cfg.futures,now),
+                "futures":{"session":futures_session(now),"selected":active_selection(db,c,cfg,now),
                     "contracts":list(db.prefix(c,"contract:").values()),
                     "history":sorted(db.prefix(c,"recovery:futures:").values(),key=lambda p:p.get("at",0),reverse=True)[:3]},
                 "greek_diagnostics":{k[7:]:v for k,v in db.prefix(c,"greeks:").items()},
@@ -188,7 +191,7 @@ def create_app(cfg=None):
                 "positions":positions,"trades":trades,"alerts":[{**row,"presentation":alert_identity(row,now)} for row in db.recent(c,"alert",limit=60)],
                 "flow":db.recent(c,"flow",limit=60),"matrix":matrix,
                 "risk":db.prefix(c,"risk:"),"ai_configured":bool(cfg.openai),
-                "limits":{"risk_per_trade":cfg.risk,"daily_realized_loss":cfg.daily_loss,"max_positions":3,"max_entries":10},
+                "limits":{"risk_per_trade":cfg.risk,"daily_realized_loss":cfg.daily_loss,"max_positions":3,"max_entries":cfg.max_entries},
                 "notes":["Quotes are sampled up to 4 Hz; minute-bar decisions, not tick-perfect execution.",
                     "GEX/VEX are OI-based proxies. Open interest is daily; dealer inventory is unobserved.",
                     "TraderMatrix matrix fields are normalized from paid responses; flow rows follow the official schema and await open-session verification.",
@@ -198,6 +201,17 @@ def create_app(cfg=None):
 
     @app.get("/api/state")
     def get_state(): return snapshot()
+
+    @app.get("/api/setup-study")
+    def get_setup_study():
+        with db.tx() as c: return study_snapshot(db,c,cfg,time.time())
+
+    @app.get("/api/setup-study/record")
+    def get_setup_record(id: str):
+        with db.tx() as c:
+            row=c.execute(select(setup_trials.c.payload).where(setup_trials.c.id==id)).scalar_one_or_none()
+        if row is None: raise HTTPException(404,"Unknown setup trial")
+        return row
 
     @app.get("/api/projects")
     def get_projects():

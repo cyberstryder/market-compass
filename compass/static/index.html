@@ -5,6 +5,7 @@
 <nav><button class="nav active" data-tab="overview">◈ Overview</button><button class="nav" data-tab="exposure">◎ Exposure</button>
 <button class="nav" data-tab="scanner">↗ Live scanner</button><button class="nav" data-tab="research">▤ Research desk</button>
 <button class="nav" data-tab="projects">▦ Connected projects</button>
+<button class="nav" data-tab="setup-study">◉ Setup results</button>
 <button class="nav" data-tab="secondary">◇ Secondary review</button>
 <button class="nav" data-tab="flow">≋ Options flow</button><button class="nav" data-tab="trades">↗ Simulated trades</button>
 <button class="nav" data-tab="assistant">✧ Ask Compass</button><button class="nav" data-tab="health">◷ Feed health</button></nav>
@@ -53,6 +54,9 @@
 <section id="flow" class="tab"><div class="banner">TraderMatrix supplies filtered unusual activity through polling. Massive supplies live prints for selected contracts. Neither view establishes a trade's opening or closing intent.</div>
 <article class="panel"><h2>TraderMatrix unusual activity</h2><div id="vendor-flows"></div></article>
 <article class="panel"><h2>Massive large option prints</h2><p class="muted">$100k minimum · selected contracts only</p><div id="flows"></div></article></section>
+<section id="setup-study" class="tab"><div class="banner">Every qualifying intraday stock/futures setup gets an independent one-unit trial. Account entry, position and loss limits do not stop these experiments. Overlapping trials are not an account equity curve.</div>
+<p id="study-status" class="fine"></p><article class="panel"><div class="panel-head"><h2>Results by setup</h2><label for="study-cohort">Cohort <select id="study-cohort"><option value="alerted">Alerted setups</option><option value="all">All qualifying candidates</option><option value="quiet">Candidates during alert cooldown</option></select></label></div><div id="study-groups"></div></article>
+<article class="panel"><h2>Individual setup outcomes</h2><div id="study-records"></div></article></section>
 <section id="trades" class="tab"><div class="banner">Every entry and exit is simulated. Fills cross the observed spread and include adverse slippage. Missing exits remain unresolved.</div>
 <article class="panel"><h2>Trade ledger</h2><div id="ledger"></div></article></section>
 <section id="assistant" class="tab"><article class="panel ask-panel"><p class="eyebrow">SHARED MARKET CONTEXT</p><h2>What would you like to understand?</h2>
