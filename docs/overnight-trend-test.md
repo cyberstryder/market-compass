@@ -81,7 +81,7 @@ other systems trading separate accounts.
 Detect tradable trends, breakouts and confirmed reversals throughout the allowed
 futures session, including Asia, Europe, the US open and the daytime session.
 Overnight trend capture is one playbook in the wider alert system. Test capturing
-a portion of an MNQ trend while Josh is asleep, protecting the profit, and
+a portion of an MES or MNQ trend while Josh is asleep, protecting the profit, and
 stopping new account entries once the selected daily objective is secured. Keep
 observing subsequent daytime opportunities even after that account is locked.
 Favor few trades, controlled drawdown and low profit giveback. No target requires
@@ -104,12 +104,19 @@ their supported regular sessions. Compass currently uses a separate 15:45 CT
 research cutoff. The new study uses the LucidFlex calendar and 15:42 CT buffer
 specified above; it must not silently treat these different schedules as equivalent.
 
+Live feed check on September 13, 2026 at 22:13:43 America/Chicago (September 14
+UTC): Compass reported `MES.c.0` resolved to `MESZ6` as ready with a 0.3-second
+quote age, and `MNQ.c.0` resolved to `MNQZ6` as ready with a 0.1-second quote age.
+Both micro contracts are already covered by the live futures feed. This is a
+point-in-time data check, not verification that the proposed runner or shared
+account controller is running.
+
 ## Alert families and implementation status
 
 The ES/NQ family shares setup logic, with contract-specific prices, tick values,
-costs and sizing for ES, NQ, MES and MNQ. The initial runner study uses MNQ. Test
-long and short directions separately, and retain each family's identity even
-when several conditions support the same trade idea.
+costs and sizing for ES, NQ, MES and MNQ. The initial runner study compares MES
+and MNQ in parallel. Test long and short directions separately, and retain each
+family's identity even when several conditions support the same trade idea.
 
 | Family | Evidence for a candidate | Current status |
 | --- | --- | --- |
@@ -129,6 +136,52 @@ for overlapping same-direction signals, with supporting conditions attached,
 while preserving every candidate in the research ledger. A confirmed opposing
 setup invalidates an incompatible pending idea; it must not automatically flip
 an open broker position.
+
+## MES versus MNQ comparison
+
+Treat the user's observation that MES trends look smoother as a testable
+hypothesis. MES tracks the S&P 500 and MNQ tracks the Nasdaq-100; lower volatility
+or a differently scaled chart does not establish better trend persistence or
+better net trading results. Use the same versioned setup definitions and
+confirmation timeframes for both, with separate results by contract, direction,
+setup family and Asia/Europe/US window. Compare matched observation windows and
+retain no-signal periods; do not select only the clean moves visible afterward.
+
+| Contract | Dollars per index point | Minimum tick | Dollars per tick |
+| --- | --- | --- | --- |
+| MES | $5 | 0.25 point | $1.25 |
+| MNQ | $2 | 0.25 point | $0.50 |
+
+[CME MES specifications](https://www.cmegroup.com/markets/equities/sp/micro-e-mini-sandp-500.contractSpecs.html),
+[CME MNQ specifications](https://www.cmegroup.com/markets/equities/nasdaq/micro-e-mini-nasdaq-100.contractSpecs.html).
+
+Place invalidation using each market's own structure and volatility, then apply
+the same dollar-risk ceiling. Do not copy an MNQ point stop onto MES. For unit
+comparison, 20 MES points and 50 MNQ points each represent $100 with one contract,
+before fees and slippage; these are not selected stop distances. Start with
+one-contract diagnostics and compare results in both net dollars and initial-risk
+units, recording actual initial risk. A shared ceiling does not make every trade
+exactly equal-risk; reject candidates that cannot fit the budget after costs.
+
+Measure retracement relative to volatility, false-breakout and stop-out rates,
+trend capture, MFE giveback, net expectancy after instrument/session-specific
+costs, and worst drawdown. Report directional efficiency over fixed matched
+windows as absolute net close change divided by the sum of absolute consecutive
+close changes. Mark zero-movement windows as undefined and exclude incomplete
+windows rather than filling data gaps. Freeze window lengths and detector
+parameters before the holdout comparison; do not favor MES simply because its
+raw point swings are smaller. Forward shadow results must support any eventual
+priority between the two markets.
+
+Both contracts represent equity-index exposure. Preserve all independent
+candidates for research, but treat simultaneous same-direction candidates as
+competing for one account risk budget, not as automatic diversification. For the
+first combined simulation allow only one of MES/MNQ open at a time, with a
+predeclared selection rule based on information available at the trigger. Do not
+choose the winner after seeing the move or double the attempt/risk allowance
+because a second symbol is available. This proposed cross-instrument account
+policy is not implemented by the current scanner and does not change the
+independent MNQ/MGC automation.
 
 ## Alert lifecycle and account eligibility
 
@@ -158,9 +211,9 @@ requires separately enabled and verified execution after shadow testing.
 
 ## First test design
 
-1. Use MNQ first, both directions, with dated unadjusted contract data and explicit
-   roll handling. Study Asia, Europe and US periods separately within the same
-   exchange trading day. Do not reset daily risk at midnight.
+1. Study MES and MNQ in parallel, both directions, with dated unadjusted contract
+   data and explicit roll handling. Study Asia, Europe and US periods separately
+   within the same exchange trading day. Do not reset daily risk at midnight.
 2. Require completed 15-minute trend direction. Form the entry on a completed
    three-minute continuation bar after an EMA/VWAP pullback. Evaluate a separate
    consolidation-breakout candidate for trends that do not pull back. Keep their
@@ -169,10 +222,12 @@ requires separately enabled and verified execution after shadow testing.
    and confirmed trend-reversal cohorts separately, rather than treating every
    trend exit as a reversal entry.
 3. Fill only on an eligible quote after the trigger, with spread, fees and adverse
-   slippage. Define initial invalidation before entry. Start with one MNQ, no
-   averaging down or pyramiding, and at most two attempts per exchange session.
-   Use the existing $100 planned-risk ceiling as a research comparison, not as a
-   new live account instruction. Reject a stop that cannot fit the study budget.
+   slippage. Define initial invalidation before entry. Start with one micro
+   contract per trade, no averaging down or pyramiding, and at most two attempts
+   per exchange session across the combined MES/MNQ simulation. Use the existing
+   $100 planned-risk ceiling as a research comparison, not as a new live account
+   instruction. Reject a stop that cannot fit the study budget after costs;
+   preserve its rejected candidate record for comparison.
 4. Compare exits on the same accepted signals: the existing fixed target against
    one predefined volatility/structure trail. Update a trail only after the
    confirming bar has completed; the tightened stop becomes effective afterward.
@@ -198,8 +253,8 @@ Overnight entry eligibility must rely on live futures data. Last cash-session
 options GEX/VEX and unusual-flow data can be dated context; they must never be
 presented as fresh overnight confirmation or block the test merely because the
 options market is closed. No new subscription is established as necessary for
-the MNQ price-based study; current data entitlement and coverage still need
-verification for each replay window.
+the MES/MNQ price-based study. Both live feeds were verified above; historical
+entitlement and coverage still need verification for each replay window.
 
 ## Evidence required
 
