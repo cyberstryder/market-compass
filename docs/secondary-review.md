@@ -169,8 +169,11 @@ eligible original candidates and the subset the secondary rules support, using
 the **same review-time reference**, not an earlier original price against a
 later secondary price.
 
-Each checkpoint requires a fresh observed quote at or after its deadline and
-within 30 seconds. Missed windows stay missing. Windows extending through the
+Each checkpoint first checks retained quotes at or after its deadline, received
+within 30 seconds and fresh when received, then falls back to a timely live quote.
+Delayed review cycles can recover still-pending windows from these archives;
+see [archive coverage and limits](stock-quote-coverage.md).
+Missed windows stay missing. Windows extending through the
 cash close or futures research flatten deadline are marked session boundary.
 No checkpoint carries into the next session. Excursions use sampled quotes and
 show sampling gaps; they are not tick-complete highs or lows. Review records

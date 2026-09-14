@@ -110,7 +110,7 @@ class Collectors:
             if record: self.db.append(c,"quote",source,symbol,q["ts"],q,identity("quote",source,symbol,q["ts"]))
 
     def quote_batch(self,source,items):
-        """One transaction per socket batch; broad watch quotes update latest state."""
+        """One transaction per socket batch for latest state and sampled history."""
         with self.db.tx() as c:
             for symbol,q,record in items:
                 if not q.get('ts') or number(q.get('bid')) is None or number(q.get('ask')) is None:

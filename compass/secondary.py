@@ -19,6 +19,7 @@ from .instruments import ROOTS, INDEX_FUTURES
 from .scanner import ema, features, bars_from_window
 from .store import events, identity, meta
 from .projects import records as originals
+from .quote_path import recorded_path
 
 VERSION = "secondary-context-v2"
 LABELS = {"morning": "Morning Algo", "smoothers": "Smoothers",
@@ -320,7 +321,7 @@ def start_measurement(candidate, inputs, decision, now):
     result.update(anchor=mid, anchor_ts=q["ts"], anchor_bid=q["bid"], anchor_ask=q["ask"],
         market_symbol=inputs["market_symbol"], max_price=mid, min_price=mid,
         last_quote_ts=q["ts"], last_sample_at=now, max_gap_seconds=0, samples=1,
-        checkpoint_basis="First fresh quote at/after each deadline, within 30 seconds; missed windows remain missing")
+        checkpoint_basis="First usable retained quote at/after each deadline, received within 30 seconds; live fallback if available; missing windows stay missing")
     for minutes in (15, 30, 60):
         due = now + minutes * 60
         result["horizons"][str(minutes)] = {"due": due,
@@ -349,7 +350,7 @@ def advance_measurement(measurement, side, quote, now):
             continue
         if usable and point["due"] <= quote["ts"] <= point["due"] + 30 and now <= point["due"] + 30:
             point.update(status="observed", source_ts=quote["ts"], captured_at=now, price=mid,
-                return_pct=sign * (mid / m["anchor"] - 1) * 100)
+                observation_source="live_quote", return_pct=sign * (mid / m["anchor"] - 1) * 100)
         elif now > point["due"] + 30:
             point.update(status="missing", reason="No fresh quote captured in the checkpoint window")
     m["sampled_mfe_pct"] = ((m["max_price"] / m["anchor"] - 1) if sign == 1 else (1 - m["min_price"] / m["anchor"])) * 100
@@ -357,6 +358,37 @@ def advance_measurement(measurement, side, quote, now):
     if not any(p["status"] == "pending" for p in m["horizons"].values()):
         m["state"] = "complete"
     return m
+
+
+def advance_recorded_measurement(db, c, measurement, side, quote, now):
+    """Recover pending checkpoint windows without rewriting frozen decisions.
+
+    Query each 30-second window directly, so an engine restart never scans a
+    whole hour of quotes or lets a path batch limit hide a later checkpoint.
+    Extrema remain engine-sampled; checkpoint recovery does not reconstruct MFE.
+    """
+    m = {**measurement, "horizons": {k: dict(v) for k, v in measurement.get("horizons", {}).items()}}
+    if m["state"] != "tracking":
+        return m
+    for point in m["horizons"].values():
+        if point["status"] != "pending" or now < point["due"]:
+            continue
+        until = min(now, point["due"] + 30, m["sampling_deadline"])
+        path, truncated, check = recorded_path(db, c, m["market_symbol"],
+            max(m["anchor_ts"], math.nextafter(point["due"], -math.inf)), until)
+        point["archive_check"] = {**check, "truncated": truncated}
+        if path:
+            q = path[0]
+            mid = (q["bid"] + q["ask"]) / 2
+            point.update(status="observed", source_ts=q["ts"], captured_at=q["recorded_at"],
+                recovered_at=now, observation_source="retained_quote", price=mid,
+                return_pct=(1 if side == "long" else -1) * (mid / m["anchor"] - 1) * 100)
+        elif truncated:
+            # A bounded read of invalid rows is not proof that the rest is empty.
+            point.update(status="missing", reason="Checkpoint archive scan limit reached; coverage unknown")
+        elif now > point["due"] + 30:
+            point.update(status="missing", reason="No usable retained quote received in the checkpoint window")
+    return advance_measurement(m, side, quote, now)
 
 
 def source_result(payload, project):
@@ -547,7 +579,7 @@ class Secondary:
                 quote = self.db.get(c, "quote:" + row["measurements"]["market_symbol"])
                 if self.clock or live_clock:
                     now = self.clock() if self.clock else time.time()
-                m = advance_measurement(row["measurements"], row["side"], quote, now)
+                m = advance_recorded_measurement(self.db, c, row["measurements"], row["side"], quote, now)
                 c.execute(update(reviews).where(reviews.c.id == row["id"]).values(measurements=m, tracking=m["state"], updated=now))
             self.db.put(c, "secondary:status", {"at": now, "version": VERSION, "enabled": True,
                 "alerts_enabled": self.cfg.secondary_alerts, "events_checked": len(batch),

@@ -167,6 +167,8 @@ def create_app(cfg=None):
             now=time.time()
             watch={k[6:]:{**q,"age":round(now-q["ts"],2)} for k,q in quotes.items()
                 if k[6:] in collected_symbols or "@" in k}
+            from .quote_coverage import stock_archive_health
+            health.append(stock_archive_health(c,collected_symbols,quotes,now,markets['equities']))
             health=decorate_health(health,workers,markets,now)
             checks=quote_checks(collected_symbols,configured(cfg),{k[6:]:q for k,q in quotes.items()},
                 db.recent(c,"mapping",limit=100),markets,now,active_selection(db,c,cfg,now))

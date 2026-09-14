@@ -36,7 +36,7 @@ class StockBuffer:
         quotes=[]
         for symbol in list(self.quotes):
             if now-self.written.get(symbol,float('-inf')) >= (.25 if symbol in self.core else 1):
-                quotes.append((symbol,self.quotes.pop(symbol),symbol in self.core))
+                quotes.append((symbol,self.quotes.pop(symbol),True))
                 self.written[symbol]=now
         bars=[(symbol,stamp,payload) for (symbol,stamp),payload in self.bars.items()]
         self.bars.clear()
@@ -75,7 +75,7 @@ async def consume(ws, collector):
                 await asyncio.to_thread(collector.bars,'alpaca',bars)
             if source is not None and time.monotonic()-last_health>5:
                 await asyncio.to_thread(collector.db.health,'alpaca_stocks','receiving',
-                    'Latest quotes coalesced: core up to 4 Hz, watchlist up to 1 Hz; batched completed bars',
+                    'Quotes retained: core up to 4 Hz, full watchlist up to 1 Hz; batched completed bars',
                     source,watch_symbols=len(buffer.watch))
                 last_health=time.monotonic()
             await asyncio.sleep(.05)
