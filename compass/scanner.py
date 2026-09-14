@@ -8,6 +8,7 @@ from collections import defaultdict
 from .market import levels, fresh, day, number, session, dedup
 from .futures import future_levels, futures_session, risk_day, prior_rth, selection
 from .store import identity
+from .alert_format import alert_context
 from .research import FEEDS, catalog
 
 VERSION='compass-scanner-v2'
@@ -388,7 +389,7 @@ class Scanner:
             if reason:
                 pending.update(status='expired',reason=reason,updated_at=now)
                 self.db.put(c,key,pending)
-                engine.alert(c,symbol,{'status':'options_skipped','reason':reason,'parent_signal':signal['id']},'pending-option-expired:'+signal['id'])
+                engine.alert(c,symbol,{**alert_context(signal),'status':'options_skipped','reason':reason,'parent_signal':signal['id']},'pending-option-expired:'+signal['id'])
             elif fresh(quote,now) and abs((quote['bid']+quote['ask'])/2-signal['signal_price'])<=signal['context']['atr14']*.5:
                 if engine.options(c,signal,now,quiet=True):
                     pending.update(status='entered',updated_at=now)
@@ -409,7 +410,7 @@ class Scanner:
                 self.db.append(c,'opportunity_update','scanner',item['symbol'],now,item,identity(item['id'],status))
                 if status=='invalidated' and item.get('entry'):
                     self.db.append(c,'alert','scanner',item['symbol'],now,
-                        {'status':'setup_invalidated','strategy':item['strategy'],'side':item['side'],
+                        {**alert_context(item),'status':'setup_invalidated',
                          'reason':'Underlying invalidation reached; see the separate paper-position ledger for fill/exit status',
                          'setup_id':item['id']},identity('invalidated',item['id']))
 

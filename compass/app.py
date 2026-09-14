@@ -20,6 +20,7 @@ from .store import Store,events
 from .providers import Collectors
 from .engine import Engine
 from .alerts import deliver,outbox_status
+from .alert_format import alert_identity
 from .market import is_open
 from .diagnostics import assistant_error
 from .readiness import decorate_health,quote_checks,clock
@@ -181,7 +182,7 @@ def create_app(cfg=None):
                 "greek_diagnostics":{k[7:]:v for k,v in db.prefix(c,"greeks:").items()},
                 "levels":{k[7:]:v for k,v in db.prefix(c,"levels:").items()},
                 "exposure":{k[9:]:v for k,v in db.prefix(c,"exposure:").items()},
-                "positions":positions,"trades":trades,"alerts":db.recent(c,"alert",limit=60),
+                "positions":positions,"trades":trades,"alerts":[{**row,"presentation":alert_identity(row,now)} for row in db.recent(c,"alert",limit=60)],
                 "flow":db.recent(c,"flow",limit=60),"matrix":matrix,
                 "risk":db.prefix(c,"risk:"),"ai_configured":bool(cfg.openai),
                 "limits":{"risk_per_trade":cfg.risk,"daily_realized_loss":cfg.daily_loss,"max_positions":3,"max_entries":10},
