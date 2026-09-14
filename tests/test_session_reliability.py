@@ -227,3 +227,31 @@ def test_secondary_uses_clock_after_reads_and_rejects_actual_future(db):
         db.put(c,'quote:SPY',q(NOW+3))
         result=secondary_snapshot(db,c,NOW,clock=lambda:NOW+2)['data_readiness']['rows'][0]
         assert not result['quote_ready'] and result['quote_age']==-1
+
+
+def test_unknown_insert_rowcount_cannot_drop_the_quote_archive(db,monkeypatch):
+    from sqlalchemy.engine import Connection
+    execute=Connection.execute
+    class UnknownCount:
+        rowcount=-1
+        def __init__(self,result): self.result=result
+        def __getattr__(self,name): return getattr(self.result,name)
+    def unknown_count(connection,statement,*args,**kwargs):
+        result=execute(connection,statement,*args,**kwargs)
+        return UnknownCount(result) if getattr(statement,'is_insert',False) else result
+    monkeypatch.setattr(Connection,'execute',unknown_count)
+    async def run():
+        collector=Collectors(db,Config(local=True))
+        try:
+            collector.quote('databento','MESZ6@1',q(),1)
+            collector.quote('databento','MESZ6@1',q(NOW-1),1)
+            collector.quote_batch('alpaca',[('SPY',q(),True)])
+        finally:
+            await collector.close()
+    asyncio.run(run())
+    with db.tx() as c:
+        assert db.get(c,'quote:MESZ6@1')['ts']==NOW
+        assert len(db.recent(c,'quote','MESZ6@1'))==1
+        assert len(db.recent(c,'quote','SPY'))==1
+        assert db.append(c,'flow','fixture','SPY',NOW,{'premium':100000},'same-print')
+        assert not db.append(c,'flow','fixture','SPY',NOW,{'premium':100000},'same-print')

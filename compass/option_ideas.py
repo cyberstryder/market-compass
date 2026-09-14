@@ -118,7 +118,7 @@ class OptionIdeas:
             basis='Independent one-contract intraday simulation; ask + $0.01 entry, bid - $0.01 exit, $0.65 per side; not account P&L')
         inserted = c.execute(self.db.insert(ideas).values(id=key, underlying=p['underlying'],
             status=p['status'], created=now, updated=now, payload=p)
-            .on_conflict_do_nothing(index_elements=['id'])).rowcount
+            .on_conflict_do_nothing(index_elements=['id']).returning(ideas.c.id)).first()
         if inserted:
             self.db.put(c,'focus:'+p['underlying'],dict(symbol=p['underlying'],priority=110,
                 at=now,reason='Options idea: select contract and verify live quote'))
