@@ -5,6 +5,7 @@ import uuid
 import re
 from .market import levels,fresh,day,session,dedup
 from .store import identity
+from .alert_format import alert_context
 from .futures import futures_session,risk_day,future_levels,selection,prior_rth
 
 VERSION="orb15-breakout-v1"
@@ -111,7 +112,7 @@ class Engine:
             q=self.db.get(c,"quote:"+p["symbol"])
             if not fresh(q,now) or q["ts"]<=p["last_quote_ts"]:
                 if now-p.get("last_quote_ts",now)>15:
-                    self.alert(c,p["symbol"],{"status":"management_blocked","trade_id":p["id"],
+                    self.alert(c,p["symbol"],{**alert_context(p),"status":"management_blocked","trade_id":p["id"],
                         "reason":"No fresh exit quote; position remains unresolved"},"stale:"+p["id"]+":"+str(int(now//300)))
                 continue
             price=fill(q,p["side"],p["tick"],False)
@@ -152,7 +153,7 @@ class Engine:
         chain=self.db.get(c,"chain:"+signal["symbol"],{})
         if now-chain.get("asof",0)>120:
             if not quiet:
-                self.alert(c,signal["symbol"],{"status":"options_skipped","reason":"No recent options chain",
+                self.alert(c,signal["symbol"],{**alert_context(signal),"status":"options_skipped","reason":"No recent options chain",
                     "parent_signal":signal["id"]},"option-skip:"+signal["id"])
             return False
         kind="call" if signal["side"]=="long" else "put"
@@ -174,7 +175,7 @@ class Engine:
                 if self.enter(c,{**option_signal,"selection_rejections":rejected},now): return True
             else: rejected.append({"symbol":o["symbol"],"reason":"Missing or invalid fresh quote"})
         if not quiet:
-            self.alert(c,signal["symbol"],{"status":"options_skipped","reason":"No eligible 0DTE contract passes quote, spread and risk checks","rejections":rejected,
+            self.alert(c,signal["symbol"],{**alert_context(signal),"status":"options_skipped","reason":"No eligible 0DTE contract passes quote, spread and risk checks","rejections":rejected,
                 "parent_signal":signal["id"]},"option-skip:"+signal["id"])
         return False
 

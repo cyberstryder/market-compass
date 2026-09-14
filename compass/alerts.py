@@ -1,12 +1,11 @@
 import asyncio
 import time
 import uuid
-from datetime import datetime
-from zoneinfo import ZoneInfo
 from urllib.parse import urlparse,parse_qsl,urlencode
 import httpx
 from sqlalchemy import select,func
 from .store import events
+from .alert_format import message_for, alert_identity
 
 class DeliveryError(Exception):
     def __init__(self,detail,retry=15):
@@ -28,45 +27,10 @@ def outbox_status(db,c,now):
         "last_test_confirmation":db.get(c,"outbox:discord:test_confirmation")}
 
 
-def message_for(row,now=None):
-    now=now or time.time()
-    p=row["payload"]
-    content=("[TEST — NO TRADE] Market Compass delivery check\nThis verifies the alert channel. No position was opened."
-        if p.get("status")=="notification_test" else
-        f"[SIMULATED] {row['symbol']} | {p.get('status')}\n{p.get('strategy','')} {p.get('side','')}\n{p.get('reason',p.get('exit_reason',''))}")
-    if p.get('status')=='setup_triggered':
-        delayed=now>=p.get('expires_at',0)
-        content=(('[EXPIRED SETUP — DELAYED DELIVERY]' if delayed else '[SIMULATED SETUP]')+
-            f" {row['symbol']} {p.get('side','').upper()}\n"+
-            ', '.join(p.get('matched_rules',[p.get('rule','')])).replace('_',' ')+'\n'+p.get('reason',''))
-        if delayed: content+='\nThe entry window has ended. This is a historical notification.'
-    if p.get('status')=='project_observation':
-        content=f"[STRATEGY OBSERVATION] {row['symbol']} | {p.get('strategy','')} {p.get('side','')}\n{p.get('reason','')}"
-    for label in ["entry","stop","target","fill_price","source_price","qty","exit","pnl"]:
-        if label in p: content+=f"\n{label}: {p[label]}"
-    if p.get('evidence'):
-        sources=[]
-        for evidence in p['evidence']:
-            stamp=evidence.get('source_ts')
-            label=evidence.get('source','')+' / '+evidence.get('kind','').replace('_',' ')
-            if evidence.get('symbol'): label+=' '+evidence['symbol']
-            if evidence.get('agreement'): label+=' '+evidence['agreement']
-            if stamp is not None:
-                label+=' as of '+datetime.fromtimestamp(stamp,ZoneInfo('America/Chicago')).strftime('%H:%M:%S CT')
-            else: label+=' / source time unavailable'
-            if label not in sources: sources.append(label)
-        content+='\nEvidence: '+'; '.join(sources[:5])
-    if p.get('status')=='setup_triggered':
-        content+='\nPaper position: '+str(p.get('paper_status','not entered')).replace('_',' ')+'. Option selection is reported separately.'
-    if now-row['ts']>30:
-        content+=f"\nDelivery age: {int(now-row['ts'])} seconds"
-    footer=f"\nEvent #{row['id']} | "+datetime.fromtimestamp(row['ts'],ZoneInfo('America/Chicago')).strftime('%Y-%m-%d %H:%M:%S CT')
-    return content[:1900-len(footer)]+footer
-
-
 async def dispatch(client,db,webhook,row):
     p=row['payload']
-    response=await client.post(confirmed_url(webhook),json={"content":message_for(row),"allowed_mentions":{"parse":[]}})
+    response=await client.post(confirmed_url(webhook),json={"content":message_for(row),
+        "username":"Market Compass · "+alert_identity(row)['label'].title(),"allowed_mentions":{"parse":[]}})
     if response.status_code==429:
         try: retry=max(1,min(60,float(response.json().get("retry_after",5))))
         except (ValueError,TypeError): retry=5
