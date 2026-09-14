@@ -11,7 +11,8 @@ rules; it does not claim to reproduce undocumented proprietary algorithms.
   combines it with STOCK_SYMBOLS. WATCH_SYMBOLS can explicitly replace the saved
   additions. Test/local configurations use only their supplied symbols.
 - Alpaca streams prices across that universe. Core quote observations are sampled
-  up to 4 Hz; other watchlist quotes update latest state up to 1 Hz. Completed
+  and retained up to 4 Hz; other watchlist quotes are retained up to 1 Hz, including
+  symbols added by connected stock projects. Completed
   minute bars remain the basis of bar-confirmed patterns.
 - ES/NQ contract specifications are distinct from MES/MNQ. FUTURES_SYMBOLS must
   include the intended roots on all three application services. Full-size

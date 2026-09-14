@@ -5,6 +5,9 @@
 
 # Market Compass
 
+Full-watchlist sampled quote retention and secondary checkpoint recovery are
+described in [stock quote coverage](docs/stock-quote-coverage.md).
+
 Secondary review now compares original Morning Algo, Smoothers and futures
 candidates with a separately labeled Compass selection. Originals remain
 independent; see [the review rules and comparison limits](docs/secondary-review.md).

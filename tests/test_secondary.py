@@ -179,6 +179,31 @@ def test_original_unchanged_review_frozen_and_duplicate_delivery_not_rescored(db
         assert not db.recent(c, "paper_decision")
 
 
+def test_secondary_worker_recovers_archived_checkpoint_after_restart_delay(db):
+    worker = Secondary(db, Config(local=True))
+    worker.tick(NOW-1)
+    seed(db)
+    with db.tx() as c:
+        ingest(db,c,'morning',source(),NOW)
+    worker.tick(NOW)
+    with db.tx() as c:
+        before = dict(c.execute(select(reviews)).mappings().one())
+        alert_count = len(db.recent(c,'alert'))
+        c.execute(db.insert(events).values(key='checkpoint-fixture',kind='quote',source='alpaca',
+            symbol='SPY',ts=NOW+900,received=NOW+900.1,payload=quote(NOW+900,102)))
+        db.put(c,'quote:SPY',quote(NOW+1000,90))
+        # The prior process lease must expire before a replacement can run.
+        from compass.store import leases
+        c.execute(leases.update().values(until=0))
+    Secondary(db,Config(local=True)).tick(NOW+1000)
+    with db.tx() as c:
+        after = dict(c.execute(select(reviews)).mappings().one())
+        assert after['measurements']['horizons']['15']['price'] == 102
+        assert after['measurements']['horizons']['15']['observation_source'] == 'retained_quote'
+        assert after['decision'] == before['decision'] and after['inputs'] == before['inputs']
+        assert len(db.recent(c,'alert')) == alert_count
+
+
 def test_activation_skips_existing_history_and_late_import_never_alerts(db):
     with db.tx() as c:
         ingest(db, c, "morning", source(NOW - 100), NOW - 100)
