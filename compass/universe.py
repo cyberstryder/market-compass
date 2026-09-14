@@ -26,8 +26,10 @@ def focus_symbols(db, c, cfg, now, limit=12):
     allowed = set(cfg.watch_symbols)
     held = [p.get('underlying', p.get('symbol')) for p in db.prefix(c, 'position:').values()
             if p.get('status') == 'open' and p.get('asset') != 'future']
+    from .swing_ideas import active_underlyings
+    swing_held = active_underlyings(c)
     requests = sorted(db.prefix(c, 'focus:').values(),
                       key=lambda row: (row.get('priority', 0), row.get('at', 0)), reverse=True)
     active = [r['symbol'] for r in requests if 0 <= now-r.get('at', 0) <= 600]
     core = [s for s in ('SPY', 'QQQ', 'IWM', *cfg.stocks) if s in allowed]
-    return list(dict.fromkeys(s for s in held+active+core if s in allowed))[:limit]
+    return list(dict.fromkeys(s for s in held+active+swing_held+core if s in allowed))[:limit]

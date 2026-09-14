@@ -33,6 +33,12 @@ class Config:
     ideas_min_dte: int = field(default_factory=lambda: int(env("OPTION_IDEAS_MIN_DTE","1")))
     ideas_max_dte: int = field(default_factory=lambda: int(env("OPTION_IDEAS_MAX_DTE","21")))
     ideas_target_dte: int = field(default_factory=lambda: int(env("OPTION_IDEAS_TARGET_DTE","7")))
+    swing_ideas: bool = field(default_factory=lambda: env("SWING_IDEAS_ENABLED","true")=="true")
+    swing_alerts: bool = field(default_factory=lambda: env("SWING_IDEAS_ALERTS","true")=="true")
+    swing_min_dte: int = field(default_factory=lambda: int(env("SWING_MIN_DTE","14")))
+    swing_max_dte: int = field(default_factory=lambda: int(env("SWING_MAX_DTE","60")))
+    swing_target_dte: int = field(default_factory=lambda: int(env("SWING_TARGET_DTE","30")))
+    swing_hold_sessions: int = field(default_factory=lambda: int(env("SWING_MAX_HOLD_SESSIONS","10")))
     stream_limit: int = field(default_factory=lambda: min(900,max(10,int(env("OPTION_STREAM_CONTRACTS","100")))))
     history_budget: float = field(default_factory=lambda: float(env("FUTURES_HISTORY_BUDGET_USD","0.10")))
     watchlist: tuple = field(default_factory=lambda: symbols(env("WATCH_SYMBOLS")))
@@ -76,6 +82,10 @@ class Config:
             raise ValueError("Invalid options ideas expiration range")
         if self.option_ideas and self.chain_dte<self.ideas_max_dte:
             raise ValueError("Options chain horizon must cover the ideas expiration range")
+        if not 7<=self.swing_min_dte<=self.swing_target_dte<=self.swing_max_dte<=90 or not 1<=self.swing_hold_sessions<=30:
+            raise ValueError("Invalid swing expiration range or holding period")
+        if self.swing_ideas and self.chain_dte<self.swing_max_dte:
+            raise ValueError("Options chain horizon must cover the swing expiration range")
         if not 1<=self.option_focus<=30 or not 1<=self.chain_dte<=180:
             raise ValueError("Invalid options focus or expiration horizon")
         if not self.watch_symbols or len(self.watch_symbols)>500:
