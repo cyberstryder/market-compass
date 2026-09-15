@@ -17,10 +17,10 @@ def assess(db,c,symbol,now):
 
 
 def cohorts(rows):
-    versions=sorted({r.get('collection_version','not_opened') for r in rows})
+    versions=sorted({r.get('collection_version','unversioned') for r in rows})
     out=[]
     for version in versions:
-        selected=[r for r in rows if r.get('collection_version','not_opened')==version]
+        selected=[r for r in rows if r.get('collection_version','unversioned')==version]
         opened=[r for r in selected if r.get('opened_at') is not None]
         closed=sum(r['status']=='closed' for r in opened)
         unresolved=sum(r['status']=='unresolved' for r in opened)
