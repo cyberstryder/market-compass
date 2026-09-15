@@ -1,0 +1,117 @@
+{
+  "source": "https://github.com/cyberstryder/market-compass/issues/42",
+  "provenance": "Retrospective chart exports reconciled September 15, 2026; timestamp absence only.",
+  "records": [
+    {
+      "ticker": "NYSE:EMR",
+      "signal_at_ms": 1789394640000,
+      "script_version": "1.3.0",
+      "minutes": [
+        7,
+        33,
+        37
+      ],
+      "file": "NYSE_EMR, 1.csv",
+      "sha256": "8f49eb2dd2f5282f118acece0f28e12564a846df37c212a55aa7404935ec8d86"
+    },
+    {
+      "ticker": "NYSE:NSC",
+      "signal_at_ms": 1789393680000,
+      "script_version": "1.3.0",
+      "minutes": [
+        4,
+        9,
+        23,
+        27,
+        34,
+        41,
+        50,
+        55
+      ],
+      "file": "NYSE_NSC, 1.csv",
+      "sha256": "de7d45ad631efbe559714f665af56aee5a753932335d60803ea19c848ae73489"
+    },
+    {
+      "ticker": "NASDAQ:ROST",
+      "signal_at_ms": 1789393020000,
+      "script_version": "1.3.0",
+      "minutes": [
+        17,
+        18,
+        52
+      ],
+      "file": "NASDAQ_ROST, 1.csv",
+      "sha256": "1d7fd66cade86752d7dd922160c2c6caaba0d4aeade5b2650384f9363fb58fd7"
+    },
+    {
+      "ticker": "NYSE:LOW",
+      "signal_at_ms": 1789392960000,
+      "script_version": "1.3.0",
+      "minutes": [
+        51
+      ],
+      "file": "NYSE_LOW, 1.csv",
+      "sha256": "9fc5b535455c65e396a7b4fb49f83ac2c7cf6dd06d14bcee1bb89a191fe691f2"
+    },
+    {
+      "ticker": "NASDAQ:VRTX",
+      "signal_at_ms": 1789392840000,
+      "script_version": "1.3.0",
+      "minutes": [
+        6,
+        23,
+        44,
+        53
+      ],
+      "file": "NASDAQ_VRTX, 1.csv",
+      "sha256": "058d5ce364108d106253b70356311acce8c53ed0616f16ecbcf52c29027c0a59"
+    },
+    {
+      "ticker": "NASDAQ:ACB",
+      "signal_at_ms": 1789392720000,
+      "script_version": "1.3.0",
+      "minutes": [
+        1,
+        8,
+        9,
+        11,
+        19,
+        21,
+        22,
+        23,
+        26,
+        27,
+        30,
+        31,
+        32,
+        33,
+        34,
+        37,
+        38,
+        39,
+        40,
+        41,
+        45,
+        50,
+        51,
+        52,
+        56
+      ],
+      "file": "NASDAQ_ACB, 1.csv",
+      "sha256": "28efcafb349ad68f8bd96a513f8f3671d604574d6198566b135a1935dafe5653"
+    },
+    {
+      "ticker": "NYSE:APD",
+      "signal_at_ms": 1789392720000,
+      "script_version": "1.3.0",
+      "minutes": [
+        1,
+        22,
+        44,
+        54
+      ],
+      "file": "NYSE_APD, 1.csv",
+      "sha256": "1564075952288e82892b418efd0a9bd6bafd6f7a907ef07bfded1e75a48e2350"
+    }
+  ]
+}
