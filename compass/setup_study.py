@@ -13,7 +13,7 @@ from .futures import futures_session
 from .instruments import tick_price
 from .simulation import bracket, exit_price, FILL_VERSION, FILL_DESCRIPTION
 from .quote_path import recorded_path
-from . import futures_variants
+from . import futures_variants, futures_assessment
 
 VERSION = 'setup-outcomes-v2'
 MAX_GAP = 15
@@ -83,6 +83,7 @@ class SetupStudy:
             'mfe_r':0, 'mae_r':0, 'pnl':None, 'r_multiple':None,
             'basis':'Independent one-unit trial; sampled executable quotes, one adverse entry/stop tick, illustrative fees; not account P&L'}
         if future:
+            p['market_assessment'] = futures_assessment.freeze(self.db, c, signal, now, q, spec)
             p['entry_variants'] = futures_variants.classify(self.db, c, signal, now, cause is None)
         c.execute(self.db.insert(trials).values(id=key, source_id=signal['id'], symbol=p['symbol'],
             strategy=p['strategy'], side=p['side'], version=VERSION, status=p['status'], started=now,
@@ -226,6 +227,7 @@ def report_for(c, now):
             mean_seconds=sum(p['elapsed_seconds'] for p in closed)/len(closed) if closed else None))
     return {'at':now, 'version':VERSION, 'groups':groups, 'records':rows[:100], 'count':len(rows),
         'truncated':truncated, 'window_days':30, 'limit':10000, 'entry_variants':futures_variants.report(rows),
+        'market_assessment':futures_assessment.report(rows),
         'basis':'Independent one-unit experiments grouped by contract, strategy, direction, version and alert cohort; overlapping results are not portfolio returns'}
 
 
