@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from .universe import symbols, saved_watchlist
+from .universe import symbols, saved_watchlist, EXCLUDED_STOCKS
 
 def env(k, default=""):
     return os.environ.get(k, default).strip()
@@ -62,7 +62,7 @@ class Config:
     @property
     def watch_symbols(self):
         extra = self.watchlist or (saved_watchlist() if not self.local and self.scanner else ())
-        return symbols((*self.stocks, *extra))
+        return tuple(s for s in symbols((*self.stocks, *extra)) if s not in EXCLUDED_STOCKS)
 
     def validate(self):
         if self.obsidian_url:

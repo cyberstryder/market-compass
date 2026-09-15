@@ -6,7 +6,7 @@ from sqlalchemy import Table, Column, String, Float, JSON, Index, select, update
 from .store import meta, identity
 from .market import fresh, number, day, session
 
-VERSION = 'option-ideas-v1'
+VERSION = 'option-ideas-v2'
 MAX_GAP = 15
 FEE = .65
 SLIPPAGE = .01
@@ -180,15 +180,48 @@ class OptionIdeas:
                 premium_stop=round(entry*.70,2),premium_target=round(entry*1.50,2),
                 last_option_ts=oq['ts'],last_underlying_ts=q['ts'],waiting_reason=None,
                 chain_asof=chain.get('asof'),chain_source=chain.get('source'),
-                pagination_complete=chain.get('complete'),last_quote=oq)
+                pagination_complete=chain.get('complete'),last_quote=oq,last_underlying_quote=q,
+                observation_model='paired-recorded-quotes-v1')
             self.notify(c,p,now,'new')
         self.save(c,p,now)
 
     def observe(self, c, p, now):
-        oq = self.db.get(c,'quote:'+p['contract']['symbol'])
-        uq = self.db.get(c,'quote:'+p['underlying'])
+        if p.get('observation_model') != 'paired-recorded-quotes-v1':
+            return self.observe_pair(c,p,now)
+        from .quote_path import recorded_path
+        option_path,ot,oc=recorded_path(self.db,c,p['contract']['symbol'],max(p['last_option_ts'],p['opened_at']),now)
+        stock_path,ut,uc=recorded_path(self.db,c,p['underlying'],max(p['last_underlying_ts'],p['opened_at']),now)
+        p['archive_check']={'option':oc,'underlying':uc}
+        # Do not consume beyond either stream's loaded prefix.
+        frontier=min([now]+([option_path[-1]['ts']] if ot and option_path else [])+
+            ([stock_path[-1]['ts']] if ut and stock_path else []))
+        if (ot and not option_path) or (ut and not stock_path):
+            p['gap_detail']={'reason':'archive_batch_has_no_usable_quotes'}
+            return self.finish(c,p,now,'observation_gap')
+        oq=p['last_quote'];uq=p['last_underlying_quote']
+        timeline=sorted([(q['ts'],0,q) for q in option_path if q['ts']<=frontier]+
+                        [(q['ts'],1,q) for q in stock_path if q['ts']<=frontier],key=lambda x:(x[0],x[1]))
+        stock_times={t for t,k,_ in timeline if k==1}
+        for stamp,kind,q in timeline:
+            if kind==0:oq=q
+            else:uq=q
+            # Equal source times are evaluated together, independent of SQL row order.
+            if kind==0 and stamp in stock_times:continue
+            self.observe_pair(c,p,stamp,oq,uq)
+            if p['status']!='open':return
+        p['replay_pending']=ot or ut
+        if not p['replay_pending']:
+            self.observe_pair(c,p,now)
+        if p['status']=='open':self.save(c,p,now)
+
+    def observe_pair(self, c, p, now, oq=None, uq=None):
+        oq = oq if oq is not None else self.db.get(c,'quote:'+p['contract']['symbol'])
+        uq = uq if uq is not None else self.db.get(c,'quote:'+p['underlying'])
         if (now-p['last_option_ts']>MAX_GAP and (not current(oq,now) or oq['ts']-p['last_option_ts']>MAX_GAP)
                 or now-p['last_underlying_ts']>MAX_GAP and (not current(uq,now) or uq['ts']-p['last_underlying_ts']>MAX_GAP)):
+            p['gap_detail']={'checked_at':now,'option_last':p['last_option_ts'],
+                'underlying_last':p['last_underlying_ts'],'option_next':(oq or {}).get('ts'),
+                'underlying_next':(uq or {}).get('ts'),'reason':'missing_continuous_paired_quotes'}
             self.finish(c,p,now,'observation_gap')
             return
         if not current(oq,now) or not current(uq,now):
@@ -202,7 +235,7 @@ class OptionIdeas:
         if not changed and now<p['flatten_at']:
             return
         p['max_gap_seconds'] = max(p['max_gap_seconds'],oq['ts']-p['last_option_ts'],uq['ts']-p['last_underlying_ts'])
-        p.update(last_option_ts=oq['ts'],last_underlying_ts=uq['ts'],last_quote=oq)
+        p.update(last_option_ts=oq['ts'],last_underlying_ts=uq['ts'],last_quote=oq,last_underlying_quote=uq)
         p['samples'] += 1
         mark = round(max(0,oq['bid']-SLIPPAGE),2)
         long = p['underlying_side']=='long'
@@ -260,3 +293,4 @@ def snapshot(db, c, cfg, now):
     return dict(enabled=cfg.option_ideas,worker=db.get(c,'option_ideas:worker'),records=recent,counts=counts,
         min_dte=cfg.ideas_min_dte,max_dte=cfg.ideas_max_dte,target_dte=cfg.ideas_target_dte,
         basis='Last 100 ideas; status counts over 30 days. Independent one-contract intraday observations, not account returns.')
+

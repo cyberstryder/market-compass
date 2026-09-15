@@ -3,7 +3,7 @@ import asyncio
 import time
 from datetime import datetime, timezone
 from sqlalchemy import select
-from .market import fresh, is_open, ts
+from .market import fresh, is_open, ts, day
 from .projects import records
 from .secondary import current, daily_context, pending, technical_context, technical_ready
 from .universe import connected_symbols, data_symbols, symbols
@@ -20,8 +20,18 @@ def coverage(db, c, cfg, now):
         projects.setdefault(normalized, set()).add(project)
     subscribed = set(data_symbols(db, c, cfg, now))
     rows = []
-    for symbol in connected_symbols(db, c, now):
+    universe=set(connected_symbols(db,c,now))
+    if cfg.swing_ideas: universe.update(cfg.watch_symbols)
+    for symbol in sorted(universe):
+        if cfg.swing_ideas and symbol in cfg.watch_symbols: projects.setdefault(symbol,set()).add("swing")
         daily = daily_context(db, c, symbol, now) if "smoothers" in projects.get(symbol, ()) else {}
+        swing=db.get(c,"swing_daily:"+symbol,{})
+        if "swing" in projects.get(symbol,()):
+            from .swing_signals import daily_context as swing_daily
+            if swing.get("day")!=day(now):
+                swing=swing_daily(db.recent(c,"daily",symbol,limit=180),now)
+            if swing.get("status")!="ready":daily={"status":"warming_up","note":swing.get("reason")}
+            elif "smoothers" not in projects.get(symbol,()):daily={"status":"ready","through":swing.get("through") }
         minute = technical_context(db, c, symbol, now)
         minute_reason = minute.get("reason")
         if not technical_ready(minute, now):
@@ -60,7 +70,7 @@ def plan(collector, now):
         jobs = {}
         for kind, wait in (("daily", 300), ("minute", 60)):
             needed = [r["symbol"] for r in state.get("rows", []) if r["collection_enabled"]
-                and not r[kind + "_ready"] and (kind != "daily" or "smoothers" in r["projects"])
+                and not r[kind + "_ready"] and (kind != "daily" or bool({"smoothers","swing"}&set(r["projects"])))
                 and (kind != "minute" or is_open(now))]
             if kind == "minute":
                 needed += [s for s in priority if not technical_ready(technical_context(db, c, s, now), now)]
@@ -116,3 +126,4 @@ async def refresh(collector):
         "Connected equity coverage and bounded quote/history recovery; original review records unchanged"
         + ('; returned bars ' + ' / '.join(recovered) if recovered else '; no history requests this pass'),
         quote_requests=len(jobs["quotes"]), daily_symbols=len(jobs["daily"]), minute_symbols=len(jobs["minute"]))
+
