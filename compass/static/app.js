@@ -182,6 +182,8 @@ $('#map-symbol').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};
 $('#map-metric').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};
 function renderProjects(data){
  if(!data)return;
+ const parity=data.program_parity||{}, pp=parity.projects||{};
+ $('#program-parity').innerHTML='<p>Checked '+when(parity.at)+'. Read-only comparisons; original programs still own alerts. Cutover is not ready.</p>'+table(['Program','Records checked','Comparison results'],[['Morning',pp.morning?.checked||0,esc(JSON.stringify(pp.morning?.samples||{}))+'<br>Delivery '+esc(JSON.stringify(pp.morning?.delivery||{}))],['Smoothers',pp.smoothers?.checked||0,esc(JSON.stringify(pp.smoothers?.counts||{}))]])+'<p class="fine">At most 500 records checked per program; latest 100 details retained. '+((pp.morning?.truncated||pp.smoothers?.truncated)?'Input limit reached; comparison is incomplete. ':'')+'Option results reconcile source-sample arithmetic, not independent fills. Smoothers checks scoring on original inputs, not independent weekly selection.</p>';
  const migration=data.migration||{};
  const history=data.history_import||{};
  const historyHtml='<h3>Morning research import</h3><p>'+esc(history.basis||'Awaiting import')+'</p>'+table(['Stream','Status','Last complete scan'],Object.entries(history.streams||{}).map(([k,v])=>[esc(k),tag(v.status),when(v.last_complete_at)]))+'<p>'+Object.entries(history.counts||{}).map(([k,v])=>esc(k)+': '+num(v,0)).join(' · ')+'</p>';
