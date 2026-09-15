@@ -312,3 +312,16 @@ def test_quote_batch_retains_all_accepted_samples_with_one_archive_insert(db):
     finally:
         event.remove(db.engine,'before_cursor_execute',count)
         asyncio.run(collector.close())
+
+
+def test_expired_review_explanation_uses_frozen_inputs_not_previous_quote_failure(db):
+    worker=Secondary(db,Config(local=True))
+    enqueue(db,worker)
+    with db.tx() as c: db.put(c,'quote:SPY',quote(NOW+60))
+    worker.tick(NOW+62)
+    with db.tx() as c:
+        row=c.execute(select(reviews)).mappings().one()
+        assert row['decision']['data_checks']['quote']['ready']
+        assert any('bid/ask' in x for x in row['decision']['readiness_previous_missing'])
+        assert not any('bid/ask' in x for x in row['decision']['reasons'])
+        assert row['verdict']=='insufficient_data' and not row['decision']['timely']

@@ -468,7 +468,9 @@ class Secondary:
             decision["readiness_wait_seconds"] = round(now-waiting["first_seen"], 3)
             decision["readiness_attempts"] = waiting["attempts"]+1
             if now > deadline:
-                decision["reasons"] = ["Review deadline passed before independent data became usable", *waiting["missing"]]
+                decision["readiness_previous_missing"] = waiting["missing"]
+                decision["reasons"] = ["Review deadline passed before independent data became usable",
+                    *[reason for reason in decision["missing"] if not reason.startswith("Source arrived outside")]]
         c.execute(delete(pending).where(pending.c.id == key))
         baseline_inputs = {**inputs, 'flow': [], 'levels': [], 'exposure': {}}
         baseline = assess(candidate, baseline_inputs, now)
