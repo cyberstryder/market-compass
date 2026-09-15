@@ -63,7 +63,11 @@ def capture(db, cfg, owner, now):
 
 def snapshot(db, c, now):
     saved = db.get(c, KEY, {'status': 'awaiting_measurement'})
-    return {**saved, 'status': 'stale' if saved.get('at') and now - saved['at'] > 900 else saved['status']}
+    archive=db.get(c,'archive:schedule-v1',{})
+    if archive:
+        archive={**archive,'status':'stale' if now-archive.get('updated_at',0)>1200 else 'running',
+            'report_age_seconds':max(0,now-archive.get('updated_at',0))}
+    return {**saved,'scheduled_archive':archive, 'status': 'stale' if saved.get('at') and now - saved['at'] > 900 else saved['status']}
 
 
 async def run(db, cfg):

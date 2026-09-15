@@ -16,11 +16,11 @@ def sha(path):
     return digest.hexdigest()
 
 
-def run(db,client,bucket,after_id=0,max_rows=10000):
+def run(db,client,bucket,after_id=0,max_rows=10000,through_id=None):
     if not bucket or not 1<=max_rows<=100000:raise ValueError('Invalid archive scope')
     with tempfile.TemporaryDirectory(prefix='compass-archive-') as tmp:
         source=Path(tmp)/'source.gz'
-        manifest=export(db,source,after_id,max_rows)
+        manifest=export(db,source,after_id,max_rows,through_id)
         checksum=sha(source)
         key='events/'+uuid.uuid4().hex+'/'+checksum+'.jsonl.gz'
         # A unique key per run prevents accidental overwrites of previous evidence.
@@ -45,7 +45,7 @@ def run(db,client,bucket,after_id=0,max_rows=10000):
         restored=restore_isolated(downloaded,Path(tmp)/'restored.sqlite')
         receipt=dict(object_key=key,compressed_sha256=checksum,compressed_bytes=size,
             rows=manifest['count'],after_id=manifest['after_id'],last_id=manifest['last_id'],
-            snapshot_high_water_id=manifest['snapshot_high_water_id'],
+            snapshot_high_water_id=manifest['snapshot_high_water_id'],range_through_id=through_id,
             continuation_after_id=manifest['continuation_after_id'],may_have_more=manifest['may_have_more'],
             content_sha256=manifest['sha256'],durable_copy_verified=True,
             isolated_restore_verified=restored['restore_verified'],database_rows_deleted=0,
@@ -71,8 +71,14 @@ def main():
         config=Config(connect_timeout=5,read_timeout=30,retries={'mode':'standard','max_attempts':2},
             s3={'addressing_style':os.environ.get('ARCHIVE_ADDRESSING_STYLE','virtual')}))
     db=Store(os.environ['DATABASE_URL'])
-    try:print('Archive verification: '+json.dumps(run(db,client,os.environ['ARCHIVE_BUCKET'],
-        int(os.environ.get('ARCHIVE_AFTER_ID','0')),int(os.environ.get('ARCHIVE_MAX_ROWS','10000'))),sort_keys=True))
+    try:
+        if os.environ.get('ARCHIVE_MODE')=='scheduled':
+            from .archive_schedule import scheduled
+            result=scheduled(db,client,os.environ['ARCHIVE_BUCKET'])
+            print('Archive schedule: '+json.dumps(result,sort_keys=True))
+        else:
+            print('Archive verification: '+json.dumps(run(db,client,os.environ['ARCHIVE_BUCKET'],
+                int(os.environ.get('ARCHIVE_AFTER_ID','0')),int(os.environ.get('ARCHIVE_MAX_ROWS','10000'))),sort_keys=True))
     finally:db.engine.dispose();client.close()
 
 
