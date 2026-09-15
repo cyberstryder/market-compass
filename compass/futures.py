@@ -123,3 +123,16 @@ def future_levels(rows, asof, coverage=None, symbol=None):
         out["atr14"] = sum(max(b["payload"]["h"]-b["payload"]["l"],abs(b["payload"]["h"]-a["payload"]["c"]),
             abs(b["payload"]["l"]-a["payload"]["c"])) for a,b in zip(recent,recent[1:]))/14
     return out
+
+
+def research_session(now, symbol=None):
+    """Market research envelope, independent of account entry/flatten limits.
+
+    Live quote/bar freshness still gates every trial. Calendar early closes
+    shorten this envelope; no prices are invented during exchange halts.
+    """
+    h = futures_session(now, symbol)
+    return {**h, 'entry_open': h['open'] <= now < h['close']-60,
+            'is_open': h['open'] <= now < h['close'],
+            'flatten_at': h['close']-60, 'entry_end': h['close']-60,
+            'policy': 'full-session-research-v1'}

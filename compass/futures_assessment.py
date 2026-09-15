@@ -56,9 +56,9 @@ def freeze(db, c, signal, now, q, spec):
                   q['ask']-q['bid'] <= max(spec['tick']*8, (q['ask']+q['bid'])/2*.002))
     rule = signal.get('rule', '')
     direction = 1 if signal['side'] == 'long' else -1
-    suitable = ((state['state'] == 'trend' and state['direction'] == direction and rule in ('trend_pullback', 'orb_retest'))
-        or (state['state'] == 'expansion' and state['direction'] == direction and rule == 'volume_breakout')
-        or (state['state'] == 'range_candidate' and rule == 'session_sweep_reclaim'))
+    suitable = ((state['state'] == 'trend' and state['direction'] == direction and rule in ('trend_pullback', 'orb_retest', 'momentum_continuation'))
+        or (state['state'] == 'expansion' and state['direction'] == direction and rule in ('volume_breakout', 'compression_breakout'))
+        or (state['state'] == 'range_candidate' and rule in ('session_sweep_reclaim', 'range_reversal', 'failed_breakout')))
     return dict(state, frozen_at=now, quote_fresh_and_liquid=liquid,
                 proposed_selection='candidate' if suitable and liquid else 'abstain',
                 selection_basis='Untested fixed hypothesis; all existing trials continue', execution_eligible=False)

@@ -6,7 +6,7 @@ flow and vendor screeners remain attributed evidence, never probability claims.
 import time
 from collections import defaultdict
 from .market import levels, fresh, day, number, session, dedup
-from .futures import future_levels, futures_session, risk_day, prior_rth, active_selection
+from .futures import research_session, future_levels, futures_session, risk_day, prior_rth, active_selection
 from .store import identity
 from .instruments import future_root
 from .alert_format import alert_context
@@ -63,10 +63,15 @@ def features(symbol, rows, now, previous=None,coverage=None):
     ht=ema(higher[-60:],21)
     bias=(1 if higher[-1]>ht[-1] and ht[-1]>ht[-2] else -1 if higher[-1]<ht[-1] and ht[-1]<ht[-2] else 0) if len(ht)>=21 else None
     volume=latest['payload']['v']
+    prior5=rows[-6:-1]
+    prior5_high=max(r['payload']['h'] for r in prior5)
+    prior5_low=min(r['payload']['l'] for r in prior5)
     return {**context,'symbol':symbol,'status':'ready','asof':latest['ts']+60,
         'bar':latest['payload'],'previous_bar':rows[-2]['payload'],'bar_start':latest['ts'],
         'ema9':e9[-1],'ema21':e21[-1],'ema21_previous':e21[-2],
         'htf15_bias':bias,'htf15_completed_bars':len(ht),
+        'prior5_high':prior5_high, 'prior5_low':prior5_low,
+        'prior5_range_atr':(prior5_high-prior5_low)/context['atr14'] if context.get('atr14') else None,
         'rvol20':volume/average if average>0 else None,
         'rvol_method':'Current minute volume / preceding 20 observed minute volumes',
         'high20':max(r['payload']['h'] for r in lookback),
@@ -94,11 +99,11 @@ def make_candidate(symbol,rule,side,price,stop,clock,reason,evidence=None):
         'reason':reason,'evidence':evidence or [],'rule_version':VERSION}
 
 
-def technical_candidates(f,arms,now,tick):
+def technical_candidates(f,arms,now,tick, research=False):
     """Only completed-bar patterns; arms are durable and session-specific."""
     result=[]
     arms=dict(arms)
-    if f.get('status')!='ready' or not 0<=now-f.get('asof',0)<=90 or not f.get('atr14') or not session_open(f['symbol'],now):
+    if f.get('status')!='ready' or not 0<=now-f.get('asof',0)<=90 or not f.get('atr14') or not (research_session(now,f['symbol'])['entry_open'] if research else session_open(f['symbol'],now)):
         return result,arms
     b,p=f['bar'],f['previous_bar']
     price,clock=b['c'],f['asof']
@@ -458,3 +463,7 @@ def snapshot(db,c,cfg,now):
 def focus_for_display(db,c,now):
     return sorted((value for value in db.prefix(c,'focus:').values() if now-value.get('at',0)<=600),
         key=lambda row:(row.get('priority',0),row.get('at',0)),reverse=True)[:30]
+
+
+def research_candidates(f,arms,now,tick):
+    return technical_candidates(f,arms,now,tick,research=True)

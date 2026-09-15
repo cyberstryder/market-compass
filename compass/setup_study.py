@@ -9,13 +9,13 @@ import logging
 from sqlalchemy import Table, Column, String, Float, JSON, Index, select, update
 from .store import meta, identity
 from .market import fresh, number, session, day
-from .futures import futures_session
+from .futures import futures_session, research_session
 from .instruments import tick_price
 from .simulation import bracket, exit_price, FILL_VERSION, FILL_DESCRIPTION
 from .quote_path import recorded_path
 from . import futures_variants, futures_assessment
 
-VERSION = 'setup-outcomes-v2'
+VERSION = 'setup-outcomes-v3'
 MAX_GAP = 15
 trials = Table('setup_trials_v1', meta,
     Column('id', String(64), primary_key=True), Column('source_id', String(100), nullable=False),
@@ -49,7 +49,7 @@ class SetupStudy:
         if self.db.get(c, 'setup_study:model_activation:'+VERSION) is None:
             self.db.put(c, 'setup_study:model_activation:'+VERSION, {'at':now,'version':VERSION,'fill_version':FILL_VERSION})
         future = spec['asset'] == 'future'
-        hours = futures_session(now, signal['symbol']) if future else None
+        hours = research_session(now, signal['symbol']) if future else None
         cash = session(day(now)) if not future else None
         deadline = hours['flatten_at'] if future else (cash[1]-900 if cash else now)
         opened = hours['entry_open'] if future else bool(cash and cash[0] <= now < cash[1]-1800)
@@ -153,6 +153,7 @@ class SetupStudy:
         if now-report.get('at', 0) >= 30:
             report = report_for(c, now)
             self.db.put(c, 'setup_study:report', report)
+            logging.getLogger('uvicorn.error').info('Futures market research: model=%s cohorts=%s census_contracts=%s', VERSION, len(report['market_assessment']['groups']), sum('snapshot' in v for v in self.db.prefix(c,'futures_research:').values()))
             groups = report['entry_variants']['groups']
             logging.getLogger('uvicorn.error').info(
                 'Futures entry variants: version=%s cohorts=%s selected=%s unknown=%s unresolved=%s',
@@ -233,6 +234,7 @@ def report_for(c, now):
 
 def snapshot(db, c, cfg, now):
     return {**db.get(c, 'setup_study:report', {'groups':[], 'records':[], 'count':0}),
+        'futures_census':[v['snapshot'] for k,v in db.prefix(c,'futures_research:').items() if 'snapshot' in v],
         'enabled':cfg.setup_study, 'activation':db.get(c, 'setup_study:activation'),
         'model_activation':db.get(c, 'setup_study:model_activation:'+VERSION),
         'entry_variants_activation':db.get(c, futures_variants.PREFIX+'activation'),

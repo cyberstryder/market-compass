@@ -242,7 +242,10 @@ class Engine:
                 if future and self.cfg.setup_study:
                     from .scanner import features
                     from .futures_variants import observe_bar
-                    observe_bar(self.db,c,symbol,features(symbol,rows,now,coverage=coverage),now)
+                    f=features(symbol,rows,now,coverage=coverage)
+                    observe_bar(self.db,c,symbol,f,now)
+                    from .futures_research import observe
+                    observe(self.db,c,symbol,f,now,self.study,spec(symbol))
                 s=candidate(symbol,rows[-2],bar,context,now)
                 if s:
                     self.db.append(c,"signal","engine",symbol,s["signal_time"],s,s["id"])

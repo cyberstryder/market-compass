@@ -15,3 +15,13 @@ Proposed matches: trend pullback and ORB retest with trend direction; volume bre
 Existing trials supply one-contract entry, fixed stop and target, deadline exit, retained-quote outcomes, and illustrative costs. This build does not optimize targets/stops, fit a selector, measure a realizable portfolio, prove profitability, or provide holdout results. Commissions/slippage need calibration before economic conclusions. Aggregate closed-only metrics must be read alongside excluded and unresolved counts and report truncation.
 
 Next: record broader no-setup opportunities and volatility/liquidity baselines; compare exit models; partition by sessions into development and untouched evaluation sets; test correlation-aware portfolio risk and forward paper execution. Keep drawdown and loss clustering central to selection. Historical repair remains secondary to forward evidence.
+
+## Full-session and catalog completion
+
+Additional shadow-only rules: momentum continuation (two directional closes, EMA/15m alignment, RVOL >=1); failed 20-minute break (wick outside and close back inside); range reversal (flat EMAs, range >=2 ATR, edge touch and prior-bar reversal); compression breakout (preceding five-bar range <=1.5 current ATR, close outside, RVOL >=1.5). Stops use observed structure plus one tick. These thresholds are hypotheses, not optimized claims.
+
+The engine retains a timestamped market-assessment event for each fresh processed completed bar, including no-candidate bars, and shows latest per-contract assessments. Missing bars do not generate fabricated snapshots. It does not certify uninterrupted 23-hour coverage. Existing scanner rules extend into the account-restricted period as separate shadow trials; new rules are always shadow-only. Existing account/alert behavior stays intact.
+
+New setup-outcomes-v3 futures trials use the market calendar envelope and exit one minute before its close; the old 15:15 entry and 15:45 account flatten limits no longer bound research trials. Previously opened trials retain their original deadlines. The inherited CMES calendar supplies holiday closures; product-specific holiday/calendar reconciliation remains necessary before broker execution. No execution eligibility is claimed.
+
+Validated regular overnight, late-session, maintenance and reopen boundaries, candidate triggers, immutable/idempotent events and shadow trials after account cutoff. Full suite: 518 tests.
