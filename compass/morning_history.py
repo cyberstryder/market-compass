@@ -8,7 +8,7 @@ import uuid
 import httpx
 from sqlalchemy import Column, Float, Index, JSON, String, Table, select, func
 from .store import meta, identity
-from .morning_schema.models import Event
+from .morning_schema.models import Event, Signal, StockBar
 from .morning_schema.candidate_models import ResearchBatch
 
 LOG = logging.getLogger('uvicorn.error')
@@ -46,6 +46,7 @@ def ingest(db, c, stream, row, now):
         raise ValueError('Invalid source receipt clock')
     if digest(payload) != row['sha256']:
         raise ValueError('Source checksum mismatch')
+    if stream == 'stock': return ingest_stock(db, c, row, now)
     if stream not in {'events', 'research'}: raise ValueError('Invalid history stream')
     parsed = (Event if stream == 'events' else ResearchBatch).model_validate(payload)
     if parsed.event_id != row['id']: raise ValueError('Envelope identity mismatch')
@@ -63,6 +64,58 @@ def ingest(db, c, stream, row, now):
     for candidate in payload.get('records', []):
         save(db, c, 'candidate', parent_id, candidate['record_id'], candidate, received / 1000, now)
     return changed
+
+
+def ingest_stock(db, c, row, now):
+    payload = row['payload']
+    if not isinstance(payload, dict) or set(payload) != {'schema_version','signal','initial_received_at_ms','bars'} or payload['schema_version'] != 1:
+        raise ValueError('Invalid stock inventory schema')
+    signal = Signal.model_validate(payload['signal'])
+    if signal.is_test or signal.signal_id != row['id'] or signal.signal_at_ms > row['received_at_ms'] + 60000:
+        raise ValueError('Invalid stock inventory identity')
+    initial = payload['initial_received_at_ms']
+    if initial is not None and (type(initial) is not int or not 0 < initial <= (now+60)*1000):
+        raise ValueError('Invalid initial source receipt')
+    bars = payload['bars']
+    if not isinstance(bars, list) or len(bars)>180: raise ValueError('Invalid stock candle inventory')
+    values, previous = [], 0
+    sid = signal.signal_id
+    for item in bars:
+        if not isinstance(item,dict) or set(item) != {'payload','sha256','received_at_ms'}:
+            raise ValueError('Invalid stock candle envelope')
+        b = StockBar.model_validate(item['payload']); received=item['received_at_ms']
+        if type(received) is not int or not 0 < received <= (now+60)*1000 or b.open_at_ms+60000 > received+60000:
+            raise ValueError('Invalid stock candle receipt')
+        offset=b.open_at_ms-signal.signal_at_ms
+        if not 0 <= offset < 180*60000 or offset%60000 or b.open_at_ms<=previous:
+            raise ValueError('Invalid stock candle order or bounds')
+        if digest(item['payload']) != item['sha256']: raise ValueError('Stock candle checksum mismatch')
+        previous=b.open_at_ms
+        values.append(dict(key=identity('signal_bar',sid,str(b.open_at_ms)),kind='signal_bar',parent=sid,
+            source_id=str(b.open_at_ms),source_received=received/1000,imported_at=now,
+            sha256=item['sha256'],payload=item['payload']))
+    save(db,c,'signal',sid,sid,payload['signal'],row['received_at_ms']/1000,now)
+    if values:
+        # One bounded batch; conflicts never replace existing candle prices.
+        q=db.insert(history).values(values)
+        c.execute(q.on_conflict_do_nothing(index_elements=['key']))
+        stored={r.key:r for r in c.execute(select(history.c.key,history.c.sha256,history.c.source_received)
+            .where(history.c.key.in_([v['key'] for v in values])))}
+        for value in values:
+            saved=stored[value['key']]
+            if saved.sha256!=value['sha256']:raise ValueError('Source history identity conflict: signal_bar')
+            if saved.source_received>value['source_received']:
+                c.execute(history.update().where(history.c.key==value['key'],history.c.source_received>value['source_received'])
+                    .values(source_received=value['source_received']))
+    key=identity('stock_inventory',sid,sid)
+    old=c.execute(select(history.c.sha256).where(history.c.key==key)).scalar_one_or_none()
+    q=db.insert(history).values(key=key,kind='stock_inventory',parent=sid,source_id=sid,
+        source_received=row['received_at_ms']/1000,imported_at=now,sha256=row['sha256'],payload=row)
+    # The latest complete source inventory may grow; individual candle rows stay immutable.
+    updates={'imported_at':now}
+    if old!=row['sha256']:updates.update(payload=row,sha256=row['sha256'])
+    c.execute(q.on_conflict_do_update(index_elements=['key'],set_=updates))
+    return old != row['sha256']
 
 
 def accept_page(db, stream, payload, after, now):
@@ -105,7 +158,18 @@ async def poll_page(db, cfg, client, stream):
             size += len(part)
             if size > 8 * 1024 * 1024: raise ValueError('History page exceeds limit')
             chunks.append(part)
-    return await asyncio.to_thread(accept_page, db, stream, json.loads(b''.join(chunks)), after, time.time())
+    status = await asyncio.to_thread(accept_page, db, stream, json.loads(b''.join(chunks)), after, time.time())
+    if stream == 'stock' and status['status'] == 'scan_complete':
+        def audit():
+            from .morning_report import build_report
+            with db.tx() as c:
+                report=build_report(db,c,time.time())
+                proof={**report['summary'],'at':report['as_of_ms']/1000,'truncated':report['truncated']}
+                db.put(c,'morning_native_reconciliation:status',proof)
+            LOG.info('Morning native reconciliation: %s',json.dumps(proof,sort_keys=True))
+        try: await asyncio.to_thread(audit)
+        except Exception as exc: LOG.error('Morning native reconciliation audit failed: %s',type(exc).__name__)
+    return status
 
 
 async def run(db, cfg):
@@ -113,7 +177,7 @@ async def run(db, cfg):
     owner = uuid.uuid4().hex
     async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=4), follow_redirects=False) as client:
         while True:
-            for stream in ('events', 'research'):
+            for stream in ('stock', 'events', 'research'):
                 try:
                     with db.tx() as c:
                         active = db.lease(c, 'morning-history-' + stream, owner, 120)
@@ -137,7 +201,7 @@ async def run(db, cfg):
 
 
 def snapshot(db, c, now):
-    streams = {s: db.get(c, 'morning_history:' + s, {'status': 'awaiting_import'}) for s in ('events', 'research')}
+    streams = {s: db.get(c, 'morning_history:' + s, {'status': 'awaiting_import'}) for s in ('stock', 'events', 'research')}
     for saved in streams.values():
         if saved.get('at') and now - saved['at'] > 180: saved['status'] = 'stale'
     counts = dict(c.execute(select(history.c.kind, func.count()).group_by(history.c.kind)).all())

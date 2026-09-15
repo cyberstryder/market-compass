@@ -68,11 +68,26 @@ def build_report(db, c, now, limit=100, start='', end='', ticker='', stream=''):
             destination[r['parent']].append({**r['payload'], 'received_at_ms': round(r['source_received'] * 1000)})
         for bars in destination.values(): bars.sort(key=lambda b:b['open_at_ms'])
     expected = {r['parent'] for r in load_kind(c, 'events', signal_ids) if r['payload']['payload']['schema_version'] == 2}
+    inventories = {r['parent']:r for r in load_kind(c, 'stock_inventory', signal_ids)}
     signals, candidates, stock_groups, candidate_groups = [], [], defaultdict(list), defaultdict(list)
     now_ms = int(now * 1000)
     for raw in raw_signals:
         s = raw['payload']; sid = s['signal_id']; bars = candles[sid]
         coverage = stock_coverage(s, bars, sid in expected or s['script_version'] == '1.3.0', now_ms)
+        inventory=inventories.get(sid)
+        reconciliation={'status':'awaiting_source_inventory'}
+        if inventory:
+            source_bars=inventory['payload']['payload']['bars']
+            source_hashes={b['payload']['open_at_ms']:b['sha256'] for b in source_bars}
+            imported_hashes={b['open_at_ms']:digest({k:v for k,v in b.items() if k!='received_at_ms'}) for b in bars}
+            missing=sorted(source_hashes.keys()-imported_hashes.keys())
+            extra=sorted(imported_hashes.keys()-source_hashes.keys())
+            conflicts=sorted(t for t in source_hashes.keys()&imported_hashes.keys() if source_hashes[t]!=imported_hashes[t])
+            source_coverage=stock_coverage(s,[b['payload'] for b in source_bars],sid in expected or s['script_version']=='1.3.0',now_ms)
+            reconciliation={'status':'inventory_differs' if missing or extra or conflicts else 'matched_source_snapshot',
+                'checked_at':inventory['imported_at'],'source_candles':len(source_hashes),'compass_candles':len(imported_hashes),
+                'missing_in_compass':missing,'extra_in_compass':extra,'conflicting_candles':conflicts,
+                'source_stock_coverage':source_coverage,'source_inventory_sha256':inventory['sha256']}
         exits = [stock_exit(s, bars, h) for h in (5,15,30,60)]
         exits += [stock_exit(s, bars, target=t, stop=stop) for t, stop in ((1.,.5),(2.,1.))]
         linked = links.get(sid)
@@ -86,7 +101,7 @@ def build_report(db, c, now, limit=100, start='', end='', ticker='', stream=''):
         bucket = f'{central.hour:02d}:{central.minute//15*15:02d}'
         row = {'signal_id':sid, 'ticker':s['ticker'],'setup':s['setup'],'at_ms':s['signal_at_ms'],
             'stream_id':s['stream_id'],'config_id':config,'logic_mode':s['logic_mode'],'script_version':s['script_version'],
-            'time_bucket_central':bucket,'stock_history':coverage,'modeled_exits':exits,
+            'time_bucket_central':bucket,'stock_history':coverage,'native_reconciliation':reconciliation,'modeled_exits':exits,
             'extended_stock_history':extended,'extended_checkpoints':outcomes,
             'source_received_at':raw['source_received'],'imported_at':raw['imported_at']}
         signals.append(row)
@@ -126,6 +141,8 @@ def build_report(db, c, now, limit=100, start='', end='', ticker='', stream=''):
         'truncated':{'signals':signal_truncated,'candidates':candidate_truncated},'import_status':import_snapshot(db,c,now),
         'signals':signals,'candidates':candidates,'stock_comparisons':comparisons,'candidate_comparisons':groups,
         'summary':{'signals':len(signals),'candidates':len(candidates),'stock_coverage':dict(Counter(r['stock_history']['status'] for r in signals)),
+            'native_inventory':dict(Counter(r['native_reconciliation']['status'] for r in signals)),
+            'source_stock_coverage':dict(Counter(r['native_reconciliation'].get('source_stock_coverage',{}).get('status','awaiting_inventory') for r in signals)),
             'candidate_kinds':dict(Counter(r['kind'] for r in candidates))},
         'cutover_ready':False,'notes':[
             'Stock research only. Underlying returns are not option returns, broker fills or realized P&L.',
