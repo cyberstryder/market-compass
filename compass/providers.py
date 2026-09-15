@@ -82,10 +82,12 @@ class Collectors:
 
     def tasks(self):
         c=self.cfg
+        from .obsidian_history import step as history_obsidian
         from .obsidian import poll as poll_obsidian
         from .extra_futures import tasks as extra_tasks
         from .secondary_data import refresh as refresh_secondary_data
         return [
+            self.supervise("obsidian_history",bool(c.obsidian_history and c.obsidian_url and c.massive),lambda:history_obsidian(self),3),
             self.supervise("obsidian",bool(c.obsidian_url),lambda:poll_obsidian(self),5),
             self.supervise("alpaca_stocks",bool(c.alpaca_key and c.alpaca_secret),self.stocks),
             self.supervise("alpaca_history",bool(c.alpaca_key and c.alpaca_secret),self.history,3600),

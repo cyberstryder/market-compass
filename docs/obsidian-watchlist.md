@@ -40,3 +40,28 @@ Obsidian adds no Discord notifications or broker orders.
 The Obsidian Watchlist dashboard shows the latest 100 ideas/events; all received
 records are retained. Tracking and subscription candidates are bounded to the
 latest 500 unexpired ideas, with truncation exposed in tracking status.
+
+## September 14 historical audit
+
+`OBSIDIAN_HISTORY_AUDIT_ENABLED=true` on the collector enables a single durable
+cohort audit: this feed's idea IDs through 116, source times before September 15
+00:00 UTC. It waits for intake cursor 116, prioritizes ideas without matched
+updates, and stops after the cohort. Existing Massive credentials request up to
+50,000 unadjusted minute bars per idea, at most three attempts, three seconds
+between steps; HTTP 401/403 stops further provider requests. Pagination/limit
+hits are explicitly partial. No new subscription or paid backfill is purchased.
+
+Evidence and summaries occupy their own versioned state keys, never live quote
+archives, live baseline measurements, or historical Compass ratings. The first
+full minute at/after source time supplies the hypothetical open baseline; bars
+before it or after expiry/cutoff are excluded. Source-to-baseline delay is visible.
+15/30/60-minute values require the exact last completed minute at the original
+source-time checkpoint; missing minutes are not forward-filled. Price extremes
+and final observed closes are descriptive trade prices, not executable exits,
+expiration settlement, or profits. Missing minutes may reflect inactivity or
+closed sessions and are not proof of a collection outage.
+
+A fixed +25%/-25% first-touch scenario is a sensitivity check only, not the
+provider's strategy or a tuned recommendation. Both touches within one minute
+remain ambiguous. Incomplete paths and delayed entries prohibit an unqualified
+win-rate claim. Current unexpired contracts are censored at the fixed cutoff.

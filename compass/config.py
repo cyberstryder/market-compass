@@ -47,6 +47,7 @@ class Config:
     research: bool = field(default_factory=lambda: env("RESEARCH_FEEDS_ENABLED","true")=="true")
     option_focus: int = field(default_factory=lambda: int(env("OPTION_FOCUS_SYMBOLS","12")))
     chain_dte: int = field(default_factory=lambda: int(env("OPTION_CHAIN_MAX_DTE","90")))
+    obsidian_history: bool = field(default_factory=lambda: env("OBSIDIAN_HISTORY_AUDIT_ENABLED","false")=="true")
     obsidian_url: str = field(default_factory=lambda: env("OBSIDIAN_FEED_URL"), repr=False)
     morning_url: str = field(default_factory=lambda: env("MORNING_SOURCE_URL"))
     morning_token: str = field(default_factory=lambda: env("MORNING_INTEGRATION_TOKEN"))
