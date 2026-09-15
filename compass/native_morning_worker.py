@@ -7,7 +7,7 @@ import secrets
 import time
 import uuid
 import httpx
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from .native_morning import store as source
 from .native_morning.models import Event
 from .native_morning.frames import Frame, accept_frame, FRAME_LIMIT
@@ -23,7 +23,10 @@ VERSION='native-morning-v1'
 
 
 def initialize(db):
-    source.metadata.create_all(db.engine)
+    with db.engine.begin() as c:
+        if c.dialect.name=='postgresql':
+            c.execute(text('SELECT pg_advisory_xact_lock(8675309001)'))
+        source.metadata.create_all(c)
 
 
 def accept(db,raw,now,body_size=0,origin='direct'):
