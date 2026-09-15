@@ -47,6 +47,7 @@ class Config:
     research: bool = field(default_factory=lambda: env("RESEARCH_FEEDS_ENABLED","true")=="true")
     option_focus: int = field(default_factory=lambda: int(env("OPTION_FOCUS_SYMBOLS","12")))
     chain_dte: int = field(default_factory=lambda: int(env("OPTION_CHAIN_MAX_DTE","90")))
+    obsidian_url: str = field(default_factory=lambda: env("OBSIDIAN_FEED_URL"), repr=False)
     morning_url: str = field(default_factory=lambda: env("MORNING_SOURCE_URL"))
     morning_token: str = field(default_factory=lambda: env("MORNING_INTEGRATION_TOKEN"))
     smoothers_url: str = field(default_factory=lambda: env("SMOOTHERS_SOURCE_URL"))
@@ -63,6 +64,9 @@ class Config:
         return symbols((*self.stocks, *extra))
 
     def validate(self):
+        if self.obsidian_url:
+            from .obsidian import validate_url
+            validate_url(self.obsidian_url)
         if self.role not in {"all","web","collector","engine"}:
             raise ValueError("Invalid COMPASS_ROLE")
         if not self.local and self.db.startswith("sqlite"):
@@ -95,3 +99,4 @@ class Config:
         for url in (self.morning_url, self.smoothers_url):
             if url and not url.startswith("https://"): raise ValueError("Source connections require HTTPS")
         if not set(self.observer_streams)<= {"mnq","mgc"}: raise ValueError("Unknown configured observer stream")
+

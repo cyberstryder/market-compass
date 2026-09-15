@@ -7,7 +7,7 @@ const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notati
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
 const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated','event_stale','poll_stale','vendor_stale','mixed'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
-const titles={'swing-ideas':'Swing ideas','option-ideas':'Options ideas','setup-study':'Setup results',secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
+const titles={obsidian:'Obsidian Watchlist','swing-ideas':'Swing ideas','option-ideas':'Options ideas','setup-study':'Setup results',secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav,.tab').forEach(n=>n.classList.remove('active'));b.classList.add('active');$('#'+b.dataset.tab).classList.add('active');$('#title').textContent=titles[b.dataset.tab];});
 $('#logout').onclick=async()=>{await fetch('/logout',{method:'POST'});location.href='/login';};
 let lastState=null,first=true,testEvent=null;
@@ -40,7 +40,14 @@ function vendorFlow(e){
   when(r.source_ts)+'<br><span class="fine">First seen '+when(r.first_seen)+'</span>',esc(r.symbol)+' '+esc(r.option_type)+' '+num(r.strike)+'<br><span class="fine">'+esc(r.expiry)+'</span>','$'+num(r.premium),esc(r.classification||'Unclassified'),esc(r.sentiment||'Unknown'),num(r.score,0)])):
   empty('No vendor activity returned for today','This is an empty filtered response; it is not proof of a failed connection.'))+'<p class="fine">Latest '+rows.length+' rows shown. '+esc(e.schema_validation)+'</p>';
 }
+function renderObsidian(d){
+ if(!d)return;
+ $('#obsidian-status').innerHTML='<p>'+tag(d.status.status||'not_configured')+' · '+num(d.total_events,0)+' retained events · '+num(d.total_ideas,0)+' ideas · last poll '+when(d.status.at)+'</p><p class="fine">New ideas receive an independent underlying-direction review in Secondary review. Option measurement starts at the first fresh quote after live receipt and may wait for market open. Historical imports have no reconstructed entry. Latest 100 ideas and events shown.</p>';
+ $('#obsidian-ideas').innerHTML=d.ideas.length?table(['Contract','Added / first received','Baseline observation','Latest bid / modeled change','Coverage'],d.ideas.map(r=>{const m=r.measurements;return [esc(r.contract),when(r.source_ts)+'<br>'+when(r.received),tag(m.anchor_status)+'<br>'+num(m.anchor_ask)+'<br>Delay '+age(m.anchor_delay_seconds),num(m.latest_bid)+' / '+(m.liquidation_pct==null?'—':num(m.liquidation_pct)+'%')+'<br>'+when(m.last_observed_at),num(m.samples,0)+' samples · '+(m.anchor_status!=='observed'?'Entry unavailable':m.path_complete?'Sampled path continuous':'Path has gaps')];})):empty('Waiting for watchlist ideas','The feed must be connected before events can appear.');
+ $('#obsidian-events').innerHTML=table(['Event / contract','Source time','Provider-reported change','Association'],d.events.map(r=>[esc(r.payload.type)+' #'+num(r.vendor_id,0)+'<br>'+esc(r.payload.contract),when(r.payload.source_ts),r.payload.vendor_percentage==null?'—':num(r.payload.vendor_percentage)+'%',esc(r.association)]))+'<p class="fine">Repeated additions for the same contract can make update ownership ambiguous. Reported returns are never used as measured fills or profits.</p>';
+}
 function render(d){
+ renderObsidian(d.obsidian);
  const openDetails=new Set([...document.querySelectorAll('details[open][data-key]')].map(e=>e.dataset.key));
  lastState=d;
  $('#market').textContent=d.markets.equities?'EQUITY SESSION OPEN':d.markets.futures?'FUTURES SESSION OPEN':'MARKETS CLOSED';
@@ -177,7 +184,7 @@ if(location.hash==='#projects')document.querySelector('[data-tab="projects"]').c
 function renderSecondary(data){
  if(!data)return;
  if(secondaryReport)data={...data,comparisons:secondaryReport.comparisons,window:secondaryReport.window,report_at:secondaryReport.at};
- const names={morning:'Morning Algo',smoothers:'Smoothers',futures:'TradingView futures',compass_futures:'Compass futures'};
+ const names={obsidian:'Obsidian Watchlist',morning:'Morning Algo',smoothers:'Smoothers',futures:'TradingView futures',compass_futures:'Compass futures'};
  const labels={supported:'Supported',watch:'Watch',rejected:'Rejected',insufficient_data:'Insufficient data'};
  const status=data.status||{}, filter=$('#secondary-filter').value;
  const groups=(data.comparisons||[]).filter(g=>filter==='all'||g.project===filter);

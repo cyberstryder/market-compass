@@ -24,7 +24,7 @@ from .vendor_freshness import confirmation, context_check
 from .flow_recovery import freshness as flow_freshness
 
 VERSION = "secondary-context-v4"
-LABELS = {"morning": "Morning Algo", "smoothers": "Smoothers",
+LABELS = {"obsidian": "Obsidian Watchlist", "morning": "Morning Algo", "smoothers": "Smoothers",
           "futures": "TradingView futures", "compass_futures": "Compass futures"}
 VERDICTS = ("supported", "watch", "rejected", "insufficient_data")
 ROOT = re.compile(r"^("+ROOTS+r")(?:[12]!|[FGHJKMNQUVXZ]\d{1,4})(?:@\d+)?$")
@@ -487,7 +487,7 @@ class Secondary:
         self.db.append(c, "secondary_review", "secondary", row["symbol"], now,
             {"id": key, "project": row["project"], "source_id": row["source_id"], "verdict": row["verdict"],
              "version": VERSION, "decision": decision}, "secondary-review:" + key)
-        if self.cfg.secondary_alerts and decision["timely"]:
+        if self.cfg.secondary_alerts and candidate["project"]!="obsidian" and decision["timely"]:
             self.db.append(c, "alert", "secondary", row["symbol"], now,
                 {"status": "secondary_review", "project": "futures" if candidate["project"] == "compass_futures" else candidate["project"],
                  "review_source": LABELS[candidate["project"]], "strategy": candidate["strategy"], "side": row["side"],

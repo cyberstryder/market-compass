@@ -4,6 +4,7 @@
 <aside class="sidebar"><a class="brand" href="/">↗ <span>Market<br>Compass</span></a><p class="eyebrow">WORKSPACE</p>
 <nav><button class="nav active" data-tab="overview">◈ Overview</button><button class="nav" data-tab="exposure">◎ Exposure</button>
 <button class="nav" data-tab="scanner">↗ Live scanner</button><button class="nav" data-tab="research">▤ Research desk</button>
+<button class="nav" data-tab="obsidian">◇ Obsidian Watchlist</button>
 <button class="nav" data-tab="projects">▦ Connected projects</button>
 <button class="nav" data-tab="setup-study">◉ Setup results</button>
 <button class="nav" data-tab="option-ideas">◇ Options ideas</button>
@@ -15,6 +16,7 @@
 <main class="workspace"><header><div><p class="eyebrow">MARKET INTELLIGENCE</p><h1 id="title">Session overview</h1></div>
 <div class="header-right"><span id="market" class="pill">Checking session</span><p id="clock" class="mono"></p></div></header>
 <div id="connection" class="banner">Connecting to the shared market state…</div>
+<section id="obsidian" class="tab"><div class="banner">Watchlist ideas, not provider trade entries. Reported percentages are separate from independently observed option prices.</div><article class="panel"><h2>Obsidian Watchlist</h2><div id="obsidian-status"></div><div id="obsidian-ideas"></div></article><article class="panel"><h2>Provider updates</h2><div id="obsidian-events"></div></article></section>
 <section id="secondary" class="tab">
 <div class="banner">Compass reviews each original candidate independently. Supported is a research assessment of the underlying direction. The original alerts and automation keep running.</div>
 <p id="secondary-status" class="fine"></p><div id="secondary-stats" class="stats"></div>
@@ -25,7 +27,7 @@
 <p id="secondary-period-note" class="fine">Choose a start time to separate a corrected collection period. Results include measurements available when loaded.</p>
 <div id="secondary-comparison"></div><div id="secondary-weekly"></div>
 <p class="fine">Watch and rejected candidates remain in the comparison. A missed positive move is shown alongside an avoided negative move. The per-candidate filter result assigns zero exposure to unselected candidates; it is not portfolio performance. No automatic rule optimization runs.</p></article>
-<article class="panel"><div class="panel-head"><h2>Secondary assessments</h2><label for="secondary-filter">Source <select id="secondary-filter"><option value="all">All sources</option><option value="morning">Morning Algo</option><option value="smoothers">Smoothers</option><option value="futures">TradingView futures</option><option value="compass_futures">Compass futures</option></select></label></div><div id="secondary-reviews"></div></article>
+<article class="panel"><div class="panel-head"><h2>Secondary assessments</h2><label for="secondary-filter">Source <select id="secondary-filter"><option value="all">All sources</option><option value="obsidian">Obsidian Watchlist</option><option value="morning">Morning Algo</option><option value="smoothers">Smoothers</option><option value="futures">TradingView futures</option><option value="compass_futures">Compass futures</option></select></label></div><div id="secondary-reviews"></div></article>
 </section>
 <section id="projects" class="tab">
 <div class="banner">Signals and outcomes from Morning Algo, New Smoothers, and the automated futures strategies. Market context is captured separately; each project keeps its original rules and results.</div>

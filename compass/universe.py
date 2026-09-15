@@ -34,7 +34,8 @@ def connected_symbols(db, c, now):
             result.extend(symbols((symbol,)))
         except ValueError:
             continue
-    return symbols(result)
+    from .obsidian import symbols as watchlist_symbols
+    return symbols((*result,*watchlist_symbols(c,now)))
 
 
 def data_symbols(db, c, cfg, now):
@@ -54,3 +55,4 @@ def focus_symbols(db, c, cfg, now, limit=12):
     active = [r['symbol'] for r in requests if 0 <= now-r.get('at', 0) <= 600]
     core = [s for s in ('SPY', 'QQQ', 'IWM', *cfg.stocks) if s in allowed]
     return list(dict.fromkeys(s for s in held+active+swing_held+core if s in allowed))[:limit]
+
