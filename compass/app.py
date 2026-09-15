@@ -34,6 +34,7 @@ from .scanner import snapshot as scanner_snapshot
 from .research import FEEDS
 from .universe import data_symbols
 from .projects import install as install_projects, run_sources, snapshot as projects_snapshot, records as project_records, PROJECTS
+from .strategy_tracking import run as run_strategy_tracking
 from .secondary import Secondary, snapshot as secondary_snapshot, reviews as secondary_reviews
 
 def create_app(cfg=None):
@@ -72,6 +73,7 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(Secondary(db,cfg,clock=time.time).run()))
             tasks.append(asyncio.create_task(SwingIdeas(db,cfg).run()))
             tasks.append(asyncio.create_task(run_obsidian(db,cfg)))
+            tasks.append(asyncio.create_task(run_strategy_tracking(db)))
             from .forward_audit import run as run_forward_audit
             tasks.append(asyncio.create_task(run_forward_audit(db,cfg)))
             from .observation_audit import run as run_observation_audit
