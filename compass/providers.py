@@ -82,9 +82,11 @@ class Collectors:
 
     def tasks(self):
         c=self.cfg
+        from .obsidian import poll as poll_obsidian
         from .extra_futures import tasks as extra_tasks
         from .secondary_data import refresh as refresh_secondary_data
         return [
+            self.supervise("obsidian",bool(c.obsidian_url),lambda:poll_obsidian(self),5),
             self.supervise("alpaca_stocks",bool(c.alpaca_key and c.alpaca_secret),self.stocks),
             self.supervise("alpaca_history",bool(c.alpaca_key and c.alpaca_secret),self.history,3600),
             self.supervise("secondary_data",bool(c.secondary and c.alpaca_key and c.alpaca_secret),lambda:refresh_secondary_data(self),2),
@@ -361,6 +363,7 @@ class Collectors:
         """Reconcile tracked ideas every two seconds, independently of chain HTTP work."""
         from .option_ideas import stream_requests, choose_streams
         from .swing_ideas import stream_requests as swing_requests
+        from .obsidian import contracts as watchlist_contracts
         def reconcile():
             now=time.time()
             with self.db.tx() as c:
@@ -368,7 +371,7 @@ class Collectors:
                       if p.get("status")=="open" and p.get("asset")=="option"]
                 # Every open contract precedes every unfilled candidate in both studies.
                 requested=(stream_requests(c,now,'open')+swing_requests(c,now,'open')
-                    +stream_requests(c,now,'pending')+swing_requests(c,now,'pending'))
+                    +stream_requests(c,now,'pending')+swing_requests(c,now,'pending')+watchlist_contracts(c,now))
                 selected=choose_streams(held,requested,self.background_option_symbols,self.cfg.stream_limit)
                 self.option_symbols=set(selected)
                 # This is requested subscription state; opening still requires actual fresh quotes.

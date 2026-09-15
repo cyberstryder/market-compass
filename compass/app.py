@@ -18,6 +18,7 @@ from sqlalchemy import select,func,text
 from .config import Config
 from .store import Store,events
 from .providers import Collectors
+from .obsidian import run as run_obsidian, snapshot as obsidian_snapshot
 from .engine import Engine
 from .alerts import deliver,outbox_status
 from .alert_format import alert_identity
@@ -70,6 +71,7 @@ def create_app(cfg=None):
             tasks.extend([asyncio.create_task(Engine(db,cfg,clock=time.time).run()),asyncio.create_task(deliver(db,cfg))])
             tasks.append(asyncio.create_task(Secondary(db,cfg,clock=time.time).run()))
             tasks.append(asyncio.create_task(SwingIdeas(db,cfg).run()))
+            tasks.append(asyncio.create_task(run_obsidian(db,cfg)))
             from .observation_audit import run as run_observation_audit
             tasks.append(asyncio.create_task(run_observation_audit(db,cfg)))
         tasks.append(asyncio.create_task(heartbeat()))
@@ -196,6 +198,7 @@ def create_app(cfg=None):
                 "health":health,"workers":workers,"quotes":watch,
                 "scanner":scanner_snapshot(db,c,cfg,now),
                 "projects":projects_snapshot(db,c,cfg,now),
+                "obsidian":obsidian_snapshot(db,c,now),
                 "secondary":secondary_snapshot(db,c,now,clock=time.time),
                 "setup_study":study_snapshot(db,c,cfg,now),
                 "option_ideas":ideas_snapshot(db,c,cfg,now),
