@@ -70,3 +70,28 @@ are rejected. It does not write to production, restore strategy state, establish
 multi-chunk completeness, or demonstrate durable storage. No connected tool
 currently provisions an archive bucket; durable destination setup and production
 copy/readback remain outstanding. Cleanup stays disabled.
+
+## Private object-store verification job
+
+`python -m compass.archive_object` exports at most 10,000 events by default,
+uploads to a unique private object key, downloads the bytes, checks size and
+SHA-256, verifies the event manifest, restores a new SQLite research database,
+and writes and reads back a JSON receipt in the same bucket. It prints only the
+receipt, never credentials. A mismatch exits unsuccessfully; it does not delete
+source data or uploaded evidence. This verifies a bounded copy, not full-database
+backup coverage or safe eviction. Repeated runs create independent objects.
+
+Required worker variables: `DATABASE_URL`, `ARCHIVE_BUCKET`, `ARCHIVE_ENDPOINT`,
+`ARCHIVE_REGION`, `ARCHIVE_ACCESS_KEY_ID`, `ARCHIVE_SECRET_ACCESS_KEY`.
+Optional scope: `ARCHIVE_AFTER_ID=0`, `ARCHIVE_MAX_ROWS=10000` (maximum 100000).
+`ARCHIVE_ADDRESSING_STYLE=virtual` defaults to current Railway bucket style.
+Use `railway-archive.toml` for a separate one-shot service, with no restart or cron.
+
+Provision a private Railway bucket named `compass-archive`. In the archive worker,
+reference `${{Postgres.DATABASE_URL}}` and the bucket's `BUCKET`, `ENDPOINT`,
+`REGION`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` variables using matching
+`ARCHIVE_` names. Do not copy secrets into repository files or chat.
+The connected direct Railway tools cannot create buckets, and the September 15
+read-only infrastructure capability check returned a tool serialization failure.
+Bucket creation/wiring and a real production run remain outstanding until the
+bucket is provisioned. No recurring export or database deletion is enabled.

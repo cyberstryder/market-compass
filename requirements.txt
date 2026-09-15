@@ -8,3 +8,6 @@ exchange-calendars==4.13.2
 websockets==17.1
 itsdangerous==2.2.0
 pytest==9.1.1
+
+
+boto3==1.43.94
