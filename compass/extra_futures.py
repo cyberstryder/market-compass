@@ -12,7 +12,7 @@ from .futures import risk_day, lead_contract
 from .diagnostics import redacted_detail
 from .futures_replay import ReplayBars
 from .futures_ingress import IngressProbe
-from .futures_writer import FuturesWriter
+from .futures_writer import FuturesWriter, transient_database_error
 from .feed_loop import FeedLoop
 
 
@@ -60,6 +60,7 @@ async def collect_group(collector, exchange, aliases):
         feed_loop = None
         writer = None
         errors = []
+        retry_delay = 120
         try:
             feed_loop = FeedLoop(exchange)
             client = sdk.Live(key=cfg.databento, heartbeat_interval_s=15, reconnect_policy='none', slow_reader_behavior='warn', loop=feed_loop.loop)
@@ -176,7 +177,8 @@ async def collect_group(collector, exchange, aliases):
             if client: client.terminate()
             raise
         except Exception as error:
-            db.health(name, 'error', redacted_detail(error,(cfg.databento,),220)+'; index stream unaffected; retry in 120s')
+            retry_delay = 5 if transient_database_error(error) else 120
+            await asyncio.to_thread(db.health,name, 'error', redacted_detail(error,(cfg.databento,),220)+f'; index stream unaffected; retry in {retry_delay}s')
         finally:
             if client: client.stop()
             if writer and not writer.closed:
@@ -184,7 +186,7 @@ async def collect_group(collector, exchange, aliases):
             if feed_loop:
                 await asyncio.to_thread(feed_loop.close)
             collector.extra_live.pop(exchange, None)
-        await asyncio.sleep(120)
+        await asyncio.sleep(retry_delay)
 
 
 def tasks(collector):

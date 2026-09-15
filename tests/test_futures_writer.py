@@ -38,3 +38,52 @@ def test_background_failure_propagates_to_stream():
     writer=FuturesWriter(SimpleNamespace(bars=failed),'fixture')
     writer.bars('databento',[1]);assert entered.wait(1)
     with pytest.raises(RuntimeError,match='worker failed'): writer.close()
+
+
+def test_transient_write_retries_same_batch_without_losing_following_quotes():
+    from sqlalchemy.exc import OperationalError
+    calls=[]; received=[]
+    def quotes(source,items):
+        calls.append(list(items))
+        if len(calls)==1: raise OperationalError('fixture',{},Exception('disconnect'))
+        received.extend(items)
+    writer=FuturesWriter(SimpleNamespace(quote_batch=quotes),'retry')
+    for i in range(4): writer.quote('databento','ESZ6@1',{'ts':i+100},1)
+    writer.close()
+    assert calls[0]==calls[1]
+    assert [q['ts'] for _,q,_ in received]==list(range(100,104))
+    assert writer.committed_quotes==4
+
+
+def test_persistent_database_failure_is_bounded_and_classified():
+    from sqlalchemy.exc import OperationalError
+    from compass.futures_writer import transient_database_error
+    calls=[]
+    def quotes(source,items):
+        calls.append(1); raise OperationalError('fixture',{},Exception('disconnect'))
+    writer=FuturesWriter(SimpleNamespace(quote_batch=quotes),'failure')
+    writer.quote('databento','ESZ6@1',{'ts':100},1)
+    with pytest.raises(RuntimeError) as caught: writer.close()
+    assert len(calls)==3 and writer.committed_quotes==0
+    assert transient_database_error(caught.value)
+    assert not transient_database_error(ValueError('not transient'))
+
+
+def test_telemetry_database_failure_does_not_stop_quote_persistence():
+    from contextlib import contextmanager
+    from sqlalchemy.exc import OperationalError
+    entered=threading.Event(); release=threading.Event(); received=[]
+    class DB:
+        @contextmanager
+        def tx(self):
+            raise OperationalError('fixture',{},Exception('disconnect'))
+            yield
+    def quotes(source,items):
+        entered.set(); assert release.wait(2); received.extend(items)
+    writer=FuturesWriter(SimpleNamespace(db=DB(),quote_batch=quotes),'telemetry')
+    writer.last_log=0
+    writer.quote('databento','ESZ6@1',{'ts':100},1)
+    assert entered.wait(1)
+    writer.quote('databento','ESZ6@1',{'ts':101},1)
+    release.set();writer.close()
+    assert writer.committed_quotes==2 and writer.error is None

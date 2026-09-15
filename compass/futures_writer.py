@@ -3,6 +3,16 @@ from collections import deque
 import logging
 import threading
 import time
+from sqlalchemy.exc import OperationalError
+
+
+def transient_database_error(error):
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error, OperationalError): return True
+        error = error.__cause__ or error.__context__
+    return False
 
 
 class FuturesWriter:
@@ -57,25 +67,39 @@ class FuturesWriter:
                 self.max_queue_age = max(self.max_queue_age,queue_age)
                 self.window_max_queue_age = max(self.window_max_queue_age,queue_age)
                 started=time.monotonic()
-                if kind=='quote':
-                    self.collector.quote_batch('databento',values)
-                    self.committed_quotes += len(values)
-                elif kind=='metadata':
-                    value()
-                else:
-                    self.collector.bars('databento',value)
+                # Keep this batch owned until a transaction succeeds. The store's
+                # unique keys make retries safe after an ambiguous commit.
+                for attempt in range(3):
+                    try:
+                        if kind=='quote':
+                            self.collector.quote_batch('databento',values)
+                        elif kind=='metadata':
+                            value()
+                        else:
+                            self.collector.bars('databento',value)
+                        break
+                    except OperationalError as error:
+                        logging.getLogger('uvicorn.error').warning(
+                            'Futures persistence retry: stream=%s attempt=%s sqlstate=%s',
+                            self.stream,attempt+1,getattr(error.orig,'sqlstate',None))
+                        if attempt==2: raise
+                        time.sleep(.25*(2**attempt))
+                if kind=='quote': self.committed_quotes += len(values)
                 write_seconds=time.monotonic()-started
                 self.max_write_seconds=max(self.max_write_seconds,write_seconds)
                 self.window_max_write_seconds=max(self.window_max_write_seconds,write_seconds)
                 if time.monotonic()-self.last_log>=30:
                     self.last_log=time.monotonic()
-                    if hasattr(self.collector,'db'):
-                        with self.collector.db.tx() as c:
-                            self.collector.db.put(c,'futures_persistence:'+self.stream,dict(at=time.time(),
-                                queue_depth=len(self.jobs),max_queue_age=self.max_queue_age,
-                                window_max_queue_age=self.window_max_queue_age,
-                                window_max_write_seconds=self.window_max_write_seconds,
-                                max_write_seconds=self.max_write_seconds,committed_quotes=self.committed_quotes))
+                    try:
+                        if hasattr(self.collector,'db'):
+                            with self.collector.db.tx() as c:
+                                self.collector.db.put(c,'futures_persistence:'+self.stream,dict(at=time.time(),
+                                    queue_depth=len(self.jobs),max_queue_age=self.max_queue_age,
+                                    window_max_queue_age=self.window_max_queue_age,
+                                    window_max_write_seconds=self.window_max_write_seconds,
+                                    max_write_seconds=self.max_write_seconds,committed_quotes=self.committed_quotes))
+                    except OperationalError:
+                        logging.getLogger('uvicorn.error').warning('Futures persistence telemetry unavailable: stream=%s; receipt continues',self.stream)
                     logging.getLogger('uvicorn.error').info(
                         'Futures persistence: stream=%s completed_quote_items=%s queue_depth=%s max_queue_age=%s max_write_seconds=%s window_max_queue_age=%s window_max_write_seconds=%s',
                         self.stream,self.committed_quotes,len(self.jobs),self.max_queue_age,self.max_write_seconds,

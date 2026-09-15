@@ -481,13 +481,21 @@ class Collectors:
         return out,False
 
     async def options(self):
+        feed = FeedLoop("options")
+        task = asyncio.run_coroutine_threadsafe(self.option_connection(), feed.loop)
+        try:
+            await asyncio.wrap_future(task)
+        finally:
+            await asyncio.to_thread(feed.close)
+
+    async def option_connection(self):
         while not self.option_symbols:
-            self.db.health("option_stream","waiting","Waiting for verified chain to select contracts")
+            await asyncio.to_thread(self.db.health,"option_stream","waiting","Waiting for verified chain to select contracts")
             await asyncio.sleep(5)
-        self.db.health("option_stream","connecting","Opening Massive options stream")
+        await asyncio.to_thread(self.db.health,"option_stream","connecting","Opening Massive options stream")
         async with websockets.connect("wss://socket.massive.com/options",max_queue=8192,ping_interval=20) as ws:
             await ws.send(json.dumps({"action":"auth","params":self.cfg.massive}))
-            self.db.health("option_stream","authenticating","Waiting for Massive authentication acknowledgement")
+            await asyncio.to_thread(self.db.health,"option_stream","authenticating","Waiting for Massive authentication acknowledgement")
             from .option_stream import consume, OptionStreamError
             try:
                 await consume(ws,self)
