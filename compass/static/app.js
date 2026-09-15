@@ -182,6 +182,11 @@ $('#map-symbol').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};
 $('#map-metric').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};
 function renderProjects(data){
  if(!data)return;
+ const native=data.native_programs||{}, nm=native.morning||{}, ns=native.smoothers||{};
+ $('#native-programs').innerHTML='<p>Independent workflows are running in shadow mode. Original programs remain the official alert senders.</p>'+table(['Workflow','Progress','Forward check'],[
+ ['Morning',esc(String(nm.signals||0))+' native signals; '+esc(String(nm.samples||0))+' scheduled samples','Opening-session intake, contract choice, option observations and delivery comparison'],
+ ['Smoothers',esc(ns.state||'not started')+' · '+esc(String(ns.enabled_tickers||0))+' enabled tickers; '+esc(String(ns.processed||0))+' processed','Complete weekly cycle, including target checks, premiums and final-session closure']])+
+ '<p>Morning checked '+when(nm.at)+'. Smoothers config received '+when(ns.config_received_at)+'.</p><p>Notification intents: '+esc(JSON.stringify(native.notifications?.counts||{}))+'</p><p class="fine">A missed weekly window is not replayed with current option prices. Stock target outcomes and option valuations remain separate. Historical shadow messages will never be sent after activation.</p>';
  const parity=data.program_parity||{}, pp=parity.projects||{};
  $('#program-parity').innerHTML='<p>Checked '+when(parity.at)+'. Read-only comparisons; original programs still own alerts. Cutover is not ready.</p>'+table(['Program','Records checked','Comparison results'],[['Morning',pp.morning?.checked||0,esc(JSON.stringify(pp.morning?.samples||{}))+'<br>Delivery '+esc(JSON.stringify(pp.morning?.delivery||{}))],['Smoothers',pp.smoothers?.checked||0,esc(JSON.stringify(pp.smoothers?.counts||{}))]])+'<p class="fine">At most 500 records checked per program; latest 100 details retained. '+((pp.morning?.truncated||pp.smoothers?.truncated)?'Input limit reached; comparison is incomplete. ':'')+'Option results reconcile source-sample arithmetic, not independent fills. Smoothers checks scoring on original inputs, not independent weekly selection.</p>';
  const migration=data.migration||{};

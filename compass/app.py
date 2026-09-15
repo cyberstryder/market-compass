@@ -38,6 +38,8 @@ from .storage_health import run as run_storage_health, snapshot as storage_snaps
 from .strategy_tracking import run as run_strategy_tracking
 from .morning_history import run as run_morning_history
 from .morning_report import build_report as morning_report, run as run_morning_report
+from .native_morning_worker import run as run_native_morning, install as install_native_morning, initialize as initialize_native_morning
+from .native_smoothers import run as run_native_smoothers
 from .secondary import Secondary, snapshot as secondary_snapshot, reviews as secondary_reviews
 
 def create_app(cfg=None):
@@ -60,6 +62,7 @@ def create_app(cfg=None):
     async def lifespan(app):
         cfg.validate()
         db.initialize()
+        initialize_native_morning(db)
         nonlocal collectors,serializer
         if not cfg.secret:
             from .store import state
@@ -78,6 +81,14 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(SwingIdeas(db,cfg).run()))
             tasks.append(asyncio.create_task(run_obsidian(db,cfg)))
             tasks.append(asyncio.create_task(run_strategy_tracking(db)))
+            from .native_outbox import run as run_native_outbox
+            tasks.append(asyncio.create_task(run_native_outbox(db,cfg)))
+            if cfg.morning_token:
+                tasks.append(asyncio.create_task(run_native_morning(db,cfg,"intake")))
+                tasks.append(asyncio.create_task(run_native_morning(db,cfg,"samples")))
+            if cfg.smoothers_url and cfg.smoothers_token:
+                for role in ("schedule","target","premium"):
+                    tasks.append(asyncio.create_task(run_native_smoothers(db,cfg,role)))
             from .program_parity import run as run_program_parity
             tasks.append(asyncio.create_task(run_program_parity(db)))
             tasks.append(asyncio.create_task(run_storage_health(db,cfg)))
@@ -96,6 +107,7 @@ def create_app(cfg=None):
     app=FastAPI(title="Market Compass",lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
     app.state.db=db
     install_projects(app,db,cfg)
+    install_native_morning(app,db,cfg)
     app.mount("/static",StaticFiles(directory=root/"static"),name="static")
 
     @app.middleware("http")
@@ -103,7 +115,7 @@ def create_app(cfg=None):
         path=request.url.path
         public=path in {"/health","/login"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
-        integration=(path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
+        integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
             return JSONResponse({"detail":"Worker service"},status_code=404)
         public=public or integration
@@ -123,7 +135,7 @@ def create_app(cfg=None):
                 return JSONResponse({"detail":"Invalid origin"},status_code=403)
             try: size=int(request.headers.get("content-length","0"))
             except ValueError: return JSONResponse({"detail":"Invalid content length"},status_code=400)
-            if size>16384:
+            if size>(32768 if path.startswith("/hooks/native/morning") else 16384):
                 return JSONResponse({"detail":"Request too large"},status_code=413)
         response=await call_next(request)
         response.headers["X-Content-Type-Options"]="nosniff"

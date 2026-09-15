@@ -241,7 +241,8 @@ def snapshot(db, c, cfg, now):
     recent = c.execute(select(records).order_by(records.c.source_ts.desc()).limit(200)).mappings().all()
     from .strategy_tracking import snapshot as tracking_snapshot
     from .morning_history import snapshot as history_snapshot
-    return {"mode": "observe_only", "program_parity":db.get(c,"program-parity-v1:report",{}), "history_import": history_snapshot(db, c, now), "migration": tracking_snapshot(db, c), "projects": status, "records": [
+    from .native_program_status import snapshot as native_snapshot
+    return {"mode": "observe_only", "native_programs":native_snapshot(db,c,now), "program_parity":db.get(c,"program-parity-v1:report",{}), "history_import": history_snapshot(db, c, now), "migration": tracking_snapshot(db, c), "projects": status, "records": [
         {"project": r["project"], **{k:v for k,v in r["payload"].items() if k != "option_samples"},
          "option_sample_count": len(r["payload"].get("option_samples", [])),
          "first_seen": r["first_seen"], "updated": r["updated"],
