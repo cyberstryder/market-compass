@@ -1,0 +1,78 @@
+import asyncio
+from types import SimpleNamespace
+import pytest
+from sqlalchemy import select
+from compass.option_recovery import parse_quotes,recover
+from compass.option_stream import OptionBuffer
+from compass.providers import Collectors
+from compass.store import Store,events
+
+NOW=1789490000
+SYMBOL='O:SPY260918C00600000'
+
+
+def test_final_quote_in_a_burst_is_flushed_without_another_message():
+    b=OptionBuffer()
+    for offset in (0,.4,.8):
+        b.offer(dict(ev='Q',sym=SYMBOL,t=(NOW+offset)*1000,bp=1,ap=1.1,bs=1,**{'as':1}),{SYMBOL},NOW+offset,offset)
+    assert len(b.quotes)==1
+    b.flush(.9);assert len(b.quotes)==1
+    b.flush(1)
+    assert [q['ts'] for _,q,_ in b.quotes]==[NOW,NOW+.8]
+    assert b.quotes[-1][1]['socket_read_at']==NOW+.8
+    b.flush(2);assert len(b.quotes)==2
+
+
+def test_recovery_does_not_refresh_old_future_or_invalid_quotes():
+    def q(t,**changes):
+        return dict(sip_timestamp=int(t*1e9),bid_price=1,ask_price=1.1,bid_size=1,ask_size=1,**changes)
+    rows=parse_quotes({'results':[q(NOW-6),q(NOW+1),q(NOW-1),q(NOW-2),q(NOW-1)]},NOW)
+    assert [r['ts'] for r in rows]==[NOW-2,NOW-1]
+    assert all(r['recovery_fetched_at']==NOW for r in rows)
+    assert not parse_quotes({'results':[dict(q(NOW),bid_size=0)]},NOW)
+
+
+def test_late_history_is_archived_without_regressing_latest_state(tmp_path,monkeypatch):
+    db=Store('sqlite:///'+str(tmp_path/'test.db'));db.initialize()
+    collector=SimpleNamespace(db=db)
+    monkeypatch.setattr('compass.providers.time.time',lambda:NOW)
+    def q(t):return dict(ts=t,bid=1,ask=1.1,bid_size=1,ask_size=1)
+    Collectors.quote_batch(collector,'massive',[(SYMBOL,q(NOW),True)])
+    for _ in range(2):Collectors.quote_batch(collector,'massive_rest',[(SYMBOL,q(NOW-1),True)])
+    with db.tx() as c:
+        assert db.get(c,'quote:'+SYMBOL)['ts']==NOW
+        assert len(c.execute(select(events)).all())==2
+    db.engine.dispose()
+
+
+def test_recovery_is_bounded_and_rate_limits_back_off(monkeypatch):
+    monkeypatch.setattr('compass.option_recovery.time.time',lambda:NOW)
+    monkeypatch.setattr('compass.option_recovery.targets',lambda *args:([SYMBOL],1,False))
+    calls=[]
+    async def get(url,params):
+        calls.append(params)
+        from compass.providers import FeedError
+        raise FeedError('quota',429)
+    c=SimpleNamespace(get=get,cfg=SimpleNamespace(massive='test'),db=SimpleNamespace(health=lambda *a,**k:None))
+    async def run():
+        await recover(c)
+        await recover(c)
+    asyncio.run(run())
+    assert len(calls)==1 and calls[0]['limit']==32
+    assert c.option_recovery_backoff==NOW+60
+
+
+def test_live_recovery_retains_original_clock_and_source(monkeypatch):
+    monkeypatch.setattr('compass.option_recovery.time.time',lambda:NOW)
+    monkeypatch.setattr('compass.option_recovery.targets',lambda *args:([SYMBOL],1,False))
+    saved=[]
+    async def get(url,params):
+        assert params['timestamp.gte']==str(int((NOW-5)*1e9))
+        return {'results':[dict(sip_timestamp=int((NOW-1)*1e9),bid_price=1,ask_price=1.1,bid_size=1,ask_size=1)]}
+    c=SimpleNamespace(get=get,cfg=SimpleNamespace(massive='test'),
+        quote_batch=lambda source,rows:saved.append((source,rows)),db=SimpleNamespace(health=lambda *a,**k:None))
+    asyncio.run(recover(c))
+    assert saved[0][0]=='massive_rest'
+    q=saved[0][1][0][1]
+    assert q['ts']==NOW-1 and q['recovery_fetched_at']==NOW
+    assert q['collection_version']=='option-reliability-v1'

@@ -83,6 +83,7 @@ class Collectors:
 
     def tasks(self):
         c=self.cfg
+        from .option_recovery import recover as recover_options
         from .obsidian_history import step as history_obsidian
         from .obsidian import poll as poll_obsidian
         from .extra_futures import tasks as extra_tasks
@@ -97,6 +98,7 @@ class Collectors:
             self.supervise("futures_history",bool(c.databento),self.future_history,3600),
             self.supervise("option_chain",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.chains,2),
             self.supervise("option_stream",bool(c.massive),self.options),
+            self.supervise("option_recovery",bool(c.massive),lambda:recover_options(self),2),
             self.supervise("option_subscriptions",bool(c.massive),self.refresh_option_subscriptions,2),
             self.supervise("tradermatrix",bool(c.matrix),self.matrix,2),
             self.supervise("tradermatrix_flow",bool(c.matrix),self.flow,20),
@@ -129,7 +131,10 @@ class Collectors:
                 if not q.get('ts') or number(q.get('bid')) is None or number(q.get('ask')) is None:
                     continue
                 q={**q,'source':source,'symbol':symbol,'received':time.time()}
-                if not self.db.put_quote(c,'quote:'+symbol,q): continue
+                accepted=self.db.put_quote(c,'quote:'+symbol,q)
+                # Parallel option readers may commit out of order. Preserve their
+                # sampled history without regressing the latest cache.
+                if not accepted and source not in ('massive','massive_rest'): continue
                 if record:
                     retained.append((symbol,q))
 

@@ -181,7 +181,7 @@ class OptionIdeas:
                 last_option_ts=oq['ts'],last_underlying_ts=q['ts'],waiting_reason=None,
                 chain_asof=chain.get('asof'),chain_source=chain.get('source'),
                 pagination_complete=chain.get('complete'),last_quote=oq,last_underlying_quote=q,
-                observation_model='paired-recorded-quotes-v2')
+                observation_model='paired-recorded-quotes-v2',collection_version=oq.get('collection_version','pre-option-reliability'))
             self.notify(c,p,now,'new')
         self.save(c,p,now)
 
