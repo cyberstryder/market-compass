@@ -40,5 +40,20 @@ def test_remote_corruption_is_replaced_before_audit_advances(tmp_path):
     with db.tx() as c:old=db.get(c,KEY+':range:0')['receipt']['object_key']
     objects.data[old]=b'corrupt'
     result=cycle(db,objects,'private',width=2,chunks=1)
-    assert result['repairs']==1 and result['audit_passes']==2
+    assert result['repairs']==1 and result['audit_passes']==1
+    db.engine.dispose()
+
+
+def test_audit_runs_before_catchup_can_exhaust_time_budget(tmp_path,monkeypatch):
+    import compass.archive_schedule as module
+    db=Store('sqlite:///'+str(tmp_path/'source'));db.initialize();insert(db,2)
+    objects=Objects();cycle(db,objects,'private',width=2,chunks=1)
+    insert(db,1);insert(db,4)
+    real=module.run;calls=[]
+    def tracked(*args,**kwargs):
+        calls.append(args[3]);return real(*args,**kwargs)
+    monkeypatch.setattr(module,'run',tracked)
+    result=cycle(db,objects,'private',width=2,chunks=1)
+    assert calls==[0,2]  # Repair the old range before copying the new range.
+    assert result['audits_this_run']==1 and result['repairs']==1
     db.engine.dispose()

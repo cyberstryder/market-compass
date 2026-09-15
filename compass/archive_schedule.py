@@ -27,23 +27,6 @@ def cycle(db,client,bucket,width=WIDTH,chunks=4,audits=1,budget=180):
     progress.update(source_high_water=high,started_at=time.time(),cleanup_enabled=False,
         cross_chunk_completeness_verified=False,
         basis='Rolling range snapshots; late commits are repaired by recurring audits. Not a single global snapshot or eviction approval.')
-    completed=0
-    for _ in range(chunks):
-        if progress['frontier']>=high or time.monotonic()-began>=budget:break
-        after=progress['frontier'];upper=min(after+width,high)
-        receipt=run(db,client,bucket,after,width,upper)
-        if upper-after<width:
-            # Preserve fresh tail data without moving fixed audit boundaries.
-            # Re-export this tail next run, including any late commits.
-            progress.update(tail_receipt=receipt,tail_checked_at=time.time())
-            with db.tx() as c:db.put(c,KEY,progress)
-            completed+=1
-            break
-        with db.tx() as c:
-            db.put(c,KEY+':range:'+str(after),dict(after=after,upper=upper,receipt=receipt,checked_at=time.time()))
-            progress.update(frontier=upper,verified_ranges=progress['verified_ranges']+1,updated_at=time.time())
-            db.put(c,KEY,progress)
-        completed+=1
     if not progress['audit_target']:progress['audit_target']=progress['frontier']
     audited=0
     for _ in range(audits):
@@ -92,6 +75,23 @@ def cycle(db,client,bucket,width=WIDTH,chunks=4,audits=1,budget=180):
     if progress['audit_target'] and progress['audit_cursor']>=progress['audit_target']:
         progress.update(last_audit_pass_at=time.time(),last_audit_pass_through=progress['audit_target'],
             audit_passes=progress['audit_passes']+1,audit_cursor=0,audit_target=0)
+    completed=0
+    for _ in range(chunks):
+        if progress['frontier']>=high or time.monotonic()-began>=budget:break
+        after=progress['frontier'];upper=min(after+width,high)
+        receipt=run(db,client,bucket,after,width,upper)
+        if upper-after<width:
+            # Preserve fresh tail data without moving fixed audit boundaries.
+            # Re-export this tail next run, including any late commits.
+            progress.update(tail_receipt=receipt,tail_checked_at=time.time())
+            with db.tx() as c:db.put(c,KEY,progress)
+            completed+=1
+            break
+        with db.tx() as c:
+            db.put(c,KEY+':range:'+str(after),dict(after=after,upper=upper,receipt=receipt,checked_at=time.time()))
+            progress.update(frontier=upper,verified_ranges=progress['verified_ranges']+1,updated_at=time.time())
+            db.put(c,KEY,progress)
+        completed+=1
     progress.update(updated_at=time.time(),chunks_this_run=completed,audits_this_run=audited,
         pending_id_span=max(0,high-progress['frontier']),tail_is_partial=0<high-progress['frontier']<width)
     with db.tx() as c:db.put(c,KEY,progress)
