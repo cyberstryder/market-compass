@@ -20,6 +20,15 @@ def counts(rows):
         reasons=dict(Counter(r.get('exit_reason','none') for r in rows)))
 
 
+def option_validation(rows):
+    paired=[r for r in rows if r.get('observation_model')=='paired-recorded-quotes-v1']
+    closed=sum(r['status']=='closed' for r in paired)
+    unresolved=sum(r['status']=='unresolved' for r in paired)
+    return dict(status='gaps_detected' if unresolved else 'completed_cycle_observed' if closed else 'awaiting_completed_cycle',
+        opened=len(paired),closed=closed,unresolved=unresolved,
+        note='Observation-path validation only; excluded candidates do not validate replay or profitability.')
+
+
 def capture(db,cfg,now):
     with db.tx() as c:
         marker=db.locked_get(c,KEY+':activation',{'at':now,'option_model':'paired-recorded-quotes-v1'})
@@ -33,7 +42,8 @@ def capture(db,cfg,now):
         scans=list(db.prefix(c,'swing_scan:').values())
         technical=db.recent(c,'swing_candidate',limit=5001,since=since)
         status=dict(at=now,since=since,options_truncated=options_truncated,options_before=counts(old),options_after=counts(new),
-            options_replay_models=dict(Counter(r.get('observation_model','legacy_latest') for r in new)),
+            options_replay_models=dict(Counter(r.get('observation_model','not_opened') for r in new)),
+            options_observation_validation=option_validation(new),
             option_subscription=db.get(c,'options:subscriptions',{}),
             swing_scan=dict(Counter(r.get('status','unknown') for r in scans)),
             swing_daily_ready=sum(r.get('daily_ready',False) for r in scans),swing_symbols=len(scans),

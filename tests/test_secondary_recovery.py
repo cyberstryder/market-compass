@@ -255,3 +255,60 @@ def test_stale_readiness_never_claims_current_coverage(db):
         db.put(c, 'quote:SPY', quote(NOW))
         assert not snapshot(db, c, NOW)['data_readiness']['rows'][0]['ready']
 
+
+
+def test_pending_minute_recovery_retries_before_review_deadline(db):
+    cfg = Config(local=True, stocks=('SPY',))
+    enqueue(db, Secondary(db, cfg))
+    collector = SimpleNamespace(db=db, cfg=cfg)
+    assert plan(collector, NOW)['minute'] == ['SPY']
+    assert plan(collector, NOW+9)['minute'] == []
+    assert plan(collector, NOW+10)['minute'] == ['SPY']
+
+
+def test_failed_quote_and_daily_requests_do_not_starve_minute_recovery(db, monkeypatch):
+    cfg = Config(local=True, stocks=('SPY',))
+    enqueue(db, Secondary(db, cfg))
+    collector = Collectors(db, cfg)
+    calls = []
+    async def get(url, headers=None, params=None):
+        calls.append(params)
+        if url.endswith('/quotes/latest') or params.get('timeframe') == '1Day':
+            raise TimeoutError('fixture')
+        return {'bars': {'SPY': [dict(t=datetime.fromtimestamp(NOW-60, timezone.utc).isoformat(),
+            o=100, h=102, l=99, c=101, v=100)]}}
+    collector.get = get
+    monkeypatch.setattr('compass.secondary_data.time', SimpleNamespace(time=lambda: NOW))
+    async def run():
+        try:
+            await refresh(collector)
+        finally:
+            await collector.close()
+    asyncio.run(run())
+    with db.tx() as c:
+        assert db.get(c, 'bar_window:SPY')[0][0] == NOW-60
+        assert c.execute(select(pending)).first()
+        assert not c.execute(select(reviews)).first()
+    assert len(calls) == 3
+
+
+def test_quote_batch_retains_all_accepted_samples_with_one_archive_insert(db):
+    from sqlalchemy import event
+    from compass.store import events
+    statements=[]
+    def count(conn,cursor,statement,parameters,context,executemany):
+        if statement.startswith('INSERT INTO events '): statements.append(statement)
+    event.listen(db.engine,'before_cursor_execute',count)
+    collector=Collectors(db,Config(local=True))
+    try:
+        collector.quote_batch('test', [('SPY',quote(NOW+i),True) for i in range(64)]
+            + [('SPY',quote(NOW-1),True),('QQQ',quote(NOW),False)])
+        assert len(statements)==1
+        with db.tx() as c:
+            stamps=c.execute(select(events.c.ts).where(events.c.kind=='quote').order_by(events.c.ts)).scalars().all()
+            assert stamps==[NOW+i for i in range(64)]
+            assert db.get(c,'quote:SPY')['ts']==NOW+63
+            assert db.get(c,'quote:QQQ')['ts']==NOW
+    finally:
+        event.remove(db.engine,'before_cursor_execute',count)
+        asyncio.run(collector.close())
