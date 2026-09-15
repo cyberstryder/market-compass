@@ -134,7 +134,7 @@ class Collectors:
                 accepted=self.db.put_quote(c,'quote:'+symbol,q)
                 # Parallel option readers may commit out of order. Preserve their
                 # sampled history without regressing the latest cache.
-                if not accepted and source not in ('massive','massive_rest'): continue
+                if not accepted and source not in ('massive','massive_rest','alpaca_opra_recovery'): continue
                 if record:
                     retained.append((symbol,q))
 

@@ -55,6 +55,7 @@ def capture(db,cfg,now):
             options_v2_validation=option_validation(new,'paired-recorded-quotes-v2'),
             feed_fix_validation=feed_validation(options),
             options_reliability_validation=option_validation([r for r in options if r.get('collection_version')=='option-reliability-v1'],'paired-recorded-quotes-v2'),
+            options_reliability_v2_validation=option_validation([r for r in options if r.get('collection_version')=='option-reliability-v2'],'paired-recorded-quotes-v2'),
             option_subscription=db.get(c,'options:subscriptions',{}),
             swing_scan=dict(Counter(r.get('status','unknown') for r in scans)),
             swing_daily_ready=sum(r.get('daily_ready',False) for r in scans),swing_symbols=len(scans),
