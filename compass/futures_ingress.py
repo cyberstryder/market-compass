@@ -69,5 +69,5 @@ class IngressProbe:
                     self.emit(dict(stream=self.stream,started=self.started,at=self.clock(),
                         callback_types=dict(self.types),max_callback_seconds=self.max_callback_seconds,
                         max_callback_gap=self.max_callback_gap,symbols=self.symbols,
-                        basis='Cumulative per connection. SDK receive clock is not local socket arrival. Write calls are not proof of committed inserts. No quotes synthesized.'))
+                        basis='Cumulative per connection. SDK receive clock is not local socket arrival. Write calls measure enqueue completion; persistence logs measure background writes. No quotes synthesized.'))
         return measured

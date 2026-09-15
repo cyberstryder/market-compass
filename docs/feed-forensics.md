@@ -92,3 +92,17 @@ receive time is a provider clock, not local socket receipt. A completed write ca
 does not establish a committed insert. An absent log during silence is not proof
 of disconnect; the next callback can report the gap. These counters are bounded to
 32 instruments per stream and never synthesize quotes or alter historical results.
+
+The first instrumented deployment reproduced a processing backlog during replay:
+CME quote event/SDK-receive clocks were 37–42 seconds behind callback execution,
+while consecutive source records were less than one second apart. Optional streams
+also showed 22–28-second receipt delays. This is direct evidence of a current
+processing delay, but does not retrospectively establish every old gap's cause.
+
+Quote and replay-bar persistence now runs in a bounded worker per stream. Receipt
+callbacks enqueue the existing sampled quotes without waiting for those database
+writes; the worker batches adjacent quote jobs into transactions. Source clocks,
+sampling throttle and retained-path freshness rules are unchanged. Queue overflow
+and worker failure raise explicit errors for controlled reconnect; they never
+silently refresh or fill a missing quote. Private persistence logs expose queue
+age, depth and write duration. Ingress write-call timings now measure enqueue calls.
