@@ -38,7 +38,7 @@ def bars_from_window(window):
 def features(symbol, rows, now, previous=None,coverage=None):
     rows=dedup(rows,now)
     if len(rows)<30:
-        return {'symbol':symbol,'status':'warming_up','reason':'At least 30 completed minute bars required'}
+        return {'symbol':symbol,'status':'warming_up','asof':rows[-1]['ts']+60 if rows else None,'reason':'At least 30 completed minute bars required'}
     if rows[-1]['ts']-rows[-30]['ts']!=29*60:
         return {'symbol':symbol,'status':'warming_up','asof':rows[-1]['ts']+60,
             'reason':'Thirty consecutive completed minutes required; historical gaps cannot stand in for recent price structure'}
