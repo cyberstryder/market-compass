@@ -54,3 +54,20 @@ database operational failures; other errors retain the 120-second backoff.
 Original source timestamps and observation freshness limits are unchanged.
 Forward validation must separately assess option age, completed observations,
 and futures write/reconnect failures; healthy deployments alone are insufficient.
+
+## Continuity qualification and dashboard
+
+New intraday option entries use quote-continuity-v1: at least five distinct
+usable source timestamps in the preceding 30 seconds, spanning at least 20
+seconds, latest no older than five seconds, maximum interior gap ten seconds.
+Only quotes available and fresh when recorded qualify. At most eight eligible
+contracts are checked; truncation is retained in the candidate record. Passing
+contracts are ranked by smaller maximum gap, then more samples, retaining the
+prior ranking for ties. This is a research eligibility policy, not a guarantee
+of future liquidity. Original strategy alert systems remain authoritative.
+
+The Observation reliability panel shows collector-version cohorts over a bounded
+24-hour window, unfinished observations, completed/opened and unresolved/opened
+rates, exclusions separately, quote source age, queue depth, latest recovery
+results and evidence age. Option collector v3 marks this release. Comparisons
+across versions are descriptive: contracts, selection policy and durations differ.

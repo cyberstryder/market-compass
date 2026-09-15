@@ -59,3 +59,14 @@ archive-aware research reads and outstanding-trial protection; reconcile all
 source IDs; only then consider eviction of verified archived rows. Unlimited
 research collection remains enabled throughout. A blanket retention deletion is
 not an acceptable response to storage pressure.
+
+An isolated event-history restoration is now available:
+
+`python -m compass.archive restore-isolated events-0001.jsonl.gz --destination restored.sqlite`
+
+It verifies the archive, writes a new SQLite file, reads every reconstructed event
+back in ID order, and compares canonical content hashes. Existing destinations
+are rejected. It does not write to production, restore strategy state, establish
+multi-chunk completeness, or demonstrate durable storage. No connected tool
+currently provisions an archive bucket; durable destination setup and production
+copy/readback remain outstanding. Cleanup stays disabled.

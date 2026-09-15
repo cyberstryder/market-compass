@@ -15,7 +15,7 @@ def parse_quotes(data, now):
         stamp=ts(raw.get('sip_timestamp'))
         q=dict(ts=stamp,bid=raw.get('bid_price'),ask=raw.get('ask_price'),
             bid_size=raw.get('bid_size'),ask_size=raw.get('ask_size'),
-            recovery='live_rest',recovery_fetched_at=now,collection_version='option-reliability-v2')
+            recovery='live_rest',recovery_fetched_at=now,collection_version='option-reliability-v3')
         if stamp is not None and 0<=now-stamp<=5 and fresh(q,now):rows[stamp]=q
     return [rows[k] for k in sorted(rows)]
 
@@ -81,7 +81,7 @@ async def recover_alpaca(collector, symbols):
             stamp=ts(raw.get('t'))
             at=time.time()
             q=dict(ts=stamp,bid=raw.get('bp'),ask=raw.get('ap'),bid_size=raw.get('bs'),ask_size=raw.get('as'),
-                recovery='live_rest_opra',recovery_fetched_at=at,collection_version='option-reliability-v2')
+                recovery='live_rest_opra',recovery_fetched_at=at,collection_version='option-reliability-v3')
             valid=stamp is not None and 0<=at-stamp<=5 and fresh(q,at)
             if valid:rows.append((symbol,q,True))
             results.append(dict(symbol=symbol,status='fresh_quotes' if valid else 'no_fresh_quotes',
