@@ -241,7 +241,8 @@ def test_rest_quote_recovery_keeps_source_clock_and_cannot_rewind_stream(db, mon
         assert db.get(c, 'quote:SPY')['ts'] == NOW+3
         assert db.get(c, 'quote:SPY')['bid'] == 100
         assert not c.execute(select(reviews)).first()
-    assert len(calls) == 2 and calls[0][1]['feed'] == cfg.feed
+    assert len(calls) == 3 and calls[0][1]['feed'] == cfg.feed
+    assert {p.get('timeframe') for _,p in calls[1:]} == {'1Day','1Min'}
 
 
 def test_stale_readiness_never_claims_current_coverage(db):
@@ -253,3 +254,4 @@ def test_stale_readiness_never_claims_current_coverage(db):
             minute_ready=True, minute_asof=NOW-1)]))
         db.put(c, 'quote:SPY', quote(NOW))
         assert not snapshot(db, c, NOW)['data_readiness']['rows'][0]['ready']
+

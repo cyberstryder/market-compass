@@ -72,6 +72,8 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(Secondary(db,cfg,clock=time.time).run()))
             tasks.append(asyncio.create_task(SwingIdeas(db,cfg).run()))
             tasks.append(asyncio.create_task(run_obsidian(db,cfg)))
+            from .forward_audit import run as run_forward_audit
+            tasks.append(asyncio.create_task(run_forward_audit(db,cfg)))
             from .observation_audit import run as run_observation_audit
             tasks.append(asyncio.create_task(run_observation_audit(db,cfg)))
         tasks.append(asyncio.create_task(heartbeat()))
@@ -199,6 +201,7 @@ def create_app(cfg=None):
                 "scanner":scanner_snapshot(db,c,cfg,now),
                 "projects":projects_snapshot(db,c,cfg,now),
                 "obsidian":obsidian_snapshot(db,c,now),
+                "forward_acceptance":db.get(c,"forward-acceptance-v1:report",{}),
                 "secondary":secondary_snapshot(db,c,now,clock=time.time),
                 "setup_study":study_snapshot(db,c,cfg,now),
                 "option_ideas":ideas_snapshot(db,c,cfg,now),

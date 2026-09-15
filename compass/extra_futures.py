@@ -135,12 +135,14 @@ async def collect_group(collector, exchange, aliases):
                         probe.writing(symbol,lambda: writer.quote('databento',symbol,{'ts':stamp,'bid':level.bid_px/1e9,'ask':level.ask_px/1e9,
                             'bid_size':level.bid_sz,'ask_size':level.ask_sz},iid))
                         if mappings.get(root,{}).get('iid')==iid and time.monotonic()-last.get('health:'+root,0)>5:
-                            if activate(root, time.time(), stamp):
-                                db.health(name+'_'+root, 'receiving', 'Live access confirmed: '+symbol, stamp, monotonic_source=True)
-                                last['health:'+root] = time.monotonic()
+                            def record_health(root=root,symbol=symbol,stamp=stamp):
+                                if activate(root,time.time(),stamp):
+                                    db.health(name+'_'+root,'receiving','Live access confirmed: '+symbol,stamp,monotonic_source=True)
+                            writer.metadata(record_health)
+                            last['health:'+root] = time.monotonic()
                     last[symbol] = time.monotonic()
                 if time.monotonic()-last.get('health',0)>5:
-                    db.health(name, 'receiving', 'Independent optional futures stream; check each contract quote age', stamp, monotonic_source=True)
+                    writer.metadata(lambda stamp=stamp:db.health(name,'receiving','Independent optional futures stream; check each contract quote age',stamp,monotonic_source=True))
                     last['health'] = time.monotonic()
 
             def on_error(error):

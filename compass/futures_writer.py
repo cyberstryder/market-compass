@@ -31,6 +31,9 @@ class FuturesWriter:
     def quote(self, source, symbol, quote, instrument_id):
         self.submit('quote',(symbol,{**quote,'instrument_id':instrument_id},True))
 
+    def metadata(self, fn):
+        self.submit("metadata",fn)
+
     def bars(self, source, items):
         self.submit('bar',list(items))
 
@@ -53,11 +56,18 @@ class FuturesWriter:
                 if kind=='quote':
                     self.collector.quote_batch('databento',values)
                     self.committed_quotes += len(values)
+                elif kind=='metadata':
+                    value()
                 else:
                     self.collector.bars('databento',value)
                 self.max_write_seconds=max(self.max_write_seconds,time.monotonic()-started)
                 if time.monotonic()-self.last_log>=30:
                     self.last_log=time.monotonic()
+                    if hasattr(self.collector,'db'):
+                        with self.collector.db.tx() as c:
+                            self.collector.db.put(c,'futures_persistence:'+self.stream,dict(at=time.time(),
+                                queue_depth=len(self.jobs),max_queue_age=self.max_queue_age,
+                                max_write_seconds=self.max_write_seconds,committed_quotes=self.committed_quotes))
                     logging.getLogger('uvicorn.error').info(
                         'Futures persistence: stream=%s completed_quote_items=%s queue_depth=%s max_queue_age=%s max_write_seconds=%s',
                         self.stream,self.committed_quotes,len(self.jobs),self.max_queue_age,self.max_write_seconds)

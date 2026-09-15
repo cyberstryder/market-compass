@@ -117,7 +117,9 @@ def active(c,now):
     return c.execute(select(ideas).where(ideas.c.expiry>=day(now)).order_by(ideas.c.source_ts.desc()).limit(501)).mappings().all()
 
 
-def contracts(c,now): return [r['contract'] for r in active(c,now)[:500]]
+def contracts(c,now):
+    from .universe import EXCLUDED_STOCKS
+    return [r['contract'] for r in active(c,now)[:500] if r['symbol'] not in EXCLUDED_STOCKS]
 def symbols(c,now):
     # These index roots are option contracts, not subscribable equity tickers.
     indices={'SPX','SPXW','XSP','NDX','NDXP','RUT','RUTW','VIX','DJX','OEX'}
@@ -129,6 +131,8 @@ def tick(db,cfg,now):
     with db.tx() as c:
         rows=active(c,now)
         for row in rows[:500]:
+            from .universe import EXCLUDED_STOCKS
+            if row['symbol'] in EXCLUDED_STOCKS: continue
             m=dict(row['measurements']);q=db.get(c,'quote:'+row['contract'])
             if now-row['source_ts']<=65:
                 item=row['data']

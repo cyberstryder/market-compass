@@ -246,7 +246,7 @@ class Collectors:
                         probe.writing(symbol,lambda: writer.quote("databento",symbol,{"ts":t,"bid":level.bid_px/1e9,"ask":level.ask_px/1e9,"bid_size":level.bid_sz,"ask_size":level.ask_sz},iid))
                     last[symbol]=time.monotonic()
                 if time.monotonic()-last.get("health",0)>5:
-                    self.db.health("databento_futures","receiving","Contract ID retained; BBO sampled up to 4 Hz",t,monotonic_source=True)
+                    writer.metadata(lambda stamp=t:self.db.health("databento_futures","receiving","Contract ID retained; BBO sampled up to 4 Hz",stamp,monotonic_source=True))
                     last["health"]=time.monotonic()
             errors=[]
             def on_error(error):

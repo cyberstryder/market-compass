@@ -272,6 +272,19 @@ class SwingIdeas:
             qualified = [s for s in signals if confirms(flow,s['side'],now)]
             for signal in qualified:
                 self.queue(c,signal,flow,now)
+            # Retain every technical candidate even when flow prevents an entry.
+            for signal in signals:
+                key=identity('swing-technical-v1',symbol,signal['side'],signal['rule'],signal['signal_time'])
+                self.db.append(c,'swing_candidate','swing_research',symbol,now,
+                    dict(id=key,signal=signal,flow_confirmed=confirms(flow,signal['side'],now),
+                         flow=flow,coverage=self.flow_coverage),key)
+            scan_state='qualified' if qualified else 'waiting_for_flow' if signals else 'market_closed' if not entry_open else 'warming_up' if daily['status']!='ready' else 'waiting_for_price' if not price_ready else 'scanning'
+            # Freeze cash-session evidence before overnight refresh overwrites current status.
+            if entry_open:
+                self.db.put(c,'swing_session_scan:'+day(now)+':'+symbol,
+                    dict(symbol=symbol,at=now,status=scan_state,daily_ready=daily['status']=='ready',
+                         price_ready=price_ready,technical_rules=[s['rule'] for s in signals],
+                         flow_confirmed=bool(qualified),flow_coverage=self.flow_coverage))
             self.db.put(c,'swing_scan:'+symbol,dict(symbol=symbol,at=now,day=day(now),daily_ready=daily['status']=='ready',
                 status='qualified' if qualified else 'waiting_for_flow' if signals else 'market_closed' if not entry_open else 'warming_up' if daily['status']!='ready' else 'waiting_for_price' if not price_ready else 'scanning',
                 price_ready=price_ready,

@@ -17,6 +17,8 @@ def symbols(value):
     return tuple(result)
 
 
+EXCLUDED_STOCKS = frozenset({"DJT"})
+
 def saved_watchlist():
     return symbols((Path(__file__).parent / 'watchlist.txt').read_text())
 
@@ -40,7 +42,7 @@ def connected_symbols(db, c, now):
 
 def data_symbols(db, c, cfg, now):
     """Expand collection only; connected projects do not change scanner entries."""
-    return symbols((*cfg.watch_symbols, *connected_symbols(db, c, now)))[:500]
+    return tuple(s for s in symbols((*cfg.watch_symbols, *connected_symbols(db, c, now))) if s not in EXCLUDED_STOCKS)[:500]
 
 
 def focus_symbols(db, c, cfg, now, limit=12):
