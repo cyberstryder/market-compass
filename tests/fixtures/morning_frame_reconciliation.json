@@ -1,0 +1,2658 @@
+{
+  "events": {
+    "schema_version": 1,
+    "project": "morning",
+    "mode": "observe_only",
+    "stream": "events",
+    "since_ms": 0,
+    "records": [
+      {
+        "id": "compact-live-15",
+        "received_at_ms": 1788875461000,
+        "sha256": "14347d4a8012122a008973a0a59f09f46c05d2a38950da7f740174db3cb5c0bf",
+        "payload": {
+          "event_id": "compact-live-15",
+          "event_type": "checkpoint",
+          "observation": {
+            "bars_observed": 15,
+            "continuous": true,
+            "dip_at_ms": 1788874620000,
+            "hit_1_ms": null,
+            "hit_2_ms": null,
+            "hit_3_ms": null,
+            "horizon_min": 15,
+            "observed_at_ms": 1788875460000,
+            "peak_at_ms": 1788874620000,
+            "price": 100.0,
+            "window_high": 100.2,
+            "window_low": 99.7
+          },
+          "schema_version": 1,
+          "signal": {
+            "bar_open_ms": 1788874500000,
+            "features": {
+              "bar_count": 6,
+              "ema_fast": 99.7,
+              "ema_slow": 99.3,
+              "orb_high": 99.9,
+              "orb_low": 98.5,
+              "rvol": 1.5,
+              "volume": 10000.0,
+              "vwap": 99.5
+            },
+            "is_test": false,
+            "logic_mode": "legacy_confirmed",
+            "price": 100.0,
+            "script_version": "1.3.0",
+            "settings": {
+              "alert_window": 60,
+              "checkpoints": true,
+              "ema_fast": 9,
+              "ema_slow": 21,
+              "fast_min_bar": 2,
+              "fast_open": true,
+              "orb_bars": 5,
+              "require_rvol": false,
+              "rvol_threshold": 1.2
+            },
+            "setup": "STANDARD_ORB",
+            "signal_at_ms": 1788874560000,
+            "signal_id": "compact-live",
+            "stream_id": "fixture",
+            "ticker": "NASDAQ:DEMO",
+            "timeframe_min": 1
+          }
+        }
+      },
+      {
+        "id": "compact-live-30",
+        "received_at_ms": 1788876361000,
+        "sha256": "0ffa42e25e22135bd0072d728ebd7801d09a0ec6de94bbb76ed44d387a1d5707",
+        "payload": {
+          "event_id": "compact-live-30",
+          "event_type": "checkpoint",
+          "observation": {
+            "bars_observed": 30,
+            "continuous": true,
+            "dip_at_ms": 1788874620000,
+            "hit_1_ms": null,
+            "hit_2_ms": null,
+            "hit_3_ms": null,
+            "horizon_min": 30,
+            "observed_at_ms": 1788876360000,
+            "peak_at_ms": 1788874620000,
+            "price": 100.0,
+            "window_high": 100.2,
+            "window_low": 99.7
+          },
+          "schema_version": 1,
+          "signal": {
+            "bar_open_ms": 1788874500000,
+            "features": {
+              "bar_count": 6,
+              "ema_fast": 99.7,
+              "ema_slow": 99.3,
+              "orb_high": 99.9,
+              "orb_low": 98.5,
+              "rvol": 1.5,
+              "volume": 10000.0,
+              "vwap": 99.5
+            },
+            "is_test": false,
+            "logic_mode": "legacy_confirmed",
+            "price": 100.0,
+            "script_version": "1.3.0",
+            "settings": {
+              "alert_window": 60,
+              "checkpoints": true,
+              "ema_fast": 9,
+              "ema_slow": 21,
+              "fast_min_bar": 2,
+              "fast_open": true,
+              "orb_bars": 5,
+              "require_rvol": false,
+              "rvol_threshold": 1.2
+            },
+            "setup": "STANDARD_ORB",
+            "signal_at_ms": 1788874560000,
+            "signal_id": "compact-live",
+            "stream_id": "fixture",
+            "ticker": "NASDAQ:DEMO",
+            "timeframe_min": 1
+          }
+        }
+      },
+      {
+        "id": "compact-live-5",
+        "received_at_ms": 1788874921000,
+        "sha256": "8719fab5b95748c8526e1ca20a4e9e084dfdc8acad20364fc02e815bc42264ff",
+        "payload": {
+          "event_id": "compact-live-5",
+          "event_type": "checkpoint",
+          "observation": {
+            "bars_observed": 5,
+            "continuous": true,
+            "dip_at_ms": 1788874620000,
+            "hit_1_ms": null,
+            "hit_2_ms": null,
+            "hit_3_ms": null,
+            "horizon_min": 5,
+            "observed_at_ms": 1788874860000,
+            "peak_at_ms": 1788874620000,
+            "price": 100.0,
+            "window_high": 100.2,
+            "window_low": 99.7
+          },
+          "schema_version": 1,
+          "signal": {
+            "bar_open_ms": 1788874500000,
+            "features": {
+              "bar_count": 6,
+              "ema_fast": 99.7,
+              "ema_slow": 99.3,
+              "orb_high": 99.9,
+              "orb_low": 98.5,
+              "rvol": 1.5,
+              "volume": 10000.0,
+              "vwap": 99.5
+            },
+            "is_test": false,
+            "logic_mode": "legacy_confirmed",
+            "price": 100.0,
+            "script_version": "1.3.0",
+            "settings": {
+              "alert_window": 60,
+              "checkpoints": true,
+              "ema_fast": 9,
+              "ema_slow": 21,
+              "fast_min_bar": 2,
+              "fast_open": true,
+              "orb_bars": 5,
+              "require_rvol": false,
+              "rvol_threshold": 1.2
+            },
+            "setup": "STANDARD_ORB",
+            "signal_at_ms": 1788874560000,
+            "signal_id": "compact-live",
+            "stream_id": "fixture",
+            "ticker": "NASDAQ:DEMO",
+            "timeframe_min": 1
+          }
+        }
+      },
+      {
+        "id": "compact-live-60",
+        "received_at_ms": 1788878161000,
+        "sha256": "31ee04cff64a841c24aea7c1ba8214f745ccfccedcc623f16de3ea51c1011d99",
+        "payload": {
+          "event_id": "compact-live-60",
+          "event_type": "checkpoint",
+          "observation": {
+            "bars_observed": 60,
+            "continuous": true,
+            "dip_at_ms": 1788874620000,
+            "hit_1_ms": null,
+            "hit_2_ms": null,
+            "hit_3_ms": null,
+            "horizon_min": 60,
+            "observed_at_ms": 1788878160000,
+            "peak_at_ms": 1788874620000,
+            "price": 100.0,
+            "window_high": 100.2,
+            "window_low": 99.7
+          },
+          "schema_version": 1,
+          "signal": {
+            "bar_open_ms": 1788874500000,
+            "features": {
+              "bar_count": 6,
+              "ema_fast": 99.7,
+              "ema_slow": 99.3,
+              "orb_high": 99.9,
+              "orb_low": 98.5,
+              "rvol": 1.5,
+              "volume": 10000.0,
+              "vwap": 99.5
+            },
+            "is_test": false,
+            "logic_mode": "legacy_confirmed",
+            "price": 100.0,
+            "script_version": "1.3.0",
+            "settings": {
+              "alert_window": 60,
+              "checkpoints": true,
+              "ema_fast": 9,
+              "ema_slow": 21,
+              "fast_min_bar": 2,
+              "fast_open": true,
+              "orb_bars": 5,
+              "require_rvol": false,
+              "rvol_threshold": 1.2
+            },
+            "setup": "STANDARD_ORB",
+            "signal_at_ms": 1788874560000,
+            "signal_id": "compact-live",
+            "stream_id": "fixture",
+            "ticker": "NASDAQ:DEMO",
+            "timeframe_min": 1
+          }
+        }
+      },
+      {
+        "id": "compact-live-signal",
+        "received_at_ms": 1788874621000,
+        "sha256": "3e01b41bd6a026f438dc71e5df042beca9732e6ad28240e557f1b52570582577",
+        "payload": {
+          "event_id": "compact-live-signal",
+          "event_type": "signal",
+          "observation": null,
+          "schema_version": 1,
+          "signal": {
+            "bar_open_ms": 1788874500000,
+            "features": {
+              "bar_count": 6,
+              "ema_fast": 99.7,
+              "ema_slow": 99.3,
+              "orb_high": 99.9,
+              "orb_low": 98.5,
+              "rvol": 1.5,
+              "volume": 10000.0,
+              "vwap": 99.5
+            },
+            "is_test": false,
+            "logic_mode": "legacy_confirmed",
+            "price": 100.0,
+            "script_version": "1.3.0",
+            "settings": {
+              "alert_window": 60,
+              "checkpoints": true,
+              "ema_fast": 9,
+              "ema_slow": 21,
+              "fast_min_bar": 2,
+              "fast_open": true,
+              "orb_bars": 5,
+              "require_rvol": false,
+              "rvol_threshold": 1.2
+            },
+            "setup": "STANDARD_ORB",
+            "signal_at_ms": 1788874560000,
+            "signal_id": "compact-live",
+            "stream_id": "fixture",
+            "ticker": "NASDAQ:DEMO",
+            "timeframe_min": 1
+          }
+        }
+      }
+    ],
+    "next": null,
+    "scope": "Source events only; repeated scans required for concurrent late arrivals; not a full database backup"
+  },
+  "stock": {
+    "schema_version": 1,
+    "project": "morning",
+    "mode": "observe_only",
+    "stream": "stock",
+    "since_ms": 0,
+    "records": [
+      {
+        "id": "compact-live",
+        "received_at_ms": 1788874621000,
+        "sha256": "0d6f1f00a72b21186bbdcb9a925df7b605747087313ac890aa47d2edff385df4",
+        "payload": {
+          "schema_version": 1,
+          "signal": {
+            "bar_open_ms": 1788874500000,
+            "features": {
+              "bar_count": 6,
+              "ema_fast": 99.7,
+              "ema_slow": 99.3,
+              "orb_high": 99.9,
+              "orb_low": 98.5,
+              "rvol": 1.5,
+              "volume": 10000.0,
+              "vwap": 99.5
+            },
+            "is_test": false,
+            "logic_mode": "legacy_confirmed",
+            "price": 100.0,
+            "script_version": "1.3.0",
+            "settings": {
+              "alert_window": 60,
+              "checkpoints": true,
+              "ema_fast": 9,
+              "ema_slow": 21,
+              "fast_min_bar": 2,
+              "fast_open": true,
+              "orb_bars": 5,
+              "require_rvol": false,
+              "rvol_threshold": 1.2
+            },
+            "setup": "STANDARD_ORB",
+            "signal_at_ms": 1788874560000,
+            "signal_id": "compact-live",
+            "stream_id": "fixture",
+            "ticker": "NASDAQ:DEMO",
+            "timeframe_min": 1
+          },
+          "initial_received_at_ms": 1788874621000,
+          "bars": [
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788874560000,
+                "volume": 10000.0
+              },
+              "sha256": "af0a07db7654091f54c4623901903c7021ad88fd73f3aaa92b5434faf0d153dc",
+              "received_at_ms": 1788874621000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788874620000,
+                "volume": 10000.0
+              },
+              "sha256": "30f09c29ff34aa3c564cf6a78a593f7073997f2530d73a2aa325352f7d765dae",
+              "received_at_ms": 1788874681000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788874680000,
+                "volume": 10000.0
+              },
+              "sha256": "66c8c313cd8cb04b2d1ce98f808f101e3ba2a274e690fd9b846e677753d5f86c",
+              "received_at_ms": 1788874741000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788874740000,
+                "volume": 10000.0
+              },
+              "sha256": "cd53c752db1846eb36f757402e0352e779003768f3f248de1db755717c0208b0",
+              "received_at_ms": 1788874801000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788874800000,
+                "volume": 10000.0
+              },
+              "sha256": "003e111c8f5305f3ca97117663fda3bd3caff80b9010fa8f42a7264cd49b53f0",
+              "received_at_ms": 1788874921000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788874860000,
+                "volume": 10000.0
+              },
+              "sha256": "89a09b3ce42c8a300ac3dc5939bdfc73ff6a67b49a34234ecc1ae4c762d0808e",
+              "received_at_ms": 1788874921000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788874920000,
+                "volume": 10000.0
+              },
+              "sha256": "471be478951897fdb2da154ecea6c90b7942737d742e44cd99f0dba7f371dde0",
+              "received_at_ms": 1788874981000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788874980000,
+                "volume": 10000.0
+              },
+              "sha256": "ec41f89e4e4b9e4524f8a2210bdc74468001fd1624f58eccb8c2b2fd4c70aa42",
+              "received_at_ms": 1788875041000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875040000,
+                "volume": 10000.0
+              },
+              "sha256": "4fab526d1dcbd16db80417bf9bcb47c68f7b6b0d2f0cbed096d5233938bb0117",
+              "received_at_ms": 1788875101000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875100000,
+                "volume": 10000.0
+              },
+              "sha256": "4b94fa37e6a3ef3d4e21ad2e07cb6fbc4353fd9f9e3aca0bca725627bc53bc7d",
+              "received_at_ms": 1788875161000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875160000,
+                "volume": 10000.0
+              },
+              "sha256": "8afdb1f47561f8a3e0a19bddf134054fa293e427d8c4ec707ef00b4ee2af7d25",
+              "received_at_ms": 1788875221000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875220000,
+                "volume": 10000.0
+              },
+              "sha256": "ec99b817bbf0a3847440f296396b5c07d7a50a6ceacf20ab7205fb9165bdf156",
+              "received_at_ms": 1788875281000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875280000,
+                "volume": 10000.0
+              },
+              "sha256": "29e6d2d9b037bbfbcf592aefe49168f166d6294cbe38bf22d6f9563b8047daa6",
+              "received_at_ms": 1788875341000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875340000,
+                "volume": 10000.0
+              },
+              "sha256": "1b9c86f77c053820843bd5d4b26fcbcdd600a755bb5dec4bb9f0c1f61c73de53",
+              "received_at_ms": 1788875401000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875400000,
+                "volume": 10000.0
+              },
+              "sha256": "2e369cfae386189c39541ab763e87722c042fea2bdb0e4d39d54975d40a816a7",
+              "received_at_ms": 1788875461000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875460000,
+                "volume": 10000.0
+              },
+              "sha256": "b4e54ebbf32f432ea48c7a6346be5a4c03d5d1d18e6c780860de4356fe957ce0",
+              "received_at_ms": 1788875521000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875520000,
+                "volume": 10000.0
+              },
+              "sha256": "32d430f30e8963510d1cfaeaee8c97ded0189a47a04bc5775aa7d67dd4cdc5cd",
+              "received_at_ms": 1788875581000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875580000,
+                "volume": 10000.0
+              },
+              "sha256": "de614ea5aa22632c7aa6d2f2596195a9cec21c32c37369dfbbfc9be3de18a1e5",
+              "received_at_ms": 1788875641000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875640000,
+                "volume": 10000.0
+              },
+              "sha256": "bcb72a13a6140a64b82d64921ade980a9c9b7d964d88b9c8c474378cda910f1f",
+              "received_at_ms": 1788875701000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875700000,
+                "volume": 10000.0
+              },
+              "sha256": "ec016b664b26194d425194be787880b8049223327cf2afb4de9dc26f4d164207",
+              "received_at_ms": 1788875761000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875760000,
+                "volume": 10000.0
+              },
+              "sha256": "4f391c40fdfa182ea9bf9d7f069cd076f75bfcbc715bacc6c1007d4d703a009e",
+              "received_at_ms": 1788875821000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875820000,
+                "volume": 10000.0
+              },
+              "sha256": "2f1cb28dad59d8ecd713a03d87e17afa177c678bbb214e7a59d81f5d579e9bb5",
+              "received_at_ms": 1788875881000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875880000,
+                "volume": 10000.0
+              },
+              "sha256": "86b25ed132716b998eb232f5c0d81b2779a41e88a664a4bff4e607de3006a4bd",
+              "received_at_ms": 1788875941000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788875940000,
+                "volume": 10000.0
+              },
+              "sha256": "f8488f30c93655e151cf0d2dd3e10c6ef3b902ad88836cefc0deab7af4bc25ff",
+              "received_at_ms": 1788876001000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876000000,
+                "volume": 10000.0
+              },
+              "sha256": "09aa2f6e3187a9fbcfa47121fd66ca18ee4a18668d0cd718d68c90b0990bdb84",
+              "received_at_ms": 1788876061000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876060000,
+                "volume": 10000.0
+              },
+              "sha256": "10cb0be16dad46596dd815a1e6fc51fd2992e3623f4b0dbf61453c10c8cba342",
+              "received_at_ms": 1788876121000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876120000,
+                "volume": 10000.0
+              },
+              "sha256": "03ff9b4308c4f9db4173d5372c20dd91c65c6eb731d54278d8c8ed01098c736d",
+              "received_at_ms": 1788876181000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876180000,
+                "volume": 10000.0
+              },
+              "sha256": "4db6ac7925c6ec4d3e33add885006e9a87ac9c68d19521c1533bfb9a24773d6c",
+              "received_at_ms": 1788876241000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876240000,
+                "volume": 10000.0
+              },
+              "sha256": "cad5d045f6984fe497774859de36b9f500fdb627336a2f9cc2ba7ac431da3428",
+              "received_at_ms": 1788876301000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876300000,
+                "volume": 10000.0
+              },
+              "sha256": "d2b4e2328693cd6c58230ab80ca2f4f7b4063de84bbed4f63d804d289bfb3270",
+              "received_at_ms": 1788876361000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876360000,
+                "volume": 10000.0
+              },
+              "sha256": "5afb098c2bff2d3eff72b3fb683cc8f705ef1e26417b0d166530c6dc3b63dd2a",
+              "received_at_ms": 1788876421000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876420000,
+                "volume": 10000.0
+              },
+              "sha256": "9f154350ed9773d6e78ad14dbbb21a6526972d7bc27eeea734cd5207a120752f",
+              "received_at_ms": 1788876481000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876480000,
+                "volume": 10000.0
+              },
+              "sha256": "eeaae0b38d352aa6b7e9acfdbd9bfc3df9315245b5e7e3e5ac7d23d1fbf4b34c",
+              "received_at_ms": 1788876541000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876540000,
+                "volume": 10000.0
+              },
+              "sha256": "3b9b16bad00497b7a5932e198b79f4d1faf9831f495fda2ddbe8fefb92014483",
+              "received_at_ms": 1788876601000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876600000,
+                "volume": 10000.0
+              },
+              "sha256": "43ef3cd6d248789452bc5a735c8d03d4b53acdd774bbf699d4f49b1be0a8a3a7",
+              "received_at_ms": 1788876661000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876660000,
+                "volume": 10000.0
+              },
+              "sha256": "20f07e6910da3e3efb93f0aa77ce662519fae313e77ba5e46f47861f4380decd",
+              "received_at_ms": 1788876781000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876720000,
+                "volume": 10000.0
+              },
+              "sha256": "80a85b3b47f399839a6a64499f59ba6b91c75aa3eb841d4dceb8354a08ca3f8b",
+              "received_at_ms": 1788876781000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876780000,
+                "volume": 10000.0
+              },
+              "sha256": "dbf8f9bd0514bb44f752ca5a9c88d246a5bc40741b7cc67b9ece4efb02ed609c",
+              "received_at_ms": 1788876841000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876840000,
+                "volume": 10000.0
+              },
+              "sha256": "8ec5bab6127731fa936f4fe3583b70f003bd00e48fc6f8ede68895965273ab4c",
+              "received_at_ms": 1788876901000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876900000,
+                "volume": 10000.0
+              },
+              "sha256": "b8f11d9601701c426eb5973932674996504e2770b51a6e14f1195460bf6f504f",
+              "received_at_ms": 1788876961000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788876960000,
+                "volume": 10000.0
+              },
+              "sha256": "f2381b21bfbe5f7829150d65bc4a7f1c33c04c0016def2c98a87377d514509ae",
+              "received_at_ms": 1788877021000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877020000,
+                "volume": 10000.0
+              },
+              "sha256": "6e71a7bd0c7b976f25dc7a655c1898f71a68b3083c50bcb4ef9803ed1bd88f39",
+              "received_at_ms": 1788877081000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877080000,
+                "volume": 10000.0
+              },
+              "sha256": "5bc11bef7534c38ec67dbcc5659038cebc9a15a87730b2cd466b1c7f1403df68",
+              "received_at_ms": 1788877141000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877140000,
+                "volume": 10000.0
+              },
+              "sha256": "a2d6d8c3acc4c5c65b98b22e07e869a60fc63d4cb3636a8897ca2fc86824da8c",
+              "received_at_ms": 1788877201000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877200000,
+                "volume": 10000.0
+              },
+              "sha256": "efba6ef980edc09fec7095eb4fc9d23b2d0523d8b51a46a65411a3ab6243b1e5",
+              "received_at_ms": 1788877261000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877260000,
+                "volume": 10000.0
+              },
+              "sha256": "f3e32a221b5d27d9fcbcda05fd2111d1a3865b2e52a50a9e90b66257c7be92f5",
+              "received_at_ms": 1788877321000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877320000,
+                "volume": 10000.0
+              },
+              "sha256": "e59b631cfa0c1030bf62ef79e1c18f6e62b4c69704bebab746fc7d0c5b732ab0",
+              "received_at_ms": 1788877381000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877380000,
+                "volume": 10000.0
+              },
+              "sha256": "af9040aee6414f2231cfdaf0946770490fbb738ef979a380190a9057aca66b95",
+              "received_at_ms": 1788877441000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877440000,
+                "volume": 10000.0
+              },
+              "sha256": "0e163ed4dc3366f25cafe42aadfcda97754d4a614c8983aa076bd0b4d3a27968",
+              "received_at_ms": 1788877501000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877500000,
+                "volume": 10000.0
+              },
+              "sha256": "673248ffa95661451d75e47d46f2460e8899eff578b15eb07345534a60028755",
+              "received_at_ms": 1788877561000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877560000,
+                "volume": 10000.0
+              },
+              "sha256": "1e193d6f38e2257574a4e8d5374c4889d705a4428ea6faa6a697fb4c2c5f123b",
+              "received_at_ms": 1788877621000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877620000,
+                "volume": 10000.0
+              },
+              "sha256": "99b63e3446d54edc22fc901b6aa74b17cb6a4a264fd907cdd4c71ce90cf6efc1",
+              "received_at_ms": 1788877681000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877680000,
+                "volume": 10000.0
+              },
+              "sha256": "a5f3b1d2be3f8d9d60b216f776bec6d8963f4f0aafb015209570ff564f249d82",
+              "received_at_ms": 1788877741000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877740000,
+                "volume": 10000.0
+              },
+              "sha256": "f2784a481adc3415c0f97dbc847219e2a464d5beb7ba26a8653e2142b61940d5",
+              "received_at_ms": 1788877801000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877800000,
+                "volume": 10000.0
+              },
+              "sha256": "d7e0cd418aaf919747380217d0ae44b23216baa77fd7c5e23528bb9c9bad95b0",
+              "received_at_ms": 1788877861000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877860000,
+                "volume": 10000.0
+              },
+              "sha256": "301baf5146d0a870e15b907a8191bca5850bb37ef465f8b33a703437c183fcbd",
+              "received_at_ms": 1788877921000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877920000,
+                "volume": 10000.0
+              },
+              "sha256": "3f2021b0216e567b7c0834115f1b1c05cace38237f411f35d7e205b9b1ee93b9",
+              "received_at_ms": 1788877981000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788877980000,
+                "volume": 10000.0
+              },
+              "sha256": "21bdfa8038893e016bfca89658f6a5f23cda7bff55e542c2daa4a32c668dbf85",
+              "received_at_ms": 1788878041000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878040000,
+                "volume": 10000.0
+              },
+              "sha256": "d58551feb792dffac38a9bf6a5fab2c2f8e586352ebcf1273a8a2a6dc2f905d3",
+              "received_at_ms": 1788878101000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878100000,
+                "volume": 10000.0
+              },
+              "sha256": "7bc5f4a0fe4090fe5aa1f86eee10d796317874e1b5f9191ae5577eea2ba1a98a",
+              "received_at_ms": 1788878161000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878160000,
+                "volume": 10000.0
+              },
+              "sha256": "1e39a45b17d926fb664447126651da01baa41b2174df579945df6a6f0ad09ecb",
+              "received_at_ms": 1788878221000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878220000,
+                "volume": 10000.0
+              },
+              "sha256": "5fdd93891a2f85eaf5e527e726380a385197f35f67bcf17854c4f26722d35a2f",
+              "received_at_ms": 1788878281000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878280000,
+                "volume": 10000.0
+              },
+              "sha256": "5bace72a7e5cde39e63bd865e58374f555e47cd36a5779f6c27dbdfd6ef8f866",
+              "received_at_ms": 1788878341000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878340000,
+                "volume": 10000.0
+              },
+              "sha256": "5c8db7fbff073e5346270353666b7613f3c19bacb2ff3ff3598060d47feb35db",
+              "received_at_ms": 1788878401000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878400000,
+                "volume": 10000.0
+              },
+              "sha256": "a85646d18a017ca512820ec61025a7df098980b80251252fef3b335a03e4641a",
+              "received_at_ms": 1788878461000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878460000,
+                "volume": 10000.0
+              },
+              "sha256": "e24afeffcb7d80abdb5b9b9ab8fe54ebb399075383d5704a97af373f727790e8",
+              "received_at_ms": 1788878521000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878520000,
+                "volume": 10000.0
+              },
+              "sha256": "eb22a7002412af809505584df5ff83b38a085023d45df56efee07556816e362c",
+              "received_at_ms": 1788878581000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878580000,
+                "volume": 10000.0
+              },
+              "sha256": "bf829cfa81af37d8eb004f3aa0f10c858a52c3be413569717e4bb64bfa381f14",
+              "received_at_ms": 1788878641000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878640000,
+                "volume": 10000.0
+              },
+              "sha256": "3ed8be6692329a4b38f0954648bd2153d75c5f1b70773985b23f8e9b0701c151",
+              "received_at_ms": 1788878701000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878700000,
+                "volume": 10000.0
+              },
+              "sha256": "a47562bb72656beb131f31142b63cc1b3e5f033d77dfecde105e7f9524fa0f05",
+              "received_at_ms": 1788878761000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878760000,
+                "volume": 10000.0
+              },
+              "sha256": "b4ab866cc56dbf9d778a5690217cd091bcd7167eacbeaa7cfb67024208323e08",
+              "received_at_ms": 1788878821000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878820000,
+                "volume": 10000.0
+              },
+              "sha256": "c31880b55e269fed4fbd00cc9f001a8ea712ab005353f0b8bae505eda08d2314",
+              "received_at_ms": 1788878881000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878880000,
+                "volume": 10000.0
+              },
+              "sha256": "b83643a0825f702b950614c48300959c4a590fb80d231b72d6d0a98b91bd1b77",
+              "received_at_ms": 1788878941000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788878940000,
+                "volume": 10000.0
+              },
+              "sha256": "720fcbc750fdfeb43db8fe055671aa6e3dd2e89bd64ec922c33117148991c904",
+              "received_at_ms": 1788879001000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879000000,
+                "volume": 10000.0
+              },
+              "sha256": "1ff815931d6d3bae2dedec4452ed0f8ad4fc950118e4a08cc2c10075586e6797",
+              "received_at_ms": 1788879061000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879060000,
+                "volume": 10000.0
+              },
+              "sha256": "fbd2d383efae1e806e548485c9b3951a9706838091f1e99f7cb258d1a3746ab6",
+              "received_at_ms": 1788879121000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879120000,
+                "volume": 10000.0
+              },
+              "sha256": "a74dd5f60640f7c3e08c988e22f63620ae0b58d4dffe57edf87960dbde846876",
+              "received_at_ms": 1788879181000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879180000,
+                "volume": 10000.0
+              },
+              "sha256": "1c3dc4c27ff725dcf44783a25c8a8b0a80e023ef7c3131994100d49efd6a9bbc",
+              "received_at_ms": 1788879241000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879240000,
+                "volume": 10000.0
+              },
+              "sha256": "d6f1d93f638267d0b64adbf4dfb69db362f86c78f8ec82c4116b491a837c70ff",
+              "received_at_ms": 1788879301000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879300000,
+                "volume": 10000.0
+              },
+              "sha256": "2b032c1ad327b2b80a05154eac7f7841ee5bc13b457ee37f2f6925a8e5b76241",
+              "received_at_ms": 1788879361000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879360000,
+                "volume": 10000.0
+              },
+              "sha256": "a93171616926738c2d278ae0d33a5b8d985933a327dc5b6a5f69ee167bfda900",
+              "received_at_ms": 1788879421000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879420000,
+                "volume": 10000.0
+              },
+              "sha256": "2edf54d25abd9bcc61ac2cd9d2a057d231f5fc14ee109dfddcbe6247cfd6d36f",
+              "received_at_ms": 1788879481000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879480000,
+                "volume": 10000.0
+              },
+              "sha256": "08adfcd54ca1af117a3a559bdf904cc89f3ea82fc04936c84b6a28932d49e105",
+              "received_at_ms": 1788879541000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879540000,
+                "volume": 10000.0
+              },
+              "sha256": "a2a97b833bfa20dd694ee97b7d71fe89b5b73093ddd78ab4d6f298db2ea22061",
+              "received_at_ms": 1788879601000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879600000,
+                "volume": 10000.0
+              },
+              "sha256": "757931628a5f4adb79cdbf2db0989a70d6a158c038d7744856f3cf724c1d87a2",
+              "received_at_ms": 1788879661000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879660000,
+                "volume": 10000.0
+              },
+              "sha256": "4f91a806077f6bf8b0e8306cb628ead9217c9a38abe6e762ace59eddce5bbffe",
+              "received_at_ms": 1788879721000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879720000,
+                "volume": 10000.0
+              },
+              "sha256": "e270728a34ab27681ff81cc753612047e59ec15fab34bf7b846e503d50a2b7d3",
+              "received_at_ms": 1788879781000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879780000,
+                "volume": 10000.0
+              },
+              "sha256": "88a9c5f8e7d196aa2eee6e4689d4078bb854c031d8b2f6f6a27e81e2f0fb0278",
+              "received_at_ms": 1788879841000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879840000,
+                "volume": 10000.0
+              },
+              "sha256": "fed3323dbf8b64d4d518c96f3a3c592149d62bd62a5a686b1c59ec465fc7c2bb",
+              "received_at_ms": 1788879901000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879900000,
+                "volume": 10000.0
+              },
+              "sha256": "33319cfd346e56001acfaf6c91efb0c29c0e6a610c780aefe9a4a8c27376bdc8",
+              "received_at_ms": 1788879961000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788879960000,
+                "volume": 10000.0
+              },
+              "sha256": "5f17523279760a76e0d0f3d6bc4cf5e275519aa56d29f9660053b979c3cfeba7",
+              "received_at_ms": 1788880021000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880020000,
+                "volume": 10000.0
+              },
+              "sha256": "55c30156b13e81e837ec5294dc990e1f0b394dcd79157faff0e40153359aba67",
+              "received_at_ms": 1788880081000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880080000,
+                "volume": 10000.0
+              },
+              "sha256": "95703a321f782731bdad4acd6d3f78ac4ee1bba175438cb3dd3b1fb4a375e7c4",
+              "received_at_ms": 1788880141000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880140000,
+                "volume": 10000.0
+              },
+              "sha256": "640dcbec0dad1c0b48966871b18b3f23a8f03fd01a2c0496124c92dc942f967f",
+              "received_at_ms": 1788880201000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880200000,
+                "volume": 10000.0
+              },
+              "sha256": "4d28e50354bf7ca51449a536eaca6bcb706c815684147b99ed7dae998a5e9bfb",
+              "received_at_ms": 1788880261000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880260000,
+                "volume": 10000.0
+              },
+              "sha256": "490e712b283f1143c91dd1c3e9b96225a2729357f37ae03d78584d1395b4a3ef",
+              "received_at_ms": 1788880321000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880320000,
+                "volume": 10000.0
+              },
+              "sha256": "2ebb620b557aa35c1721f17c7eb4fc69296b125f3b75305d26d1f9a8345a16a7",
+              "received_at_ms": 1788880381000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880380000,
+                "volume": 10000.0
+              },
+              "sha256": "719b6e3d973d38338e079c803fbb75f5119faf5c716c2f7b689b8cfcb544e8fd",
+              "received_at_ms": 1788880441000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880440000,
+                "volume": 10000.0
+              },
+              "sha256": "b86ed5bf5a026c3b292696c415bcbd21e39bf1fad116570688cad486011edaf7",
+              "received_at_ms": 1788880501000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880500000,
+                "volume": 10000.0
+              },
+              "sha256": "89e120dc1addcf8ea61bc2c5599915de0de8ad961916b1e7a26c7c2463a262f7",
+              "received_at_ms": 1788880561000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880560000,
+                "volume": 10000.0
+              },
+              "sha256": "8a401f3ed03248b521970a54200cc4612807f958bc883aa7c1c971b68fdf2e70",
+              "received_at_ms": 1788880621000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880620000,
+                "volume": 10000.0
+              },
+              "sha256": "e9db18333dc00881681d6c73211aa48a3e7162fb937b0767d330697fcf2cbcfc",
+              "received_at_ms": 1788880681000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880680000,
+                "volume": 10000.0
+              },
+              "sha256": "ecb52ddffa9d4c4f2ef5aea3c31757d9331c7f2dc989e53f53e02c412ec126ae",
+              "received_at_ms": 1788880741000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880740000,
+                "volume": 10000.0
+              },
+              "sha256": "9cb89d021ac6e7ce24212f0d3394b084e6b9476be3dff95c085026f3427a7e46",
+              "received_at_ms": 1788880801000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880800000,
+                "volume": 10000.0
+              },
+              "sha256": "afa597fa5fde60e43c206f0666e204658943c92209c434d8218682b5598995fd",
+              "received_at_ms": 1788880861000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880860000,
+                "volume": 10000.0
+              },
+              "sha256": "8822847356982f3c6659529d4cb1168316e01660bf1b820ee6184475ee3e4396",
+              "received_at_ms": 1788880921000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880920000,
+                "volume": 10000.0
+              },
+              "sha256": "6ecfc15d9c55fe4a282bd421a4a361572657b9b66cb2675e31eca1546d881736",
+              "received_at_ms": 1788880981000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788880980000,
+                "volume": 10000.0
+              },
+              "sha256": "721dea5ee7624e365234e41538160b6556c8f24858c59f6cb3be02b8c1c83ce7",
+              "received_at_ms": 1788881041000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881040000,
+                "volume": 10000.0
+              },
+              "sha256": "a20d95d3a25e646a60d9e4724a6cb9e981c00763ce7645a1c1abef6a86ea97e3",
+              "received_at_ms": 1788881101000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881100000,
+                "volume": 10000.0
+              },
+              "sha256": "c52c53d594b9fb72b29c1a01b7eb1ed66fba996c7267fed0eb4a73447575e6ec",
+              "received_at_ms": 1788881161000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881160000,
+                "volume": 10000.0
+              },
+              "sha256": "50f4e6cbeeb37f42eb16d1e979bcb5567d6a1fa401b8e45b381746372bd1ea50",
+              "received_at_ms": 1788881221000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881220000,
+                "volume": 10000.0
+              },
+              "sha256": "b8dcd706a48060c93d44a996347d52792601b76ebfd0ae48efb7f9892e9225ee",
+              "received_at_ms": 1788881281000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881280000,
+                "volume": 10000.0
+              },
+              "sha256": "81a9a7f9eb6c7ae2b1b92e3d22f3d5c1e0c4deb92c8634a38882ced19fe37145",
+              "received_at_ms": 1788881341000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881340000,
+                "volume": 10000.0
+              },
+              "sha256": "018bcf2e7099a2d1337fb39e4f32e4872e6bdf855d9889eff9045c3ffd938fc1",
+              "received_at_ms": 1788881401000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881400000,
+                "volume": 10000.0
+              },
+              "sha256": "49612496ef2008f77f4b426f0cf3e29c1971d9cb56030969461368dedd3b4376",
+              "received_at_ms": 1788881461000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881460000,
+                "volume": 10000.0
+              },
+              "sha256": "21fc00122af86e7772a044ab1efe6a569cb099071cff13b0e5dff8fc37365ded",
+              "received_at_ms": 1788881521000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881520000,
+                "volume": 10000.0
+              },
+              "sha256": "82f3ea57a0d9e6b8b2cd22e474dbd5d2530d1d5b726dc8b3ca70b2f909fe676b",
+              "received_at_ms": 1788881581000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881580000,
+                "volume": 10000.0
+              },
+              "sha256": "b970795095d412fc74abb5f556864675e0a384eec73e54549b0bb4c3069050ae",
+              "received_at_ms": 1788881641000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881640000,
+                "volume": 10000.0
+              },
+              "sha256": "bf0a9c54597d40190ae7fb17ade8c387174921834f353c138ace59abb020b457",
+              "received_at_ms": 1788881701000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881700000,
+                "volume": 10000.0
+              },
+              "sha256": "96595c45980fd08ff32e45e286f61dda5aebd1ea4bca449a54289a73abc29d76",
+              "received_at_ms": 1788881761000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881760000,
+                "volume": 10000.0
+              },
+              "sha256": "6c1a4d3a893934fe9e75819236e9cc1d386a0c35dc3887b07ecf774b5bef3db1",
+              "received_at_ms": 1788881821000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881820000,
+                "volume": 10000.0
+              },
+              "sha256": "5bc908a2cddbeb404f4781113942e198755614bc11828657ca50aa85e01cc1c7",
+              "received_at_ms": 1788881881000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881880000,
+                "volume": 10000.0
+              },
+              "sha256": "b23fae9b21ef53984e98d64cc0a206cd2c60d3fc1e718565bdc3c7b20f3a6729",
+              "received_at_ms": 1788881941000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788881940000,
+                "volume": 10000.0
+              },
+              "sha256": "8ce24dd8e4d7b4f0d4ee6da380b63a43e8cbd65cca739031f80d24229ab41000",
+              "received_at_ms": 1788882001000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882000000,
+                "volume": 10000.0
+              },
+              "sha256": "cc3602bdfc3d2e8e50a1086512983e00735ebcd82009f789077a9e78a78f2ba5",
+              "received_at_ms": 1788882061000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882060000,
+                "volume": 10000.0
+              },
+              "sha256": "4a07bd7094abeebcc93da63372defc47ecfd9684530582054887628381b091f5",
+              "received_at_ms": 1788882121000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882120000,
+                "volume": 10000.0
+              },
+              "sha256": "983aae35378ca2b6f5d5330376712e6ef54be114f258c87a0ced1ecc2cf561f9",
+              "received_at_ms": 1788882181000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882180000,
+                "volume": 10000.0
+              },
+              "sha256": "ebfaa634ec00dad89fa3634e8b00787c278c3794941ac7476312762cad6be51d",
+              "received_at_ms": 1788882241000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882240000,
+                "volume": 10000.0
+              },
+              "sha256": "5157ee97d8557d55392a2922bca8f34818c3e82a18c7c9f8d44dc731b723fea0",
+              "received_at_ms": 1788882301000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882300000,
+                "volume": 10000.0
+              },
+              "sha256": "0089866194b3c99bf18978a85e4e272d34d14e2c8811814762b6acb47010ff83",
+              "received_at_ms": 1788882361000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882360000,
+                "volume": 10000.0
+              },
+              "sha256": "6b479a1ee56d6596da55e885679217b63f2954cec300b4bb64a3d7ceacedf973",
+              "received_at_ms": 1788882421000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882420000,
+                "volume": 10000.0
+              },
+              "sha256": "b4ceea7863ea606882ceded4460f77537cae3522d626bb71eaaf8d4e4de095b7",
+              "received_at_ms": 1788882481000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882480000,
+                "volume": 10000.0
+              },
+              "sha256": "97a5ba5f2ed758d71b4510d861beb03b814f10611fa15c9731e8dec780346ff2",
+              "received_at_ms": 1788882541000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882540000,
+                "volume": 10000.0
+              },
+              "sha256": "fe600900d0024396c2ac767beade16242e71fb6242425aeb88d12358c05d4342",
+              "received_at_ms": 1788882601000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882600000,
+                "volume": 10000.0
+              },
+              "sha256": "fb5e4990f21081eb757b434369fb7304d1bcd63ca325fc806dc20fa314a81311",
+              "received_at_ms": 1788882661000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882660000,
+                "volume": 10000.0
+              },
+              "sha256": "51d1638bca2425489609ce913ef09db2ff5db44b89a121c530416cb3d18aff21",
+              "received_at_ms": 1788882721000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882720000,
+                "volume": 10000.0
+              },
+              "sha256": "b03be40f62bbb03c9399b475ef2f1cdd1d61b5b763f7214af59387ab6ba9dfcb",
+              "received_at_ms": 1788882781000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882780000,
+                "volume": 10000.0
+              },
+              "sha256": "c18337a28b7921bc6857fe13ba327c75229883a01b77596e13b6acf16984bf98",
+              "received_at_ms": 1788882841000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882840000,
+                "volume": 10000.0
+              },
+              "sha256": "6b502477c3488d8efe0531775867625c1e9d4e3c3c2a50b2a733c82f878547cb",
+              "received_at_ms": 1788882901000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882900000,
+                "volume": 10000.0
+              },
+              "sha256": "7692316c6f27dc197bf77d38ee8115fc36934741fe2284d5c1fd08dcdfc78524",
+              "received_at_ms": 1788882961000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788882960000,
+                "volume": 10000.0
+              },
+              "sha256": "9d4efb6b30610599573a1a16c2944100dba0b7ae09464ad48c18e99bf9bf805c",
+              "received_at_ms": 1788883021000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883020000,
+                "volume": 10000.0
+              },
+              "sha256": "e46c257c0c75a0a7ad2c97ef4a902e9625f6cdb86853716e2e79b733fd442370",
+              "received_at_ms": 1788883081000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883080000,
+                "volume": 10000.0
+              },
+              "sha256": "d34064b2017be86b8b9a9bf13be7c2df736cbcbfbb952c80e58a74c88813b102",
+              "received_at_ms": 1788883141000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883140000,
+                "volume": 10000.0
+              },
+              "sha256": "1dcbee40563d86792781443cb1cceb308d9ca4c686e327f4563da59705357eee",
+              "received_at_ms": 1788883201000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883200000,
+                "volume": 10000.0
+              },
+              "sha256": "72d2772179f96f7ee508fa232c0413281f26b5901cf8e75013b7bec528a34741",
+              "received_at_ms": 1788883261000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883260000,
+                "volume": 10000.0
+              },
+              "sha256": "3d555416b15fb7309e96bd765899d43b6cfc34874acf1cc7e07d6bf7c8b3cd72",
+              "received_at_ms": 1788883321000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883320000,
+                "volume": 10000.0
+              },
+              "sha256": "5f8d06fed5fc86cf9ac342b85a2957814269e480c2320c1e37d97a36c3650b43",
+              "received_at_ms": 1788883381000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883380000,
+                "volume": 10000.0
+              },
+              "sha256": "fe9599f855e18314bd588176a33fa5ef02b92d997372b667a1b79a85ce27df65",
+              "received_at_ms": 1788883441000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883440000,
+                "volume": 10000.0
+              },
+              "sha256": "8a41485c1aaae7d1539a1557e9b3f739f0786afa63631c5722b637d62e55456c",
+              "received_at_ms": 1788883501000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883500000,
+                "volume": 10000.0
+              },
+              "sha256": "6b025c55e466babdda47a69585287844737b868dfe1ea1b2cdad2ad0cae06c52",
+              "received_at_ms": 1788883561000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883560000,
+                "volume": 10000.0
+              },
+              "sha256": "a129a34d7aa96820379154cf8af3efcd045eeccb1b90d785f7267af316effbea",
+              "received_at_ms": 1788883621000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883620000,
+                "volume": 10000.0
+              },
+              "sha256": "15e11bf694af34d63623f57ec87e077e6f00a748ebd81e2307caf7225a0e7f56",
+              "received_at_ms": 1788883681000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883680000,
+                "volume": 10000.0
+              },
+              "sha256": "331d335ad7828c88fe80d91a541b03823f6ba9e9928fc979e10b19f0fbf2c4e7",
+              "received_at_ms": 1788883741000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883740000,
+                "volume": 10000.0
+              },
+              "sha256": "b8723a90145e54f349feb031c5f6fd11a7b5c4492a9bca75e42ce8653fde7bd0",
+              "received_at_ms": 1788883801000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883800000,
+                "volume": 10000.0
+              },
+              "sha256": "bd09b4ee1f327f3cb34879e8bb1412e60432d4743d3cf04dbf16955ed508ecd1",
+              "received_at_ms": 1788883861000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883860000,
+                "volume": 10000.0
+              },
+              "sha256": "40f1b4d476992806863cdf18521663a0020b61641b73eae1c44bf4bb62905c04",
+              "received_at_ms": 1788883921000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883920000,
+                "volume": 10000.0
+              },
+              "sha256": "80a389e8fdae53403ad1c659a24508cc01851ed7ba55655da9cb47e1b57fc80e",
+              "received_at_ms": 1788883981000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788883980000,
+                "volume": 10000.0
+              },
+              "sha256": "da0813d86279a1cd0c026bf7cc20324544f8a23d69d44cdeb5beacb317637de6",
+              "received_at_ms": 1788884041000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884040000,
+                "volume": 10000.0
+              },
+              "sha256": "2d3fbe1a22024ba02d747317e317dedc0343958b52dd5e22499059a37f348475",
+              "received_at_ms": 1788884101000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884100000,
+                "volume": 10000.0
+              },
+              "sha256": "ad431a7723a3b3df49448f28579cbc32a0ff19eef8a2acababee7ce0ba206813",
+              "received_at_ms": 1788884161000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884160000,
+                "volume": 10000.0
+              },
+              "sha256": "01216e74fdeb43b304a39cb513c12c55fb80243e9e022ba560a639e7d248695d",
+              "received_at_ms": 1788884221000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884220000,
+                "volume": 10000.0
+              },
+              "sha256": "935fc7f8cd644738a6674d43dedfdec41d30556f0d7714893ec29c178197e340",
+              "received_at_ms": 1788884281000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884280000,
+                "volume": 10000.0
+              },
+              "sha256": "8a14681379da82960316e60e4af16239929528b3ab144951ffed6b36791a58b3",
+              "received_at_ms": 1788884341000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884340000,
+                "volume": 10000.0
+              },
+              "sha256": "29450b2c755bcd89e5253dd1df9bb3f91dafa6e30a5fa9ac30081d490c324bb9",
+              "received_at_ms": 1788884401000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884400000,
+                "volume": 10000.0
+              },
+              "sha256": "4a981efb8c8813efbafadafda38dfe0de7f3f6abab8616dcac53953fd9af8a3a",
+              "received_at_ms": 1788884461000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884460000,
+                "volume": 10000.0
+              },
+              "sha256": "2277e6abdb615bcc8f4d504c0c0ff12a8cf1aeccea798f059ad50be829d873d7",
+              "received_at_ms": 1788884521000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884520000,
+                "volume": 10000.0
+              },
+              "sha256": "0307059d187192f4be0fa07911194c641fbbffd93b32c324090c3db82a2ca23b",
+              "received_at_ms": 1788884581000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884580000,
+                "volume": 10000.0
+              },
+              "sha256": "a2eaae03307bf32285ad3fe38c2a617612e3f21c445749952da6ae23a80d4366",
+              "received_at_ms": 1788884641000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884640000,
+                "volume": 10000.0
+              },
+              "sha256": "488cdfd650e345b3a84050fce32b937f9b3924a15e5726d09402d25fda220240",
+              "received_at_ms": 1788884701000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884700000,
+                "volume": 10000.0
+              },
+              "sha256": "cbec18b9c39eebd0b99c9d3597574cc9434a59ed40c62d5037eff683f60d23ae",
+              "received_at_ms": 1788884761000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884760000,
+                "volume": 10000.0
+              },
+              "sha256": "9a41fffed8a31689e635b3a8721dd343cd3fea30557b880a31235858f1233f7a",
+              "received_at_ms": 1788884821000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884820000,
+                "volume": 10000.0
+              },
+              "sha256": "e15297ece7fed2fdab6ab4761753251da7b4ffb9bfc237654ef94f66229539b4",
+              "received_at_ms": 1788884881000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884880000,
+                "volume": 10000.0
+              },
+              "sha256": "8c17420c2df52437da1c0c332bbbbe0d8b46d611859799dee54aa44b69227aa3",
+              "received_at_ms": 1788884941000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788884940000,
+                "volume": 10000.0
+              },
+              "sha256": "3aeb47c9c3e412ec9bd3c130f00a17bce5047cdf3420a53ad04a8017022c90bc",
+              "received_at_ms": 1788885001000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788885000000,
+                "volume": 10000.0
+              },
+              "sha256": "148092527e9a19cfaed29d879ad8a707343265b10457d40addf007a45e2e4c35",
+              "received_at_ms": 1788885061000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788885060000,
+                "volume": 10000.0
+              },
+              "sha256": "d325e0ae98dc88f0bb30841c414a9ef147e32b13306941c5e9da824bcf947cb1",
+              "received_at_ms": 1788885121000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788885120000,
+                "volume": 10000.0
+              },
+              "sha256": "027d621b21db791a5918c5e6dc598ae674845be63b66571f893a44b35887a4a4",
+              "received_at_ms": 1788885181000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788885180000,
+                "volume": 10000.0
+              },
+              "sha256": "1e0c336f4850e5c95226977a192b1a560cb575f64154eb16b45550e04fbc8e47",
+              "received_at_ms": 1788885241000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788885240000,
+                "volume": 10000.0
+              },
+              "sha256": "1b5c9fb8b6bc8bfce0244e267b29b8a5646f12443dbb3468373079522668d734",
+              "received_at_ms": 1788885301000
+            },
+            {
+              "payload": {
+                "close": 100.0,
+                "high": 100.2,
+                "low": 99.7,
+                "open": 99.8,
+                "open_at_ms": 1788885300000,
+                "volume": 10000.0
+              },
+              "sha256": "abe850730e3bcb40bf0cefb36538c55b7e576b4e8adc6b54fae451d755a7ef1c",
+              "received_at_ms": 1788885421000
+            }
+          ]
+        }
+      }
+    ],
+    "next": null,
+    "scope": "All stored native stock candles per non-test signal; repeated inventories discover later frame candles"
+  },
+  "now_ms": 1788898200000,
+  "expected": {
+    "stock_history": {
+      "status": "complete",
+      "recorded": 60,
+      "expected": 60,
+      "elapsed_minutes": 60,
+      "unreceived_elapsed_minutes": [],
+      "volume_missing": 0
+    },
+    "modeled_exits": [
+      {
+        "asset": "stock",
+        "rule": "close_5m",
+        "horizon_min": 5,
+        "target_pct": null,
+        "stop_pct": null,
+        "method": "research_v1",
+        "status": "modeled",
+        "exit_reason": "time_close",
+        "exit_minute": 5,
+        "exit_bar_open_ms": 1788874800000,
+        "exit_bar_close_ms": 1788874860000,
+        "price": 100.0,
+        "return_pct": 0.0
+      },
+      {
+        "asset": "stock",
+        "rule": "close_15m",
+        "horizon_min": 15,
+        "target_pct": null,
+        "stop_pct": null,
+        "method": "research_v1",
+        "status": "modeled",
+        "exit_reason": "time_close",
+        "exit_minute": 15,
+        "exit_bar_open_ms": 1788875400000,
+        "exit_bar_close_ms": 1788875460000,
+        "price": 100.0,
+        "return_pct": 0.0
+      },
+      {
+        "asset": "stock",
+        "rule": "close_30m",
+        "horizon_min": 30,
+        "target_pct": null,
+        "stop_pct": null,
+        "method": "research_v1",
+        "status": "modeled",
+        "exit_reason": "time_close",
+        "exit_minute": 30,
+        "exit_bar_open_ms": 1788876300000,
+        "exit_bar_close_ms": 1788876360000,
+        "price": 100.0,
+        "return_pct": 0.0
+      },
+      {
+        "asset": "stock",
+        "rule": "close_60m",
+        "horizon_min": 60,
+        "target_pct": null,
+        "stop_pct": null,
+        "method": "research_v1",
+        "status": "modeled",
+        "exit_reason": "time_close",
+        "exit_minute": 60,
+        "exit_bar_open_ms": 1788878100000,
+        "exit_bar_close_ms": 1788878160000,
+        "price": 100.0,
+        "return_pct": 0.0
+      },
+      {
+        "asset": "stock",
+        "rule": "target_1_stop_0.5_60m",
+        "horizon_min": 60,
+        "target_pct": 1.0,
+        "stop_pct": 0.5,
+        "method": "research_v1",
+        "status": "modeled",
+        "exit_reason": "time_close",
+        "exit_minute": 60,
+        "exit_bar_open_ms": 1788878100000,
+        "exit_bar_close_ms": 1788878160000,
+        "price": 100.0,
+        "return_pct": 0.0
+      },
+      {
+        "asset": "stock",
+        "rule": "target_2_stop_1_60m",
+        "horizon_min": 60,
+        "target_pct": 2.0,
+        "stop_pct": 1.0,
+        "method": "research_v1",
+        "status": "modeled",
+        "exit_reason": "time_close",
+        "exit_minute": 60,
+        "exit_bar_open_ms": 1788878100000,
+        "exit_bar_close_ms": 1788878160000,
+        "price": 100.0,
+        "return_pct": 0.0
+      }
+    ],
+    "extended_stock_history": {
+      "horizon_min": 180,
+      "status": "complete",
+      "recorded": 180,
+      "expected": 180,
+      "missing_elapsed_minutes": [],
+      "return_pct": 0.0,
+      "best_pct": 0.20000000000000018,
+      "worst_pct": -0.30000000000000027,
+      "peak_bar_open_ms": 1788874560000,
+      "dip_bar_open_ms": 1788874560000,
+      "peak_price": 100.2,
+      "dip_price": 99.7,
+      "volume_missing": 0,
+      "record_id": "compact-fixture-BASELINE-1788874560000",
+      "conflicting_bar_open_ms": []
+    },
+    "extended_checkpoints": {
+      "120": {
+        "horizon_min": 120,
+        "status": "complete",
+        "recorded": 120,
+        "expected": 120,
+        "missing_elapsed_minutes": [],
+        "return_pct": 0.0,
+        "best_pct": 0.20000000000000018,
+        "worst_pct": -0.30000000000000027,
+        "peak_bar_open_ms": 1788874560000,
+        "dip_bar_open_ms": 1788874560000,
+        "peak_price": 100.2,
+        "dip_price": 99.7,
+        "volume_missing": 0
+      },
+      "180": {
+        "horizon_min": 180,
+        "status": "complete",
+        "recorded": 180,
+        "expected": 180,
+        "missing_elapsed_minutes": [],
+        "return_pct": 0.0,
+        "best_pct": 0.20000000000000018,
+        "worst_pct": -0.30000000000000027,
+        "peak_bar_open_ms": 1788874560000,
+        "dip_bar_open_ms": 1788874560000,
+        "peak_price": 100.2,
+        "dip_price": 99.7,
+        "volume_missing": 0
+      }
+    }
+  }
+}

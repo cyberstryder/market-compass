@@ -1,7 +1,7 @@
 # Morning research and native-candle import
 
 The collector reads Morning's authenticated `/api/compass/history` endpoint using
-the existing scoped integration token. Separate `events` and `research` streams
+the existing scoped integration token. Separate `events`, `research` and `stock` streams
 export all available non-test history in ordered pages of up to 20 source events.
 No 14/45-day truncation is applied to this history route. Requests are bounded to
 8 MiB and timed out. The collector reads up to five pages per stream per cycle,
@@ -21,7 +21,8 @@ created by this importer.
 Validation is pinned to Morning's `Event` (schema 1/2) and `ResearchBatch` (schema 3)
 models at source commit `f459740a452a3cdf17fbb62af3d38edc1fc63c4d`. The two modules in
 `compass/morning_schema` are copied unchanged apart from provenance comments.
-Source protocol upgrades require explicit matching validation and fixture review.
+The stock inventory stream also preserves direct v1.3 frame candle writes; see
+`morning-native-reconciliation.md`. Source protocol upgrades require explicit matching validation and fixture review.
 Synthetic fixtures were generated from that source's own test helpers.
 
 The Connected Projects transfer panel shows counts, per-stream status and last
