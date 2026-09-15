@@ -20,6 +20,7 @@ from .instruments import future_root
 from .futures_replay import ReplayBars
 from .futures_ingress import IngressProbe
 from .futures_writer import FuturesWriter
+from .feed_loop import FeedLoop
 from .universe import focus_symbols, data_symbols
 from .research import collect as collect_research
 from .vendor_schedule import matrix_target, matrix_health
@@ -214,7 +215,12 @@ class Collectors:
         targets,symbols=self.future_targets()
         self.db.health("databento_futures","connecting","GLBX.MDP3 explicit contracts: "+", ".join(symbols))
         def run():
-            client=db.Live(key=self.cfg.databento,heartbeat_interval_s=15,reconnect_policy="none",slow_reader_behavior="warn")
+            feed_loop=FeedLoop("CME")
+            try:
+                client=db.Live(key=self.cfg.databento,heartbeat_interval_s=15,reconnect_policy="none",slow_reader_behavior="warn",loop=feed_loop.loop)
+            except BaseException:
+                feed_loop.close()
+                raise
             self.live=client
             last={}
             writer=FuturesWriter(self,"CME")
@@ -225,14 +231,16 @@ class Collectors:
                 if isinstance(r,db.ErrorMsg):
                     raise FeedError("Databento stream: "+redacted_detail(r.err,(self.cfg.databento,)))
                 if isinstance(r,db.SymbolMappingMsg):
-                    with self.db.tx() as c:
-                        raw=str(r.stype_in_symbol)
-                        target=next((t for t in targets if t["raw_symbol"]==raw),None)
-                        self.db.append(c,"mapping","databento",raw,time.time(),
-                            {"instrument_id":r.instrument_id,"input":target["configured_symbol"] if target else raw,"output":raw})
-                        if target:
-                            self.db.put(c,"contract:"+target["root"],{**target,"instrument_id":r.instrument_id,
-                                "resolved_symbol":f"{raw}@{r.instrument_id}","mapping_source":"databento live mapping","at":time.time()})
+                    raw,iid=str(r.stype_in_symbol),r.instrument_id
+                    def save_mapping(raw=raw,iid=iid):
+                        with self.db.tx() as c:
+                            target=next((t for t in targets if t["raw_symbol"]==raw),None)
+                            self.db.append(c,"mapping","databento",raw,time.time(),
+                                {"instrument_id":iid,"input":target["configured_symbol"] if target else raw,"output":raw})
+                            if target:
+                                self.db.put(c,"contract:"+target["root"],{**target,"instrument_id":iid,
+                                    "resolved_symbol":f"{raw}@{iid}","mapping_source":"databento live mapping","at":time.time()})
+                    writer.metadata(save_mapping)
                     return
                 iid=getattr(r,"instrument_id",None)
                 alias=client.symbology_map.get(iid)
@@ -246,7 +254,7 @@ class Collectors:
                 elif isinstance(r,db.MBP1Msg) and time.monotonic()-last.get(symbol,0)>.25:
                     level=r.levels[0]
                     if level.bid_px<9e18 and level.ask_px<9e18:
-                        probe.writing(symbol,lambda: writer.quote("databento",symbol,{"ts":t,"bid":level.bid_px/1e9,"ask":level.ask_px/1e9,"bid_size":level.bid_sz,"ask_size":level.ask_sz},iid))
+                        probe.writing(symbol,lambda: writer.quote("databento",symbol,{"ts":t,"bid":level.bid_px/1e9,"ask":level.ask_px/1e9,"bid_size":level.bid_sz,"ask_size":level.ask_sz,"callback_at":time.time()},iid))
                     last[symbol]=time.monotonic()
                 if time.monotonic()-last.get("health",0)>5:
                     writer.metadata(lambda stamp=t:self.db.health("databento_futures","receiving","Contract ID retained; BBO sampled up to 4 Hz",stamp,monotonic_source=True))
@@ -267,7 +275,9 @@ class Collectors:
             finally:
                 client.stop()
                 try: replay.flush()
-                finally: writer.close()
+                finally:
+                    try: writer.close()
+                    finally: feed_loop.close()
             if errors: raise FeedError("Databento callback failure: "+errors[0])
         try:
             task=asyncio.create_task(asyncio.to_thread(run))
@@ -473,46 +483,24 @@ class Collectors:
         async with websockets.connect("wss://socket.massive.com/options",max_queue=8192,ping_interval=20) as ws:
             await ws.send(json.dumps({"action":"auth","params":self.cfg.massive}))
             self.db.health("option_stream","authenticating","Waiting for Massive authentication acknowledgement")
-            auth_deadline=time.monotonic()+15
-            subscribed=set()
-            authenticated=False
-            last={}
-            while True:
-                if not authenticated and time.monotonic()>auth_deadline:
-                    raise FeedError("Massive authentication acknowledgement timed out; reconnecting")
-                wanted=set(self.option_symbols)
-                if authenticated:
-                    for action,syms in [("unsubscribe",subscribed-wanted),("subscribe",wanted-subscribed)]:
-                        if syms: await ws.send(json.dumps({"action":action,"params":",".join(f"{k}.{s}" for s in sorted(syms) for k in ["T","Q"])}))
-                    subscribed=wanted
-                try: raw=await asyncio.wait_for(ws.recv(),10)
-                except asyncio.TimeoutError:
-                    if not authenticated: raise FeedError("Massive authentication acknowledgement timed out; reconnecting") from None
-                    continue
-                for x in json.loads(raw):
-                    if x.get("status") in {"auth_failed","error","not_authorized","max_connections"} or x.get("ev")=="error":
-                        raise FeedError("Massive options "+redacted_detail(x.get("status") or "error")+": "+redacted_detail(x.get("message","subscription rejected"),(self.cfg.massive,),180))
-                    if x.get("status")=="auth_success":
-                        authenticated=True
-                        self.db.health("option_stream","connected","Authenticated; waiting for selected-contract events")
-                    symbol,t=x.get("sym"),ts(x.get("t"))
-                    if x.get("ev")=="Q" and time.monotonic()-last.get(symbol,0)>1:
-                        await asyncio.to_thread(self.quote,"massive",symbol,{"ts":t,"bid":x.get("bp"),"ask":x.get("ap"),"bid_size":x.get("bs",0),"ask_size":x.get("as",0)})
-                        last[symbol]=time.monotonic()
-                    if x.get("ev")=="T" and t:
-                        await asyncio.to_thread(self.option_trade,symbol,t,x)
-                    if t and time.monotonic()-last.get("health",0)>5:
-                        await asyncio.to_thread(self.db.health,"option_stream","receiving","Selected-contract trades; $100k large-print filter; not full-market unusual activity",t,contracts=len(subscribed))
-                        last["health"]=time.monotonic()
+            from .option_stream import consume, OptionStreamError
+            try:
+                await consume(ws,self)
+            except OptionStreamError as error:
+                raise FeedError(str(error)) from None
 
     def option_trade(self,symbol,t,x):
+        self.option_trade_batch([(symbol,t,x)])
+
+    def option_trade_batch(self,items):
         with self.db.tx() as c:
-            key=identity("option_trade",symbol,t,x.get("i"),x.get("q"),x)
-            added=self.db.append(c,"option_trade","massive",symbol,t,x,key)
-            premium=float(x.get("p",0))*float(x.get("s",0))*100
-            if added and premium>=100000:
-                self.db.append(c,"flow","massive",symbol,t,{"premium":premium,"size":x.get("s"),"price":x.get("p"),
-                    "classification":"Large print; opening/closing and intent unknown","scope":"Selected contracts only","raw":x},"flow:"+key)
+            for symbol,t,x in items:
+                key=identity("option_trade",symbol,t,x.get("i"),x.get("q"),x)
+                added=self.db.append(c,"option_trade","massive",symbol,t,x,key)
+                premium=float(x.get("p",0))*float(x.get("s",0))*100
+                if added and premium>=100000:
+                    self.db.append(c,"flow","massive",symbol,t,{"premium":premium,"size":x.get("s"),"price":x.get("p"),
+                        "classification":"Large print; opening/closing and intent unknown","scope":"Selected contracts only","raw":x},"flow:"+key)
 
     async def matrix_request(self,path,label):
         # A shared lock spaces request starts across flow, matrices and research.
