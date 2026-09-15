@@ -58,9 +58,9 @@ async def recover(collector):
             return dict(symbol=symbol,status='unavailable',http_status=code,error=type(exc).__name__)
     results=await asyncio.gather(*(fetch(s) for s in selected))
     opra=await recover_alpaca(collector,[r['symbol'] for r in results if r.get('fresh_rows',0)==0])
-    report=dict(at=time.time(),requests=len(selected),waiting=waiting,truncated=truncated,results=results,opra_results=opra,
+    report=dict(at=time.time(),requests=len(selected),opra_requests=int(bool(opra)),waiting=waiting,truncated=truncated,results=results,opra_results=opra,
         backoff_until=getattr(collector,'option_recovery_backoff',0),
-        note='Open intraday observations only; max four requests per cycle, five-second per-contract cooldown, two-second timeout. Only original quotes still fresh at receipt; no historical gap rewriting.')
+        note='Open intraday observations only; max four Massive requests plus one OPRA batch per cycle, five-second per-contract cooldown, two-second timeout. Only original quotes still fresh at receipt; no historical gap rewriting.')
     await asyncio.to_thread(collector.db.health,'option_recovery','running','Bounded original-timestamp quote recovery',None,**report)
     if results:LOG.info('Option recovery: %s',__import__('json').dumps(report,sort_keys=True))
 
