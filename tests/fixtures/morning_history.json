@@ -1,0 +1,838 @@
+{
+  "signal": {
+    "schema_version": 2,
+    "event_type": "signal",
+    "event_id": "migration-fixture-signal",
+    "signal": {
+      "signal_id": "migration-fixture",
+      "ticker": "NASDAQ:DEMO",
+      "stream_id": "fixture",
+      "script_version": "1.1.0",
+      "logic_mode": "legacy_confirmed",
+      "setup": "STANDARD_ORB",
+      "timeframe_min": 1,
+      "signal_at_ms": 1788874500000,
+      "bar_open_ms": 1788874440000,
+      "price": 100.0,
+      "settings": {
+        "orb_bars": 5,
+        "alert_window": 60,
+        "fast_open": true,
+        "fast_min_bar": 2,
+        "require_rvol": false,
+        "rvol_threshold": 1.2,
+        "ema_fast": 9,
+        "ema_slow": 21,
+        "checkpoints": true
+      },
+      "features": {
+        "rvol": 1.5,
+        "volume": 10000.0,
+        "vwap": 99.5,
+        "ema_fast": 99.7,
+        "ema_slow": 99.3,
+        "orb_high": 99.9,
+        "orb_low": 98.5,
+        "bar_count": 6
+      },
+      "is_test": false
+    },
+    "observation": null
+  },
+  "checkpoint": {
+    "schema_version": 2,
+    "event_type": "checkpoint",
+    "event_id": "migration-fixture-60",
+    "signal": {
+      "signal_id": "migration-fixture",
+      "ticker": "NASDAQ:DEMO",
+      "stream_id": "fixture",
+      "script_version": "1.1.0",
+      "logic_mode": "legacy_confirmed",
+      "setup": "STANDARD_ORB",
+      "timeframe_min": 1,
+      "signal_at_ms": 1788874500000,
+      "bar_open_ms": 1788874440000,
+      "price": 100.0,
+      "settings": {
+        "orb_bars": 5,
+        "alert_window": 60,
+        "fast_open": true,
+        "fast_min_bar": 2,
+        "require_rvol": false,
+        "rvol_threshold": 1.2,
+        "ema_fast": 9,
+        "ema_slow": 21,
+        "checkpoints": true
+      },
+      "features": {
+        "rvol": 1.5,
+        "volume": 10000.0,
+        "vwap": 99.5,
+        "ema_fast": 99.7,
+        "ema_slow": 99.3,
+        "orb_high": 99.9,
+        "orb_low": 98.5,
+        "bar_count": 6
+      },
+      "is_test": false
+    },
+    "observation": {
+      "horizon_min": 60,
+      "observed_at_ms": 1788878100000,
+      "price": 100.0,
+      "window_high": 100.1,
+      "window_low": 99.9,
+      "peak_at_ms": 1788874560000,
+      "dip_at_ms": 1788874560000,
+      "hit_1_ms": null,
+      "hit_2_ms": null,
+      "hit_3_ms": null,
+      "bars_observed": 60,
+      "continuous": true
+    },
+    "stock_bars": [
+      {
+        "open_at_ms": 1788874500000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874560000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874620000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874680000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874740000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874800000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874860000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874920000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874980000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875040000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875100000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875160000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875220000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875280000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875340000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875400000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875460000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875520000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875580000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875640000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875700000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875760000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875820000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875880000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788875940000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876000000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876060000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876120000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876180000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876240000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876300000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876360000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876420000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876480000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876540000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876600000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876660000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876720000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876780000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876840000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876900000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788876960000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877020000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877080000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877140000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877200000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877260000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877320000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877380000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877440000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877500000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877560000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877620000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877680000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877740000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877800000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877860000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877920000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788877980000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788878040000,
+        "open": 100.0,
+        "high": 100.1,
+        "low": 99.9,
+        "close": 100.0,
+        "volume": 10000.0
+      }
+    ]
+  },
+  "research": {
+    "schema_version": 3,
+    "event_type": "research",
+    "event_id": "research-fixture-research-1788874560000-1",
+    "observed_at_ms": 1788874560000,
+    "part": 1,
+    "session": {
+      "session_id": "research-fixture",
+      "ticker": "NASDAQ:DEMO",
+      "stream_id": "fixture",
+      "script_version": "1.2.0",
+      "logic_mode": "legacy_confirmed",
+      "timeframe_min": 1,
+      "session_open_ms": 1788874200000,
+      "activated_at_ms": 1788874200000,
+      "settings": {
+        "orb_bars": 5,
+        "alert_window": 60,
+        "fast_open": true,
+        "fast_min_bar": 2,
+        "require_rvol": false,
+        "rvol_threshold": 1.2,
+        "ema_fast": 9,
+        "ema_slow": 21,
+        "checkpoints": true
+      },
+      "policy": {
+        "version": "shadow_v1",
+        "candidate_window_min": 180,
+        "followup_min": 180,
+        "delayed_bars": 3,
+        "max_extension_pct": 1.0,
+        "pullback_pct": 0.3,
+        "reclaim_wait_min": 20,
+        "reclaim_cooldown_min": 10
+      },
+      "is_test": false
+    },
+    "bars": [
+      {
+        "open_at_ms": 1788874200000,
+        "open": 99.8,
+        "high": 100.2,
+        "low": 99.7,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874260000,
+        "open": 99.8,
+        "high": 100.2,
+        "low": 99.7,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874320000,
+        "open": 99.8,
+        "high": 100.2,
+        "low": 99.7,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874380000,
+        "open": 99.8,
+        "high": 100.2,
+        "low": 99.7,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874440000,
+        "open": 99.8,
+        "high": 100.2,
+        "low": 99.7,
+        "close": 100.0,
+        "volume": 10000.0
+      },
+      {
+        "open_at_ms": 1788874500000,
+        "open": 99.8,
+        "high": 100.2,
+        "low": 99.7,
+        "close": 100.0,
+        "volume": 10000.0
+      }
+    ],
+    "records": [
+      {
+        "record_id": "research-fixture-BASELINE-1788874560000",
+        "kind": "BASELINE",
+        "at_ms": 1788874560000,
+        "price": 100.0,
+        "previous_close": 99.8,
+        "features": {
+          "rvol": 1.5,
+          "volume": 10000.0,
+          "vwap": 99.5,
+          "ema_fast": 99.7,
+          "ema_slow": 99.3,
+          "orb_high": 99.9,
+          "orb_low": 98.5,
+          "bar_count": 6
+        },
+        "filters": {
+          "trade_window": true,
+          "above_orb": true,
+          "above_vwap": true,
+          "ema_trend": true,
+          "volume_ok": true,
+          "green": true,
+          "vwap_cross": false,
+          "ema_cross": false,
+          "ema_rising": true,
+          "fast_window": true,
+          "already_triggered": false
+        },
+        "anchor_at_ms": null,
+        "anchor_price": null,
+        "source_signal_id": "research-fixture-live",
+        "baseline_setup": "STANDARD_ORB"
+      },
+      {
+        "record_id": "research-fixture-BLOCKED_ORB-1788874560000",
+        "kind": "BLOCKED_ORB",
+        "at_ms": 1788874560000,
+        "price": 100.0,
+        "previous_close": 99.8,
+        "features": {
+          "rvol": 1.5,
+          "volume": 10000.0,
+          "vwap": 99.5,
+          "ema_fast": 99.7,
+          "ema_slow": 99.8,
+          "orb_high": 99.9,
+          "orb_low": 98.5,
+          "bar_count": 6
+        },
+        "filters": {
+          "trade_window": true,
+          "above_orb": true,
+          "above_vwap": true,
+          "ema_trend": false,
+          "volume_ok": true,
+          "green": true,
+          "vwap_cross": false,
+          "ema_cross": false,
+          "ema_rising": true,
+          "fast_window": true,
+          "already_triggered": false
+        },
+        "anchor_at_ms": null,
+        "anchor_price": null,
+        "source_signal_id": null,
+        "baseline_setup": null
+      },
+      {
+        "record_id": "research-fixture-BLOCKED_FAST-1788874560000",
+        "kind": "BLOCKED_FAST",
+        "at_ms": 1788874560000,
+        "price": 100.0,
+        "previous_close": 99.8,
+        "features": {
+          "rvol": 1.5,
+          "volume": 10000.0,
+          "vwap": 99.5,
+          "ema_fast": 99.7,
+          "ema_slow": 99.3,
+          "orb_high": 99.9,
+          "orb_low": 98.5,
+          "bar_count": 6
+        },
+        "filters": {
+          "trade_window": true,
+          "above_orb": true,
+          "above_vwap": true,
+          "ema_trend": true,
+          "volume_ok": false,
+          "green": true,
+          "vwap_cross": true,
+          "ema_cross": false,
+          "ema_rising": true,
+          "fast_window": true,
+          "already_triggered": false
+        },
+        "anchor_at_ms": null,
+        "anchor_price": null,
+        "source_signal_id": null,
+        "baseline_setup": null
+      },
+      {
+        "record_id": "research-fixture-DELAYED_CONFIRM-1788874560000",
+        "kind": "DELAYED_CONFIRM",
+        "at_ms": 1788874560000,
+        "price": 100.0,
+        "previous_close": 99.8,
+        "features": {
+          "rvol": 1.5,
+          "volume": 10000.0,
+          "vwap": 99.5,
+          "ema_fast": 99.7,
+          "ema_slow": 99.3,
+          "orb_high": 99.9,
+          "orb_low": 98.5,
+          "bar_count": 6
+        },
+        "filters": {
+          "trade_window": true,
+          "above_orb": true,
+          "above_vwap": true,
+          "ema_trend": true,
+          "volume_ok": true,
+          "green": true,
+          "vwap_cross": false,
+          "ema_cross": false,
+          "ema_rising": true,
+          "fast_window": true,
+          "already_triggered": false
+        },
+        "anchor_at_ms": 1788874500000,
+        "anchor_price": 99.9,
+        "source_signal_id": null,
+        "baseline_setup": null
+      },
+      {
+        "record_id": "research-fixture-PULLBACK_RECLAIM-1788874560000",
+        "kind": "PULLBACK_RECLAIM",
+        "at_ms": 1788874560000,
+        "price": 100.0,
+        "previous_close": 99.8,
+        "features": {
+          "rvol": 1.5,
+          "volume": 10000.0,
+          "vwap": 99.5,
+          "ema_fast": 99.7,
+          "ema_slow": 99.3,
+          "orb_high": 99.9,
+          "orb_low": 98.5,
+          "bar_count": 6
+        },
+        "filters": {
+          "trade_window": true,
+          "above_orb": true,
+          "above_vwap": true,
+          "ema_trend": true,
+          "volume_ok": true,
+          "green": true,
+          "vwap_cross": false,
+          "ema_cross": true,
+          "ema_rising": true,
+          "fast_window": true,
+          "already_triggered": false
+        },
+        "anchor_at_ms": 1788874500000,
+        "anchor_price": 99.9,
+        "source_signal_id": null,
+        "baseline_setup": null
+      }
+    ]
+  }
+}

@@ -240,7 +240,8 @@ def snapshot(db, c, cfg, now):
             "streams": streams, "strategy_behavior_changed": False})
     recent = c.execute(select(records).order_by(records.c.source_ts.desc()).limit(200)).mappings().all()
     from .strategy_tracking import snapshot as tracking_snapshot
-    return {"mode": "observe_only", "migration": tracking_snapshot(db, c), "projects": status, "records": [
+    from .morning_history import snapshot as history_snapshot
+    return {"mode": "observe_only", "history_import": history_snapshot(db, c, now), "migration": tracking_snapshot(db, c), "projects": status, "records": [
         {"project": r["project"], **{k:v for k,v in r["payload"].items() if k != "option_samples"},
          "option_sample_count": len(r["payload"].get("option_samples", [])),
          "first_seen": r["first_seen"], "updated": r["updated"],
@@ -381,4 +382,3 @@ def install(app, db, cfg):
             raise HTTPException(422, "Invalid futures observation") from None
         return JSONResponse({"status": "accepted" if inserted else "duplicate", "id": row["id"],
             "mode": "observe_only", "broker_order_sent": False}, status_code=202 if inserted else 200)
-
