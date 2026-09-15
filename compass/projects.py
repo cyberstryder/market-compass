@@ -110,6 +110,8 @@ def ingest(db, c, project, row, now=None, notify=False):
         return False
     if old and (old["symbol"] != row["symbol"] or old["source_ts"] != row["source_ts"]):
         raise ValueError("Source identity changed")
+    from .strategy_tracking import register
+    register(db, c, project, row, now)
     captured = old["context"] if old else (
         context_for(db, c, row["symbol"], now) if now - row["source_ts"] <= 60 else
         {"captured_at": now, "purpose": "historical_import", "timing_note":
@@ -237,7 +239,8 @@ def snapshot(db, c, cfg, now):
         status.append({**health,"project": project, "name": name, "status": state, "record_count": count,
             "streams": streams, "strategy_behavior_changed": False})
     recent = c.execute(select(records).order_by(records.c.source_ts.desc()).limit(200)).mappings().all()
-    return {"mode": "observe_only", "projects": status, "records": [
+    from .strategy_tracking import snapshot as tracking_snapshot
+    return {"mode": "observe_only", "migration": tracking_snapshot(db, c), "projects": status, "records": [
         {"project": r["project"], **{k:v for k,v in r["payload"].items() if k != "option_samples"},
          "option_sample_count": len(r["payload"].get("option_samples", [])),
          "first_seen": r["first_seen"], "updated": r["updated"],
@@ -378,3 +381,4 @@ def install(app, db, cfg):
             raise HTTPException(422, "Invalid futures observation") from None
         return JSONResponse({"status": "accepted" if inserted else "duplicate", "id": row["id"],
             "mode": "observe_only", "broker_order_sent": False}, status_code=202 if inserted else 200)
+
