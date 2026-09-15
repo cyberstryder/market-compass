@@ -181,16 +181,16 @@ class OptionIdeas:
                 last_option_ts=oq['ts'],last_underlying_ts=q['ts'],waiting_reason=None,
                 chain_asof=chain.get('asof'),chain_source=chain.get('source'),
                 pagination_complete=chain.get('complete'),last_quote=oq,last_underlying_quote=q,
-                observation_model='paired-recorded-quotes-v1')
+                observation_model='paired-recorded-quotes-v2')
             self.notify(c,p,now,'new')
         self.save(c,p,now)
 
     def observe(self, c, p, now):
-        if p.get('observation_model') != 'paired-recorded-quotes-v1':
+        if p.get('observation_model') not in ('paired-recorded-quotes-v1','paired-recorded-quotes-v2'):
             return self.observe_pair(c,p,now)
         from .quote_path import recorded_path
-        option_path,ot,oc=recorded_path(self.db,c,p['contract']['symbol'],max(p['last_option_ts'],p['opened_at']),now)
-        stock_path,ut,uc=recorded_path(self.db,c,p['underlying'],max(p['last_underlying_ts'],p['opened_at']),now)
+        option_path,ot,oc=recorded_path(self.db,c,p['contract']['symbol'],max(p.get('seen_option_ts',p['last_option_ts']),p['opened_at']),now)
+        stock_path,ut,uc=recorded_path(self.db,c,p['underlying'],max(p.get('seen_underlying_ts',p['last_underlying_ts']),p['opened_at']),now)
         p['archive_check']={'option':oc,'underlying':uc}
         # Do not consume beyond either stream's loaded prefix.
         frontier=min([now]+([option_path[-1]['ts']] if ot and option_path else [])+
@@ -198,7 +198,7 @@ class OptionIdeas:
         if (ot and not option_path) or (ut and not stock_path):
             p['gap_detail']={'reason':'archive_batch_has_no_usable_quotes'}
             return self.finish(c,p,now,'observation_gap')
-        oq=p['last_quote'];uq=p['last_underlying_quote']
+        oq=p.get('seen_option_quote',p['last_quote']);uq=p.get('seen_underlying_quote',p['last_underlying_quote'])
         timeline=sorted([(q['ts'],0,q) for q in option_path if q['ts']<=frontier]+
                         [(q['ts'],1,q) for q in stock_path if q['ts']<=frontier],key=lambda x:(x[0],x[1]))
         stock_times={t for t,k,_ in timeline if k==1}
@@ -217,13 +217,25 @@ class OptionIdeas:
     def observe_pair(self, c, p, now, oq=None, uq=None):
         oq = oq if oq is not None else self.db.get(c,'quote:'+p['contract']['symbol'])
         uq = uq if uq is not None else self.db.get(c,'quote:'+p['underlying'])
-        if (now-p['last_option_ts']>MAX_GAP and (not current(oq,now) or oq['ts']-p['last_option_ts']>MAX_GAP)
-                or now-p['last_underlying_ts']>MAX_GAP and (not current(uq,now) or uq['ts']-p['last_underlying_ts']>MAX_GAP)):
-            p['gap_detail']={'checked_at':now,'option_last':p['last_option_ts'],
-                'underlying_last':p['last_underlying_ts'],'option_next':(oq or {}).get('ts'),
+        independent=p.get('observation_model')=='paired-recorded-quotes-v2'
+        option_last=p.get('seen_option_ts',p['last_option_ts']) if independent else p['last_option_ts']
+        underlying_last=p.get('seen_underlying_ts',p['last_underlying_ts']) if independent else p['last_underlying_ts']
+        if (now-option_last>MAX_GAP and (not current(oq,now) or oq['ts']-option_last>MAX_GAP)
+                or now-underlying_last>MAX_GAP and (not current(uq,now) or uq['ts']-underlying_last>MAX_GAP)):
+            p['gap_detail']={'checked_at':now,'option_last':option_last,
+                'underlying_last':underlying_last,'option_next':(oq or {}).get('ts'),
                 'underlying_next':(uq or {}).get('ts'),'reason':'missing_continuous_paired_quotes'}
             self.finish(c,p,now,'observation_gap')
             return
+        if independent:
+            # Receipt continuity belongs to each feed, even when the other is
+            # too old for a paired mark. Never value an exit with stale quotes.
+            if current(oq,now) and oq['ts']>=option_last:
+                p.update(seen_option_ts=oq['ts'],seen_option_quote=oq)
+            if current(uq,now) and uq['ts']>=underlying_last:
+                p.update(seen_underlying_ts=uq['ts'],seen_underlying_quote=uq)
+            if not current(oq,now) or not current(uq,now):
+                p['unpaired_checks']=p.get('unpaired_checks',0)+1
         if not current(oq,now) or not current(uq,now):
             return
         if oq['ts']>p['flatten_at']+5 or uq['ts']>p['flatten_at']+5:
@@ -234,7 +246,7 @@ class OptionIdeas:
         changed = oq['ts']>p['last_option_ts'] or uq['ts']>p['last_underlying_ts']
         if not changed and now<p['flatten_at']:
             return
-        p['max_gap_seconds'] = max(p['max_gap_seconds'],oq['ts']-p['last_option_ts'],uq['ts']-p['last_underlying_ts'])
+        p['max_gap_seconds'] = max(p['max_gap_seconds'],oq['ts']-option_last,uq['ts']-underlying_last)
         p.update(last_option_ts=oq['ts'],last_underlying_ts=uq['ts'],last_quote=oq,last_underlying_quote=uq)
         p['samples'] += 1
         mark = round(max(0,oq['bid']-SLIPPAGE),2)
