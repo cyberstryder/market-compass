@@ -63,6 +63,14 @@ def capture(db,cfg,now):
             swing_without_flow=sum(not r['payload'].get('flow_confirmed') for r in technical),
             futures_persistence=list(db.prefix(c,'futures_persistence:').values()),
             note='Before/after creation cohorts, not retroactive reclassification or evidence of improvement.')
+        from .option_continuity import cohorts
+        stream_health=db.get(c,'health:option_stream',{})
+        ages=[r['source_age_at_read'] for r in stream_health.get('symbols',{}).values() if r.get('source_age_at_read') is not None]
+        compact_stream={k:v for k,v in stream_health.items() if k!='symbols'}
+        compact_stream['max_source_age_at_read']=max(ages) if ages else None
+        status['reliability']=dict(at=now,since=now-86400,truncated=options_truncated,**cohorts(options),
+            option_stream=compact_stream,
+            recovery=db.get(c,'health:option_recovery',{}))
         from .session_trace import tgt_trace, futures_session_audit
         status['tgt_quote_trace']=tgt_trace(db,c,now)
         status['futures_session_audit']=futures_session_audit(db,c,now)

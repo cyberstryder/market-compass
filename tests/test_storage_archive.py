@@ -51,3 +51,17 @@ def test_storage_report_stale_and_budget_validation(db):
         db.put(c,'storage:report',{'at':1000,'status':'below_threshold'})
         assert snapshot(db,c,2000)['status']=='stale'
     with pytest.raises(ValueError,match='storage'):Config(local=True,storage_budget_gb=float('nan')).validate()
+
+
+def test_isolated_restore_preserves_every_event_and_rejects_existing_destination(tmp_path):
+    from compass.archive import restore_isolated
+    from compass.store import Store
+    db=Store('sqlite:///'+str(tmp_path/'source.sqlite'));db.initialize()
+    with db.tx() as c:
+        db.append(c,'quote','fixture','ABC',123,{'ts':123,'bid':10,'ask':11})
+    archive=tmp_path/'events.gz';export(db,archive)
+    destination=tmp_path/'restored.sqlite'
+    result=restore_isolated(archive,destination)
+    assert result['restore_verified'] and result['rows']==1 and not result['durable_copy_verified']
+    with pytest.raises(ValueError,match='already exists'):restore_isolated(archive,destination)
+    db.engine.dispose()

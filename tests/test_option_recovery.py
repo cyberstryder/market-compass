@@ -75,7 +75,7 @@ def test_live_recovery_retains_original_clock_and_source(monkeypatch):
     assert saved[0][0]=='massive_rest'
     q=saved[0][1][0][1]
     assert q['ts']==NOW-1 and q['recovery_fetched_at']==NOW
-    assert q['collection_version']=='option-reliability-v2'
+    assert q['collection_version']=='option-reliability-v3'
 
 
 def test_alpaca_recovery_explicit_opra_preserves_clock(monkeypatch):

@@ -102,7 +102,8 @@ class OptionIdeas:
         if not hours or not hours[0] <= now < hours[1]-1800:
             return
         key = identity(VERSION, signal['id'])
-        p = dict(id=key, source_id=signal['id'], version=VERSION,
+        from .option_continuity import VERSION as continuity_version
+        p = dict(id=key, source_id=signal['id'], version=VERSION,continuity_policy=continuity_version,
             underlying=signal['symbol'], underlying_side=signal['side'], strategy=signal['strategy'],
             matched_rules=signal.get('matched_rules',[signal.get('rule')]),
             reason=signal.get('reason'), evidence=signal.get('evidence',[])[:20],
@@ -167,12 +168,20 @@ class OptionIdeas:
         p['waiting_reason'] = 'No recent eligible listed contract' if not p['candidates'] else 'Waiting for a fresh, liquid streamed option quote'
         stream = self.db.get(c,'options:subscriptions',{})
         selected = set(stream.get('symbols',[])) if 0 <= now-stream.get('at',0) <= 15 else set()
+        from .option_continuity import assess, VERSION
+        p['continuity_policy']=VERSION
+        p['continuity_checks']={}
+        p['continuity_candidates_truncated']=len(p['candidates'])>8
         choices = []
-        for o in p['candidates']:
+        for o in p['candidates'][:8]:
             oq = self.db.get(c,'quote:'+o['symbol'])
             if o['symbol'] in selected and liquid(oq,now) and oq['ts']>=p['signal_time']:
-                choices.append((o,oq))
+                quality=assess(self.db,c,o['symbol'],now)
+                p['continuity_checks'][o['symbol']]=quality
+                if quality['ready']: choices.append((o,oq))
+                else: p['waiting_reason']='Waiting for option quote continuity'
         if choices:
+            choices.sort(key=lambda pair:(p['continuity_checks'][pair[0]['symbol']]['max_gap_seconds'],-p['continuity_checks'][pair[0]['symbol']]['samples']))
             o,oq = choices[0]
             entry = round(oq['ask']+SLIPPAGE,2)
             p.update(status='open',contract=o,opened_at=now,entry=entry,

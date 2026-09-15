@@ -86,12 +86,54 @@ def main():
     p = commands.add_parser('export'); p.add_argument('--destination', required=True)
     p.add_argument('--after-id', type=int, default=0); p.add_argument('--max-rows', type=int, default=100000)
     p = commands.add_parser('verify'); p.add_argument('path')
+    p = commands.add_parser('restore-isolated'); p.add_argument('path'); p.add_argument('--destination',required=True)
     args = parser.parse_args()
-    if args.command == 'verify': result = verify(args.path)
+    if args.command == 'restore-isolated': result = restore_isolated(args.path,args.destination)
+    elif args.command == 'verify': result = verify(args.path)
     else:
         db = Store(os.environ['DATABASE_URL'])
         try: result = export(db, args.destination, args.after_id, args.max_rows)
         finally: db.engine.dispose()
     print(json.dumps(result, sort_keys=True))
+
+
+
+def restore_isolated(path, destination):
+    """Restore event history into a new SQLite research file, never production."""
+    destination=Path(destination)
+    if destination.exists(): raise ValueError('Restore destination already exists')
+    manifest=verify(path)
+    destination.parent.mkdir(parents=True,exist_ok=True)
+    fd,temporary=tempfile.mkstemp(prefix='.compass-restore-',dir=destination.parent)
+    os.close(fd)
+    restored=Store('sqlite:///'+temporary)
+    try:
+        restored.initialize()
+        digest=hashlib.sha256(); count=0
+        with restored.tx() as c, gzip.open(path,'rb') as source:
+            header=json.loads(source.readline())
+            if header != {'format':FORMAT,'after_id':manifest['after_id'],'through_id':manifest['through_id']}:
+                raise ValueError('Archive changed during restore')
+            for line in source:
+                value=json.loads(line)
+                if value.get('type')=='manifest':
+                    if digest.hexdigest()!=manifest['sha256'] or count!=manifest['count'] or value['sha256']!=manifest['sha256'] or source.read(1):
+                        raise ValueError('Archive changed during restore')
+                    break
+                digest.update(line);count+=1
+                c.execute(events.insert().values(**value))
+            else: raise ValueError('Missing manifest during restore')
+            # Read every reconstructed event in order and compare canonical bytes.
+            replay_digest=hashlib.sha256()
+            for row in c.execute(select(events).order_by(events.c.id)).mappings():
+                replay_digest.update(encode(dict(row)))
+            if replay_digest.hexdigest()!=manifest['sha256']: raise ValueError('Restored content mismatch')
+        restored.engine.dispose()
+        os.link(temporary,destination)
+        return dict(path=str(destination),rows=count,sha256=manifest['sha256'],restore_verified=True,
+            durable_copy_verified=False,scope='Isolated event history only; not a full database or strategy-state restore')
+    finally:
+        restored.engine.dispose()
+        Path(temporary).unlink(missing_ok=True)
 
 if __name__ == '__main__': main()

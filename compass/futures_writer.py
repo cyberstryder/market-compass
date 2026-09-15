@@ -93,7 +93,7 @@ class FuturesWriter:
                     try:
                         if hasattr(self.collector,'db'):
                             with self.collector.db.tx() as c:
-                                self.collector.db.put(c,'futures_persistence:'+self.stream,dict(at=time.time(),
+                                self.collector.db.put(c,'futures_persistence:'+self.stream,dict(at=time.time(),stream=self.stream,
                                     queue_depth=len(self.jobs),max_queue_age=self.max_queue_age,
                                     window_max_queue_age=self.window_max_queue_age,
                                     window_max_write_seconds=self.window_max_write_seconds,

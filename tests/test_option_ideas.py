@@ -49,6 +49,11 @@ def seed(db,c,side='long',now=NOW,subscribed=True):
     db.put(c,'quote:SPY',q(now))
     db.put(c,'chain:SPY',dict(asof=now,source='massive',complete=True,contracts=[o]))
     db.put(c,'quote:'+o['symbol'],q(now,2,2.05))
+    from compass.store import events
+    for offset in (25,20,15,10,5,0):
+        quote=q(now-offset,2,2.05)
+        db.append(c,'quote','massive',o['symbol'],now-offset,quote)
+        c.execute(events.update().where(events.c.symbol==o['symbol'],events.c.ts==now-offset).values(received=now-offset+.1))
     db.put(c,'options:subscriptions',dict(at=now,symbols=[o['symbol']] if subscribed else []))
     return o
 
