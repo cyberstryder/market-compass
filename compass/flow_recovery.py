@@ -1,5 +1,6 @@
 """Durable rotating reconciliation of a paginated, moving vendor feed."""
 import math
+import logging
 from datetime import date,timedelta
 from sqlalchemy import select,func
 from .market import day
@@ -69,6 +70,7 @@ async def collect(collector,now,page_cap=5):
     today=day(now)
     yesterday=(date.fromisoformat(today)-timedelta(days=1)).isoformat()
     requests=0
+    request_pages=[]
     current_rows=0
     rejected=0
 
@@ -80,6 +82,7 @@ async def collect(collector,now,page_cap=5):
         part=flow_page(data,received)
         cp=ingest(db,label,page,part,received)
         requests+=1
+        request_pages.append(dict(day=label,page=page))
         current_rows+=part["raw_count"]
         rejected+=part["rejected"]
         return part,cp
@@ -92,9 +95,10 @@ async def collect(collector,now,page_cap=5):
         await fetch(yesterday,max(1,min(old["next_page"],old.get("page_ceiling",1))))
     # Resume with one overlapping page. Offset pagination can move; never claim an
     # atomic snapshot. Repeated full passes repair shifted pages and corrections.
-    overlap=1 if page_cap-requests>=2 else 0
-    page=max(2,min(cp["next_page"]-overlap,cp["page_ceiling"]))
     depth_cap = page_cap-1 if page_cap>=3 else page_cap
+    # The final head recheck cannot consume the slot needed to advance recovery.
+    overlap=1 if depth_cap-requests>=2 else 0
+    page=max(2,min(cp["next_page"]-overlap,cp["page_ceiling"]))
     while requests<depth_cap and page<=cp["page_ceiling"] and first["total"]:
         part,cp=await fetch(today,page)
         if page>=cp["page_ceiling"] or not part["raw_count"]: break
@@ -110,7 +114,7 @@ async def collect(collector,now,page_cap=5):
         summary={"source":"tradermatrix","received":first['received'],"day":today,
             **{k:first.get(k) for k in ('cached','vendor_stale','vendor_refresh_seconds')},
             "source_ts":max((r["source_ts"] for r in rows),default=None),"rows":rows,
-            "total":cp["total"],"pages":requests,"page_cap":page_cap,"fetched_rows":current_rows,
+            "total":cp["total"],"pages":requests,"page_cap":page_cap,"request_pages":request_pages,"fetched_rows":current_rows,
             "unique_rows":cp["unique_rows"],"rejected":rejected,
             "limited":cp["status"]!="reconciled","status":"partial" if cp["status"]!="reconciled" or rejected else "available",
             "filters":first["filters"],"aggregates":first["aggregates"],"recovery":cp,
@@ -131,4 +135,7 @@ async def collect(collector,now,page_cap=5):
     db.health("tradermatrix_flow",state if state in ('poll_stale','clock_error','vendor_stale') else summary['status'],
         f"{today}: {cp['unique_rows']} unique rows / {cp['total']} vendor count; estimated gap {cp['estimated_gap']}; resume page {cp['next_page']}; event freshness {state}",
         summary["source_ts"], poll_ts=summary['received'], freshness=summary['freshness'])
+    logging.getLogger('uvicorn.error').info(
+        'Flow recovery cycle: page_cap=%s requests=%s pages=%s resume=%s unique=%s estimated_gap=%s',
+        page_cap,requests,request_pages,cp['next_page'],cp['unique_rows'],cp['estimated_gap'])
     return summary

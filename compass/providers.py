@@ -94,8 +94,12 @@ class Collectors:
             self.supervise("option_stream",bool(c.massive),self.options),
             self.supervise("option_subscriptions",bool(c.massive),self.refresh_option_subscriptions,2),
             self.supervise("tradermatrix",bool(c.matrix),self.matrix,2),
-            self.supervise("tradermatrix_flow",bool(c.matrix),lambda:collect_flow(self,time.time(),page_cap=2),10),
+            self.supervise("tradermatrix_flow",bool(c.matrix),self.flow,20),
             self.supervise("research",bool(c.matrix and c.research),lambda:collect_research(self),1)]+extra_tasks(self)
+
+    async def flow(self):
+        # Head, optional yesterday page, forward recovery, then a head recheck.
+        return await collect_flow(self,time.time(),page_cap=4)
 
     @property
     def alpaca_headers(self):

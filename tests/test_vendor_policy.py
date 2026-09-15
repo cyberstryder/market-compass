@@ -79,3 +79,46 @@ def test_unknown_and_invalid_snapshot_clocks_fail_closed():
     for source in (None, 0, NOW+1, 1e30):
         check=context_check(dict(cache_policy=CACHE_POLICY,source_ts=source,received=NOW),NOW)
         assert not check['eligible_for_context']
+
+
+def test_three_request_budget_advances_instead_of_repeating_overlap(db):
+    from test_open_fixes import flow_fixture
+    calls=[]
+    async def request(path,label):
+        page=int(path.split('page=')[1].split('&')[0]); calls.append(page)
+        return flow_fixture(page,500),NOW
+    collector=SimpleNamespace(db=db,matrix_request=request)
+    for _ in range(4): asyncio.run(collect(collector,NOW,page_cap=3))
+    assert calls==[1,2,1,1,3,1,1,4,1,1,5,1]
+    with db.tx() as c:
+        assert c.execute(select(func.count()).select_from(flow_records)).scalar_one()==500
+
+
+def test_production_flow_budget_rechecks_head_and_advances_with_prior_day_gap(db,monkeypatch):
+    from compass.providers import Collectors
+    from compass.flow_recovery import ingest
+    from compass.vendor import flow_page
+    from test_open_fixes import flow_fixture
+    from urllib.parse import parse_qs,urlparse
+    from datetime import timedelta,date
+    from compass.market import day
+    prior=(date.fromisoformat(day(NOW))-timedelta(days=1)).isoformat()
+    ingest(db,prior,1,flow_page(flow_fixture(1,800),NOW-86400),NOW-86400)
+    calls=[]
+    monkeypatch.setattr('compass.providers.time.time',lambda:NOW)
+    async def run():
+        collector=Collectors(db,Config(local=True))
+        async def request(path,label):
+            params=parse_qs(urlparse(path).query)
+            page=int(params['page'][0]);frame=params['timeFrame'][0];calls.append((frame,page))
+            return flow_fixture(page,800),NOW
+        collector.matrix_request=request
+        try:
+            first=await collector.flow(); second=await collector.flow()
+            return first,second
+        finally: await collector.close()
+    first,second=asyncio.run(run())
+    assert first['page_cap']==second['page_cap']==4
+    assert calls==[('today',1),('yesterday',2),('today',2),('today',1),
+                   ('today',1),('yesterday',3),('today',3),('today',1)]
+    assert second['recovery']['next_page']==4 and second['unique_rows']==300
