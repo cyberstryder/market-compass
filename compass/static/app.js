@@ -205,6 +205,14 @@ function renderSecondary(data){
   (secondaryReport?' · Selected review period '+when(data.window.since)+' through '+when(data.window.through)+'.':' · Rolling 30-day comparison.')+
   (data.window?.truncated?' · Comparison limited to the latest 5,000 reviews.':'');
  $('#secondary-stats').innerHTML=Object.entries(labels).map(([key,label])=>'<div class="stat"><div class="label">'+label+'</div><div class="value">'+num(count[key]||0,0)+'</div><div class="fine">'+(key==='supported'?'Selected by the secondary rules':key==='insufficient_data'?'Excluded from directional comparison':'Retained for comparison')+'</div></div>').join('');
+ const opening=data.morning_opening;
+ if(opening){
+  const tested=opening.rows||[];
+  let box=$('#morning-opening-comparison');
+  if(!box){box=document.createElement('div');box.id='morning-opening-comparison';$('#secondary-stats').after(box);}
+  box.innerHTML='<h3>Morning opening review · forward test</h3><p class="fine">Separate opening-range review after at least five complete minutes. Existing alerts remain authoritative. '+tested.length+' recorded reviews'+(opening.truncated?' (latest 500)':'')+'. Checked '+esc(when(opening.at))+'.</p>'+
+   (tested.length?table(['Symbol','Opening review','Baseline at same time','Baseline final','15m / 30m / 60m'],tested.slice(0,50).map(r=>[esc(r.symbol),esc(r.decision.verdict),esc(r.baseline_at_capture.verdict),esc(r.baseline_final||'pending'),['15','30','60'].map(h=>esc((r.measurements.horizons[h]||{}).status||'unmeasurable')).join(' / ')])):'<p>Awaiting new opening-session alerts. Earlier decisions are not rescored.</p>');
+ }
  const horizon=Number($('#secondary-horizon').value);
  const readiness=data.data_readiness||{}, readinessStale=!readiness.at||Date.now()/1000-readiness.at>45;
  const coverage=(readiness.rows||[]).filter(r=>filter==='all'||r.projects.includes(filter));

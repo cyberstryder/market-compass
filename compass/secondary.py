@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import Column, Float, Index, Integer, JSON, String, Table, and_, delete, func, or_, select, update
 
+from . import morning_opening
 from .market import day, fresh, is_open, session, number
 from .futures import futures_session, active_selection
 from .instruments import ROOTS, INDEX_FUTURES
@@ -451,6 +452,7 @@ class Secondary:
         inputs['captured_at'] = now
         inputs['clock_basis'] = 'Local clock after input reads; source timestamps remain unchanged'
         decision = assess(candidate, inputs, now)
+        morning_opening.consider(self.db,c,candidate,inputs,decision,now)
         deadline = candidate.get("available_at", candidate["source_ts"]) + 60
         if (decision["timely"] and decision["missing"] and not decision["rejections"]
                 and candidate.get("side") in ("long", "short") and now < deadline):
@@ -596,6 +598,7 @@ class Secondary:
                     now = self.clock() if self.clock else time.time()
                 m = advance_recorded_measurement(self.db, c, row["measurements"], row["side"], quote, now)
                 c.execute(update(reviews).where(reviews.c.id == row["id"]).values(measurements=m, tracking=m["state"], updated=now))
+            morning_opening.tick(self.db,c,now)
             self.db.put(c, "secondary:status", {"at": now, "version": VERSION, "enabled": True,
                 "alerts_enabled": self.cfg.secondary_alerts, "events_checked": len(batch),
                 "active_measured": len(active),
@@ -603,7 +606,8 @@ class Secondary:
                 "originals_changed": False})
             report = self.db.get(c, "secondary:report", {})
             if now - report.get("at", 0) >= 60:
-                self.db.put(c, "secondary:report", build_report(self.db, c, now))
+                self.db.put(c, "secondary:report", {**build_report(self.db, c, now),
+                    "morning_opening": morning_opening.report(self.db,c,now)})
 
     async def run(self):
         if not self.cfg.secondary:
@@ -743,6 +747,7 @@ def snapshot(db, c, now, clock=None):
         "report_at": report["at"], "window": report["window"], "counts": report["counts"],
         "comparisons": report["comparisons"], "reviews": [dict(r) for r in recent], "originals_changed": False,
         "data_readiness": coverage,
+        "morning_opening": report.get("morning_opening"),
         "pending": [{"project": r["project"], "symbol": r["candidate"]["symbol"], "deadline": r["deadline"],
             "first_seen": r["first_seen"], "attempts": r["attempts"], "missing": r["missing"]} for r in waiting],
         "method": "Same secondary-decision quote and checkpoint for original-candidate and selected subsets. Missing data are excluded, never losses.",
