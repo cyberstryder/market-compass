@@ -7,6 +7,7 @@ def env(k, default=""):
 
 @dataclass
 class Config:
+    storage_budget_gb: float = field(default_factory=lambda: float(env("STORAGE_BUDGET_GB","0")))
     db: str = field(default_factory=lambda: env("DATABASE_URL","sqlite:///compass.db"))
     role: str = field(default_factory=lambda: env("COMPASS_ROLE","all"))
     password: str = field(default_factory=lambda: env("COMPASS_PASSWORD"))
@@ -65,6 +66,9 @@ class Config:
         return tuple(s for s in symbols((*self.stocks, *extra)) if s not in EXCLUDED_STOCKS)
 
     def validate(self):
+        import math
+        if not math.isfinite(self.storage_budget_gb) or self.storage_budget_gb < 0:
+            raise ValueError("Invalid storage budget")
         if self.obsidian_url:
             from .obsidian import validate_url
             validate_url(self.obsidian_url)

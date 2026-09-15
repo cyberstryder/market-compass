@@ -21,7 +21,7 @@ def decorate_health(items, workers, markets, now):
         h["source_asof"] = clock(h.get("source_ts"))
         h["age"] = round(now - h["source_ts"], 1) if h.get("source_ts") is not None else None
         h["check_age"] = round(now - h.get("checked_at", 0), 1)
-        role = "collector" if h["name"] in COLLECTORS or h["name"].startswith("databento_") else "engine" if h["name"] in {"engine", "discord", "secondary"} else "web"
+        role = "collector" if h["name"] in COLLECTORS or h["name"].startswith("databento_") else "engine" if h["name"] in {"engine", "discord", "secondary", "storage"} else "web"
         worker = workers.get("worker:" + role) or workers.get("worker:all")
         h["heartbeat_age"] = round(now - worker["at"], 1) if worker else None
         h["recorded_status"] = h["status"]
@@ -39,9 +39,9 @@ def decorate_health(items, workers, markets, now):
                 h.update(status="waiting", detail="Session open; no source event observed yet. " + h["detail"])
             elif h["age"] > 20 or h["age"] < -1:
                 h.update(status="stale", detail="Session open; source events are not current. " + h["detail"])
-        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine", "secondary", "secondary_data", "project_morning", "project_smoothers"}:
+        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine", "secondary", "secondary_data", "project_morning", "project_smoothers", "storage"}:
             limit = {"alpaca_history": 3900,"futures_history":3900, "option_chain": 300, "tradermatrix": 180,"tradermatrix_flow":180, "engine": 20,
-                "secondary": 20, "secondary_data": 45, "project_morning": 25, "project_smoothers": 25}[h["name"]]
+                "secondary": 20, "secondary_data": 45, "project_morning": 25, "project_smoothers": 25, "storage": 900}[h["name"]]
             if h["check_age"] > limit:
                 h.update(status="stale", detail="Worker is alive but this task has stopped reporting. " + h["detail"])
             elif h['name'] == 'tradermatrix_flow':

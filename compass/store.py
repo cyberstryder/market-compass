@@ -34,7 +34,7 @@ class Store:
     def __init__(self,url):
         url=url.replace("postgres://","postgresql+psycopg://",1).replace("postgresql://","postgresql+psycopg://",1)
         self.engine=create_engine(url,pool_pre_ping=True,
-            connect_args={"check_same_thread":False,"timeout":30} if url.startswith("sqlite") else {})
+            connect_args={"check_same_thread":False,"timeout":30} if url.startswith("sqlite") else {"connect_timeout":10})
         self.insert=sq_insert if url.startswith("sqlite") else pg_insert
 
     def initialize(self):
@@ -120,3 +120,4 @@ class Store:
             if source_ts is not None:
                 value["source_ts"]=max(source_ts,previous.get("source_ts") or source_ts) if monotonic_source else source_ts
             self.put(c,"health:"+name,value)
+
