@@ -20,8 +20,8 @@ def counts(rows):
         reasons=dict(Counter(r.get('exit_reason','none') for r in rows)))
 
 
-def option_validation(rows):
-    paired=[r for r in rows if r.get('observation_model')=='paired-recorded-quotes-v1']
+def option_validation(rows, model='paired-recorded-quotes-v1'):
+    paired=[r for r in rows if r.get('observation_model')==model]
     closed=sum(r['status']=='closed' for r in paired)
     unresolved=sum(r['status']=='unresolved' for r in paired)
     return dict(status='gaps_detected' if unresolved else 'completed_cycle_observed' if closed else 'awaiting_completed_cycle',
@@ -44,6 +44,7 @@ def capture(db,cfg,now):
         status=dict(at=now,since=since,options_truncated=options_truncated,options_before=counts(old),options_after=counts(new),
             options_replay_models=dict(Counter(r.get('observation_model','not_opened') for r in new)),
             options_observation_validation=option_validation(new),
+            options_v2_validation=option_validation(new,'paired-recorded-quotes-v2'),
             option_subscription=db.get(c,'options:subscriptions',{}),
             swing_scan=dict(Counter(r.get('status','unknown') for r in scans)),
             swing_daily_ready=sum(r.get('daily_ready',False) for r in scans),swing_symbols=len(scans),
@@ -51,12 +52,15 @@ def capture(db,cfg,now):
             swing_without_flow=sum(not r['payload'].get('flow_confirmed') for r in technical),
             futures_persistence=list(db.prefix(c,'futures_persistence:').values()),
             note='Before/after creation cohorts, not retroactive reclassification or evidence of improvement.')
+        from .session_trace import tgt_trace, futures_session_audit
+        status['tgt_quote_trace']=tgt_trace(db,c,now)
+        status['futures_session_audit']=futures_session_audit(db,c,now)
         # Bounded failure details expose which stream went missing.
-        status['option_failures']=[{k:r.get(k) for k in ('id','underlying','contract','created_at','finished_at','exit_reason','gap_detail','observation_model')}
+        status['option_failures']=[{k:r.get(k) for k in ('id','underlying','contract','created_at','finished_at','exit_reason','gap_detail','archive_check','observation_model')}
             for r in options if r['status']=='unresolved'][:12]
         future_rows=c.execute(select(trials.c.payload).where(trials.c.status=='unresolved')
             .order_by(trials.c.started.desc()).limit(20)).scalars().all()
-        status['futures_gaps']=[{k:r.get(k) for k in ('symbol','started','finished','gap_detail','observation_model')}
+        status['futures_gaps']=[{k:r.get(k) for k in ('symbol','started','finished','gap_detail','archive_check','observation_model')}
             for r in future_rows]
         recent=c.execute(select(reviews.c.verdict).where(reviews.c.decided_at>=since)).scalars().all()
         status['secondary_after']=dict(Counter(recent))

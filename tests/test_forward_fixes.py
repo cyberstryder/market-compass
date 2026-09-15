@@ -64,3 +64,47 @@ def test_option_validation_requires_actual_paired_observation_cycle():
     paired={'status':'closed','observation_model':'paired-recorded-quotes-v1'}
     assert option_validation([paired])['status']=='completed_cycle_observed'
     assert option_validation([paired,{**paired,'status':'unresolved'}])['status']=='gaps_detected'
+
+
+def test_v2_tracks_alternating_feeds_without_using_stale_pairs(db,cfg,monkeypatch):
+    service=opened(db,cfg)
+    with db.tx() as c:
+        p=rows(c)[0]
+        assert p['observation_model']=='paired-recorded-quotes-v2'
+        samples=p['samples']
+    for delta,symbol in [(7,CALL),(14,'SPY'),(21,CALL)]:
+        stamp=NOW+delta
+        monkeypatch.setattr('compass.store.time.time',lambda:stamp)
+        value=q(stamp,2,2.05) if symbol==CALL else q(stamp)
+        with db.tx() as c:
+            db.append(c,'quote','test',symbol,stamp,value)
+            db.put(c,'quote:'+symbol,value)
+            service.tick(c,stamp)
+            p=rows(c)[0]
+            assert p['status']=='open'
+            assert p['samples']==samples  # No mark with a stale counterpart.
+    archive(db,monkeypatch,NOW+28,3.5)
+    with db.tx() as c:
+        service.tick(c,NOW+28);p=rows(c)[0]
+        assert p['status']=='closed' and p['exit_reason']=='premium_target'
+        assert p['max_gap_seconds']<=14
+
+
+def test_v2_true_single_feed_silence_is_still_unresolved(db,cfg,monkeypatch):
+    service=opened(db,cfg)
+    for delta in (4,8,12,16):
+        stamp=NOW+delta
+        monkeypatch.setattr('compass.store.time.time',lambda:stamp)
+        with db.tx() as c:
+            db.append(c,'quote','test','SPY',stamp,q(stamp))
+            db.put(c,'quote:SPY',q(stamp));service.tick(c,stamp)
+    with db.tx() as c:
+        p=rows(c)[0]
+        assert p['status']=='unresolved' and p['pnl'] is None
+        assert p['gap_detail']['option_last']==NOW
+
+
+def test_validation_separates_old_and_corrected_option_models():
+    from compass.forward_audit import option_validation
+    data=[{'status':'closed','observation_model':'paired-recorded-quotes-v1'}]
+    assert option_validation(data,'paired-recorded-quotes-v2')['status']=='awaiting_completed_cycle'
