@@ -19,6 +19,7 @@ from .futures import selection
 from .instruments import future_root
 from .futures_replay import ReplayBars
 from .futures_ingress import IngressProbe
+from .futures_writer import FuturesWriter
 from .universe import focus_symbols, data_symbols
 from .research import collect as collect_research
 from .vendor_schedule import matrix_target, matrix_health
@@ -205,7 +206,8 @@ class Collectors:
             client=db.Live(key=self.cfg.databento,heartbeat_interval_s=15,reconnect_policy="none",slow_reader_behavior="warn")
             self.live=client
             last={}
-            replay=ReplayBars(self)
+            writer=FuturesWriter(self,"CME")
+            replay=ReplayBars(writer)
             probe=IngressProbe("CME")
             def callback(r):
                 replay.flush_due()
@@ -233,7 +235,7 @@ class Collectors:
                 elif isinstance(r,db.MBP1Msg) and time.monotonic()-last.get(symbol,0)>.25:
                     level=r.levels[0]
                     if level.bid_px<9e18 and level.ask_px<9e18:
-                        probe.writing(symbol,lambda: self.quote("databento",symbol,{"ts":t,"bid":level.bid_px/1e9,"ask":level.ask_px/1e9,"bid_size":level.bid_sz,"ask_size":level.ask_sz},iid))
+                        probe.writing(symbol,lambda: writer.quote("databento",symbol,{"ts":t,"bid":level.bid_px/1e9,"ask":level.ask_px/1e9,"bid_size":level.bid_sz,"ask_size":level.ask_sz},iid))
                     last[symbol]=time.monotonic()
                 if time.monotonic()-last.get("health",0)>5:
                     self.db.health("databento_futures","receiving","Contract ID retained; BBO sampled up to 4 Hz",t,monotonic_source=True)
@@ -243,16 +245,18 @@ class Collectors:
                 errors.append(str(error) if isinstance(error,FeedError) else type(error).__name__)
                 self.db.health("databento_futures","error","Callback failed; stopping stream for controlled reconnect")
                 client.terminate()
-            client.add_callback(probe.wrap(callback),exception_callback=on_error)
-            client.subscribe(dataset="GLBX.MDP3",schema="ohlcv-1m",stype_in="raw_symbol",symbols=symbols,
-                start=(datetime.now(timezone.utc)-timedelta(hours=23)).isoformat())
-            client.subscribe(dataset="GLBX.MDP3",schema="mbp-1",stype_in="raw_symbol",symbols=symbols)
-            client.start()
-            self.db.health("databento_futures","connected","Waiting for CME market events: "+", ".join(symbols))
-            try: client.block_for_close()
+            try:
+                client.add_callback(probe.wrap(callback),exception_callback=on_error)
+                client.subscribe(dataset="GLBX.MDP3",schema="ohlcv-1m",stype_in="raw_symbol",symbols=symbols,
+                    start=(datetime.now(timezone.utc)-timedelta(hours=23)).isoformat())
+                client.subscribe(dataset="GLBX.MDP3",schema="mbp-1",stype_in="raw_symbol",symbols=symbols)
+                client.start()
+                self.db.health("databento_futures","connected","Waiting for CME market events: "+", ".join(symbols))
+                client.block_for_close()
             finally:
                 client.stop()
-                replay.flush()
+                try: replay.flush()
+                finally: writer.close()
             if errors: raise FeedError("Databento callback failure: "+errors[0])
         try:
             task=asyncio.create_task(asyncio.to_thread(run))

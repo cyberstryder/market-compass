@@ -12,6 +12,7 @@ from .futures import risk_day, lead_contract
 from .diagnostics import redacted_detail
 from .futures_replay import ReplayBars
 from .futures_ingress import IngressProbe
+from .futures_writer import FuturesWriter
 
 
 def subscription_plan(db,c,aliases,now):
@@ -55,16 +56,18 @@ async def collect_group(collector, exchange, aliases):
     db, cfg = collector.db, collector.cfg
     while True:
         client = None
+        writer = None
         errors = []
         try:
             client = sdk.Live(key=cfg.databento, heartbeat_interval_s=15, reconnect_policy='none', slow_reader_behavior='warn')
             collector.extra_live[exchange] = client
             last = {}
             mappings = {}
-            replay = ReplayBars(collector)
-            probe = IngressProbe(exchange)
             with db.tx() as c:
                 stype,requested,targets=subscription_plan(db,c,aliases,time.time())
+            writer = FuturesWriter(collector,exchange)
+            replay = ReplayBars(writer)
+            probe = IngressProbe(exchange)
             db.health(name, 'connecting', 'Checking live access: '+', '.join(requested))
             logging.getLogger('uvicorn.error').info('Optional futures subscription: exchange=%s stype=%s symbols=%s',exchange,stype,requested)
 
@@ -129,7 +132,7 @@ async def collect_group(collector, exchange, aliases):
                 elif isinstance(r, sdk.MBP1Msg) and time.monotonic()-last.get(symbol,0)>.25:
                     level = r.levels[0]
                     if level.bid_px<9e18 and level.ask_px<9e18:
-                        probe.writing(symbol,lambda: collector.quote('databento',symbol,{'ts':stamp,'bid':level.bid_px/1e9,'ask':level.ask_px/1e9,
+                        probe.writing(symbol,lambda: writer.quote('databento',symbol,{'ts':stamp,'bid':level.bid_px/1e9,'ask':level.ask_px/1e9,
                             'bid_size':level.bid_sz,'ask_size':level.ask_sz},iid))
                         if mappings.get(root,{}).get('iid')==iid and time.monotonic()-last.get('health:'+root,0)>5:
                             if activate(root, time.time(), stamp):
@@ -155,7 +158,8 @@ async def collect_group(collector, exchange, aliases):
                     client.block_for_close()
                 finally:
                     client.stop()
-                    replay.flush()
+                    try: replay.flush()
+                    finally: writer.close()
 
             await asyncio.to_thread(run)
             if errors:
@@ -168,6 +172,8 @@ async def collect_group(collector, exchange, aliases):
             db.health(name, 'error', redacted_detail(error,(cfg.databento,),220)+'; index stream unaffected; retry in 120s')
         finally:
             if client: client.stop()
+            if writer and not writer.closed:
+                await asyncio.to_thread(writer.close)
             collector.extra_live.pop(exchange, None)
         await asyncio.sleep(120)
 
