@@ -15,7 +15,7 @@ def parse_quotes(data, now):
         stamp=ts(raw.get('sip_timestamp'))
         q=dict(ts=stamp,bid=raw.get('bid_price'),ask=raw.get('ask_price'),
             bid_size=raw.get('bid_size'),ask_size=raw.get('ask_size'),
-            recovery='live_rest',recovery_fetched_at=now,collection_version='option-reliability-v1')
+            recovery='live_rest',recovery_fetched_at=now,collection_version='option-reliability-v2')
         if stamp is not None and 0<=now-stamp<=5 and fresh(q,now):rows[stamp]=q
     return [rows[k] for k in sorted(rows)]
 
@@ -57,8 +57,40 @@ async def recover(collector):
             if code in (401,403,429):collector.option_recovery_backoff=time.time()+(300 if code in (401,403) else 60)
             return dict(symbol=symbol,status='unavailable',http_status=code,error=type(exc).__name__)
     results=await asyncio.gather(*(fetch(s) for s in selected))
-    report=dict(at=time.time(),requests=len(selected),waiting=waiting,truncated=truncated,results=results,
+    opra=await recover_alpaca(collector,[r['symbol'] for r in results if r.get('fresh_rows',0)==0])
+    report=dict(at=time.time(),requests=len(selected),waiting=waiting,truncated=truncated,results=results,opra_results=opra,
         backoff_until=getattr(collector,'option_recovery_backoff',0),
         note='Open intraday observations only; max four requests per cycle, five-second per-contract cooldown, two-second timeout. Only original quotes still fresh at receipt; no historical gap rewriting.')
     await asyncio.to_thread(collector.db.health,'option_recovery','running','Bounded original-timestamp quote recovery',None,**report)
     if results:LOG.info('Option recovery: %s',__import__('json').dumps(report,sort_keys=True))
+
+
+async def recover_alpaca(collector, symbols):
+    """One explicit OPRA batch; indicative quotes are never requested."""
+    now=time.time()
+    if (not symbols or not getattr(collector.cfg,'alpaca_key','') or not getattr(collector.cfg,'alpaca_secret','')
+            or now<getattr(collector,'option_opra_backoff',0)):
+        return []
+    wanted={s.removeprefix('O:'):s for s in symbols[:4]}
+    try:
+        data=await asyncio.wait_for(collector.get('https://data.alpaca.markets/v1beta1/options/quotes/latest',
+            headers=collector.alpaca_headers,params={'symbols':','.join(wanted),'feed':'opra'}),2)
+        rows=[];results=[]
+        for raw_symbol,symbol in wanted.items():
+            raw=data.get('quotes',{}).get(raw_symbol,{})
+            stamp=ts(raw.get('t'))
+            at=time.time()
+            q=dict(ts=stamp,bid=raw.get('bp'),ask=raw.get('ap'),bid_size=raw.get('bs'),ask_size=raw.get('as'),
+                recovery='live_rest_opra',recovery_fetched_at=at,collection_version='option-reliability-v2')
+            valid=stamp is not None and 0<=at-stamp<=5 and fresh(q,at)
+            if valid:rows.append((symbol,q,True))
+            results.append(dict(symbol=symbol,status='fresh_quotes' if valid else 'no_fresh_quotes',
+                latest_source_ts=stamp,fresh_rows=int(valid)))
+        if rows:await asyncio.to_thread(collector.quote_batch,'alpaca_opra_recovery',rows)
+        return results
+    except asyncio.CancelledError:raise
+    except Exception as exc:
+        code=getattr(exc,'status_code',None)
+        collector.option_opra_backoff=time.time()+(300 if code in (401,403) else 60)
+        return [dict(status='unavailable',http_status=code,error=type(exc).__name__,feed='opra',
+            backoff_until=collector.option_opra_backoff)]

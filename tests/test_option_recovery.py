@@ -75,4 +75,35 @@ def test_live_recovery_retains_original_clock_and_source(monkeypatch):
     assert saved[0][0]=='massive_rest'
     q=saved[0][1][0][1]
     assert q['ts']==NOW-1 and q['recovery_fetched_at']==NOW
-    assert q['collection_version']=='option-reliability-v1'
+    assert q['collection_version']=='option-reliability-v2'
+
+
+def test_alpaca_recovery_explicit_opra_preserves_clock(monkeypatch):
+    from compass.option_recovery import recover_alpaca
+    from datetime import datetime,timezone
+    monkeypatch.setattr('compass.option_recovery.time.time',lambda:NOW)
+    saved=[]
+    async def get(url,headers,params):
+        assert params['feed']=='opra' and params['symbols']==SYMBOL[2:]
+        return {'quotes':{SYMBOL[2:]:dict(t=datetime.fromtimestamp(NOW-1,timezone.utc).isoformat(),bp=1,ap=1.1,bs=1,**{'as':1})}}
+    c=SimpleNamespace(cfg=SimpleNamespace(alpaca_key='test',alpaca_secret='test'),alpaca_headers={},get=get,
+        quote_batch=lambda source,rows:saved.append((source,rows)))
+    result=asyncio.run(recover_alpaca(c,[SYMBOL]))
+    assert result[0]['fresh_rows']==1 and saved[0][0]=='alpaca_opra_recovery'
+    assert saved[0][1][0][1]['ts']==NOW-1
+
+
+def test_opra_access_failure_backs_off_without_indicative_fallback(monkeypatch):
+    from compass.option_recovery import recover_alpaca
+    from compass.providers import FeedError
+    monkeypatch.setattr('compass.option_recovery.time.time',lambda:NOW)
+    calls=[]
+    async def get(*args,**kwargs):
+        calls.append(kwargs)
+        raise FeedError('forbidden',403)
+    c=SimpleNamespace(cfg=SimpleNamespace(alpaca_key='test',alpaca_secret='test'),alpaca_headers={},get=get)
+    async def run():
+        first=await recover_alpaca(c,[SYMBOL]);second=await recover_alpaca(c,[SYMBOL])
+        assert first[0]['http_status']==403 and second==[]
+    asyncio.run(run())
+    assert len(calls)==1 and c.option_opra_backoff==NOW+300

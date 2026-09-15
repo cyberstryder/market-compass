@@ -25,3 +25,13 @@ unchanged. New observations carry collection_version=option-reliability-v1 and g
 a separate validation count. A completed result is not proof of profitability.
 
 Provider contract: https://massive.com/docs/rest/options/quotes
+
+A second recovery stage makes one Alpaca request for up to four contracts where
+Massive returned no usable fresh quote. It explicitly requests feed=opra; no
+indicative substitution is allowed. The same original-time, five-second freshness
+checks apply. Access failures back off for five minutes, other failures one minute.
+Responses retain provider identity and quote timestamps, including stale timestamps
+in diagnostics. Entries using this collector version are counted separately as
+option-reliability-v2. No provider subscription purchase is performed.
+
+Alpaca contract: https://docs.alpaca.markets/us/reference/optionlatestquotes
