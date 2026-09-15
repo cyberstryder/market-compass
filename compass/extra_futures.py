@@ -13,6 +13,7 @@ from .diagnostics import redacted_detail
 from .futures_replay import ReplayBars
 from .futures_ingress import IngressProbe
 from .futures_writer import FuturesWriter
+from .feed_loop import FeedLoop
 
 
 def subscription_plan(db,c,aliases,now):
@@ -56,10 +57,12 @@ async def collect_group(collector, exchange, aliases):
     db, cfg = collector.db, collector.cfg
     while True:
         client = None
+        feed_loop = None
         writer = None
         errors = []
         try:
-            client = sdk.Live(key=cfg.databento, heartbeat_interval_s=15, reconnect_policy='none', slow_reader_behavior='warn')
+            feed_loop = FeedLoop(exchange)
+            client = sdk.Live(key=cfg.databento, heartbeat_interval_s=15, reconnect_policy='none', slow_reader_behavior='warn', loop=feed_loop.loop)
             collector.extra_live[exchange] = client
             last = {}
             mappings = {}
@@ -71,8 +74,8 @@ async def collect_group(collector, exchange, aliases):
             db.health(name, 'connecting', 'Checking live access: '+', '.join(requested))
             logging.getLogger('uvicorn.error').info('Optional futures subscription: exchange=%s stype=%s symbols=%s',exchange,stype,requested)
 
-            def activate(root, now, quote_ts=None):
-                mapping = mappings[root]
+            def activate(root, now, quote_ts=None, mapping=None):
+                mapping = mapping if mapping is not None else mappings[root]
                 window = mapping_window(mapping['start_ns'], mapping['end_ns'], mapping['observed_at'], now, quote_ts)
                 if window is None:
                     return False
@@ -112,10 +115,12 @@ async def collect_group(collector, exchange, aliases):
                     now = time.time()
                     mappings[root] = {'alias':alias, 'raw':raw, 'iid':r.instrument_id,
                         'start_ns':r.start_ts, 'end_ns':r.end_ts, 'observed_at':now}
-                    activate(root, now)
-                    with db.tx() as c:
-                        db.append(c, 'mapping', 'databento', raw, now,
-                            {'instrument_id':r.instrument_id, 'input':alias, 'output':raw})
+                    def save_mapping(root=root,now=now,mapping=dict(mappings[root])):
+                        activate(root,now,mapping=mapping)
+                        with db.tx() as c:
+                            db.append(c, 'mapping', 'databento', mapping['raw'], now,
+                                {'instrument_id':mapping['iid'], 'input':mapping['alias'], 'output':mapping['raw']})
+                    writer.metadata(save_mapping)
                     return
                 iid = getattr(r, 'instrument_id', None)
                 raw = client.symbology_map.get(iid)
@@ -133,10 +138,10 @@ async def collect_group(collector, exchange, aliases):
                     level = r.levels[0]
                     if level.bid_px<9e18 and level.ask_px<9e18:
                         probe.writing(symbol,lambda: writer.quote('databento',symbol,{'ts':stamp,'bid':level.bid_px/1e9,'ask':level.ask_px/1e9,
-                            'bid_size':level.bid_sz,'ask_size':level.ask_sz},iid))
+                            'bid_size':level.bid_sz,'ask_size':level.ask_sz,'callback_at':time.time()},iid))
                         if mappings.get(root,{}).get('iid')==iid and time.monotonic()-last.get('health:'+root,0)>5:
-                            def record_health(root=root,symbol=symbol,stamp=stamp):
-                                if activate(root,time.time(),stamp):
+                            def record_health(root=root,symbol=symbol,stamp=stamp,mapping=dict(mappings[root])):
+                                if activate(root,time.time(),stamp,mapping):
                                     db.health(name+'_'+root,'receiving','Live access confirmed: '+symbol,stamp,monotonic_source=True)
                             writer.metadata(record_health)
                             last['health:'+root] = time.monotonic()
@@ -176,6 +181,8 @@ async def collect_group(collector, exchange, aliases):
             if client: client.stop()
             if writer and not writer.closed:
                 await asyncio.to_thread(writer.close)
+            if feed_loop:
+                await asyncio.to_thread(feed_loop.close)
             collector.extra_live.pop(exchange, None)
         await asyncio.sleep(120)
 

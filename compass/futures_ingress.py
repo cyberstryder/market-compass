@@ -17,6 +17,8 @@ class IngressProbe:
         self.types = Counter()
         self.max_callback_seconds = 0
         self.max_callback_gap = 0
+        self.window_max_event_age = 0
+        self.window_max_callback_seconds = 0
 
     def quote(self, symbol, record):
         """Called for every mapped MBP1 before the sampling throttle."""
@@ -36,6 +38,7 @@ class IngressProbe:
         row['valid_bbo' if valid else 'invalid_bbo'] += 1
         row.update(last_source_ts=stamp,last_callback_at=now)
         row['max_event_age'] = max(row['max_event_age'],now-stamp)
+        self.window_max_event_age = max(self.window_max_event_age,now-stamp)
         received = getattr(record,'ts_recv',None)
         if received is not None and 0 < received < 9e18:
             row['last_sdk_receive_ts'] = received/1e9
@@ -64,10 +67,15 @@ class IngressProbe:
                 return callback(record)
             finally:
                 self.max_callback_seconds = max(self.max_callback_seconds,self.monotonic()-start)
+                self.window_max_callback_seconds = max(self.window_max_callback_seconds,self.monotonic()-start)
                 if self.monotonic()-self.last_emit >= 30:
                     self.last_emit = self.monotonic()
                     self.emit(dict(stream=self.stream,started=self.started,at=self.clock(),
                         callback_types=dict(self.types),max_callback_seconds=self.max_callback_seconds,
-                        max_callback_gap=self.max_callback_gap,symbols=self.symbols,
+                        max_callback_gap=self.max_callback_gap,symbols={k:dict(v) for k,v in self.symbols.items()},
+                        window_max_event_age=self.window_max_event_age,
+                        window_max_callback_seconds=self.window_max_callback_seconds,
                         basis='Cumulative per connection. SDK receive clock is not local socket arrival. Write calls measure enqueue completion; persistence logs measure background writes. No quotes synthesized.'))
+                    self.window_max_event_age = 0
+                    self.window_max_callback_seconds = 0
         return measured

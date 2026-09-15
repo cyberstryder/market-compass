@@ -32,3 +32,16 @@ def test_probe_counts_invalid_unsampled_quotes_without_writing_or_swallowing_err
     def failed(): raise RuntimeError('fixture')
     with pytest.raises(RuntimeError): probe.writing('MCLV6@1',failed)
     assert probe.symbols['MCLV6@1']['write_calls_completed']==0
+
+
+def test_recent_window_resets_without_erasing_connection_peak():
+    now=[100.0]; rows=[]
+    p=IngressProbe('COMEX',clock=lambda:now[0],monotonic=lambda:now[0],emit=rows.append)
+    def r(t):return SimpleNamespace(ts_event=int(t*1e9),levels=[SimpleNamespace(bid_px=1,ask_px=2,bid_sz=1,ask_sz=1)])
+    f=p.wrap(lambda r:p.quote('MGC',r))
+    now[0]=130;f(r(120))
+    now[0]=160;f(r(160))
+    assert rows[0]['window_max_event_age']==10
+    assert rows[1]['window_max_event_age']==0
+    assert rows[1]['symbols']['MGC']['max_event_age']==10
+    assert rows[0]['symbols']['MGC']['records']==1
