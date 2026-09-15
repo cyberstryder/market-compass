@@ -123,13 +123,16 @@ class Collectors:
     def quote_batch(self,source,items):
         """One transaction per socket batch for latest state and sampled history."""
         with self.db.tx() as c:
+            retained=[]
             for symbol,q,record in items:
                 if not q.get('ts') or number(q.get('bid')) is None or number(q.get('ask')) is None:
                     continue
                 q={**q,'source':source,'symbol':symbol,'received':time.time()}
                 if not self.db.put_quote(c,'quote:'+symbol,q): continue
                 if record:
-                    self.db.append(c,'quote',source,symbol,q['ts'],q,identity('quote',source,symbol,q['ts']))
+                    retained.append((symbol,q))
+
+            self.db.append_quotes(c,source,retained)
 
     def bars(self,source,items,kind="bar"):
         items=sorted((row for row in items if row[1] is not None and

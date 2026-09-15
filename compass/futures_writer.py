@@ -13,6 +13,8 @@ class FuturesWriter:
         self.closed = False
         self.error = None
         self.max_queue_age = 0
+        self.window_max_queue_age = 0
+        self.window_max_write_seconds = 0
         self.max_write_seconds = 0
         self.committed_quotes = 0
         self.last_log = time.monotonic()
@@ -51,7 +53,9 @@ class FuturesWriter:
                     if kind=='quote':
                         while self.jobs and self.jobs[0][0]=='quote' and len(values)<64:
                             values.append(self.jobs.popleft()[1])
-                self.max_queue_age = max(self.max_queue_age,time.time()-queued)
+                queue_age=time.time()-queued
+                self.max_queue_age = max(self.max_queue_age,queue_age)
+                self.window_max_queue_age = max(self.window_max_queue_age,queue_age)
                 started=time.monotonic()
                 if kind=='quote':
                     self.collector.quote_batch('databento',values)
@@ -60,17 +64,24 @@ class FuturesWriter:
                     value()
                 else:
                     self.collector.bars('databento',value)
-                self.max_write_seconds=max(self.max_write_seconds,time.monotonic()-started)
+                write_seconds=time.monotonic()-started
+                self.max_write_seconds=max(self.max_write_seconds,write_seconds)
+                self.window_max_write_seconds=max(self.window_max_write_seconds,write_seconds)
                 if time.monotonic()-self.last_log>=30:
                     self.last_log=time.monotonic()
                     if hasattr(self.collector,'db'):
                         with self.collector.db.tx() as c:
                             self.collector.db.put(c,'futures_persistence:'+self.stream,dict(at=time.time(),
                                 queue_depth=len(self.jobs),max_queue_age=self.max_queue_age,
+                                window_max_queue_age=self.window_max_queue_age,
+                                window_max_write_seconds=self.window_max_write_seconds,
                                 max_write_seconds=self.max_write_seconds,committed_quotes=self.committed_quotes))
                     logging.getLogger('uvicorn.error').info(
-                        'Futures persistence: stream=%s completed_quote_items=%s queue_depth=%s max_queue_age=%s max_write_seconds=%s',
-                        self.stream,self.committed_quotes,len(self.jobs),self.max_queue_age,self.max_write_seconds)
+                        'Futures persistence: stream=%s completed_quote_items=%s queue_depth=%s max_queue_age=%s max_write_seconds=%s window_max_queue_age=%s window_max_write_seconds=%s',
+                        self.stream,self.committed_quotes,len(self.jobs),self.max_queue_age,self.max_write_seconds,
+                        self.window_max_queue_age,self.window_max_write_seconds)
+                    self.window_max_queue_age=0
+                    self.window_max_write_seconds=0
         except Exception as error:
             with self.condition:
                 self.error=error

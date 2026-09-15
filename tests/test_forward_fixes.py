@@ -55,3 +55,12 @@ def test_forward_boundary_is_durable_and_old_records_separate(db,cfg):
     first=capture(db,cfg,NOW+60);second=capture(db,cfg,NOW+120)
     assert first['since']==second['since']==NOW+60
     assert second['options_before']['total']==1 and second['options_after']['total']==0
+
+
+def test_option_validation_requires_actual_paired_observation_cycle():
+    from compass.forward_audit import option_validation
+    assert option_validation([{'status':'excluded'}])['status']=='awaiting_completed_cycle'
+    assert option_validation([{'status':'closed','observation_model':'legacy_latest'}])['closed']==0
+    paired={'status':'closed','observation_model':'paired-recorded-quotes-v1'}
+    assert option_validation([paired])['status']=='completed_cycle_observed'
+    assert option_validation([paired,{**paired,'status':'unresolved'}])['status']=='gaps_detected'

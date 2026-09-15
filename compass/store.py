@@ -56,6 +56,16 @@ class Store:
         return c.execute(q.on_conflict_do_nothing(index_elements=["key"])
             .returning(events.c.id)).first() is not None
 
+    def append_quotes(self,c,source,items):
+        """Persist every accepted sample with bounded inserts, not one SQL call each."""
+        for start in range(0,len(items),500):
+            received=time.time()
+            rows=[dict(key=identity('quote',source,symbol,q['ts']),kind='quote',
+                source=source,symbol=symbol,ts=q['ts'],received=received,payload=q)
+                for symbol,q in items[start:start+500]]
+            c.execute(self.insert(events).values(rows)
+                .on_conflict_do_nothing(index_elements=['key']))
+
     def append_bars(self,c,kind,source,items):
         """Bounded multi-row inserts keep history recovery off the live write path."""
         received=time.time()

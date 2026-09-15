@@ -75,7 +75,7 @@ def plan(collector, now):
             if kind == "minute":
                 needed += [s for s in priority if not technical_ready(technical_context(db, c, s, now), now)]
             needed = sorted(set(needed), key=lambda s: (s not in priority, attempts.get(kind + ":" + s, 0), s))
-            chosen = [s for s in needed if now-attempts.get(kind + ":" + s, 0) >= wait][:8]
+            chosen = [s for s in needed if now-attempts.get(kind + ":" + s, 0) >= (10 if kind == "minute" and s in priority else wait)][:8]
             for s in chosen:
                 attempts[kind + ":" + s] = now
             jobs[kind] = chosen
@@ -91,7 +91,9 @@ async def refresh(collector):
     """
     jobs = await asyncio.to_thread(plan, collector, time.time())
     recovered = []
-    if jobs["quotes"]:
+    async def quotes():
+        if not jobs["quotes"]:
+            return
         data = await asyncio.wait_for(collector.get("https://data.alpaca.markets/v2/stocks/quotes/latest",
             collector.alpaca_headers, {"symbols": ",".join(jobs["quotes"]), "feed": collector.cfg.feed}), timeout=6)
         items = []
@@ -100,10 +102,11 @@ async def refresh(collector):
                 items.append((symbol, dict(ts=ts(q.get("t")), bid=q.get("bp"), ask=q.get("ap"),
                     bid_size=q.get("bs", 0), ask_size=q.get("as", 0)), True))
         await asyncio.to_thread(collector.quote_batch, "alpaca", items)
-    for kind, frame, seconds in (("daily", "1Day", 120*86400), ("minute", "1Min", 3*3600)):
+
+    async def history(kind, frame, seconds):
         wanted = jobs[kind]
         if not wanted:
-            continue
+            return
         now = time.time()
         end = int(now//60)*60-1 if kind == "minute" else int(now//86400)*86400-1
         iso = lambda stamp: datetime.fromtimestamp(stamp, timezone.utc).isoformat()
@@ -117,13 +120,21 @@ async def refresh(collector):
                  for s, bars in data.get("bars", {}).items() if s in wanted for b in bars]
         await asyncio.to_thread(collector.bars, "alpaca", items, "daily" if kind == "daily" else "bar")
         recovered.append(kind + ': ' + ', '.join(s + '=' + str(sum(row[0] == s for row in items)) for s in wanted))
+
+    # Each input has its own timeout and failure boundary. Slow daily history
+    # cannot prevent a pending intraday review from receiving quotes or bars.
+    results = await asyncio.gather(quotes(), history("minute", "1Min", 3*3600),
+        history("daily", "1Day", 120*86400), return_exceptions=True)
+    failures = {kind: type(result).__name__ for kind, result in zip(("quotes", "minute", "daily"), results)
+                if isinstance(result, Exception)}
     if jobs["daily"] or jobs["minute"]:
         def update_coverage():
             with collector.db.tx() as c:
                 return coverage(collector.db, c, collector.cfg, time.time())
         await asyncio.to_thread(update_coverage)
-    await asyncio.to_thread(collector.db.health, "secondary_data", "running",
-        "Connected equity coverage and bounded quote/history recovery; original review records unchanged"
-        + ('; returned bars ' + ' / '.join(recovered) if recovered else '; no history requests this pass'),
-        quote_requests=len(jobs["quotes"]), daily_symbols=len(jobs["daily"]), minute_symbols=len(jobs["minute"]))
-
+    await asyncio.to_thread(collector.db.health, "secondary_data", "partial" if failures else "running",
+        "Independent bounded quote/minute/daily recovery; original review records unchanged"
+        + ('; returned bars ' + ' / '.join(recovered) if recovered else '; no history returned')
+        + ('; failed inputs ' + str(failures) if failures else ''),
+        quote_requests=len(jobs["quotes"]), daily_symbols=len(jobs["daily"]), minute_symbols=len(jobs["minute"]),
+        failures=failures)
