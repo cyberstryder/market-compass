@@ -33,7 +33,9 @@ Not transferred:
 
 Implemented next step: read-only versioned export and resumable Compass pull import
 for raw research batches and native candles; see `morning-history-import.md`.
-Next: source-equivalent coverage/outcome reports, then direct Compass intake.
+Stock coverage/outcome reports and bounded JSON exports are implemented; see
+`morning-stock-reports.md`. Source option/delivery reports and live paired parity
+are still pending, followed by direct Compass intake.
 Compare input IDs,
 late/duplicate events, initial receipt times and all measurement windows. Require
 complete paired forward cohorts and a documented rollback before switching sends.

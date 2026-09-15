@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 import httpx
-from fastapi import FastAPI,HTTPException,Request
+from fastapi import FastAPI,HTTPException,Request,Query
 from fastapi.responses import HTMLResponse,JSONResponse,RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import URLSafeTimedSerializer,BadSignature,SignatureExpired
@@ -37,6 +37,7 @@ from .projects import install as install_projects, run_sources, snapshot as proj
 from .storage_health import run as run_storage_health, snapshot as storage_snapshot
 from .strategy_tracking import run as run_strategy_tracking
 from .morning_history import run as run_morning_history
+from .morning_report import build_report as morning_report, run as run_morning_report
 from .secondary import Secondary, snapshot as secondary_snapshot, reviews as secondary_reviews
 
 def create_app(cfg=None):
@@ -78,6 +79,7 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(run_obsidian(db,cfg)))
             tasks.append(asyncio.create_task(run_strategy_tracking(db)))
             tasks.append(asyncio.create_task(run_storage_health(db,cfg)))
+            tasks.append(asyncio.create_task(run_morning_report(db)))
             from .forward_audit import run as run_forward_audit
             tasks.append(asyncio.create_task(run_forward_audit(db,cfg)))
             from .observation_audit import run as run_observation_audit
@@ -247,6 +249,17 @@ def create_app(cfg=None):
     @app.get("/api/projects")
     def get_projects():
         with db.tx() as c: return projects_snapshot(db,c,cfg,time.time())
+
+    @app.get('/api/projects/morning/report')
+    def get_morning_report(limit:int=Query(100,ge=1,le=200),
+            start:str=Query('',max_length=10),end:str=Query('',max_length=10),
+            ticker:str=Query('',max_length=50,pattern=r'^[A-Za-z0-9_:!.\-]*$'),
+            stream:str=Query('',max_length=32,pattern=r'^[A-Za-z0-9_\-]*$'),download:bool=False):
+        try:
+            with db.tx() as c: report=morning_report(db,c,time.time(),limit,start,end,ticker.upper(),stream)
+        except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+        headers={'Content-Disposition':'attachment; filename="morning-stock-research.json"'} if download else None
+        return JSONResponse(report,headers=headers)
 
     @app.get("/api/secondary")
     def get_secondary():
