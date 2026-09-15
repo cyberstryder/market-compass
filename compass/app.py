@@ -78,6 +78,8 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(SwingIdeas(db,cfg).run()))
             tasks.append(asyncio.create_task(run_obsidian(db,cfg)))
             tasks.append(asyncio.create_task(run_strategy_tracking(db)))
+            from .program_parity import run as run_program_parity
+            tasks.append(asyncio.create_task(run_program_parity(db)))
             tasks.append(asyncio.create_task(run_storage_health(db,cfg)))
             tasks.append(asyncio.create_task(run_morning_report(db)))
             from .forward_audit import run as run_forward_audit
