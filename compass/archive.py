@@ -46,8 +46,9 @@ def verify(path):
             digest.update(line); count += 1; previous = value['id']
 
 
-def export(db, destination, after_id=0, max_rows=100000):
+def export(db, destination, after_id=0, max_rows=100000, through_id=None):
     if after_id < 0 or not 1 <= max_rows <= 1000000: raise ValueError('Invalid export bounds')
+    if through_id is not None and through_id < after_id: raise ValueError('Invalid upper bound')
     destination = Path(destination)
     if destination.exists(): raise ValueError('Destination already exists')
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -59,7 +60,7 @@ def export(db, destination, after_id=0, max_rows=100000):
                 from sqlalchemy import text
                 c.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY'))
                 c.execute(text("SET LOCAL statement_timeout = '30s'"))
-            through = c.execute(select(func.max(events.c.id))).scalar_one() or after_id
+            through = through_id if through_id is not None else (c.execute(select(func.max(events.c.id))).scalar_one() or after_id)
             rows = c.execute(select(events).where(events.c.id > after_id, events.c.id <= through)
                 .order_by(events.c.id).limit(max_rows).execution_options(stream_results=True)).mappings()
             digest = hashlib.sha256(); count = 0; last = after_id

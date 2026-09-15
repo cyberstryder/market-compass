@@ -95,3 +95,32 @@ The connected direct Railway tools cannot create buckets, and the September 15
 read-only infrastructure capability check returned a tool serialization failure.
 Bucket creation/wiring and a real production run remain outstanding until the
 bucket is provisioned. No recurring export or database deletion is enabled.
+
+## Scheduled catch-up and rolling completeness checks
+
+`ARCHIVE_MODE=scheduled` enables a bounded cycle in the same worker command.
+Configure a separate worker to run every five minutes, restart NEVER, with the
+existing private bucket references. Each cycle handles at most four new ranges
+of 100,000 IDs and audits one previously archived range, with a 180-second budget
+checked between ranges. A PostgreSQL session advisory lock prevents overlap.
+Data and credentials never enter the dashboard; it shows checkpoint/audit counts.
+
+Progress advances only after upload, full readback, isolated restore and receipt
+readback. Fixed ID boundaries include sparse IDs without assuming every sequence
+value is a row. The incomplete tail is re-exported without shifting boundaries.
+Rolling audits compare source content hashes/counts and stream remote objects for
+checksum verification. Late commits, missing objects or corruption cause a new
+verified replacement; the previous receipt reference is retained. Failed uploads
+leave the checkpoint unchanged; a run can resume after restart. Old objects are
+not deleted automatically.
+
+These are per-range snapshots at different times, not one settled global snapshot.
+Completed audit passes remain explicitly provisional: another old transaction may
+commit later. Rolling checks repair it on subsequent passes. Cross-chunk global
+completeness and deletion eligibility remain false. No production eviction is
+implemented. Initial catch-up and the first full audit take multiple scheduled
+runs; the progress report marks stale evidence after twenty minutes.
+
+Operational setup uses direct Railway service settings; the legacy config-file
+path setter was rejected by Railway. No config-file migration is required for
+these workers. The original one-shot verification service remains unscheduled.
