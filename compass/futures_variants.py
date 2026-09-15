@@ -15,6 +15,8 @@ PREFIX = VERSION + ':'
 
 
 def observe_bar(db, c, symbol, f, now):
+    from .futures_assessment import observe
+    observe(db, c, symbol, f, now)
     key = PREFIX + symbol
     old = db.get(c, key, {})
     stamp = number(f.get('asof'))
