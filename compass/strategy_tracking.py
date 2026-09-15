@@ -123,7 +123,7 @@ def tick(db, owner, now):
             c.execute(ledger.update().where(ledger.c.key == r['key']).values(measurements=measurements))
         previous = db.get(c, 'strategy_tracking:status', {})
         if int(previous.get('at', 0) // 60) != int(now // 60):
-            logging.info('Strategy tracking shadow: version=%s processed=%s orders=false notifications=false', VERSION, len(rows))
+            logging.getLogger('uvicorn.error').info('Strategy tracking shadow: version=%s processed=%s orders=false notifications=false', VERSION, len(rows))
         db.put(c, 'strategy_tracking:status', {'at': now, 'version': VERSION,
             'mode': 'shadow', 'notifications_enabled': False, 'orders_enabled': False,
             'bootstrap_complete': db.get(c, 'strategy_tracking:bootstrap_cursor') == 'complete'})

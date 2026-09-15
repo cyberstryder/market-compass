@@ -34,6 +34,7 @@ from .scanner import snapshot as scanner_snapshot
 from .research import FEEDS
 from .universe import data_symbols
 from .projects import install as install_projects, run_sources, snapshot as projects_snapshot, records as project_records, PROJECTS
+from .storage_health import run as run_storage_health, snapshot as storage_snapshot
 from .strategy_tracking import run as run_strategy_tracking
 from .secondary import Secondary, snapshot as secondary_snapshot, reviews as secondary_reviews
 
@@ -74,6 +75,7 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(SwingIdeas(db,cfg).run()))
             tasks.append(asyncio.create_task(run_obsidian(db,cfg)))
             tasks.append(asyncio.create_task(run_strategy_tracking(db)))
+            tasks.append(asyncio.create_task(run_storage_health(db,cfg)))
             from .forward_audit import run as run_forward_audit
             tasks.append(asyncio.create_task(run_forward_audit(db,cfg)))
             from .observation_audit import run as run_observation_audit
@@ -199,7 +201,7 @@ def create_app(cfg=None):
             positions=list(db.prefix(c,"position:").values())
             trades=sorted(db.prefix(c,"trade:").values(),key=lambda p:p.get("entered_at",0),reverse=True)[:100]
             return {"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","markets":markets,
-                "health":health,"workers":workers,"quotes":watch,
+                "storage":storage_snapshot(db,c,now),"health":health,"workers":workers,"quotes":watch,
                 "scanner":scanner_snapshot(db,c,cfg,now),
                 "projects":projects_snapshot(db,c,cfg,now),
                 "obsidian":obsidian_snapshot(db,c,now),
