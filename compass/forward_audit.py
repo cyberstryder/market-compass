@@ -11,6 +11,9 @@ from .secondary import reviews
 from .market import day
 from .swing_ideas import swings
 
+# Conservative boundary after Railway marked PR47 collector healthy (15:42:33.300Z).
+FEED_FIX_AT=1789486954.0
+
 KEY='forward-acceptance-v1'
 LOG=logging.getLogger('uvicorn.error')
 
@@ -29,6 +32,11 @@ def option_validation(rows, model='paired-recorded-quotes-v1'):
         note='Observation-path validation only; excluded candidates do not validate replay or profitability.')
 
 
+def feed_validation(rows):
+    return {'since':FEED_FIX_AT,'basis':'opened_at after PR47 collector healthy; preexisting observations excluded',
+        **option_validation([r for r in rows if r.get('opened_at',0)>=FEED_FIX_AT],'paired-recorded-quotes-v2')}
+
+
 def capture(db,cfg,now):
     with db.tx() as c:
         marker=db.locked_get(c,KEY+':activation',{'at':now,'option_model':'paired-recorded-quotes-v1'})
@@ -45,6 +53,7 @@ def capture(db,cfg,now):
             options_replay_models=dict(Counter(r.get('observation_model','not_opened') for r in new)),
             options_observation_validation=option_validation(new),
             options_v2_validation=option_validation(new,'paired-recorded-quotes-v2'),
+            feed_fix_validation=feed_validation(options),
             option_subscription=db.get(c,'options:subscriptions',{}),
             swing_scan=dict(Counter(r.get('status','unknown') for r in scans)),
             swing_daily_ready=sum(r.get('daily_ready',False) for r in scans),swing_symbols=len(scans),

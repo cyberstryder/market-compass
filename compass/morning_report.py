@@ -1,5 +1,6 @@
 """Bounded stock-only reports from the immutable Morning history mirror."""
 import asyncio
+import json
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 import logging
@@ -10,6 +11,8 @@ from sqlalchemy import select, cast, BigInteger
 from .morning_history import history, digest, snapshot as import_snapshot
 from .morning_schema.candidate_models import failed_filters
 from .morning_schema.outcomes import stock_coverage, stock_exit, path_outcome, extend_baseline
+
+from .morning_gaps import chart_gaps, legacy_trace
 
 HORIZONS = (5, 15, 30, 60, 120, 180)
 
@@ -67,7 +70,10 @@ def build_report(db, c, now, limit=100, start='', end='', ticker='', stream=''):
         for r in load_kind(c, kind, ids):
             destination[r['parent']].append({**r['payload'], 'received_at_ms': round(r['source_received'] * 1000)})
         for bars in destination.values(): bars.sort(key=lambda b:b['open_at_ms'])
-    expected = {r['parent'] for r in load_kind(c, 'events', signal_ids) if r['payload']['payload']['schema_version'] == 2}
+    event_rows = load_kind(c, 'events', signal_ids)
+    envelopes = defaultdict(list)
+    for event in event_rows: envelopes[event['parent']].append(event)
+    expected = {r['parent'] for r in event_rows if r['payload']['payload']['schema_version'] == 2}
     inventories = {r['parent']:r for r in load_kind(c, 'stock_inventory', signal_ids)}
     signals, candidates, stock_groups, candidate_groups = [], [], defaultdict(list), defaultdict(list)
     now_ms = int(now * 1000)
@@ -103,6 +109,8 @@ def build_report(db, c, now, limit=100, start='', end='', ticker='', stream=''):
             'stream_id':s['stream_id'],'config_id':config,'logic_mode':s['logic_mode'],'script_version':s['script_version'],
             'time_bucket_central':bucket,'stock_history':coverage,'native_reconciliation':reconciliation,'modeled_exits':exits,
             'extended_stock_history':extended,'extended_checkpoints':outcomes,
+            'gap_evidence':chart_gaps(s,coverage),
+            'legacy_trace':legacy_trace(s,coverage,envelopes[sid],link,tapes.get(link['session']['session_id'],[]) if link else []),
             'source_received_at':raw['source_received'],'imported_at':raw['imported_at']}
         signals.append(row)
         stock_groups[(bucket,s['setup'],s['logic_mode'],config,s['stream_id'])].append(row)
@@ -141,6 +149,10 @@ def build_report(db, c, now, limit=100, start='', end='', ticker='', stream=''):
         'truncated':{'signals':signal_truncated,'candidates':candidate_truncated},'import_status':import_snapshot(db,c,now),
         'signals':signals,'candidates':candidates,'stock_comparisons':comparisons,'candidate_comparisons':groups,
         'summary':{'signals':len(signals),'candidates':len(candidates),'stock_coverage':dict(Counter(r['stock_history']['status'] for r in signals)),
+            'chart_absent_minutes':sum(len(r['gap_evidence']['chart_absent_minutes']) for r in signals),
+            'legacy_trace':dict(Counter(r['legacy_trace']['classification'] for r in signals if r['legacy_trace'])),
+            'legacy_native_recoverable_minutes':sum(len(r['legacy_trace']['native_packet_recoverable_minutes']) for r in signals if r['legacy_trace']),
+            'legacy_research_available_minutes':sum(len(r['legacy_trace']['research_only_available_minutes']) for r in signals if r['legacy_trace']),
             'native_inventory':dict(Counter(r['native_reconciliation']['status'] for r in signals)),
             'source_stock_coverage':dict(Counter(r['native_reconciliation'].get('source_stock_coverage',{}).get('status','awaiting_inventory') for r in signals)),
             'candidate_kinds':dict(Counter(r['kind'] for r in candidates))},
@@ -162,6 +174,12 @@ async def run(db):
             report=build_report(db,c,time.time())
             summary={**report['summary'],'at':report['as_of_ms']/1000,'truncated':report['truncated'],'cutover_ready':False}
             db.put(c,'morning_report:status',summary)
+            legacy=build_report(db,c,time.time(),limit=200,start='2026-09-11',end='2026-09-11')
+        log=logging.getLogger('uvicorn.error')
+        log.info('Morning legacy audit: %s',json.dumps({'summary':legacy['summary'],'truncated':legacy['truncated']},sort_keys=True))
+        for row in legacy['signals']:
+            if row['legacy_trace'] and row['stock_history']['status']=='incomplete':
+                log.info('Morning legacy detail: %s',json.dumps({'signal_id':row['signal_id'],'ticker':row['ticker'],'trace':row['legacy_trace']},sort_keys=True))
         logging.getLogger('uvicorn.error').info('Morning stock report: %s',summary)
     while True:
         try:await asyncio.to_thread(audit)
