@@ -102,3 +102,18 @@ For budgets of at least three requests, a head-page recheck follows deeper-page
 reads within the same cap. This spends one recovery request on current arrivals;
 large archives may take another cycle. Offset pagination is still not atomic and
 no full-coverage guarantee is made from matching counts.
+
+### Production flow scheduling correction
+
+The production job now uses four requests per cycle with a 20-second supervisor
+pause: initial page one, optional prior-day recovery, current-day recovery, and
+final page-one recheck when deeper pages were read. The longer pause offsets the
+larger per-cycle budget under the shared 2.6-second request spacing. Actual cycles
+may use fewer requests when the feed is empty or one page long.
+
+Overlap is calculated after reserving the head-recheck request. With only one
+remaining deeper-page slot, recovery advances without overlap; otherwise the
+previous page can be revisited while still advancing. Production-method tests
+verify advancement with an unfinished prior day, and a three-request regression
+covers the formerly repeating overlap. Private cycle logs expose requested pages,
+resume page and estimated gaps for operational verification.
