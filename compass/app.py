@@ -36,6 +36,7 @@ from .universe import data_symbols
 from .projects import install as install_projects, run_sources, snapshot as projects_snapshot, records as project_records, PROJECTS
 from .storage_health import run as run_storage_health, snapshot as storage_snapshot
 from .strategy_tracking import run as run_strategy_tracking
+from .morning_history import run as run_morning_history
 from .secondary import Secondary, snapshot as secondary_snapshot, reviews as secondary_reviews
 
 def create_app(cfg=None):
@@ -69,6 +70,7 @@ def create_app(cfg=None):
             collectors=Collectors(db,cfg)
             tasks.extend(asyncio.create_task(t) for t in collectors.tasks())
             tasks.append(asyncio.create_task(run_sources(db,cfg)))
+            tasks.append(asyncio.create_task(run_morning_history(db,cfg)))
         if cfg.role in {"all","engine"}:
             tasks.extend([asyncio.create_task(Engine(db,cfg,clock=time.time).run()),asyncio.create_task(deliver(db,cfg))])
             tasks.append(asyncio.create_task(Secondary(db,cfg,clock=time.time).run()))

@@ -31,12 +31,15 @@ Not transferred:
 - Source stock-bar research, sampled option histories, exports and coverage reports.
   The PR36 midpoint monitor does not duplicate candle closes or continuous peaks.
 
-Next build: a read-only versioned export for research batches and native candles,
-then direct Compass intake with source schema tests reused. Compare input IDs,
+Implemented next step: read-only versioned export and resumable Compass pull import
+for raw research batches and native candles; see `morning-history-import.md`.
+Next: source-equivalent coverage/outcome reports, then direct Compass intake.
+Compare input IDs,
 late/duplicate events, initial receipt times and all measurement windows. Require
 complete paired forward cohorts and a documented rollback before switching sends.
-Historical records older than the current 14-day polling window require explicit
-bounded export/reconciliation; current feed scope is at most 45 days.
+The existing signal-summary feed polls 14 days and exports at most 45 days.
+The separate history importer scans all available source history in bounded pages;
+completed scans still require source completeness and forward-parity assessment.
 
 ## New Smoothers — move second
 
