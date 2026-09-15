@@ -35,3 +35,22 @@ in diagnostics. Entries using this collector version are counted separately as
 option-reliability-v2. No provider subscription purchase is performed.
 
 Alpaca contract: https://docs.alpaca.markets/us/reference/optionlatestquotes
+
+## Receive isolation and transient database recovery
+
+September 15 verification found option source ages of 28–68 seconds despite
+small persistence queues. Option receipt still shared the main collector event
+loop with synchronous database operations. It now runs on a dedicated loop;
+connection health writes run off that loop. A regression test blocks the main
+loop and verifies option receipt continues. This removes a buffering risk; it
+does not establish that all observed delay was local.
+
+COMEX logged a persistence OperationalError at 16:48:51 UTC, followed by
+clustered observation gaps and resubscription at 16:50:50. Futures writers now
+retain and retry the same batch up to three attempts on OperationalError
+(250/500 ms pauses). Exhaustion remains explicit. Database telemetry failures
+no longer stop receipt. Optional feeds reconnect after five seconds for chained
+database operational failures; other errors retain the 120-second backoff.
+Original source timestamps and observation freshness limits are unchanged.
+Forward validation must separately assess option age, completed observations,
+and futures write/reconnect failures; healthy deployments alone are insufficient.
