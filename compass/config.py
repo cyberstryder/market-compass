@@ -25,6 +25,11 @@ class Config:
     openai: str = field(default_factory=lambda: env("OPENAI_API_KEY"))
     model: str = field(default_factory=lambda: env("OPENAI_MODEL","gpt-5-mini"))
     discord: str = field(default_factory=lambda: env("DISCORD_WEBHOOK_URL"))
+    discord_routes: dict = field(default_factory=lambda: {
+        key: env('DISCORD_' + key.upper() + '_WEBHOOK_URL')
+        for key in ('spy_morning', 'futures', 'options_0dte', 'options_ideas', 'swing',
+                    'unusual_options', 'exposure', 'intraday', 'research', 'system')})
+    discord_fallback: bool = field(default_factory=lambda: env('DISCORD_SHARED_FALLBACK', 'true') == 'true')
     spy_morning_brief: bool = field(default_factory=lambda: env("SPY_MORNING_BRIEF_ENABLED", "true") == "true")
     risk: float = field(default_factory=lambda: float(env("SHADOW_RISK_DOLLARS","100")))
     daily_loss: float = field(default_factory=lambda: float(env("SHADOW_MAX_DAILY_LOSS","300")))

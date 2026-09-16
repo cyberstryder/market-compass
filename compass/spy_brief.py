@@ -231,6 +231,8 @@ def build(db, c, now, phase='preview'):
     add('Prior high', context['prior'].get('h')); add('Prior low', context['prior'].get('l')); add('Prior close', context['prior'].get('c'))
     add('RTH VWAP' if now >= opening else 'PM VWAP', context['regular' if now >= opening else 'premarket'].get('vwap'))
     add('Gamma flip', gamma['flip'])
+    if context['first15_complete']:
+        add('First 15m close', context['first15_close'])
     for i, level in enumerate(gamma['ranked']):
         add('Apex #' + str(i + 1), level['price'])
     for i, level in enumerate(gamma['local_ranked']):
@@ -273,6 +275,8 @@ class BriefWorker:
                 return
             report['id'] = key
             self.db.append(c, 'alert', 'spy_brief', 'SPY', now, report, key)
+            from .spy_chart import companion
+            self.db.append(c, 'alert', 'spy_brief', 'SPY', now, companion(report), key + ':chart')
             self.db.put(c, key, report)
             self.db.put(c, 'spy-brief:latest', report)
         self.db.health('spy_morning_brief', 'queued', phase + ' 0DTE morning plan', now)
@@ -300,7 +304,7 @@ def delivery_payload(row, now):
     p = row['payload']; ctx = p['context']
     expired = now >= p.get('expires_at', 0)
     heading = 'DATED PLAN — refresh before use' if expired else p['decision']
-    content = '**SPY 0DTE MORNING PLAN · ' + p['phase'].upper() + '**\n' + heading
+    content = '**SPY 0DTE MORNING PLAN · ' + p['phase'].upper() + ' · message 1 of 2**\n' + heading
     if ctx['status'] == 'closed':
         return {'content': content, 'allowed_mentions': {'parse': []}}
     session_name = 'PREMARKET' if p['generated_at'] < ctx['session_open'] else 'REGULAR SESSION'

@@ -114,14 +114,21 @@ def create_app(cfg=None):
     @app.get('/api/spy-morning-brief')
     def spy_morning_brief():
         from .spy_brief import build, delivery_payload
+        from .spy_chart import prompt, delivery_payload as chart_payload
         now=time.time()
         with db.tx() as c:
             report=build(db,c,now)
             latest=db.get(c,'spy-brief:latest')
         row={'id':'preview','symbol':'SPY','source':'spy_brief','ts':now,'payload':report}
         return {'preview':report,'discord_preview':delivery_payload(row,now),'latest_scheduled':latest,
+                'tradingview_prompt':prompt(report,now),'chart_discord_preview':chart_payload(row,now),
                 'enabled':cfg.spy_morning_brief,'schedule_ct':['08:20','08:45:05'],
-                'delivery':'Existing Compass Discord outbox; session days only'}
+                'delivery':'Two messages through the spy_morning route; session days only'}
+
+    @app.get('/api/alerts/routes')
+    def alert_routes():
+        with db.tx() as c:
+            return outbox_status(db,c,time.time())
     app.state.db=db
     install_projects(app,db,cfg)
     install_native_morning(app,db,cfg)
@@ -376,21 +383,26 @@ def create_app(cfg=None):
 
     class AlertTest(BaseModel):
         request_id:uuid.UUID
+        route:str='system'
 
     @app.post("/api/alerts/test")
     def test_alert(body:AlertTest):
+        from .alert_routes import ROUTES
+        if body.route not in ROUTES:
+            raise HTTPException(422,'Unknown delivery route')
         now=time.time()
         key="test-alert:"+str(body.request_id)
         with db.tx() as c:
             existing=db.get(c,key)
             if existing: return existing
-            status=db.get(c,"health:discord",{}).get("status")
+            status=db.get(c,"health:discord:"+body.route,db.get(c,"health:discord",{})).get("status")
             if status not in {"connected","delivered","error"}:
                 raise HTTPException(409,"Discord worker has not verified its configuration yet")
             if not db.lease(c,"discord-test-rate",str(body.request_id),60):
                 raise HTTPException(429,"A delivery test was requested in the last minute")
             db.append(c,"alert","owner","SYSTEM",now,{"mode":"TEST","status":"notification_test",
-                "reason":"Explicit alert-channel check; no trade or position","request_id":str(body.request_id)},key)
+                "reason":"Explicit alert-channel check; no trade or position","request_id":str(body.request_id),
+                "delivery_route":body.route},key)
             event_id=c.execute(select(events.c.id).where(events.c.key==key)).scalar_one()
             result={"event_id":event_id,"status":"queued","at":now}
             db.put(c,key,result)
