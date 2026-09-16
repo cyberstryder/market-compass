@@ -247,7 +247,7 @@ def create_app(cfg=None):
                     item['flow_freshness']=flow_freshness(item,now)
             positions=list(db.prefix(c,"position:").values())
             trades=sorted(db.prefix(c,"trade:").values(),key=lambda p:p.get("entered_at",0),reverse=True)[:100]
-            return {"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","markets":markets,
+            data={"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","markets":markets,
                 "storage":storage_snapshot(db,c,now),"health":health,"workers":workers,"quotes":watch,
                 "scanner":scanner_snapshot(db,c,cfg,now),
                 "projects":projects_snapshot(db,c,cfg,now),
@@ -274,9 +274,17 @@ def create_app(cfg=None):
                     "Large prints cover selected contracts; not a full-market unusual-flow feed.",
                     "Scanner alerts join completed-bar structure, observed exposure levels and fresh vendor flow. No profitability claim.",
                     "No execution adapter, broker order route, partial exits or runners."]}
+            from .research_admin import snapshot as research_admin_snapshot
+            data['research_admin']=research_admin_snapshot(db,c,cfg,data)
+            return data
 
     @app.get("/api/state")
     def get_state(): return snapshot()
+
+    @app.get('/api/research-admin')
+    def get_research_admin(download:bool=False):
+        headers={'Content-Disposition':'attachment; filename="compass-research-status.json"'} if download else None
+        return JSONResponse(snapshot()['research_admin'],headers=headers)
 
     @app.get("/api/setup-study")
     def get_setup_study():

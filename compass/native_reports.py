@@ -219,6 +219,8 @@ async def run(db):
                         r=report(db,c,time.time())
                         config=db.get(c,'native-smoothers-v1:config',{})
                         summary={'at':r['at'],'morning':r['morning']['summary'],'smoothers':r['smoothers']['summary'],
+                            'expiration_comparison':r['morning']['expiration_comparison'],
+                            'morning_truncated':r['morning']['truncated'],'smoothers_truncated':r['smoothers']['truncated'],
                             'config_owner':config.get('owner','source'),'config_revision':config.get('revision'),
                             'configured_tickers':len(config.get('configs',[])),'cutover_ready':False}
                         db.put(c,'native-program-report-v1:summary',summary)

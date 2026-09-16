@@ -7,8 +7,18 @@ const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notati
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
 const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated','event_stale','poll_stale','vendor_stale','mixed'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
-const titles={obsidian:'Obsidian Watchlist','swing-ideas':'Swing ideas','option-ideas':'Options ideas','setup-study':'Setup results',secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
-document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav,.tab').forEach(n=>n.classList.remove('active'));b.classList.add('active');$('#'+b.dataset.tab).classList.add('active');$('#title').textContent=titles[b.dataset.tab];});
+const titles={'research-admin':'Research admin',obsidian:'Obsidian Watchlist','swing-ideas':'Swing ideas','option-ideas':'Options ideas','setup-study':'Setup results',secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
+function selectTab(tab){
+ if(!Object.hasOwn(titles,tab))return;
+ const button=Array.from(document.querySelectorAll('.nav')).find(n=>n.dataset.tab===tab);
+ if(!button||!$('#'+tab))return;
+ document.querySelectorAll('.nav,.tab').forEach(n=>n.classList.remove('active'));
+ button.classList.add('active');$('#'+tab).classList.add('active');$('#title').textContent=titles[tab];
+ if(location.hash!=='#'+tab)history.replaceState(null,'','#'+tab);
+}
+document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>selectTab(b.dataset.tab));
+window.addEventListener('hashchange',()=>selectTab(location.hash.slice(1)));
+selectTab(location.hash.slice(1));
 $('#logout').onclick=async()=>{await fetch('/logout',{method:'POST'});location.href='/login';};
 let lastState=null,first=true,testEvent=null;
 let secondaryReport=null,secondaryReportRequest=0;
@@ -49,6 +59,7 @@ function renderObsidian(d){
  $('#obsidian-events').innerHTML=table(['Event / contract','Source time','Provider-reported change','Association'],d.events.map(r=>[esc(r.payload.type)+' #'+num(r.vendor_id,0)+'<br>'+esc(r.payload.contract),when(r.payload.source_ts),r.payload.vendor_percentage==null?'—':num(r.payload.vendor_percentage)+'%',esc(r.association)]))+'<p class="fine">Repeated additions for the same contract can make update ownership ambiguous. Reported returns are never used as measured fills or profits.</p>';
 }
 function render(d){
+ renderResearchAdmin(d.research_admin);
  renderObsidian(d.obsidian);
  const openDetails=new Set([...document.querySelectorAll('details[open][data-key]')].map(e=>e.dataset.key));
  lastState=d;
