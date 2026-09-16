@@ -30,12 +30,12 @@ No connected Discord channel-management capability was available during this cha
 
 ## SPY message pair
 
-On equity session days, the existing 08:20 Chicago pre-open brief and 08:45:05 opening check each enqueue two durable messages in the same transaction:
+On equity session days, the 08:20 Chicago pre-open brief and 08:45:05 opening check each enqueue two durable messages in the same transaction. After an opening WAIT, follow-up checks at 09:00:05, 09:15:05 and 09:30:05 send the same pair. The first confirmed setup stops all remaining checks; the final unresolved check sends NO ENTRY.
 
 1. Full SPY 0DTE morning plan with source comparisons and dated SPX/XSP estimates.
 2. One copy-ready TradingView AI block for **1-minute and 15-minute** charts. It uses exactly the frozen report's levels, chooses the matching instrument column, labels estimated index levels, preserves unrelated chart drawings, treats VWAP as a snapshot, and marks unavailable/incomplete/expired data. This prepares a prompt to paste; it does not invoke TradingView or draw automatically.
 
-The 1-minute view adds no entry rule. The first completed 09:30–09:45 ET candle remains the confirmation baseline. Stops and targets remain conditional unless that side is confirmed. Estimated SPX/XSP levels are chart references derived from matched previous-session SPY/SPX closes, not independently confirmed index signals or option strikes. The SPY brief remains 0DTE only; other existing strategies keep their expiration policies.
+The 1-minute view adds no entry rule. Each check evaluates its newly completed 15-minute candle against the same frozen opening premarket range. Missing data, changed recovered range extremes or missing earlier checks block confirmation. Stops and targets remain conditional unless that side is confirmed, and then re-anchor to that candle's close. Later confirmations are labeled and stored separately from opening confirmations. Estimated SPX/XSP levels are chart references derived from matched previous-session SPY/SPX closes, not independently confirmed index signals or option strikes. The SPY brief remains 0DTE only; other existing strategies keep their expiration policies.
 
 Preview both messages at `/api/spy-morning-brief`. The second payload includes a copyable text block; prices are never truncated to make it fit a short message.
 
