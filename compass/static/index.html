@@ -77,6 +77,19 @@
 <button id="native-handoff-rollback" type="button">Stop Compass official sending</button>
 <p>After rollback, resolve in-flight or unknown deliveries before manually resuming the original sender.</p>
 <pre id="native-handoff-status" aria-live="polite"></pre></details></article>
+<article class="panel"><h2>Smoothers sender handoff</h2><details><summary>Review a complete week and prepare the next weekly cohort</summary>
+<p>The original app remains official during the comparison week. Activation requires matched weekly observations, current message previews, a review of the original channel, and the original sender paused. The source feed does not retain Discord delivery receipts.</p>
+<label>Completed review week (Monday date) <input id="smoothers-handoff-review" type="date"></label>
+<label>Next cohort (Monday date) <input id="smoothers-handoff-date" type="date"></label>
+<button id="smoothers-handoff-load" type="button">Load handoff status</button>
+<button id="smoothers-handoff-prepare" type="button">Prepare weekly evidence check</button>
+<label><input id="smoothers-handoff-paused" type="checkbox"> I have paused the original Smoothers sender</label>
+<label><input id="smoothers-handoff-reviewed" type="checkbox"> I reviewed and accepted the full week and message previews</label>
+<label><input id="smoothers-handoff-original" type="checkbox"> I checked the original channel's entry, roster, target and closure messages</label>
+<button id="smoothers-handoff-activate" type="button" disabled>Arm accepted weekly handoff</button>
+<button id="smoothers-handoff-rollback" type="button">Stop Compass Smoothers sending</button>
+<p>Rollback stops pending native sends. Check any in-flight or uncertain deliveries before manually resuming the original sender.</p>
+<pre id="smoothers-handoff-status" aria-live="polite"></pre></details></article>
 <article class="panel"><h2>Program replacement checks</h2><div id="program-parity"></div></article>
 <article class="panel"><h2>Transfer to Compass</h2><div id="strategy-migration"></div></article>
 <article class="panel"><h2>Morning stock research</h2><p>Original candles and research candidates. Underlying outcomes are not option returns or executed trades.</p><label>Ticker <input id="morning-ticker" maxlength="50" placeholder="All tickers"></label> <label>From <input id="morning-start" type="date"></label> <label>Through <input id="morning-end" type="date"></label> <label>Stream <input id="morning-stream" maxlength="32" placeholder="All streams"></label> <button id="morning-load" type="button">Load report</button> <a id="morning-download" href="/api/projects/morning/report?download=true">Download JSON</a><div id="morning-report"><p>Load the latest 100 matching signals and 100 candidates. Narrow dates or ticker if the report is truncated.</p></div></article>
@@ -146,4 +159,3 @@
 <p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></section>
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
 <script src="/static/app.js"></script><script src="/static/native.js"></script></body></html>
-

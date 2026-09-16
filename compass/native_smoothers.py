@@ -1,4 +1,4 @@
-"""Durable weekly selector, target monitor and premium worker, all shadow-only."""
+"""Durable weekly observations; official delivery requires accepted ownership."""
 import asyncio
 from datetime import datetime,timedelta
 import json
@@ -16,8 +16,9 @@ from .smoothers_signals import classify_signal,get_week_start_indices
 from .smoothers_quality import score_signal,rank_signals
 from .smoothers_factors import atr
 from .smoothers_blackscholes import value_at_target
-from .native_outbox import queue
+from .native_outbox import queue,owner
 from .native_config import bootstrap, effective
+from . import smoothers_messages as messages
 
 VERSION='native-smoothers-v1'
 weekly=Table('native_smoothers_signals_v1',meta,Column('id',String(64),primary_key=True),
@@ -94,6 +95,25 @@ def save(db,c,p):
               .on_conflict_do_update(index_elements=['id'],set_={'status':p['status'],'payload':p}))
 
 
+def rolling_record(db,c,ticker,week,owned_since):
+    """Use retained source history before ownership, then independent native weeks."""
+    from .projects import records
+    resolved={}
+    for p in c.execute(select(records.c.payload).where(records.c.project=='smoothers',records.c.symbol==ticker)).scalars():
+        original=p.get('original') or {};cohort=str(original.get('monday_date') or '')[:10]
+        if cohort and cohort<week and p.get('source_ts',float('inf'))<owned_since and original.get('status') in ('WIN','LOSS'):
+            resolved[cohort]=original['status']
+    for p in c.execute(select(weekly.c.payload).where(weekly.c.ticker==ticker,weekly.c.week<week)).scalars():
+        if p.get('created_at',0)>=owned_since and p['status'] in ('WIN','LOSS'):resolved[p['week']]=p['status']
+    outcomes=[resolved[w] for w in sorted(resolved,reverse=True)[:4]]
+    return {'wins':outcomes.count('WIN'),'losses':outcomes.count('LOSS'),'observed_weeks':len(outcomes)} if outcomes else None
+
+
+def queue_signal(db,c,p,event,payload,now,event_time):
+    return queue(db,c,'smoothers',p['id']+':'+event,payload,now,
+                 event_time=event_time,cohort_time=p.get('model_entry_time'))
+
+
 def schedule(db,data,now):
     monday=monday_for(now);key=VERSION+':week:'+monday.isoformat()
     with db.tx() as c:
@@ -115,7 +135,7 @@ def schedule(db,data,now):
             config=db.get(c,VERSION+':config',{})
             if config.get('owner')=='compass':config=effective(db,c,config)
         if not config.get('configs') or (config.get('owner')!='compass' and now-config.get('received_at',0)>7200):return
-        state['config']=config;state['started']=now;state['state']='running'
+        state['config']=config;state['started']=now;state['state']='running';state['message_version']=messages.VERSION
         with db.tx() as c:db.put(c,key,state)
     configs=[r for r in state['config']['configs'] if r['enabled']]
     if state['index']<len(configs):
@@ -142,7 +162,10 @@ def schedule(db,data,now):
                 signal.update(score_signal(target_atr_mult=signal['target_atr_mult'],alltime_wins=stats.get('wins',0),alltime_losses=stats.get('losses',0),
                     backtest_wr=config.get('backtest_wr'),entry_premium=signal['entry_premium'],est_return_pct=signal['est_return_pct']))
                 signal['stats_at_entry']=stats;signal['config_revision']=state['config']['revision']
-                with db.tx() as c:save(db,c,signal)
+                signal['message_version']=messages.VERSION
+                with db.tx() as c:
+                    signal['rolling_at_entry']=rolling_record(db,c,config['ticker'],monday.isoformat(),state['config'].get('owned_since',float('inf')))
+                    save(db,c,signal)
         except Exception as e:state['errors'].append({'ticker':config['ticker'],'reason':type(e).__name__})
         state['index']+=1
         with db.tx() as c:db.put(c,key,state)
@@ -152,8 +175,12 @@ def schedule(db,data,now):
         ranked=rank_signals(signals)
         for p in ranked:
             save(db,c,p)
-            if p['is_featured']:queue(db,c,'smoothers',p['id']+':entry',{'content':f"SMOOTHERS | {p['ticker']} {p['direction']} | reference {p['entry_price']:.4f} target {p['target_price']:.4f}",'allowed_mentions':{'parse':[]}},now)
-        queue(db,c,'smoothers',monday.isoformat()+':summary',{'content':f"Weekly cohort: {len(ranked)} signals; {len(state['errors'])} errors; shadow only",'allowed_mentions':{'parse':[]}},now)
+            if p['is_featured']:queue_signal(db,c,p,'entry',messages.entry(p),now,p['model_entry_time'])
+        previews=messages.roster(ranked,monday.isoformat(),now,len(state['errors']))
+        for i,payload in enumerate(previews):
+            event_key=monday.isoformat()+':summary'+(':'+str(i+1) if i else '')
+            queue(db,c,'smoothers',event_key,payload,now,event_time=first['open']+3600,cohort_time=first['open']+3600)
+        state['summary_messages']=len(previews)
         state.update(state='partial' if state['errors'] else 'complete',finished=now,signals=len(ranked))
         db.put(c,key,state)
 
@@ -200,14 +227,17 @@ def monitor(db,data,now):
         if not hits.empty:
             hit=hits.iloc[0];p.update(status='WIN',resolution_time=hits.index[0].timestamp(),exit_underlying=p['target_price'],
                 touch_bar={k:float(hit[k]) for k in ('open','high','low','close')},touch_detected_at=now)
+            # Capture at observation time, never substitute an old hourly premium.
+            try:p['exit_quote']=data.quote(p['contract']) if p.get('contract') else {'status':'unavailable','reason':'no_contract'}
+            except Exception as e:p['exit_quote']={'status':'unavailable','reason':type(e).__name__}
         with db.tx() as c:
             current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
             if current['status']!='OPEN':continue
-            current.update({k:p[k] for k in ('status','resolution_time','exit_underlying','touch_bar','touch_detected_at','last_seen_at','last_underlying','target_checked_at','coverage_missing','target_error') if k in p})
+            current.update({k:p[k] for k in ('status','resolution_time','exit_underlying','touch_bar','touch_detected_at','exit_quote','last_seen_at','last_underlying','target_checked_at','coverage_missing','target_error') if k in p})
             p=current
             save(db,c,p)
             db.append(c,'native_target_check','smoothers',p['ticker'],now,{'id':p['id'],'from':start,'through':end,'missing_minutes':len(missing),'last_seen_at':p['last_seen_at'],'status':p['status']})
-            if p['status']=='WIN':queue(db,c,'smoothers',p['id']+':target',{'content':f"SMOOTHERS | TARGET HIT | {p['ticker']} | trigger {p['target_price']} | observed 1m close {p['touch_bar']['close']}",'allowed_mentions':{'parse':[]}},now)
+            if p['status']=='WIN':queue_signal(db,c,p,'target',messages.target(p),now,p['resolution_time']+60)
     # Recover overdue closures after a restart even when the calendar week changed.
     with db.tx() as c:
         open_weeks=c.execute(select(weekly.c.week).where(weekly.c.status=='OPEN').distinct()).scalars().all()
@@ -216,9 +246,12 @@ def monitor(db,data,now):
             if not closing or now<closing[-1]['close']+300:continue
             for p in c.execute(select(weekly.c.payload).where(weekly.c.week==open_week,weekly.c.status=='OPEN').with_for_update()).scalars().all():
                 # An observed target is not an option fill or option profit.
-                p.update(status='UNRESOLVED' if p.get('coverage_missing') or (p.get('last_seen_at') or 0)<closing[-1]['close']-60 else 'LOSS',resolution_time=now,exit_underlying=None,closure_basis='weekly target not observed; closing price unavailable')
+                final_seen=(p.get('last_seen_at') or 0)==closing[-1]['close']-60
+                p.update(status='UNRESOLVED' if p.get('coverage_missing') or not final_seen else 'LOSS',resolution_time=closing[-1]['close']+300,
+                         exit_underlying=p.get('last_underlying') if final_seen else None,closed_detected_at=now,
+                         closure_basis='Completed final regular-session minute close; option return unverified')
                 save(db,c,p)
-                queue(db,c,'smoothers',p['id']+':close',{'content':f"SMOOTHERS | WEEK CLOSED | {p['ticker']} | target not observed; option return unverified",'allowed_mentions':{'parse':[]}},now)
+                queue_signal(db,c,p,'close',messages.close(p),now,p['resolution_time'])
 
 
 def premium(db,data,now):
@@ -235,6 +268,7 @@ def premium(db,data,now):
         with db.tx() as c:
             current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
             current['premium_attempt_at']=now
+            current['premium_last_attempt_quote']=q
             save(db,c,current)
         if q.get('status') not in ('available','wide_spread'):continue
         expiration=p['contract']['expiration']
@@ -265,13 +299,16 @@ async def run(db,cfg,role='schedule'):
                         await asyncio.to_thread(schedule,db,data,now)
                     elif role=='target':await asyncio.to_thread(monitor,db,data,now)
                     else:await asyncio.to_thread(premium,db,data,now)
-                    with db.tx() as c:db.put(c,VERSION+':worker:'+role,{'at':time.time(),'status':'shadow','sending_enabled':False})
+                    with db.tx() as c:
+                        ownership=owner(db,c,'smoothers',time.time())
+                        mode='official' if ownership else 'shadow'
+                        db.put(c,VERSION+':worker:'+role,{'at':time.time(),'status':mode,'ownership_epoch':ownership['epoch'] if ownership else None})
                     if now-last_log>=60:
                         with db.tx() as c:
                             config=db.get(c,VERSION+':config',{})
                             job=db.get(c,VERSION+':week:'+monday_for(now).isoformat(),{})
-                        logging.getLogger('uvicorn.error').info('Native Smoothers: role=%s configs=%s week=%s state=%s processed=%s errors=%s sending=false',role,len(config.get('configs',[])),job.get('week'),job.get('state'),job.get('index',0),len(job.get('errors',[])))
-                        db.health(VERSION+'_'+role,'shadow','Native worker active; official sender unchanged')
+                        logging.getLogger('uvicorn.error').info('Native Smoothers: role=%s configs=%s week=%s state=%s processed=%s errors=%s mode=%s',role,len(config.get('configs',[])),job.get('week'),job.get('state'),job.get('index',0),len(job.get('errors',[])),mode)
+                        db.health(VERSION+'_'+role,mode,'Native worker active; Discord delivery requires sender environment and accepted ownership')
                         last_log=now
             except Exception as e:
                 failed=True

@@ -1,10 +1,10 @@
 """Private dashboard APIs. Official activation is gated and never automatic."""
 import time
 from typing import Literal
-from pydantic import BaseModel,Field,ConfigDict
+from pydantic import BaseModel,Field,ConfigDict,StrictBool
 from fastapi import HTTPException,Query
 from fastapi.responses import JSONResponse
-from . import native_config,native_routing,native_reports,native_handoff
+from . import native_config,native_routing,native_reports,native_handoff,smoothers_handoff
 
 
 class ConfigChange(BaseModel):
@@ -34,7 +34,32 @@ class HandoffChange(BaseModel):
     previous_sender_paused:bool=False
     operator_reviewed:bool=False
 
+
+class SmoothersHandoffChange(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    action:Literal['prepare','activate','rollback']
+    review_week:str=Field(default='',max_length=10)
+    effective_week:str=Field(default='',max_length=10)
+    plan_id:str=Field(default='',max_length=64)
+    previous_sender_paused:StrictBool=False
+    operator_reviewed:StrictBool=False
+    original_alerts_reviewed:StrictBool=False
+
+
 def install(app,db):
+    @app.get('/api/native/smoothers/handoff')
+    def get_smoothers_handoff():
+        with db.tx() as c:return smoothers_handoff.snapshot(db,c)
+
+    @app.post('/api/native/smoothers/handoff')
+    def set_smoothers_handoff(change:SmoothersHandoffChange):
+        try:
+            if change.action=='prepare':return smoothers_handoff.prepare(db,change.review_week,change.effective_week,time.time())
+            if change.action=='activate':return smoothers_handoff.activate(db,change.plan_id,change.previous_sender_paused,change.operator_reviewed,change.original_alerts_reviewed,time.time())
+            return smoothers_handoff.rollback(db,time.time())
+        except native_config.RevisionConflict as e:raise HTTPException(409,str(e)) from None
+        except ValueError as e:raise HTTPException(422,str(e)) from None
+
     @app.get('/api/native/morning/handoff')
     def get_handoff():
         with db.tx() as c:return native_handoff.snapshot(db,c)

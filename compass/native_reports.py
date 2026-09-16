@@ -167,10 +167,32 @@ def smoothers(db,c,now,limit=100,week='',ticker=''):
         pair=comparison(p,other,('direction','entry_price','target_price','signal_type','status','quality_score','quality_tier','quality_rank','featured_rank','is_featured'))
         if len(matches)>1:pair={'status':'ambiguous_source_identity','differences':{}}
         results.append({'native':p,'comparison':pair,'source_checked_at':r['updated'] if r else None,
-            'source_id':r['source_id'] if r else None,'source_contract':other.get('occ_symbol') if other else None})
+            'source_id':r['source_id'] if r else None,'source_contract':other.get('occ_symbol') if other else None,
+            'configuration_comparison':comparison(p.get('config') or {},other,('s1','s2','s3','pm')),
+            'option_comparison':comparison({'occ_symbol':(p.get('contract') or {}).get('symbol')},other,('occ_symbol',)),
+            'source_observations':{k:other.get(k) for k in ('entry_premium','option_quote_time','resolution_time','exit_underlying','target_atr_mult','quality_version','alltime_wins_at_entry','alltime_losses_at_entry','rolling_wins_at_entry','rolling_losses_at_entry')} if other else None})
     native_symbols=set(c.execute(select(weekly.c.ticker).where(weekly.c.week==week)).scalars())
     state=db.get(c,VERSION+':week:'+week,{})
+    from . import smoothers_messages as messages
+    expected={}
+    for p in rows:
+        if p.get('is_featured'):expected[p['id']+':entry']=messages.entry(p)
+        if p['status']=='WIN':expected[p['id']+':target']=messages.target(p)
+        elif p['status'] in ('LOSS','UNRESOLVED'):expected[p['id']+':close']=messages.close(p)
+    if state.get('finished') and not ticker and not truncated:
+        for i,payload in enumerate(messages.roster(rows,week,state['finished'],len(state.get('errors',[])))):
+            expected[week+':summary'+(':'+str(i+1) if i else '')]=payload
+    keys=[p['id']+':'+event for p in rows for event in ('entry','target','close')]
+    selector=outbox.c.event_key.in_(keys)
+    if not ticker and not truncated:selector=selector|outbox.c.event_key.startswith(week+':summary',autoescape=True)
+    intents={r['event_key']:r for r in c.execute(select(outbox).where(outbox.c.program=='smoothers',selector)).mappings()}
+    delivery=[{'event_id':key,'native_status':intents[key]['status'] if key in intents else 'missing',
+        'source_status':'unrecorded','preview':intents[key]['payload'] if key in intents else None,
+        'current_format_matches':bool(key in intents and intents[key]['payload']==payload),
+        'delivery':intents[key]['delivery'] if key in intents else None} for key,payload in expected.items()]
     return {'week':week,'job':{k:v for k,v in state.items() if k!='config'},'rows':results,
+        'delivery':delivery,'unexpected_intents':sorted(intents.keys()-expected.keys()),
+        'delivery_basis':'Original Smoothers exports no Discord receipts; source delivery is unrecorded and requires a channel review. Native previews are not delivered messages.',
         'source_only':[{'ticker':r['symbol'],'source_id':r['source_id'],'status':'native_week_not_run' if state.get('state') in ('missed','waiting',None) else 'not_selected_or_failed'} for r in source[:500] if r['symbol'] not in native_symbols],
         'truncated':{'native':truncated,'source':len(source)>500},
         'summary':dict(Counter(p['status'] for p in rows)),
