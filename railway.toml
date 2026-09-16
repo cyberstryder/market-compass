@@ -3,5 +3,5 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "python -m compass.opening_wait_study"
+startCommand = "python -m compass.spy_option_audit"
 restartPolicyType = "NEVER"
