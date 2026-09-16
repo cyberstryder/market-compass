@@ -16,4 +16,5 @@ jobs:
       - run: python -m pytest -q
         env:
           COMPASS_LOCAL: 'true'
-      - run: node --check compass/static/app.js && node --check compass/static/login.js
+      - run: node --check compass/static/app.js && node --check compass/static/login.js && node --check compass/static/native.js
+

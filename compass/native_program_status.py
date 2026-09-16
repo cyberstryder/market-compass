@@ -12,7 +12,7 @@ def snapshot(db,c,now):
     return {'morning':db.get(c,'native-morning-v1:status',{}),
         'morning_intake':db.get(c,'native_morning:last_intake',{}),
         'smoothers':{'week':week,'config_received_at':config.get('received_at'),
-            'config_revision':config.get('revision'),'config_count':len(config.get('configs',[])),
+            'config_owner':config.get('owner','source'),'config_revision':config.get('revision'),'config_count':len(config.get('configs',[])),
             'enabled_tickers':sum(r.get('enabled',False) for r in config.get('configs',[])),
             'state':job.get('state','not_started'),'processed':job.get('index',0),
             'errors':job.get('errors',[]),'sessions':job.get('sessions',[]),'signals':counts,

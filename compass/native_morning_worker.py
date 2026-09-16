@@ -18,6 +18,7 @@ from .native_morning.options import AlpacaQuotes, OptionsConfig, POLICY, option_
 from .native_morning.option_history import schedule_history, sample_batch
 from .native_outbox import queue
 from .projects import records
+from .native_routing import routing_guard, allowed, record, day
 
 VERSION='native-morning-v1'
 
@@ -34,6 +35,19 @@ def accept(db,raw,now,body_size=0,origin='direct'):
     payload=(Frame if kind=='frame' else ResearchBatch if kind=='research' else Event).model_validate(raw)
     stamp=payload.observed_at_ms if kind in ('frame','research') else payload.observation.observed_at_ms if payload.observation else payload.signal.signal_at_ms
     if stamp>(now+60)*1000: raise ValueError('Future input clock')
+    session_stamp=payload.session.session_open_ms if kind in ('frame','research') else payload.signal.signal_at_ms
+    with routing_guard(db,shared=True) as guard:
+        if not allowed(db,guard,origin,day(session_stamp/1000)):
+            if origin=='source_summary_relay':return {'status':'route_disabled'}
+            raise source.PayloadConflict('Direct intake is disabled for this session')
+        result=commit_input(db,payload,kind,now,body_size)
+        record(db,guard,payload,origin,now,result)
+    with db.tx() as c:
+        db.put(c,'native_morning:last_intake',{'at':now,'kind':kind,'origin':origin,'status':result['status']})
+    return result
+
+
+def commit_input(db,payload,kind,now,body_size):
     received=int(now*1000)
     if kind=='frame':
         if body_size>FRAME_LIMIT: raise ValueError('Frame too large')
@@ -43,8 +57,6 @@ def accept(db,raw,now,body_size=0,origin='direct'):
         message=signal_message(payload.signal,received,POLICY) if kind=='signal' else None
         result=source.accept_event(db.engine,payload,message,False,received)
     flush_previews(db,now)
-    with db.tx() as c:
-        db.put(c,'native_morning:last_intake',{'at':now,'kind':kind,'origin':origin,'status':result['status']})
     return result
 
 

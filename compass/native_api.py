@@ -1,0 +1,55 @@
+"""Private dashboard APIs. These controls never enable official notifications."""
+import time
+from typing import Literal
+from pydantic import BaseModel,Field,ConfigDict
+from fastapi import HTTPException,Query
+from fastapi.responses import JSONResponse
+from . import native_config,native_routing,native_reports
+
+
+class ConfigChange(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_revision:str=Field(min_length=64,max_length=64)
+    configs:list[dict]|None=Field(default=None,max_length=500)
+    restore_revision:str|None=Field(default=None,min_length=64,max_length=64)
+    reason:str=Field(min_length=1,max_length=300)
+
+
+class RouteChange(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_revision:str|None=Field(default=None,min_length=64,max_length=64)
+    action:Literal['prepare','schedule','cancel_future']
+    mode:Literal['direct_shadow','relay_shadow']|None=None
+    effective_session:str|None=Field(default=None,max_length=10)
+    reason:str=Field(min_length=1,max_length=300)
+
+
+def install(app,db):
+    @app.get('/api/native/report')
+    def get_report(limit:int=Query(100,ge=1,le=200),start:str=Query('',max_length=10),end:str=Query('',max_length=10),
+            ticker:str=Query('',max_length=50,pattern=r'^[A-Za-z0-9_:!.\-]*$'),week:str=Query('',max_length=10),download:bool=False):
+        try:
+            with db.tx() as c:result=native_reports.report(db,c,time.time(),limit,start,end,ticker.upper(),week)
+        except ValueError as e:raise HTTPException(422,str(e)) from None
+        return JSONResponse(result,headers={'Content-Disposition':'attachment; filename="native-program-report.json"'} if download else {})
+
+    @app.get('/api/native/smoothers/config')
+    def get_config():
+        with db.tx() as c:return native_config.snapshot(db,c)
+
+    @app.post('/api/native/smoothers/config')
+    def set_config(change:ConfigChange):
+        if (change.configs is None)==(change.restore_revision is None):raise HTTPException(422,'Provide configurations or a revision to restore')
+        try:return native_config.revise(db,change.expected_revision,change.configs,change.reason,time.time(),change.restore_revision)
+        except native_config.RevisionConflict as e:raise HTTPException(409,str(e)) from None
+        except ValueError as e:raise HTTPException(422,str(e)) from None
+
+    @app.get('/api/native/morning/routing')
+    def get_routing():
+        with db.tx() as c:return native_routing.snapshot(db,c,time.time())
+
+    @app.post('/api/native/morning/routing')
+    def set_routing(change:RouteChange):
+        try:return native_routing.change(db,change.expected_revision,change.action,time.time(),change.mode,change.effective_session,change.reason)
+        except native_config.RevisionConflict as e:raise HTTPException(409,str(e)) from None
+        except ValueError as e:raise HTTPException(422,str(e)) from None

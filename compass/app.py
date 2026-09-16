@@ -40,6 +40,7 @@ from .morning_history import run as run_morning_history
 from .morning_report import build_report as morning_report, run as run_morning_report
 from .native_morning_worker import run as run_native_morning, install as install_native_morning, initialize as initialize_native_morning
 from .native_smoothers import run as run_native_smoothers
+from .native_api import install as install_native_api
 from .secondary import Secondary, snapshot as secondary_snapshot, reviews as secondary_reviews
 
 def create_app(cfg=None):
@@ -81,12 +82,14 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(SwingIdeas(db,cfg).run()))
             tasks.append(asyncio.create_task(run_obsidian(db,cfg)))
             tasks.append(asyncio.create_task(run_strategy_tracking(db)))
+            from .native_reports import run as run_native_reports
+            tasks.append(asyncio.create_task(run_native_reports(db)))
             from .native_outbox import run as run_native_outbox
             tasks.append(asyncio.create_task(run_native_outbox(db,cfg)))
             if cfg.morning_token:
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"intake")))
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"samples")))
-            if cfg.smoothers_url and cfg.smoothers_token:
+            if cfg.alpaca_key and cfg.alpaca_secret:
                 for role in ("schedule","target","premium"):
                     tasks.append(asyncio.create_task(run_native_smoothers(db,cfg,role)))
             from .program_parity import run as run_program_parity
@@ -108,6 +111,7 @@ def create_app(cfg=None):
     app.state.db=db
     install_projects(app,db,cfg)
     install_native_morning(app,db,cfg)
+    install_native_api(app,db)
     app.mount("/static",StaticFiles(directory=root/"static"),name="static")
 
     @app.middleware("http")
@@ -135,7 +139,7 @@ def create_app(cfg=None):
                 return JSONResponse({"detail":"Invalid origin"},status_code=403)
             try: size=int(request.headers.get("content-length","0"))
             except ValueError: return JSONResponse({"detail":"Invalid content length"},status_code=400)
-            if size>(32768 if path.startswith("/hooks/native/morning") else 16384):
+            if size>(131072 if path=="/api/native/smoothers/config" else 32768 if path.startswith("/hooks/native/morning") else 16384):
                 return JSONResponse({"detail":"Request too large"},status_code=413)
         response=await call_next(request)
         response.headers["X-Content-Type-Options"]="nosniff"
