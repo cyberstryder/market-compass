@@ -3,6 +3,7 @@
 <title>Market Compass</title><link rel="stylesheet" href="/static/style.css"></head><body>
 <aside class="sidebar"><a class="brand" href="/">↗ <span>Market<br>Compass</span></a><p class="eyebrow">WORKSPACE</p>
 <nav><button class="nav active" data-tab="overview">◈ Overview</button><button class="nav" data-tab="exposure">◎ Exposure</button>
+<button class="nav" data-tab="research-admin">▣ Research admin</button>
 <button class="nav" data-tab="scanner">↗ Live scanner</button><button class="nav" data-tab="research">▤ Research desk</button>
 <button class="nav" data-tab="obsidian">◇ Obsidian Watchlist</button>
 <button class="nav" data-tab="projects">▦ Connected projects</button>
@@ -16,6 +17,14 @@
 <main class="workspace"><header><div><p class="eyebrow">MARKET INTELLIGENCE</p><h1 id="title">Session overview</h1></div>
 <div class="header-right"><span id="market" class="pill">Checking session</span><p id="clock" class="mono"></p></div></header>
 <div id="connection" class="banner">Connecting to the shared market state…</div>
+<section id="research-admin" class="tab">
+<div class="research-intro"><div><p class="eyebrow">THE WHOLE RESEARCH PROGRAM</p><h2>What we have, what we know, what comes next.</h2><p>Collection, assessment, outcomes and alert delivery have separate evidence. Saving a record does not mean it has a Compass rating or a measured result.</p></div><a class="research-download" href="/api/research-admin?download=true">Download status</a></div>
+<div id="research-admin-summary" class="stats" aria-live="polite"></div>
+<article class="panel research-gap"><h2>TraderMatrix coverage</h2><div id="research-admin-coverage"></div></article>
+<div class="research-controls"><label for="research-admin-search">Find a program<input id="research-admin-search" type="search" placeholder="Morning, swings, futures…"></label><label for="research-admin-filter">Show<select id="research-admin-filter"><option value="all">All workstreams</option><option value="attention">Needs attention</option><option value="results">Has measured results</option></select></label><p id="research-admin-count" class="muted" aria-live="polite"></p></div>
+<div id="research-admin-streams" class="research-cards"></div>
+<article class="panel"><h2>Saved evidence and reporting limits</h2><div id="research-admin-storage"></div><div id="research-admin-notes"></div></article>
+</section>
 <section id="obsidian" class="tab"><div class="banner">Watchlist ideas, not provider trade entries. Reported percentages are separate from independently observed option prices.</div><article class="panel"><h2>Obsidian Watchlist</h2><div id="obsidian-status"></div><div id="obsidian-ideas"></div></article><article class="panel"><h2>Historical price audit</h2><div id="obsidian-history"></div></article><article class="panel"><h2>Provider updates</h2><div id="obsidian-events"></div></article></section>
 <section id="secondary" class="tab">
 <div class="banner">Compass reviews each original candidate independently. Supported is a research assessment of the underlying direction. The original alerts and automation keep running.</div>
@@ -158,4 +167,4 @@
 <p class="muted">Connections are checked. Live readiness still requires advancing source times, usable option inputs, and a recorded simulated entry, exit, and confirmed alert.</p>
 <p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></section>
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
-<script src="/static/app.js"></script><script src="/static/native.js"></script></body></html>
+<script src="/static/research-admin.js"></script><script src="/static/app.js"></script><script src="/static/native.js"></script></body></html>

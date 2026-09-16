@@ -5,6 +5,10 @@
 
 # Market Compass
 
+The authenticated [Research admin](docs/research-admin.md) page (`/#research-admin`)
+shows stored coverage, assessments, outcome counts, gaps and alert status across
+the programs and comparison studies.
+
 Full-watchlist sampled quote retention and secondary checkpoint recovery are
 described in [stock quote coverage](docs/stock-quote-coverage.md).
 

@@ -29,5 +29,4 @@ jobs:
         env:
           COMPASS_LOCAL: 'true'
           SMOOTHERS_TEST_DATABASE_URL: 'postgresql+psycopg://compass_test:isolated_test_only@localhost:5432/compass_test'
-      - run: node --check compass/static/app.js && node --check compass/static/login.js && node --check compass/static/native.js
-
+      - run: node --check compass/static/app.js && node --check compass/static/login.js && node --check compass/static/native.js && node --check compass/static/research-admin.js
