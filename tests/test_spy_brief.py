@@ -65,7 +65,8 @@ def seed(db, now=NOW):
                 {'price': 762, 'score': 90, 'kind': 'apex', 'net_gex': 1e8, 'oi': 20000},
                 {'price': 761.5, 'score': None, 'kind': 'gamma_flip'}]})
         db.put(c, 'research:gamma_market', {'received': now-1, 'items': [{'symbol': 'SPY',
-            'source_ts': now-60, 'data': {'totalGEX': 1e9, 'callGEX': 2e9, 'putGEX': -1e9}}]})
+            'source_ts': now-60, 'data': {'totalGEX': 1e9, 'totalCallGEX': 2e9, 'totalPutGEX': -1e9,
+                'gammaFlipLevel': 761.6, 'expirationsUsed': [day(now)]}}]})
         db.put(c, 'index_reference:SPY', reference_pair(760, 7560, prior_session(now), now, 'SYNTHETIC FIXTURE'))
 
 
@@ -87,6 +88,8 @@ def test_confirmed_plan_has_0dte_quotes_and_dated_index_estimates(db):
     assert high['spx_estimate'] == pytest.approx(760.5 * 7560 / 760)
     assert high['xsp_estimate'] == pytest.approx(high['spx_estimate'] / 10)
     assert 'Vendor and Compass GEX signs disagree' in r['gamma']['discrepancies']
+    assert r['gamma']['vendor_call_gex'] == 2e9 and r['gamma']['vendor_put_gex'] == -1e9
+    assert any('Overview/Apex flips differ' in v for v in r['gamma']['discrepancies'])
 
 
 def test_premarket_does_not_claim_open_or_fresh_option_premiums(db):
@@ -124,7 +127,8 @@ def test_stale_gamma_and_index_reference_are_withheld_independently(db):
         ref = db.get(c, 'index_reference:SPY'); ref['reference_day'] = '2026-09-14'
         db.put(c, 'index_reference:SPY', ref)
     r = report(db)
-    assert not r['gamma']['ranked'] and r['gamma']['flip'] is None
+    assert not r['gamma']['ranked'] and r['gamma']['flip'] == 761.6
+    assert r['gamma']['flip_source'] == 'overview'
     assert r['mapping']['status'] == 'unavailable'
     assert all(v['spx_estimate'] is None for v in r['chart_levels'])
     assert r['decision'] == 'CALL SETUP CONFIRMED'

@@ -49,9 +49,18 @@ def bar_context(db, c, now):
         if d < day(now) and d not in daily and session(d):
             daily[d] = row['payload']
     prior = daily.get(prior_session(now), {})
-    ordered = [daily[d] for d in sorted(daily)][-15:]
+    ordered_days = sorted(daily)[-15:]
+    expected_days = []
+    previous = now
+    for _ in range(15):
+        expected = prior_session(previous)
+        if expected is None:
+            break
+        expected_days.append(expected)
+        previous = session(expected)[0]
+    ordered = [daily[d] for d in ordered_days]
     atr = None
-    if len(ordered) == 15 and all(all(number(r.get(k)) is not None for k in ('h', 'l', 'c')) for r in ordered):
+    if ordered_days == sorted(expected_days) and len(ordered) == 15 and all(all(number(r.get(k)) is not None for k in ('h', 'l', 'c')) for r in ordered):
         atr = sum(max(b['h'] - b['l'], abs(b['h'] - a['c']), abs(b['l'] - a['c']))
                   for a, b in zip(ordered, ordered[1:])) / 14
     quote = db.get(c, 'quote:SPY')
@@ -100,6 +109,10 @@ def gamma_context(db, c, now, spot):
     check = confirmation({**market, 'source_ts': item.get('source_ts')}, now, 1800 if now < session(day(now))[0] else 180,
                          1800 if now < session(day(now))[0] else 180)
     vendor = item.get('data', {}) if check['eligible_for_live_confirmation'] else {}
+    overview_flip = number(vendor.get('gammaFlipLevel'))
+    apex_flip = flip
+    if flip is None and overview_flip and overview_flip > 0:
+        flip = overview_flip
     chain = db.get(c, 'chain:SPY', {})
     expiries = sorted({o.get('expiry') for o in chain.get('contracts', []) if isinstance(o.get('expiry'), str) and o['expiry'] >= day(now)})[:5]
     vendor_expiries = apex.get('expirations', []) if apex_ok else []
@@ -116,13 +129,20 @@ def gamma_context(db, c, now, spot):
     if local_gex is not None and vendor_gex is not None and local_gex * vendor_gex < 0:
         disagreements.append('Vendor and Compass GEX signs disagree')
     if not aligned:
-        disagreements.append('Vendor/Compass expiry scope not verified equal')
+        disagreements.append('Apex/Compass expiry scope not verified equal')
+    overview_scope = vendor.get('expirationsUsed')
+    if not isinstance(overview_scope, list) or sorted(str(v) for v in overview_scope) != sorted(chosen):
+        disagreements.append('Gamma overview/Compass expiry scope not verified equal')
+    if apex_flip is not None and overview_flip is not None and abs(apex_flip - overview_flip) > .01:
+        disagreements.append('Overview/Apex flips differ: ' + money(overview_flip) + '/' + money(apex_flip) + '; source clocks differ')
     if proxy.get('status') != 'available':
         disagreements.append('Compass GEX inputs partial or unavailable')
     today_proxy = calculate([o for o in contracts if o.get('expiry') == day(now)], spot, now, chain.get('source'), chain.get('complete', False)) if proxy else {}
     return {'apex_status': 'available' if apex_ok else apex_check['cache_status'], 'apex_asof': apex.get('source_ts'),
-        'ranked': ranked, 'flip': flip, 'vendor_expiries': vendor_expiries, 'vendor_gex': vendor_gex,
-        'vendor_call_gex': number(vendor.get('callGEX')), 'vendor_put_gex': number(vendor.get('putGEX')),
+        'ranked': ranked, 'flip': flip, 'flip_asof': apex.get('source_ts') if apex_flip is not None else item.get('source_ts'),
+        'flip_source': 'Apex' if apex_flip is not None else 'overview',
+        'vendor_expiries': vendor_expiries, 'vendor_gex': vendor_gex,
+        'vendor_call_gex': number(vendor.get('totalCallGEX')), 'vendor_put_gex': number(vendor.get('totalPutGEX')),
         'vendor_status': check['status'], 'vendor_asof': item.get('source_ts'),
         'local': {k: proxy.get(k) for k in ('gex', 'coverage', 'contracts', 'usable_gex', 'status')},
         'local_ranked': sorted(proxy.get('strikes', []), key=lambda r: -abs(r['gex']))[:5],
@@ -198,6 +218,8 @@ def build(db, c, now, phase='preview'):
             'rule': 'Completed 15-minute close above premarket high' if side == 'call' else 'Completed 15-minute close below premarket low'}
     ref = db.get(c, 'index_reference:SPY', {})
     mapping = reference_pair(ref.get('spy_close'), ref.get('spx_close'), ref.get('reference_day'), now, ref.get('source'))
+    if mapping['status'] == 'available':
+        mapping.update(received=ref.get('received'), computed_at=now)
     chart = []
     def add(label, value):
         if number(value) is None:
@@ -309,10 +331,11 @@ def delivery_payload(row, now):
     g = p['gamma']; local = g['local']
     lines = ['Vendor GEX ' + billions(g['vendor_gex']) + ' · ' + g['vendor_status'] + ' · ' + stamp(g['vendor_asof']),
         'Vendor call/put GEX: ' + billions(g['vendor_call_gex']) + ' / ' + billions(g['vendor_put_gex']),
-        'Vendor flip ' + money(g['flip']) + ' · Apex ' + g['apex_status'] + ' · ' + stamp(g['apex_asof']),
-        'Compass proxy ' + billions(local.get('gex')) + '; call/put ' + billions(g['local_call_gex']) + ' / ' + billions(g['local_put_gex']),
+        'Vendor flip ' + money(g['flip']) + ' (' + g['flip_source'] + ', ' + stamp(g['flip_asof']) + ')',
+        'Apex ' + g['apex_status'] + ' · ' + stamp(g['apex_asof']),
+        'Compass proxy ' + billions(local.get('gex')) + ' USD delta/1% move; call/put ' + billions(g['local_call_gex']) + ' / ' + billions(g['local_put_gex']),
         'P/C proxy ' + (f"{g['put_call_ratio']:.2f}" if g['put_call_ratio'] is not None else 'unavailable') +
-        '; coverage ' + (f"{local['coverage']:.1%}" if local.get('coverage') is not None else 'unavailable') + ' · ' + stamp(g['local_asof']),
+        '; coverage ' + (f"{local['coverage']:.1%}" if local.get('coverage') is not None else 'unavailable') + '; chain fetched ' + stamp(g['local_asof']),
         'Compass expiries: ' + (', '.join(g['local_expiries']) or 'unavailable'),
         '0DTE-only proxy ' + billions(g['zero_dte_gex']) + '; coverage ' + (f"{g['zero_dte_coverage']:.1%}" if g['zero_dte_coverage'] is not None else 'unavailable')]
     if g['vendor_gex'] is not None:
@@ -325,7 +348,7 @@ def delivery_payload(row, now):
         lines.append('Current Apex rankings unavailable; stale rankings withheld.')
     if g['local_ranked']:
         lines.append('Compass largest |GEX|: ' + '; '.join(money(r['strike']) + ' ' + billions(r['gex']) for r in g['local_ranked']))
-    lines += g['discrepancies'] + [g['interpretation']]
+    lines += g['discrepancies'] + [g['interpretation'], 'Vendor units/methodology unverified. Individual Greek calculation clocks unavailable.']
     embeds.append({'title': 'Gamma, ranked levels and source comparison', 'description': '\n'.join(lines)})
     m = p['mapping']
     if m['status'] == 'available':
