@@ -115,15 +115,19 @@ def create_app(cfg=None):
     def spy_morning_brief():
         from .spy_brief import build, delivery_payload
         from .spy_chart import prompt, delivery_payload as chart_payload
+        from .spy_confirmation import SCHEDULE_CT, reports_for_day
+        from .market import day
         now=time.time()
         with db.tx() as c:
             report=build(db,c,now)
             latest=db.get(c,'spy-brief:latest')
+            history=[p for p in reports_for_day(db,c,day(now)).values() if p]
         row={'id':'preview','symbol':'SPY','source':'spy_brief','ts':now,'payload':report}
         return {'preview':report,'discord_preview':delivery_payload(row,now),'latest_scheduled':latest,
                 'tradingview_prompt':prompt(report,now),'chart_discord_preview':chart_payload(row,now),
-                'enabled':cfg.spy_morning_brief,'schedule_ct':['08:20','08:45:05'],
-                'delivery':'Two messages through the spy_morning route; session days only'}
+                'enabled':cfg.spy_morning_brief,'schedule_ct':list(SCHEDULE_CT),
+                'confirmation_history':history,
+                'delivery':'Two messages per check through spy_morning; later checks only after opening WAIT; stop after confirmation or 09:30 CT'}
 
     @app.get('/api/alerts/routes')
     def alert_routes():

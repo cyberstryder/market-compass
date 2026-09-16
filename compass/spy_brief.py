@@ -7,9 +7,11 @@ import uuid
 from .exposure import calculate
 from .index_reference import prior_session, reference_pair
 from .market import CT, NY, day, dedup, fresh, number, session
+from .spy_confirmation import (CONFIRMED, SCHEDULE_CT, assess, check_minute, report_key,
+                               reports_for_day, scheduled_phase)
 from .vendor_freshness import confirmation, context_check
 
-VERSION = 'spy-morning-brief-v1'
+VERSION = 'spy-morning-brief-v2'
 
 
 def stamp(value):
@@ -24,7 +26,7 @@ def billions(value):
     return f'{value / 1e9:+.2f}B' if number(value) is not None else 'unavailable'
 
 
-def bar_context(db, c, now):
+def bar_context(db, c, now, phase='preview'):
     hours = session(day(now))
     if not hours:
         return {'status': 'closed', 'reason': 'No regular equity session today'}
@@ -43,6 +45,14 @@ def bar_context(db, c, now):
     pm_complete = (expected_pm >= 60 and len(pm) >= .9 * expected_pm and pm
                    and min(now, opening) - (pm[-1]['ts'] + 60) <= 120)
     first_complete = {r['ts'] for r in first} == {opening + i * 60 for i in range(15)}
+    minute = check_minute(opening, now, phase)
+    boundary = opening + minute*60
+    confirming = [r for r in rth if boundary-900 <= r['ts'] < boundary]
+    candle_complete = {r['ts'] for r in confirming} == {boundary-900 + i*60 for i in range(15)}
+    history_complete = {r['ts'] for r in rth if r['ts'] < boundary} == {opening + i*60 for i in range(minute)}
+    candle = {'minute': minute, 'start': boundary-900, 'end': boundary,
+              'bars': len(confirming), 'complete': candle_complete,
+              'close': confirming[-1]['payload']['c'] if candle_complete else None}
     daily = {}
     for row in db.recent(c, 'daily', 'SPY', limit=90):
         d = day(row['ts'])
@@ -94,6 +104,7 @@ def bar_context(db, c, now):
         'premarket_complete': bool(pm_complete), 'premarket_expected_bars': expected_pm,
         'first15_complete': first_complete, 'first15_close': first[-1]['payload']['c'] if first_complete else None,
         'first15_asof': opening + 900 if first_complete else None,
+        'confirmation_candle': candle, 'confirmation_history_complete': history_complete,
         'structure': structure, 'recent_closes': closes, 'minute_volume_ratio': rv, **groups}
 
 
@@ -183,27 +194,18 @@ def option_reference(db, c, now, kind, reference):
 
 
 def build(db, c, now, phase='preview'):
-    context = bar_context(db, c, now)
+    context = bar_context(db, c, now, phase)
     out = {'version': VERSION, 'status': 'spy_morning_brief', 'alert_category': 'spy_morning',
            'phase': phase, 'day': day(now), 'generated_at': now, 'context': context, 'symbol': 'SPY'}
     if context['status'] == 'closed':
         return {**out, 'decision': 'MARKET CLOSED', 'expires_at': now}
     opening = context['session_open']
+    assessment = assess(context, reports_for_day(db, c, day(now)), now, phase)
     gamma = gamma_context(db, c, now, context['spot'] if context['status'] == 'available' else None)
     pm = context['premarket']
     risk = (context.get('atr14_daily') or 0) * .2
-    decision = 'WAIT — first 15-minute candle closes at 08:45 CT'
-    close = context['first15_close']
-    eligible = context['status'] == 'available' and context['premarket_complete'] and risk > 0
-    if now >= opening + 900:
-        decision = 'WAIT — opening data incomplete'
-        if eligible and context['first15_complete']:
-            decision = ('CALL SETUP CONFIRMED' if close > pm['high'] else
-                        'PUT SETUP CONFIRMED' if close < pm['low'] else 'WAIT — first candle stayed inside premarket range')
-    if now > opening + 1025:
-        decision = 'REFERENCE ONLY — opening confirmation window passed'
-    if not eligible:
-        decision = 'WAIT — price/range/ATR evidence incomplete'
+    decision = assessment['decision']
+    close = context['confirmation_candle']['close']
     plans = {}
     for side, sign, trigger in (('call', 1, pm.get('high')), ('put', -1, pm.get('low'))):
         if trigger is None or not risk:
@@ -233,6 +235,8 @@ def build(db, c, now, phase='preview'):
     add('Gamma flip', gamma['flip'])
     if context['first15_complete']:
         add('First 15m close', context['first15_close'])
+    if assessment['check_minute'] > 15 and context['confirmation_candle']['complete']:
+        add('Confirmation close', close)
     for i, level in enumerate(gamma['ranked']):
         add('Apex #' + str(i + 1), level['price'])
     for i, level in enumerate(gamma['local_ranked']):
@@ -240,9 +244,8 @@ def build(db, c, now, phase='preview'):
             add('GEX #' + str(i + 1), level['strike'])
     for side, plan in plans.items():
         add(side.title() + ' stop', plan.get('stop')); add(side.title() + ' target', plan.get('target'))
-    out.update(decision=decision, gamma=gamma, plans=plans, mapping=mapping, chart_levels=chart,
+    out.update(**assessment, gamma=gamma, plans=plans, mapping=mapping, chart_levels=chart,
         options={side: option_reference(db, c, now, side, context['spot']) for side in ('call', 'put')},
-        expires_at=opening if now < opening else opening + 1025,
         notes=['Conditional plan, not a broker order or an instruction to enter at a clock time.',
                '15-minute baseline retained; historical study did not prove it optimal.',
                'Stops/targets are SPY prices: 0.2 × prior 14-day mean true range risk, target 2R. Re-anchor to confirmed close.',
@@ -262,17 +265,23 @@ class BriefWorker:
         if not hours:
             return
         opening = hours[0]
-        phase = ('preopen' if opening - 600 <= now < opening - 300 else
-                 'opening' if opening + 905 <= now < opening + 1025 else None)
+        phase = scheduled_phase(opening, now)
         if not phase:
             return
-        key = 'spy-brief:' + day(now) + ':' + phase
+        key = report_key(day(now), phase)
         with self.db.tx() as c:
             if not self.db.lease(c, 'spy-morning-brief', self.owner, 30) or self.db.get(c, key):
                 return
-            report = build(self.db, c, now, phase)
-            if phase == 'opening' and not report['context']['first15_complete'] and now < opening + 1010:
+            previous = reports_for_day(self.db, c, day(now))
+            if any(p and p.get('decision') in CONFIRMED for p in previous.values()):
                 return
+            if phase.startswith('followup') and not (previous[15] and previous[15].get('decision', '').startswith('WAIT')):
+                return
+            report = build(self.db, c, now, phase)
+            if phase != 'preopen':
+                candle = report['context']['confirmation_candle']
+                if not candle['complete'] and now < candle['end'] + 110:
+                    return
             report['id'] = key
             self.db.append(c, 'alert', 'spy_brief', 'SPY', now, report, key)
             from .spy_chart import companion
@@ -285,8 +294,9 @@ class BriefWorker:
     async def run(self):
         import logging
         self.db.health('spy_morning_brief', 'scheduled' if self.cfg.spy_morning_brief else 'disabled',
-                       '08:20 and 08:45 Chicago on equity session days; 0DTE conditional plans')
-        logging.getLogger('uvicorn.error').info('SPY morning brief enabled=%s schedule=08:20,08:45:05_CT', self.cfg.spy_morning_brief)
+                       '08:20 preopen; 08:45 check; after WAIT, 09:00/09:15/09:30 Chicago; stop after confirmation')
+        logging.getLogger('uvicorn.error').info('SPY morning brief enabled=%s schedule=%s_CT; follow-ups after WAIT only',
+                                               self.cfg.spy_morning_brief, ','.join(SCHEDULE_CT))
         if not self.cfg.spy_morning_brief:
             return
         while True:
@@ -304,7 +314,7 @@ def delivery_payload(row, now):
     p = row['payload']; ctx = p['context']
     expired = now >= p.get('expires_at', 0)
     heading = 'DATED PLAN — refresh before use' if expired else p['decision']
-    content = '**SPY 0DTE MORNING PLAN · ' + p['phase'].upper() + ' · message 1 of 2**\n' + heading
+    content = '**SPY 0DTE MORNING PLAN · ' + p.get('phase_label', p['phase'].upper()) + ' · message 1 of 2**\n' + heading
     if ctx['status'] == 'closed':
         return {'content': content, 'allowed_mentions': {'parse': []}}
     session_name = 'PREMARKET' if p['generated_at'] < ctx['session_open'] else 'REGULAR SESSION'
@@ -317,6 +327,20 @@ def delivery_payload(row, now):
         ctx['structure'] + '; latest minute volume / prior 20: ' + (f"{ctx['minute_volume_ratio']:.2f}×" if ctx['minute_volume_ratio'] is not None else 'unavailable'),
         f"Premarket coverage {ctx['premarket']['bars']}/{ctx['premarket_expected_bars']} minutes; " + ('usable' if ctx['premarket_complete'] else 'incomplete'),
         'First 15m close: ' + money(ctx['first15_close']) + ' · ' + stamp(ctx['first15_asof'])]
+    candle = ctx.get('confirmation_candle')
+    if candle:
+        lines.append('This 15m check: ' + stamp(candle['start']) + ' → ' + stamp(candle['end']) +
+                     '; close ' + money(candle['close']) + f"; {candle['bars']}/15 minutes")
+    if p.get('confirmation_kind') == 'later':
+        lines.append('Later 15m check · frozen PM range ' + money(ctx['premarket']['low']) +
+                     '–' + money(ctx['premarket']['high']))
+    if ctx.get('premarket_range_unchanged') is False:
+        observed = ctx.get('premarket_observed', {})
+        lines.append('Range check: current observed PM low/high ' + money(observed.get('low')) + '/' + money(observed.get('high')))
+    if p.get('next_check_at'):
+        lines.append('If still waiting, next check ' + stamp(p['next_check_at']))
+    elif p.get('session_complete'):
+        lines.append('Morning checks finished for this session.')
     if ctx['spot'] is not None and ctx['prior'].get('c'):
         lines.append('Versus prior close: ' + f"{ctx['spot']-ctx['prior']['c']:+.2f} ({(ctx['spot']/ctx['prior']['c']-1)*100:+.2f}%)")
     if ctx['spot'] is not None and group.get('vwap') is not None:

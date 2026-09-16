@@ -5,7 +5,8 @@ from .spy_brief import stamp
 def prompt(report, now):
     p = report
     dated = now >= p.get('expires_at', 0)
-    lines = [f"Compass {p['day']} {p['phase']} | as of {stamp(p['generated_at'])}"]
+    lines = [f"Compass {p['day']} {p.get('phase_label', p['phase'])} | as of {stamp(p['generated_at'])}",
+             'Valid until ' + stamp(p.get('expires_at')) + '; reference only afterward.']
     if dated:
         lines.append('EXPIRED / REFERENCE ONLY: do not draw an active entry signal. Refresh the plan before trading.')
     lines += [
@@ -32,12 +33,20 @@ def prompt(report, now):
     lines += [
         'Snapshot decision: ' + p['decision'] + ('. Historical only.' if dated else '.'),
         'Show the snapshot decision and as-of time in a visible chart note. A stop line is not an entry trigger.',
-        'SPY confirmation: completed first 09:30–09:45 ET 15-minute close above PM high for CALL or below PM low for PUT; otherwise WAIT.',
+        'SPY confirmation: completed 15-minute close above frozen PM high for CALL or below frozen PM low for PUT. Checks: 08:45, 09:00, 09:15, 09:30 CT; stop after the first confirmation.',
         '1-minute candles are viewing context only: no 1-minute entry trigger and no intrabar breakout confirmation.',
         'Label stops/targets by CALL or PUT. They are conditional unless that side is confirmed in this snapshot; never draw both as active trades.',
-        'If the decision is WAIT, data is incomplete or the plan is expired, draw reference levels only, with no entry arrows. Do not generate later confirmations.',
+        'Only a current CALL/PUT SETUP CONFIRMED snapshot may show an entry arrow. WAIT, NO ENTRY, reference-only, incomplete or expired plans get reference levels only. Never infer another confirmation.',
         'Draw underlying levels only, never option premiums or order instructions.',
     ]
+    candle = p.get('context', {}).get('confirmation_candle')
+    if candle:
+        lines.append('This check uses the candle ending ' + stamp(candle['end']) +
+                     '. Only a new Compass message can confirm a later candle.')
+    if p.get('next_check_at'):
+        lines.append('Next Compass check: ' + stamp(p['next_check_at']))
+    elif p.get('session_complete'):
+        lines.append('Morning checks finished for this session.')
     if not p.get('context', {}).get('premarket_complete'):
         lines.append('Premarket coverage incomplete: label PM levels INCOMPLETE; not eligible for confirmation.')
     return '\n'.join(lines)
@@ -53,7 +62,7 @@ def delivery_payload(row, now):
     text = prompt(p, now)
     # Rich description supports a complete, copyable code block in one second message.
     # The report bounds Apex/GEX rows and uses fixed labels; no truncation of prices.
-    return {'content': '**TRADINGVIEW AI · message 2 of 2 · ' + p['day'] + ' ' + p['phase'].upper() + '**\nCopy the full block into your chart AI.',
+    return {'content': '**TRADINGVIEW AI · message 2 of 2 · ' + p['day'] + ' ' + p.get('phase_label', p['phase'].upper()) + '**\nCopy the full block into your chart AI.',
             'embeds': [{'title': 'Draw on the 1-minute and 15-minute charts',
                         'description': '```text\n' + text + '\n```',
                         'footer': {'text': p.get('parent_plan', p.get('id', 'preview')) + ' · Event ' + str(row['id'])}}],

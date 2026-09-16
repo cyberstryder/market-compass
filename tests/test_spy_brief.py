@@ -283,3 +283,234 @@ def test_two_messages_are_atomic_deduplicated_and_individually_acknowledged(db):
     assert len(sent) == 3
     assert sum('message 1 of 2' in p['content'] for p in sent) == 1
     with db.tx() as c: assert outbox_status(db, c, NOW+3)['pending'] == 0
+
+
+def seed_checks(db, now, closes=None, missing=(), pm_gap=0):
+    """Default every completed candle to inside the PM range; change selected blocks."""
+    seed(db, now)
+    closes = closes or {}
+    with db.tx() as c:
+        rows = db.get(c, 'bar_window:SPY')
+        for row in rows:
+            if row[0] >= OPEN:
+                minute = (int((row[0]-OPEN)//900)+1)*15
+                price = closes.get(minute, 760)
+                row[1:5] = [price, price+.1, price-.1, price]
+        rows = [r for r in rows[pm_gap:] if r[0] not in missing]
+        db.put(c, 'bar_window:SPY', rows)
+
+
+@pytest.mark.parametrize('minute', [30, 45, 60])
+@pytest.mark.parametrize('price,side', [(761, 'call'), (759, 'put')])
+def test_later_confirmation_uses_current_candle_and_stops_after_first_setup(db, minute, price, side):
+    from compass.store import leases
+    worker = BriefWorker(db, Config(local=True))
+    for m in range(15, minute+1, 15):
+        now = OPEN+m*60+7
+        seed_checks(db, now, {minute: price})
+        r = worker.tick(now)
+        if m < minute:
+            assert r['decision'].startswith('WAIT')
+            assert r['next_check_at'] == OPEN+(m+15)*60
+    assert r['decision'] == side.upper() + ' SETUP CONFIRMED'
+    assert r['confirmation_kind'] == 'later' and r['session_complete']
+    assert r['check_minute'] == minute and r['next_check_at'] is None
+    assert r['context']['first15_close'] == 760
+    assert r['context']['confirmation_candle']['close'] == price
+    assert r['context']['confirmation_candle']['start'] == OPEN+(minute-15)*60
+    assert r['plans'][side]['entry_reference'] == price
+    sign = 1 if side == 'call' else -1
+    assert r['plans'][side]['stop'] == pytest.approx(price-sign*.8)
+    assert r['plans'][side]['target'] == pytest.approx(price+sign*1.6)
+    assert r['frozen_premarket']['high'] == 760.5
+    assert r['frozen_premarket']['low'] == 759.5
+    with db.tx() as c:
+        rows = db.recent(c, 'alert')
+        assert len(rows) == minute//15*2
+        assert sum(x['payload'].get('decision') in ('CALL SETUP CONFIRMED','PUT SETUP CONFIRMED') for x in rows) == 2
+        assert not db.prefix(c, 'position:')
+        c.execute(leases.update().values(until=0))
+    restarted = BriefWorker(db, Config(local=True))
+    assert restarted.tick(now+1) is None
+    for m in range(minute+15, 61, 15):
+        seed_checks(db, OPEN+m*60+7, {m: 758})
+        assert restarted.tick(OPEN+m*60+7) is None
+    with db.tx() as c: assert len(db.recent(c,'alert')) == minute//15*2
+
+
+def test_opening_confirmation_prevents_every_followup(db):
+    seed(db)
+    worker = BriefWorker(db, Config(local=True))
+    assert worker.tick(NOW)['decision'] == 'CALL SETUP CONFIRMED'
+    for minute in (30,45,60):
+        seed_checks(db, OPEN+minute*60+7, {minute:759})
+        assert worker.tick(OPEN+minute*60+7) is None
+    with db.tx() as c: assert len(db.recent(c,'alert')) == 2
+
+
+def test_all_waits_end_with_no_entry_and_each_check_has_two_unique_messages(db):
+    worker = BriefWorker(db, Config(local=True))
+    for minute in (15,30,45,60):
+        now = OPEN+minute*60+7
+        seed_checks(db, now)
+        r = worker.tick(now)
+        assert worker.tick(now+1) is None
+        assert r['decision'].startswith('NO ENTRY' if minute==60 else 'WAIT')
+    assert r['session_complete'] and r['next_check_at'] is None
+    assert worker.tick(OPEN+75*60+7) is None
+    with db.tx() as c:
+        rows = sorted(db.recent(c,'alert'), key=lambda x:x['id'])
+        assert len(rows) == 8 and len({x['key'] for x in rows}) == 8
+        for i in range(0,8,2):
+            assert rows[i+1]['payload']['parent_plan'] == rows[i]['key']
+        assert db.get(c,'spy-brief:latest')['decision'].startswith('NO ENTRY')
+    seed_checks(db,OPEN+3617,{60:761})
+    with db.tx() as c:
+        preview=build(db,c,OPEN+3617)
+    assert preview['decision_state']=='reference_only' and preview['session_complete']
+    assert preview['next_check_at'] is None
+
+
+@pytest.mark.parametrize('touch', [759.5,760.5])
+def test_touching_frozen_boundary_does_not_confirm(db, touch):
+    worker = BriefWorker(db, Config(local=True))
+    seed_checks(db,NOW); worker.tick(NOW)
+    seed_checks(db,OPEN+1807,{30:touch})
+    assert worker.tick(OPEN+1807)['decision_state'] == 'waiting'
+
+
+def test_no_opening_record_means_no_followup_or_invented_confirmation(db):
+    seed_checks(db,OPEN+1807,{30:761})
+    assert BriefWorker(db,Config(local=True)).tick(OPEN+1807) is None
+    with db.tx() as c:
+        assert not db.recent(c,'alert')
+        preview=build(db,c,OPEN+1807)
+    assert preview['decision'].startswith('WAIT')
+    assert 'recorded opening WAIT required' in preview['data_blocks']
+
+
+def test_missed_check_is_not_replayed_or_silently_skipped(db):
+    worker=BriefWorker(db,Config(local=True))
+    seed_checks(db,NOW); worker.tick(NOW)
+    seed_checks(db,OPEN+1925,{30:761})
+    for at in (OPEN+1799,OPEN+1804,OPEN+1925):
+        assert worker.tick(at) is None
+    for minute in (45,60):
+        seed_checks(db,OPEN+minute*60+7,{30:761,minute:761})
+        r=worker.tick(OPEN+minute*60+7)
+        assert 'earlier scheduled check missing' in r['data_blocks']
+        assert r['decision_state'] == ('no_entry' if minute==60 else 'waiting')
+    with db.tx() as c: assert db.get(c,'spy-brief:2026-09-16:followup_30') is None
+
+
+@pytest.mark.parametrize('missing', [OPEN+600,OPEN+1740])
+def test_old_or_current_minute_gaps_remain_blocking_until_recovered(db,missing):
+    worker=BriefWorker(db,Config(local=True))
+    seed_checks(db,NOW); worker.tick(NOW)
+    seed_checks(db,OPEN+1807,{30:761},missing=(missing,))
+    first_attempt=worker.tick(OPEN+1807)
+    if missing>=OPEN+900:
+        assert first_attempt is None
+        r=worker.tick(OPEN+1910)
+    else:
+        r=first_attempt
+        assert r['context']['confirmation_candle']['complete']
+    assert r['decision'].startswith('WAIT')
+    assert not r['context']['confirmation_history_complete']
+    seed_checks(db,OPEN+2707,{30:761,45:761})
+    assert worker.tick(OPEN+2707)['decision']=='CALL SETUP CONFIRMED'
+
+
+def test_followup_waits_briefly_for_late_closing_bar(db):
+    worker=BriefWorker(db,Config(local=True))
+    seed_checks(db,NOW); worker.tick(NOW)
+    seed_checks(db,OPEN+1807,{30:761},missing=(OPEN+1740,))
+    assert worker.tick(OPEN+1807) is None
+    seed_checks(db,OPEN+1817,{30:761})
+    r=worker.tick(OPEN+1817)
+    assert r['decision']=='CALL SETUP CONFIRMED' and r['expires_at']==OPEN+1925
+
+
+def test_premarket_coverage_can_recover_only_with_same_frozen_range(db):
+    worker=BriefWorker(db,Config(local=True))
+    seed_checks(db,NOW,pm_gap=58)
+    first=worker.tick(NOW)
+    assert 'premarket coverage incomplete' in first['data_blocks']
+    seed_checks(db,OPEN+1807,{30:761},pm_gap=58)
+    assert worker.tick(OPEN+1807)['decision'].startswith('WAIT')
+    seed_checks(db,OPEN+2707,{30:761,45:761})
+    r=worker.tick(OPEN+2707)
+    assert r['decision']=='CALL SETUP CONFIRMED'
+    assert r['frozen_premarket']==first['frozen_premarket']
+
+
+def test_recovered_range_discrepancy_blocks_confirmation_and_keeps_drawn_levels(db):
+    worker=BriefWorker(db,Config(local=True))
+    seed_checks(db,NOW,pm_gap=58); worker.tick(NOW)
+    for minute in (30,45,60):
+        now=OPEN+minute*60+7
+        seed_checks(db,now,{minute:762})
+        with db.tx() as c:
+            bars=db.get(c,'bar_window:SPY'); bars[0][2]=761.5
+            db.put(c,'bar_window:SPY',bars)
+        r=worker.tick(now)
+        assert r['context']['premarket_complete']
+        assert r['context']['premarket']['high']==760.5
+        assert r['context']['premarket_observed']['high']==761.5
+        assert 'recovered premarket range differs from frozen levels' in r['data_blocks']
+        assert next(x['spy'] for x in r['chart_levels'] if x['label']=='PM high')==760.5
+        assert r['decision_state']==('no_entry' if minute==60 else 'waiting')
+
+
+def test_legacy_opening_wait_can_continue_without_changing_saved_levels(db):
+    worker=BriefWorker(db,Config(local=True))
+    seed_checks(db,NOW); first=worker.tick(NOW)
+    first.pop('frozen_premarket')
+    with db.tx() as c: db.put(c,first['id'],first)
+    seed_checks(db,OPEN+1807,{30:759})
+    r=worker.tick(OPEN+1807)
+    assert r['decision']=='PUT SETUP CONFIRMED'
+    assert r['frozen_premarket']['low']==759.5
+
+
+def test_later_messages_preserve_expiry_bounds_and_separate_tracking(db):
+    from compass.spy_chart import companion,prompt,delivery_payload as chart_payload
+    worker=BriefWorker(db,Config(local=True))
+    seed_checks(db,NOW); worker.tick(NOW)
+    seed_checks(db,OPEN+1807,{30:761})
+    r=worker.tick(OPEN+1807)
+    p=companion(r)
+    row={'id':9,'payload':r,'source':'spy_brief','symbol':'SPY','ts':OPEN+1807}
+    body=delivery_payload(row,OPEN+1807)
+    assert 'LATER CHECK' in body['content']
+    assert 'Later 15m check' in body['embeds'][0]['description']
+    text=prompt(p,OPEN+1807)
+    assert '09:00' in text and 'Confirmation close: 761.00' in text
+    assert 'Valid until Sep 16 09:02:05 CT' in text
+    assert 'EXPIRED / REFERENCE ONLY' in prompt(p,OPEN+1925)
+    assert 'DATED PLAN' in delivery_payload(row,OPEN+1925)['content']
+    assert sum(len(e.get('title',''))+len(e.get('description',''))+len(e.get('footer',{}).get('text','')) for e in body['embeds'])<=6000
+    assert len(chart_payload({**row,'payload':p},OPEN+1807)['embeds'][0]['description'])<4096
+
+
+def test_followup_session_schedule_honors_dst_and_early_close_sessions():
+    from compass.spy_confirmation import scheduled_phase,clock
+    for d in ('2026-07-06','2026-12-07','2026-11-27'):
+        opening=session(d)[0]
+        for minute in (15,30,45,60):
+            at=opening+minute*60+7
+            assert scheduled_phase(opening,at)==('opening' if minute==15 else 'followup_'+str(minute))
+            assert clock(opening+minute*60)=={15:'08:45 CT',30:'09:00 CT',45:'09:15 CT',60:'09:30 CT'}[minute]
+
+
+def test_opening_preview_cannot_bypass_a_changed_saved_premarket_range(db):
+    worker=BriefWorker(db,Config(local=True))
+    seed_checks(db,NOW); worker.tick(NOW)
+    seed_checks(db,NOW+10,{15:761})
+    with db.tx() as c:
+        bars=db.get(c,'bar_window:SPY'); bars[0][2]=762
+        db.put(c,'bar_window:SPY',bars)
+        r=build(db,c,NOW+10)
+    assert r['decision'].startswith('WAIT')
+    assert r['context']['premarket']['high']==760.5
+    assert 'recovered premarket range differs from frozen levels' in r['data_blocks']
