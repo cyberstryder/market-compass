@@ -21,7 +21,10 @@ def activity(worker, now, enabled=None, limit=180):
     stamp = worker.get('at')
     if stamp is None:
         return 'awaiting_evidence'
-    return 'observing' if 0 <= now-stamp <= limit else 'stale'
+    # The shared-state response reads several tables while workers keep writing.
+    # A heartbeat can land just after the response's initial clock. This grace
+    # applies only to activity labels, never to market-data entry eligibility.
+    return 'observing' if -5 <= now-stamp <= limit else 'stale'
 
 
 def metric(label, value):
