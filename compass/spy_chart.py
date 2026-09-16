@@ -11,8 +11,9 @@ def prompt(report, now):
     lines += [
         'Draw these underlying-price levels on BOTH 1-minute and 15-minute charts (not monthly).',
         'Use ONLY the column matching the chart: SPY, SPX or XSP. For any other symbol, stop and ask. Never mix columns.',
-        'Create a Compass group for this date on each timeframe; update only that group and preserve all my other drawings.',
+        'Update or create one Compass group for this date; replace its levels with this snapshot and preserve all my other drawings. Reuse synced drawings across panes; do not duplicate.',
         'Use horizontal rays from the as-of time; do not backdate signals. Label every ray with its name and price.',
+        'Keep each name paired with its listed price. If labels overlap, offset only their text with leader lines; never move or merge price levels.',
         'PM high/low: blue; prior H/L/C: gray; gamma/Apex/GEX: purple; VWAP snapshot: orange dashed; stops: red dashed; targets: green dashed.',
         'VWAP here is a static snapshot, not a live VWAP indicator. Premarket levels are provisional before 09:30 ET and frozen afterward.',
         'All SPX/XSP levels are ESTIMATES: include EST in their labels. They are not independently confirmed index signals.',
@@ -30,6 +31,7 @@ def prompt(report, now):
         lines.append('SPX/XSP mapping unavailable: draw SPY only; do not approximate missing index levels.')
     lines += [
         'Snapshot decision: ' + p['decision'] + ('. Historical only.' if dated else '.'),
+        'Show the snapshot decision and as-of time in a visible chart note. A stop line is not an entry trigger.',
         'SPY confirmation: completed first 09:30–09:45 ET 15-minute close above PM high for CALL or below PM low for PUT; otherwise WAIT.',
         '1-minute candles are viewing context only: no 1-minute entry trigger and no intrabar breakout confirmation.',
         'Label stops/targets by CALL or PUT. They are conditional unless that side is confirmed in this snapshot; never draw both as active trades.',
