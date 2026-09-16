@@ -71,3 +71,39 @@ The Observation reliability panel shows collector-version cohorts over a bounded
 rates, exclusions separately, quote source age, queue depth, latest recovery
 results and evidence age. Option collector v3 marks this release. Comparisons
 across versions are descriptive: contracts, selection policy and durations differ.
+
+## September 16: stock receipt and recovery isolation (v4)
+
+The regular-session failure audit showed fresh archived option samples paired
+with stale/invalid underlying samples, including MU and SPY near 19:30 UTC.
+Other failures had genuine option-update gaps. Code inspection found that the
+stock socket and live option REST recovery still shared the collector loop with
+synchronous chain/database work. Stock quote and completed-bar persistence also
+shared one writer. These are verified contention paths; historical telemetry
+cannot attribute every unresolved observation to them.
+
+Stock receipt and live option recovery now each run on a dedicated loop. Recovery
+creates and closes its own HTTP client on that loop and retains the existing
+request limits, cooldowns, entitlement backoffs and original source timestamps.
+Stock quotes and bars use independent writers. In-flight writes are drained on
+shutdown; pending/failed writes remain explicit. Sample rates remain unchanged.
+Out-of-order Alpaca stock samples are archived without rewinding latest state.
+
+Stock telemetry separates source-to-socket latency, socket-to-completed-storage
+delay and silence since the last quote. The dashboard reports the latest
+per-symbol maxima, not percentiles or a session-wide service-level result.
+An old quiet symbol and a delayed quote are different observations. After-hours
+telemetry alone cannot establish regular-session reliability.
+
+New option stream/recovery and stock samples use `option-reliability-v4`.
+New option observations retain both their option and underlying collection
+versions. No historical statuses, five-second freshness checks, fifteen-second
+continuity limit, continuity qualification or portfolio rules change. A quote
+that reached the socket promptly but was stored too late remains ineligible
+for recorded-path replay under the original storage-time rule.
+
+Acceptance remains a full subsequent cash session: compare versioned completed,
+unresolved and excluded cohorts; inspect every new failure cluster using both
+stream clocks and archive evidence. A successful deployment is only startup
+verification. Roll back application code if needed; no schema migration or
+rewriting of historical outcomes is required.

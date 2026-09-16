@@ -384,7 +384,7 @@ class Scanner:
                         filled=engine.enter(c,signal,now,quiet=True)
                         item['paper_status']='entered' if filled else 'risk_or_position_blocked'
                         if symbol in cfg.watch_symbols:
-                            db.put(c,'pending_options:'+item['id'],{'signal':signal,'expires_at':item['expires_at'],'status':'waiting'})
+                            db.put(c,'pending_options:'+item['id'],{'signal':signal,'created_at':now,'expires_at':item['expires_at'],'status':'waiting'})
                     db.append(c,'alert','scanner',symbol,now,{**item,'status':'setup_triggered'},'setup:'+item['id'])
             current=db.get(c,'opportunity:'+symbol+':'+item['side'],{})
             if not (current.get('status')=='triggered' and now<current.get('expires_at',0) and item['status'] in ('watch','blocked')):
@@ -393,6 +393,7 @@ class Scanner:
         self.manage_opportunities(c,quotes,now)
         self.retry_options(c,quotes,now,engine)
         db.put(c,'scanner:status',{'at':now,'mode':'SIMULATED','watch_symbols':len(cfg.watch_symbols),
+            'paper_enabled':cfg.scanner_paper,
             'features_ready':sum(f.get('status')=='ready' and 0<=now-f.get('asof',0)<=90 for f in facts.values()),
             'last_updated_symbols':len(changed),'rules_version':VERSION,
             'rules':['orb_retest','session_sweep_reclaim','trend_pullback','volume_breakout','exposure_level_break','flow_price_breakout'],
@@ -417,9 +418,23 @@ class Scanner:
                 self.db.put(c,key,pending)
                 engine.alert(c,symbol,{**alert_context(signal),'status':'options_skipped','reason':reason,'parent_signal':signal['id']},'pending-option-expired:'+signal['id'])
             elif fresh(quote,now) and abs((quote['bid']+quote['ask'])/2-signal['signal_price'])<=signal['context']['atr14']*.5:
-                if engine.options(c,signal,now,quiet=True):
+                audit={}
+                if engine.options(c,signal,now,quiet=True,diagnostics=audit):
                     pending.update(status='entered',updated_at=now)
-                    self.db.put(c,key,pending)
+                self.save_option_diagnostic(c,key,pending,audit,now)
+            else:
+                reason='Fresh underlying quote required' if not fresh(quote,now) else 'Underlying moved beyond entry tolerance'
+                self.save_option_diagnostic(c,key,pending,dict(version='0dte-selection-v1',at=now,
+                    status='waiting',reason=reason,rejections=[],checked_contracts=0),now)
+
+    def save_option_diagnostic(self,c,key,pending,audit,now):
+        previous=pending.get('last_selection',{})
+        def signature(row):
+            return (row.get('status'),row.get('reason'),[(r['symbol'],r['reason']) for r in row.get('rejections',[])])
+        # Preserve changed reasons immediately; bound repeated identical state writes.
+        if signature(audit)!=signature(previous) or now-previous.get('at',0)>=5:
+            pending.update(last_selection=audit,updated_at=now)
+            self.db.put(c,key,pending)
 
     def manage_opportunities(self,c,quotes,now):
         for key,item in self.db.prefix(c,'opportunity:').items():

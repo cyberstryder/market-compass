@@ -5,6 +5,7 @@ import time
 from sqlalchemy import select
 from .option_ideas import ideas
 from .market import fresh, ts
+from .quote_collection import VERSION as COLLECTION_VERSION
 
 LOG=logging.getLogger('uvicorn.error')
 
@@ -15,7 +16,7 @@ def parse_quotes(data, now):
         stamp=ts(raw.get('sip_timestamp'))
         q=dict(ts=stamp,bid=raw.get('bid_price'),ask=raw.get('ask_price'),
             bid_size=raw.get('bid_size'),ask_size=raw.get('ask_size'),
-            recovery='live_rest',recovery_fetched_at=now,collection_version='option-reliability-v3')
+            recovery='live_rest',recovery_fetched_at=now,collection_version=COLLECTION_VERSION)
         if stamp is not None and 0<=now-stamp<=5 and fresh(q,now):rows[stamp]=q
     return [rows[k] for k in sorted(rows)]
 
@@ -42,14 +43,19 @@ async def recover(collector):
     selected,waiting,truncated=await asyncio.to_thread(targets,collector,now)
     async def fetch(symbol):
         collector.option_recovery_attempts[symbol]=now
+        started=time.monotonic()
         try:
             data=await asyncio.wait_for(collector.get('https://api.massive.com/v3/quotes/'+symbol,
                 params={'apiKey':collector.cfg.massive,'timestamp.gte':str(int((now-5)*1e9)),
                     'timestamp.lte':str(int(now*1e9)),'sort':'timestamp','order':'desc','limit':32}),2)
-            quotes=parse_quotes(data,time.time())
+            fetched_at=time.time()
+            request_seconds=time.monotonic()-started
+            quotes=parse_quotes(data,fetched_at)
             if quotes:await asyncio.to_thread(collector.quote_batch,'massive_rest',[(symbol,q,True) for q in quotes])
             return dict(symbol=symbol,status='fresh_quotes' if quotes else 'no_fresh_quotes',
                 fresh_rows=len(quotes),latest_source_ts=quotes[-1]['ts'] if quotes else None,
+                fetched_at=fetched_at,request_seconds=request_seconds,
+                storage_seconds=max(0,time.monotonic()-started-request_seconds),
                 truncated=bool(data.get('next_url')))
         except asyncio.CancelledError:raise
         except Exception as exc:
@@ -58,7 +64,7 @@ async def recover(collector):
             return dict(symbol=symbol,status='unavailable',http_status=code,error=type(exc).__name__)
     results=await asyncio.gather(*(fetch(s) for s in selected))
     opra=await recover_alpaca(collector,[r['symbol'] for r in results if r.get('fresh_rows',0)==0])
-    report=dict(at=time.time(),requests=len(selected),opra_requests=int(bool(opra)),waiting=waiting,truncated=truncated,results=results,opra_results=opra,
+    report=dict(at=time.time(),collection_version=COLLECTION_VERSION,requests=len(selected),opra_requests=int(bool(opra)),waiting=waiting,truncated=truncated,results=results,opra_results=opra,
         backoff_until=getattr(collector,'option_recovery_backoff',0),
         note='Open intraday observations only; max four Massive requests plus one OPRA batch per cycle, five-second per-contract cooldown, two-second timeout. Only original quotes still fresh at receipt; no historical gap rewriting.')
     await asyncio.to_thread(collector.db.health,'option_recovery','running','Bounded original-timestamp quote recovery',None,**report)
@@ -81,7 +87,7 @@ async def recover_alpaca(collector, symbols):
             stamp=ts(raw.get('t'))
             at=time.time()
             q=dict(ts=stamp,bid=raw.get('bp'),ask=raw.get('ap'),bid_size=raw.get('bs'),ask_size=raw.get('as'),
-                recovery='live_rest_opra',recovery_fetched_at=at,collection_version='option-reliability-v3')
+                recovery='live_rest_opra',recovery_fetched_at=at,collection_version=COLLECTION_VERSION)
             valid=stamp is not None and 0<=at-stamp<=5 and fresh(q,at)
             if valid:rows.append((symbol,q,True))
             results.append(dict(symbol=symbol,status='fresh_quotes' if valid else 'no_fresh_quotes',

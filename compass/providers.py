@@ -55,7 +55,11 @@ class Collectors:
         await self.client.aclose()
 
     async def get(self,url,headers=None,params=None):
-        r=await self.client.get(url,headers=headers,params=params)
+        return await self.get_with_client(self.client,url,headers,params)
+
+    @staticmethod
+    async def get_with_client(client,url,headers=None,params=None):
+        r=await client.get(url,headers=headers,params=params)
         if r.status_code!=200:
             raise FeedError(f"HTTP {r.status_code}; check entitlement, quota and credentials",r.status_code)
         return r.json()
@@ -83,7 +87,6 @@ class Collectors:
 
     def tasks(self):
         c=self.cfg
-        from .option_recovery import recover as recover_options
         from .obsidian_history import step as history_obsidian
         from .obsidian import poll as poll_obsidian
         from .extra_futures import tasks as extra_tasks
@@ -100,7 +103,7 @@ class Collectors:
             self.supervise("futures_history",bool(c.databento),self.future_history,3600),
             self.supervise("option_chain",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.chains,2),
             self.supervise("option_stream",bool(c.massive),self.options),
-            self.supervise("option_recovery",bool(c.massive),lambda:recover_options(self),2),
+            self.supervise("option_recovery",bool(c.massive),self.option_recovery),
             self.supervise("option_subscriptions",bool(c.massive),self.refresh_option_subscriptions,2),
             self.supervise("tradermatrix",bool(c.matrix),self.matrix,2),
             self.supervise("tradermatrix_flow",bool(c.matrix),self.flow,20),
@@ -134,9 +137,9 @@ class Collectors:
                     continue
                 q={**q,'source':source,'symbol':symbol,'received':time.time()}
                 accepted=self.db.put_quote(c,'quote:'+symbol,q)
-                # Parallel option readers may commit out of order. Preserve their
+                # Parallel stream/recovery readers may commit out of order. Preserve their
                 # sampled history without regressing the latest cache.
-                if not accepted and source not in ('massive','massive_rest','alpaca_opra_recovery'): continue
+                if not accepted and source not in ('alpaca','massive','massive_rest','alpaca_opra_recovery'): continue
                 if record:
                     retained.append((symbol,q))
 
@@ -164,13 +167,48 @@ class Collectors:
                     self.db.put(c,'bar_window:'+symbol,sorted(window.values(),key=lambda r:r[0])[-1800:])
 
     async def stocks(self):
-        self.db.health("alpaca_stocks","connecting",self.cfg.feed.upper()+" stream")
+        feed=FeedLoop('stocks')
+        task=asyncio.run_coroutine_threadsafe(self.stock_connection(),feed.loop)
+        try: await asyncio.wrap_future(task)
+        finally: await asyncio.to_thread(feed.close)
+
+    async def stock_connection(self):
+        await asyncio.to_thread(self.db.health,"alpaca_stocks","connecting",self.cfg.feed.upper()+" stream")
         async with websockets.connect("wss://stream.data.alpaca.markets/v2/"+self.cfg.feed,ping_interval=20,max_queue=4096) as ws:
             await ws.send(json.dumps({"action":"auth","key":self.cfg.alpaca_key,"secret":self.cfg.alpaca_secret}))
             try:
                 await consume_stocks(ws,self)
             except StockStreamError as error:
                 raise FeedError(str(error)) from None
+
+    async def option_recovery(self):
+        feed=FeedLoop('option-recovery')
+        task=asyncio.run_coroutine_threadsafe(self.recovery_connection(),feed.loop)
+        try: await asyncio.wrap_future(task)
+        finally: await asyncio.to_thread(feed.close)
+
+    async def recovery_connection(self):
+        # HTTP transports belong to this loop; never share the main-loop client.
+        from types import SimpleNamespace
+        from .option_recovery import recover
+        async with httpx.AsyncClient(timeout=20,follow_redirects=False) as client:
+            async def get(url,headers=None,params=None):
+                return await self.get_with_client(client,url,headers,params)
+            worker=SimpleNamespace(db=self.db,cfg=self.cfg,get=get,
+                quote_batch=self.quote_batch,alpaca_headers=self.alpaca_headers)
+            delay=2
+            while True:
+                try:
+                    await recover(worker)
+                    delay=2
+                except asyncio.CancelledError: raise
+                except Exception as error:
+                    await asyncio.to_thread(self.db.health,'option_recovery','error',
+                        type(error).__name__+f'; retry in {delay}s')
+                    await asyncio.sleep(delay)
+                    delay=min(delay*2,120)
+                    continue
+                await asyncio.sleep(2)
 
     async def history(self):
         newest=None

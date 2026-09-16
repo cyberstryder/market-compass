@@ -32,13 +32,14 @@ def test_recovery_does_not_refresh_old_future_or_invalid_quotes():
     assert not parse_quotes({'results':[dict(q(NOW),bid_size=0)]},NOW)
 
 
-def test_late_history_is_archived_without_regressing_latest_state(tmp_path,monkeypatch):
+@pytest.mark.parametrize('source',['massive_rest','alpaca'])
+def test_late_history_is_archived_without_regressing_latest_state(tmp_path,monkeypatch,source):
     db=Store('sqlite:///'+str(tmp_path/'test.db'));db.initialize()
     collector=SimpleNamespace(db=db)
     monkeypatch.setattr('compass.providers.time.time',lambda:NOW)
     def q(t):return dict(ts=t,bid=1,ask=1.1,bid_size=1,ask_size=1)
     Collectors.quote_batch(collector,'massive',[(SYMBOL,q(NOW),True)])
-    for _ in range(2):Collectors.quote_batch(collector,'massive_rest',[(SYMBOL,q(NOW-1),True)])
+    for _ in range(2):Collectors.quote_batch(collector,source,[(SYMBOL,q(NOW-1),True)])
     with db.tx() as c:
         assert db.get(c,'quote:'+SYMBOL)['ts']==NOW
         assert len(c.execute(select(events)).all())==2
@@ -75,7 +76,46 @@ def test_live_recovery_retains_original_clock_and_source(monkeypatch):
     assert saved[0][0]=='massive_rest'
     q=saved[0][1][0][1]
     assert q['ts']==NOW-1 and q['recovery_fetched_at']==NOW
-    assert q['collection_version']=='option-reliability-v3'
+    assert q['collection_version']=='option-reliability-v4'
+
+
+def test_recovery_owns_http_client_on_its_isolated_loop(monkeypatch):
+    loops={}
+    class Client:
+        def __init__(self,**kwargs):loops['created']=asyncio.get_running_loop()
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):loops['closed']=asyncio.get_running_loop()
+        async def get(self,*args,**kwargs):
+            loops['request']=asyncio.get_running_loop()
+            return SimpleNamespace(status_code=200,json=lambda:{'results':[]})
+    async def cycle(worker):
+        assert await worker.get('https://example.invalid')=={'results':[]}
+        raise asyncio.CancelledError
+    monkeypatch.setattr('compass.providers.httpx.AsyncClient',Client)
+    monkeypatch.setattr('compass.option_recovery.recover',cycle)
+    class Collector(Collectors):
+        def __init__(self):
+            self.cfg=SimpleNamespace(alpaca_key='test',alpaca_secret='test')
+            self.db=SimpleNamespace()
+            self.client=object()  # Cannot be used as an HTTP client.
+    async def run():
+        loops['main']=asyncio.get_running_loop()
+        with pytest.raises(asyncio.CancelledError):await Collector().option_recovery()
+    asyncio.run(run())
+    assert loops['created'] is loops['request'] is loops['closed']
+    assert loops['created'] is not loops['main']
+
+
+def test_late_storage_is_not_made_fresh_by_socket_receipt(tmp_path,monkeypatch):
+    from compass.quote_path import recorded_path
+    db=Store('sqlite:///'+str(tmp_path/'late.db'));db.initialize()
+    monkeypatch.setattr('compass.providers.time.time',lambda:NOW+10)
+    q=dict(ts=NOW,bid=1,ask=1.1,bid_size=1,ask_size=1,socket_read_at=NOW+.1)
+    Collectors.quote_batch(SimpleNamespace(db=db),'alpaca',[('SPY',q,True)])
+    with db.tx() as c:
+        path,truncated,check=recorded_path(db,c,'SPY',NOW-1,NOW+11)
+    assert not path and not truncated and check['stale_or_invalid_when_recorded']==1
+    db.engine.dispose()
 
 
 def test_alpaca_recovery_explicit_opra_preserves_clock(monkeypatch):
