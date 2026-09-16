@@ -121,3 +121,22 @@ def test_route_test_keeps_test_identity_and_no_native_ownership_change(db):
     assert route_for(row) == 'spy_morning'
     assert len(manifest(Config(local=True))) == 10
     with db.tx() as c: assert not db.prefix(c, 'native:ownership:')
+
+
+def test_verification_recovers_without_sending_a_synthetic_alert(db):
+    worker = DeliveryWorker(db, Config(local=True, discord=URL))
+    calls = []
+    def handler(request):
+        calls.append(request.method)
+        assert request.method == 'GET'
+        return httpx.Response(503) if len(calls) == 1 else httpx.Response(200, json={'id': '123', 'channel_id': '789'})
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await worker.tick(client, 100)
+            await worker.tick(client, 131)
+    asyncio.run(run())
+    with db.tx() as c:
+        assert db.get(c, 'health:discord:spy_morning')['status'] == 'connected'
+        assert db.get(c, 'health:discord:spy_morning')['destination']['channel_id'] == '789'
+        assert outbox_status(db, c, 131)['pending'] == 0
+    assert calls == ['GET', 'GET']

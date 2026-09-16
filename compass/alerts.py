@@ -114,6 +114,7 @@ class DeliveryWorker:
         self.db, self.cfg, self.owner = db, cfg, uuid.uuid4().hex
         self.verified, self.retry_at = {}, {}
         self.published, self.route_health = False, {}
+        self.ready_routes = set()
 
     def health(self, route, status, detail, **extra):
         if self.route_health.get(route) != status:
@@ -166,10 +167,11 @@ class DeliveryWorker:
             connected = True
             if now < self.retry_at.get(route, 0):
                 continue
-            if route not in self.route_health:
+            if route not in self.ready_routes:
                 self.health(route, 'connected',
                             'Dedicated webhook verified' if mode == 'dedicated' else 'Using shared fallback; channel separation pending',
                             destination=self.verified[url])
+                self.ready_routes.add(route)
             with self.db.tx() as c:
                 row = c.execute(select(events).join(discord_jobs, events.c.id == discord_jobs.c.event_id)
                     .where(discord_jobs.c.route == route, discord_jobs.c.status == 'pending')
