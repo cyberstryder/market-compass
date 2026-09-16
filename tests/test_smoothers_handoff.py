@@ -228,3 +228,21 @@ def test_smoothers_handoff_api_is_private_and_strict(tmp_path):
         assert client.get(path).json()['ownership']=={'owner':'original'}
         assert client.post(path,headers={'Origin':'https://wrong.test'},json={'action':'rollback'}).status_code==403
         assert client.post(path,json={'action':'activate','previous_sender_paused':'true'}).status_code==422
+
+
+def test_running_worker_publishes_shadow_health_without_enabling_sender(db,monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from compass import native_smoothers
+    class Stopped(Exception):pass
+    async def stop(_):raise Stopped()
+    monkeypatch.setattr(native_smoothers,'Data',lambda *args:SimpleNamespace())
+    monkeypatch.setattr(native_smoothers,'schedule',lambda *args:None)
+    monkeypatch.setattr(asyncio,'sleep',stop)
+    with db.tx() as c:db.put(c,CONFIG,dict(owner='compass',configs=[]))
+    cfg=SimpleNamespace(alpaca_key='test',alpaca_secret='test')
+    with pytest.raises(Stopped):asyncio.run(native_smoothers.run(db,cfg))
+    with db.tx() as c:
+        assert db.get(c,VERSION+':worker:schedule')['status']=='shadow'
+        assert db.get(c,'health:'+VERSION+'_schedule')['status']=='shadow'
+        assert db.get(c,OWNER) is None

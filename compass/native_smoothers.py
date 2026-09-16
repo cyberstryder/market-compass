@@ -16,7 +16,7 @@ from .smoothers_signals import classify_signal,get_week_start_indices
 from .smoothers_quality import score_signal,rank_signals
 from .smoothers_factors import atr
 from .smoothers_blackscholes import value_at_target
-from .native_outbox import queue,owner
+from .native_outbox import queue,owner as delivery_owner
 from .native_config import bootstrap, effective
 from . import smoothers_messages as messages
 
@@ -300,7 +300,7 @@ async def run(db,cfg,role='schedule'):
                     elif role=='target':await asyncio.to_thread(monitor,db,data,now)
                     else:await asyncio.to_thread(premium,db,data,now)
                     with db.tx() as c:
-                        ownership=owner(db,c,'smoothers',time.time())
+                        ownership=delivery_owner(db,c,'smoothers',time.time())
                         mode='official' if ownership else 'shadow'
                         db.put(c,VERSION+':worker:'+role,{'at':time.time(),'status':mode,'ownership_epoch':ownership['epoch'] if ownership else None})
                     if now-last_log>=60:
