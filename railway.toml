@@ -3,5 +3,5 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "env SPY_BRIEF_REFERENCE_PROBE=true python -m compass.spy_brief"
+startCommand = "python -m compass.route_audit"
 restartPolicyType = "NEVER"

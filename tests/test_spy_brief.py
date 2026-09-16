@@ -65,7 +65,8 @@ def seed(db, now=NOW):
                 {'price': 762, 'score': 90, 'kind': 'apex', 'net_gex': 1e8, 'oi': 20000},
                 {'price': 761.5, 'score': None, 'kind': 'gamma_flip'}]})
         db.put(c, 'research:gamma_market', {'received': now-1, 'items': [{'symbol': 'SPY',
-            'source_ts': now-60, 'data': {'totalGEX': 1e9, 'callGEX': 2e9, 'putGEX': -1e9}}]})
+            'source_ts': now-60, 'data': {'totalGEX': 1e9, 'totalCallGEX': 2e9, 'totalPutGEX': -1e9,
+                'gammaFlipLevel': 761.6, 'expirationsUsed': [day(now)]}}]})
         db.put(c, 'index_reference:SPY', reference_pair(760, 7560, prior_session(now), now, 'SYNTHETIC FIXTURE'))
 
 
@@ -87,6 +88,8 @@ def test_confirmed_plan_has_0dte_quotes_and_dated_index_estimates(db):
     assert high['spx_estimate'] == pytest.approx(760.5 * 7560 / 760)
     assert high['xsp_estimate'] == pytest.approx(high['spx_estimate'] / 10)
     assert 'Vendor and Compass GEX signs disagree' in r['gamma']['discrepancies']
+    assert r['gamma']['vendor_call_gex'] == 2e9 and r['gamma']['vendor_put_gex'] == -1e9
+    assert any('Overview/Apex flips differ' in v for v in r['gamma']['discrepancies'])
 
 
 def test_premarket_does_not_claim_open_or_fresh_option_premiums(db):
@@ -124,7 +127,8 @@ def test_stale_gamma_and_index_reference_are_withheld_independently(db):
         ref = db.get(c, 'index_reference:SPY'); ref['reference_day'] = '2026-09-14'
         db.put(c, 'index_reference:SPY', ref)
     r = report(db)
-    assert not r['gamma']['ranked'] and r['gamma']['flip'] is None
+    assert not r['gamma']['ranked'] and r['gamma']['flip'] == 761.6
+    assert r['gamma']['flip_source'] == 'overview'
     assert r['mapping']['status'] == 'unavailable'
     assert all(v['spx_estimate'] is None for v in r['chart_levels'])
     assert r['decision'] == 'CALL SETUP CONFIRMED'
@@ -155,7 +159,7 @@ def test_scheduler_persists_dedup_and_does_not_replay_missed_windows(db):
     assert w.tick(NOW)['phase'] == 'opening'
     assert w.tick(OPEN+1025) is None
     with db.tx() as c:
-        assert len(db.recent(c, 'alert')) == 2
+        assert len(db.recent(c, 'alert')) == 4
         assert not db.prefix(c, 'position:')
 
 
@@ -225,3 +229,57 @@ def test_preview_api_requires_authentication(db):
     with TestClient(app) as client:
         response = client.get('/api/spy-morning-brief', follow_redirects=False)
         assert response.status_code in (401, 303, 307)
+
+
+def test_chart_companion_uses_frozen_levels_and_honest_timeframes(db):
+    from compass.spy_chart import companion, prompt, delivery_payload as chart_payload
+    seed(db)
+    r = report(db); r['id'] = 'spy-brief:2026-09-16:opening'
+    p = companion(r)
+    text = prompt(p, NOW)
+    assert '1-minute and 15-minute' in text and 'no 1-minute entry trigger' in text
+    assert 'SPX=SPY×' in text and '2026-09-15' in text and 'XSP=SPX/10' in text
+    for level in r['chart_levels']:
+        assert level['label']+': '+f"{level['spy']:.2f}" in text
+        assert f"{level['spx_estimate']:.2f}" in text and f"{level['xsp_estimate']:.2f}" in text
+    assert 'static snapshot' in text and 'preserve all my other drawings' in text
+    assert p['parent_plan'] == r['id'] and p['id'] != r['id']
+    row = {'id': 2, 'payload': p, 'symbol': 'SPY', 'source': 'spy_brief', 'ts': NOW}
+    body = chart_payload(row, NOW)
+    assert len(body['content']) < 2000
+    assert len(body['embeds'][0]['description']) < 4096
+    assert 'EXPIRED / REFERENCE ONLY' in prompt(p, OPEN+1025)
+    r['mapping'] = {'status': 'unavailable'}
+    for level in r['chart_levels']: level['spx_estimate'] = level['xsp_estimate'] = None
+    assert 'draw SPY only' in prompt(r, NOW)
+
+
+def test_two_messages_are_atomic_deduplicated_and_individually_acknowledged(db):
+    from compass.alerts import DeliveryWorker, outbox_status
+    seed(db)
+    worker = BriefWorker(db, Config(local=True))
+    worker.tick(NOW); worker.tick(NOW+1)
+    with db.tx() as c:
+        rows = sorted(db.recent(c, 'alert'), key=lambda r: r['id'])
+        assert [r['payload']['status'] for r in rows] == ['spy_morning_brief', 'spy_chart_prompt']
+        assert rows[1]['payload']['parent_plan'] == rows[0]['key']
+    sent = []; fail_chart = True
+    def handler(request):
+        if request.method == 'GET': return httpx.Response(200, json={'id': '123'})
+        p = json.loads(request.content); sent.append(p)
+        if 'message 2 of 2' in p['content'] and fail_chart:
+            return httpx.Response(429, json={'retry_after': 1})
+        return httpx.Response(200, json={'id': str(1000+len(sent))})
+    async def run():
+        nonlocal fail_chart
+        delivery = DeliveryWorker(db, Config(local=True, discord='https://discord.com/api/webhooks/123/fixture'))
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await delivery.tick(client, NOW)
+            await delivery.tick(client, NOW+1)
+            with db.tx() as c: assert outbox_status(db, c, NOW+1)['pending'] == 1
+            fail_chart = False
+            await delivery.tick(client, NOW+3)
+    asyncio.run(run())
+    assert len(sent) == 3
+    assert sum('message 1 of 2' in p['content'] for p in sent) == 1
+    with db.tx() as c: assert outbox_status(db, c, NOW+3)['pending'] == 0

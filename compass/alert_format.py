@@ -104,7 +104,7 @@ def alert_identity(row, now=None):
         origin = 'TradingView mirror' if category == 'futures' else label.title() + ' mirror'
     elif status == 'notification_test':
         mode, origin = 'TEST — no trade', 'Market Compass'
-    elif status == 'spy_morning_brief':
+    elif status in ('spy_morning_brief', 'spy_chart_prompt'):
         event = 'DATED PLAN' if now >= p.get('expires_at', 0) else 'MORNING PLAN'
         mode, origin = '[CONDITIONAL PLAN]', 'Compass SPY morning brief'
     elif status == 'setup_triggered':
@@ -161,6 +161,9 @@ def alert_identity(row, now=None):
 def message_for(row, now=None):
     now = time.time() if now is None else now
     p = row['payload']
+    if p.get('status') == 'spy_chart_prompt':
+        from .spy_chart import prompt
+        return ('TRADINGVIEW AI CHART PROMPT\n' + prompt(p, now))[:1900]
     if p.get('status') == 'spy_morning_brief':
         from .spy_brief import delivery_payload
         body=delivery_payload(row,now)

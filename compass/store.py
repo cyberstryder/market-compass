@@ -17,6 +17,11 @@ events=Table("events",meta,
     Column("received",Float,nullable=False),
     Column("payload",JSON,nullable=False))
 Index("events_kind_symbol_time",events.c.kind,events.c.symbol,events.c.ts)
+discord_jobs=Table('discord_jobs_v1',meta,
+    Column('event_id',Integer,primary_key=True),Column('route',String(40),nullable=False),
+    Column('status',String(20),nullable=False),Column('queued_at',Float,nullable=False),
+    Column('confirmation',JSON,nullable=False))
+Index('discord_jobs_route_status_id',discord_jobs.c.route,discord_jobs.c.status,discord_jobs.c.event_id)
 state=Table("state",meta,Column("key",String(240),primary_key=True),
     Column("value",JSON,nullable=False),Column("updated",Float,nullable=False))
 leases=Table("leases",meta,Column("key",String(100),primary_key=True),
