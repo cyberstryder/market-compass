@@ -8,6 +8,7 @@ const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+es
 const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated','event_stale','poll_stale','vendor_stale','mixed'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
 const titles={'research-admin':'Research admin',obsidian:'Obsidian Watchlist','swing-ideas':'Swing ideas','option-ideas':'Options ideas','setup-study':'Setup results',secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
+let lastState=null,first=true,testEvent=null;
 function selectTab(tab){
  if(!Object.hasOwn(titles,tab))return;
  const button=Array.from(document.querySelectorAll('.nav')).find(n=>n.dataset.tab===tab);
@@ -15,12 +16,12 @@ function selectTab(tab){
  document.querySelectorAll('.nav,.tab').forEach(n=>n.classList.remove('active'));
  button.classList.add('active');$('#'+tab).classList.add('active');$('#title').textContent=titles[tab];
  if(location.hash!=='#'+tab)history.replaceState(null,'','#'+tab);
+ if(tab==='setup-study'&&lastState)renderSetupStudy(lastState.setup_study);
 }
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>selectTab(b.dataset.tab));
 window.addEventListener('hashchange',()=>selectTab(location.hash.slice(1)));
 selectTab(location.hash.slice(1));
 $('#logout').onclick=async()=>{await fetch('/logout',{method:'POST'});location.href='/login';};
-let lastState=null,first=true,testEvent=null;
 let secondaryReport=null,secondaryReportRequest=0;
 function vendorMatrix(items){
  const matrices=Object.entries(items).filter(([key,item])=>key!=='matrix:unusual_activity'&&Array.isArray(item.strikes));
@@ -307,7 +308,7 @@ function renderSetupStudy(d){
  if(!d)return;
  const cohort=$('#study-cohort').value;
  const allowed=r=>cohort==='all'||(cohort==='alerted'?r.alerted:!r.alerted);
- $('#study-status').textContent=(d.enabled?'Tracking enabled. ':'Tracking disabled. ')+(d.activation?'Started '+when(d.activation.at)+'. ':'')+'Portfolio entry limit: '+(d.max_entries||'unlimited')+'. Latest study check '+when(d.worker?.at)+'. '+(d.window_days||30)+'-day report; '+(d.count||0)+' trials'+(d.truncated?' (10,000-record reporting window reached)':'')+'. Closed results include modeled fees. Pending, excluded and unresolved observations are outside win rate.';
+ $('#study-status').textContent=(d.enabled?'Tracking enabled. ':'Tracking disabled. ')+(d.activation?'Started '+when(d.activation.at)+'. ':'')+'Portfolio entry limit: '+(d.max_entries||'unlimited')+'. Latest study check '+when(d.worker?.at)+'. '+(d.window_days||30)+'-day report; '+num(d.count||0,0)+' trials'+(d.coverage==='full_window'?' (all stored trials in this window)':d.truncated?' (older capped summary; awaiting full-window refresh)':'')+'. Summary through '+when(d.at)+'. Closed results include modeled fees. Pending, excluded and unresolved observations are outside win rate.';
 
  $('#study-census').innerHTML=table(['Contract','Last assessment','State','Fresh quote at assessment','Additional candidates'],(d.futures_census||[]).map(g=>[esc(g.symbol),when(g.observed_at),esc(g.state),g.quote_fresh?'Yes':'No',(g.candidate_rules||[]).map(esc).join(', ')||'None']));
  const mg=(d.market_assessment?.groups||[]).filter(allowed);
@@ -319,7 +320,7 @@ function renderSetupStudy(d){
  $('#study-variants').innerHTML=vg.length?table(['Contract / setup / side','Variant / cohort','Selected / all','Skipped / unknown / excluded','Closed: wins / losses / flat','Win rate / mean R','Open / unresolved'],vg.map(g=>[esc(g.symbol)+'<br>'+esc(g.strategy)+' · '+esc(g.side)+'<br><span class="fine">'+esc(g.model)+' · '+esc(g.fill_version)+'</span>',esc(variantNames[g.variant]||g.variant)+'<br>'+(g.alerted?'Alerted':'Cooldown candidate'),g.selected+' / '+g.total,g.skipped+' / '+g.unknown+' / '+g.excluded,g.wins+' / '+g.losses+' / '+g.breakeven,(g.win_rate===null?'—':num(g.win_rate*100,1)+'%')+' / '+num(g.mean_r,2),g.open+' / '+g.unresolved])):empty('Waiting for forward futures comparisons','Each new futures trial receives frozen entry selections; earlier trials are not reclassified.');
  const groups=(d.groups||[]).filter(allowed);
  $('#study-groups').innerHTML=groups.length?table(['Contract / setup / side','Cohort','Trials / closed','Wins / losses / flat','Target / stop','Win rate','Mean R','Mean duration','Open / unresolved / excluded'],groups.map(g=>[esc(g.symbol)+'<br>'+esc(g.strategy)+' · '+esc(g.side)+'<br><span class="fine">'+esc(g.version)+'</span>',g.alerted?'Alerted':'Cooldown candidate',num(g.total,0)+' / '+num(g.closed,0),g.wins+' / '+g.losses+' / '+g.breakeven,g.targets+' / '+g.stops,g.win_rate===null?'—':num(g.win_rate*100,1)+'%',num(g.mean_r,2),g.mean_seconds===null?'—':num(g.mean_seconds/60,1)+'m',g.open+' / '+g.unresolved+' / '+g.excluded])):empty('Waiting for completed setup observations','New qualifying setups are measured from activation. Earlier signals are not assigned reconstructed trades.');
- $('#study-records').innerHTML=(d.records||[]).filter(allowed).map(p=>'<details data-key="trial-'+esc(p.id)+'"><summary>'+esc(p.symbol)+' · '+esc(p.strategy)+' · '+esc(p.side)+' · '+esc(p.outcome||p.status)+' · '+when(p.started)+'</summary><p>Entry '+num(p.entry,4)+' · stop '+num(p.stop,4)+' · target '+num(p.target,4)+' · exit '+num(p.exit,4)+'</p><p>One-unit net result $'+num(p.pnl,2)+' · '+num(p.r_multiple,2)+'R · '+esc(p.exit_reason||p.reason||'Awaiting outcome')+'</p><p class="fine">'+esc(p.basis)+' · samples '+num(p.samples,0)+' · replayed samples '+num(p.replayed_samples||0,0)+' · largest quote gap '+num(p.max_gap_seconds,1)+'s · MFE '+num(p.mfe_r,2)+'R / MAE '+num(p.mae_r,2)+'R</p><p class="fine">Source '+esc(p.source_id)+' · '+esc(p.version)+' · '+esc(p.fill_version||'Legacy fill model')+'</p>'+(p.archive_check?'<p class="fine">Last archive check: '+num(p.archive_check.usable_rows,0)+' usable / '+num(p.archive_check.read_rows,0)+' read; timestamp mismatches '+num(p.archive_check.timestamp_mismatches,0)+'; future '+num(p.archive_check.future_when_recorded,0)+'; stale/invalid '+num(p.archive_check.stale_or_invalid_when_recorded,0)+(p.archive_check.read_rows===0?' · latest archived quote '+when(p.archive_check.latest_archived_ts)+' / stored '+when(p.archive_check.latest_archived_received):'')+'</p>':'')+'<a href="/api/setup-study/record?id='+encodeURIComponent(p.id)+'" target="_blank" rel="noreferrer">Full setup record</a></details>').join('')||empty('No setup records in this cohort','Trials continue independently of portfolio limits.');
+ window.renderSetupRecords(d);
 }
 $('#study-cohort').onchange=()=>{if(lastState)renderSetupStudy(lastState.setup_study);};
 if(location.hash==='#setup-study')document.querySelector('[data-tab="setup-study"]').click();

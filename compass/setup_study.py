@@ -4,7 +4,6 @@ Trials never read or write portfolio risk/positions. Overlapping setups are
 separate experiments, not a realizable account equity curve. Only observations
 received after activation may open a trial; missing paths are not reconstructed.
 """
-from collections import defaultdict
 import logging
 from sqlalchemy import Table, Column, String, Float, JSON, Index, select, update
 from .store import meta, identity
@@ -14,6 +13,7 @@ from .instruments import tick_price
 from .simulation import bracket, exit_price, FILL_VERSION, FILL_DESCRIPTION
 from .quote_path import recorded_path
 from . import futures_variants, futures_assessment
+from .setup_reporting import summaries, WINDOW_DAYS
 
 VERSION = 'setup-outcomes-v3'
 MAX_GAP = 15
@@ -207,28 +207,14 @@ class SetupStudy:
 
 
 def report_for(c, now):
-    rows = c.execute(select(trials.c.payload).where(trials.c.started >= now-30*86400)
-        .order_by(trials.c.started.desc()).limit(10001)).scalars().all()
-    truncated = len(rows)>10000
-    rows = rows[:10000]
-    grouped = defaultdict(list)
-    for p in rows:
-        grouped[(p['symbol'], p['strategy'], p['side'], p['version'], p['alerted'])].append(p)
-    groups = []
-    for (symbol, strategy, side, version, alerted), members in grouped.items():
-        closed = [p for p in members if p['status']=='closed']
-        wins = sum(p['pnl']>0 for p in closed)
-        groups.append(dict(symbol=symbol, strategy=strategy, side=side, version=version, alerted=alerted,
-            total=len(members), closed=len(closed), wins=wins, losses=sum(p['pnl']<0 for p in closed),
-            breakeven=sum(p['pnl']==0 for p in closed),
-            targets=sum(p.get('exit_reason')=='target' for p in closed), stops=sum(p.get('exit_reason')=='stop' for p in closed),
-            open=sum(p['status']=='open' for p in members), unresolved=sum(p['status']=='unresolved' for p in members),
-            excluded=sum(p['status']=='excluded' for p in members), win_rate=wins/len(closed) if closed else None,
-            mean_r=sum(p['r_multiple'] for p in closed)/len(closed) if closed else None,
-            mean_seconds=sum(p['elapsed_seconds'] for p in closed)/len(closed) if closed else None))
-    return {'at':now, 'version':VERSION, 'groups':groups, 'records':rows[:100], 'count':len(rows),
-        'truncated':truncated, 'window_days':30, 'limit':10000, 'entry_variants':futures_variants.report(rows),
-        'market_assessment':futures_assessment.report(rows),
+    report = summaries(c, trials, now)
+    records = c.execute(select(trials.c.payload).where(
+        trials.c.started >= now-WINDOW_DAYS*86400, trials.c.started <= now)
+        .order_by(trials.c.started.desc(), trials.c.id.desc()).limit(100)).scalars().all()
+    return {**report, 'at':now, 'version':VERSION, 'records':records,
+        'truncated':False, 'window_days':WINDOW_DAYS, 'limit':None,
+        'coverage':'full_window', 'since':now-WINDOW_DAYS*86400,
+        'records_limit':100, 'records_has_more':report['count']>len(records),
         'basis':'Independent one-unit experiments grouped by contract, strategy, direction, version and alert cohort; overlapping results are not portfolio returns'}
 
 
