@@ -32,7 +32,9 @@ def main():
                 smoothers_config={k:config.get(k) for k in ('owner','revision','owned_since')},
                 smoothers_config_count=len(config.get('configs',[]))))
             rows=c.execute(select(ideas.c.payload).where(ideas.c.status=='unresolved',
-                ideas.c.created>=now-2*86400).order_by(ideas.c.created.desc()).limit(501)).scalars().all()
+                ideas.c.created>=now-2*86400,
+                ideas.c.payload['collection_version'].as_string()=='option-reliability-v3'
+                ).order_by(ideas.c.created.desc()).limit(501)).scalars().all()
             current=[r for r in rows[:500] if r.get('collection_version')=='option-reliability-v3']
             emit('cohort',dict(unresolved_v3=len(current),scan_truncated=len(rows)>500))
             selected=current[:8]
@@ -105,6 +107,8 @@ def main():
                         archive_truncated=saved['truncated'],missing_from_provider=absent_remote,missing_from_archive=absent_local,
                         provider_present_archive_absent=sorted(remote.keys()-local.keys()),revised_or_different_minutes=changed,
                         persisted_over_90s_after_minute_start=sum(v>t+90 for t,v in saved['first'].items()),
+                        late_spy_receipts=[dict(minute_start=t,first_recorded=v,seconds_after_close=v-t-60)
+                            for t,v in sorted(saved['first'].items()) if v>t+90] if symbol=='SPY' else [],
                         basis='Latest stored bars versus retrospective SIP bars; never modifies frozen decisions'))
     finally:db.engine.dispose()
 
