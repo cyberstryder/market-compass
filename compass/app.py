@@ -96,6 +96,8 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(run_program_parity(db)))
             tasks.append(asyncio.create_task(run_storage_health(db,cfg)))
             tasks.append(asyncio.create_task(run_morning_report(db)))
+            from .spy_brief import BriefWorker
+            tasks.append(asyncio.create_task(BriefWorker(db,cfg).run()))
             from .forward_audit import run as run_forward_audit
             tasks.append(asyncio.create_task(run_forward_audit(db,cfg)))
             from .observation_audit import run as run_observation_audit
@@ -108,6 +110,18 @@ def create_app(cfg=None):
         db.engine.dispose()
 
     app=FastAPI(title="Market Compass",lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
+
+    @app.get('/api/spy-morning-brief')
+    def spy_morning_brief():
+        from .spy_brief import build, delivery_payload
+        now=time.time()
+        with db.tx() as c:
+            report=build(db,c,now)
+            latest=db.get(c,'spy-brief:latest')
+        row={'id':'preview','symbol':'SPY','source':'spy_brief','ts':now,'payload':report}
+        return {'preview':report,'discord_preview':delivery_payload(row,now),'latest_scheduled':latest,
+                'enabled':cfg.spy_morning_brief,'schedule_ct':['08:20','08:45:05'],
+                'delivery':'Existing Compass Discord outbox; session days only'}
     app.state.db=db
     install_projects(app,db,cfg)
     install_native_morning(app,db,cfg)

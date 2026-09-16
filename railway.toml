@@ -3,5 +3,5 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "python -m compass.zero_dte_timing"
+startCommand = "env SPY_BRIEF_REFERENCE_PROBE=true python -m compass.spy_brief"
 restartPolicyType = "NEVER"
