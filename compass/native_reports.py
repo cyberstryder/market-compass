@@ -148,7 +148,7 @@ def smoothers(db,c,now,limit=100,week='',ticker=''):
     for p in rows:
         matches=by_symbol[p['ticker']];r=matches[0] if len(matches)==1 else None
         other=r['payload'].get('original',{}) if r else None
-        pair=comparison(p,other,('direction','entry_price','target_price','signal_type','status'))
+        pair=comparison(p,other,('direction','entry_price','target_price','signal_type','status','quality_score','quality_tier','quality_rank','featured_rank','is_featured'))
         if len(matches)>1:pair={'status':'ambiguous_source_identity','differences':{}}
         results.append({'native':p,'comparison':pair,'source_checked_at':r['updated'] if r else None,
             'source_id':r['source_id'] if r else None,'source_contract':other.get('occ_symbol') if other else None})

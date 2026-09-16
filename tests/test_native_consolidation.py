@@ -123,3 +123,14 @@ def test_native_apis_require_owner_and_reject_cross_origin(tmp_path):
         assert client.get('/api/native/report?week=2026-09-16').status_code==422
         assert client.post('/api/native/morning/routing',headers={'Origin':'https://wrong.test'},json={}).status_code==403
         assert client.post('/api/native/morning/routing',json={'action':'enable_sender'}).status_code==422
+
+
+def test_weekly_comparison_exposes_quality_and_ranking_differences(db):
+    initialize(db)
+    with db.tx() as c:
+        save(db,c,dict(id='weekly',ticker='DEMO',week='2026-09-14',created_at=NOW,status='OPEN',direction='CALL',entry_price=100,target_price=102,signal_type='MAIN',quality_score=60,quality_rank=2,is_featured=False))
+        original=dict(ticker='DEMO',status='OPEN',direction='CALL',entry_price=100,target_price=102,signal_type='MAIN',quality_score=80,quality_rank=1,is_featured=True)
+        ingest(db,c,'smoothers',dict(id='source-weekly',symbol='DEMO',source_ts=NOW,original=original,status='open',strategy='test'),NOW)
+        result=report(db,c,NOW)['smoothers']['rows'][0]
+    assert result['comparison']['status']=='different'
+    assert set(result['comparison']['differences'])=={'quality_score','quality_rank','is_featured'}
