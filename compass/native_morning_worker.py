@@ -111,7 +111,7 @@ def enrich(db,provider,now):
         c.execute(source.option_jobs.update().where(source.option_jobs.c.event_id==job['event_id']).values(status='fetching',
             attempts=job['attempts']+1,lease_token=lease,lease_until_ms=int((now+30)*1000)))
         signal=json.loads(c.execute(select(source.signals.c.signal_json).where(source.signals.c.signal_id==job['signal_id'])).scalar_one())
-    quote=provider.lookup(signal,POLICY) if job['attempts']<3 else {'status':'unavailable','reason':'native_retry_limit'}
+    quote=provider.lookup(signal,POLICY,compare=True) if job['attempts']<3 else {'status':'unavailable','reason':'native_retry_limit'}
     completed=provider.clock()
     with db.engine.begin() as c:
         updated=c.execute(source.option_jobs.update().where(source.option_jobs.c.event_id==job['event_id'],source.option_jobs.c.lease_token==lease)
@@ -127,7 +127,9 @@ def enrich(db,provider,now):
 def report(db,now):
     with db.tx() as c:
         values={name:c.execute(select(func.count()).select_from(table)).scalar_one() for name,table in
-                [('signals',source.signals),('events',source.events),('samples',source.option_samples)]}
+                [('signals',source.signals),('events',source.events),('samples',source.option_samples),
+                 ('expiration_tracks',source.expiration_tracks),('expiration_samples',source.expiration_samples)]}
+        values['expiration_study']='atm_expiration_comparison_v1'
         values['sample_results']={}
         for raw in c.execute(select(source.option_samples.c.quote_json).where(source.option_samples.c.quote_json.is_not(None)).order_by(source.option_samples.c.due_at_ms.desc()).limit(1000)).scalars():
             result=json.loads(raw);status=result.get('status','unknown')

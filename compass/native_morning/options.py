@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from sqlalchemy import and_, or_, select
 
+from .expiration import VERSION as COMPARISON_VERSION, COST_MODEL, quality
 from .store import canonical, insert_once, now_ms, option_jobs, outbox, signals
 
 NY = ZoneInfo("America/New_York")
@@ -104,10 +105,11 @@ class AlpacaQuotes:
             raise QuoteUnavailable("invalid_provider_response")
         return data
 
-    def lookup(self, signal, policy=None):
+    def lookup(self, signal, policy=None, *, compare=False):
         policy = dict(policy or POLICY)
         result = {"status": "unavailable", "provider": "alpaca", "feed": "opra", "policy": policy,
                   "requested_at_ms": self.clock(), "signal_at_ms": signal["signal_at_ms"]}
+        variants = {}
         try:
             if not self.config.enabled:
                 raise QuoteUnavailable("options_disabled")
@@ -126,9 +128,10 @@ class AlpacaQuotes:
             day = datetime.fromtimestamp(signal["signal_at_ms"] / 1000, timezone.utc).astimezone(NY).date()
             price = positive(signal["price"])
             result["reference_stock_price"] = float(price)
+            search_policy = dict(policy, min_dte=0) if compare else policy
             band = Decimal(str(policy["strike_band_pct"])) / 100
             params = {"underlying_symbols": underlying, "root_symbol": underlying, "type": "call",
-                      "status": "active", "expiration_date_gte": (day + timedelta(days=1)).isoformat(),
+                      "status": "active", "expiration_date_gte": (day + timedelta(days=search_policy["min_dte"])).isoformat(),
                       "expiration_date_lte": (day + timedelta(days=policy["max_dte"])).isoformat(),
                       "strike_price_gte": str(price * (1 - band)), "strike_price_lte": str(price * (1 + band)),
                       "limit": 1000}
@@ -140,7 +143,7 @@ class AlpacaQuotes:
                 if not isinstance(raw_contracts, list):
                     raise QuoteUnavailable("invalid_contract_response")
                 for raw in raw_contracts:
-                    contract = parse_contract(raw, underlying, day, price, policy)
+                    contract = parse_contract(raw, underlying, day, price, search_policy)
                     if contract:
                         contracts.append(contract)
                 token = data.get("next_page_token", data.get("page_token"))
@@ -150,13 +153,33 @@ class AlpacaQuotes:
                     raise QuoteUnavailable("contract_search_incomplete")
                 seen.add(token)
                 params["page_token"] = token
-            if not contracts:
-                raise QuoteUnavailable("no_eligible_contract_within_14_days")
-            contract = min(contracts, key=lambda c: (c["expiration"], abs(Decimal(str(c["strike"])) - price), c["strike"]))
-            result["contract"] = contract
-            data = self.get("https://data.alpaca.markets/v1beta1/options/snapshots",
-                            {"symbols": contract["symbol"], "feed": "opra"})
-            self.read_snapshot(result, data.get("snapshots", {}).get(contract["symbol"], {}))
+            specs = {"baseline": (1, 14, "no_eligible_contract_within_14_days")}
+            if compare:
+                specs.update(zero_dte=(0, 0, "no_eligible_same_day_contract"),
+                             near_dte=(1, 3, "no_eligible_contract_within_1_to_3_days"))
+            selected = {}
+            for key, (lo, hi, reason) in specs.items():
+                eligible = [c for c in contracts if lo <= c["dte_calendar"] <= hi]
+                v = dict(result, policy=dict(policy, min_dte=lo, max_dte=hi,
+                    version=policy["version"] if key == "baseline" else COMPARISON_VERSION + "_" + key), cost_model=dict(COST_MODEL))
+                if eligible:
+                    c = min(eligible, key=lambda c: (c["expiration"], abs(Decimal(str(c["strike"])) - price), c["strike"]))
+                    v["contract"] = c
+                    selected[c["symbol"]] = c
+                else:
+                    v["reason"] = reason
+                variants[key] = v
+            # One snapshot request for every distinct contract, including the baseline.
+            observed = self.snapshots(list(selected.values())) if selected else {}
+            for v in variants.values():
+                if v.get("contract"):
+                    v.update(observed[v["contract"]["symbol"]])
+                    if compare and v.get("status") in {"available", "wide_spread"}:
+                        if v["quote_at_ms"] < signal["signal_at_ms"]:
+                            v.update(status="unavailable", reason="entry_quote_before_signal")
+                        elif self.clock() - signal["signal_at_ms"] > 120000:
+                            v.update(status="unavailable", reason="signal_too_old_for_current_quote")
+            result = dict(variants["baseline"])
         except QuoteUnavailable as exc:
             result["status"] = "unavailable"
             result["reason"] = str(exc)  # Only our fixed, non-sensitive reason codes.
@@ -165,6 +188,13 @@ class AlpacaQuotes:
         except (ValueError, KeyError, TypeError, AttributeError, InvalidOperation, OverflowError, OSError):
             result["status"] = "unavailable"
             result["reason"] = "invalid_provider_response"
+        if compare:
+            if not variants:
+                variants = {k: dict(result, cost_model=dict(COST_MODEL)) for k in ("baseline", "zero_dte", "near_dte")}
+            baseline_symbol = (variants["baseline"].get("contract") or {}).get("symbol")
+            if baseline_symbol and baseline_symbol == (variants["near_dte"].get("contract") or {}).get("symbol"):
+                variants["near_dte"]["alias_of"] = "baseline"
+            result["expiration_comparison"] = {"version": COMPARISON_VERSION, "variants": variants}
         return result
 
     def read_snapshot(self, result, snapshot):
@@ -237,18 +267,34 @@ class AlpacaQuotes:
 
 
 def option_text(q):
-    if q["status"] not in {"available", "wide_spread"}:
-        return "Option quote unavailable: " + q.get("reason", "unknown").replace("_", " ") + "."
-    c = q["contract"]
-    stamp = datetime.fromtimestamp(q["quote_at_ms"] / 1000, timezone.utc).astimezone(CT)
-    text = (f"**OPTION QUOTE UPDATE | {c['underlying']} ${c['strike']:g} CALL · {c['expiration']}**\n"
-            f"Bid ${q['bid']:.2f} | Ask ${q['ask']:.2f} | Mid ${q['midpoint']:.2f}\n"
-            f"Cost at ask: ${q['ask_contract_cost']:.2f} / 100-share contract, before fees\n"
-            f"OPRA quote: {stamp:%Y-%m-%d %H:%M:%S} CT · observed after the stock signal\n"
-            "Nearest listed expiry after today; closest strike. Quote only; no fill assumed.")
-    if q["status"] == "wide_spread":
-        text += f"\nWide spread: {q['spread_pct']:.1f}% of midpoint."
-    return text
+    lines = ["**OPTION QUOTE UPDATE | research comparison**"]
+    if q.get("status") not in {"available", "wide_spread"}:
+        lines.append("Option quote unavailable: " + q.get("reason", "unknown").replace("_", " ") + ".")
+    else:
+        c, cost = q["contract"], quality(q)
+        stamp = datetime.fromtimestamp(q["quote_at_ms"] / 1000, timezone.utc).astimezone(CT)
+        lines.extend([f"Current: {c['underlying']} ${c['strike']:g} CALL · {c['expiration']}",
+            f"Bid ${q['bid']:.2f} | Ask ${q['ask']:.2f} | Mid ${q['midpoint']:.2f}",
+            f"Premium ${cost['premium_at_ask']:.2f}/contract | Spread ${cost['spread_per_contract']:.2f} ({cost['spread_pct']:.1f}%)",
+            f"Spread + assumed round-trip fees: ${cost['spread_and_fees']:.2f}/contract",
+            f"OPRA {stamp:%H:%M:%S} CT; closest strike, nearest expiry after today."])
+        if cost["approx_stock_cost_hurdle"] is not None:
+            lines.append(f"Approx stock move to cover costs: ${cost['approx_stock_cost_hurdle']:.3f} (fixed delta; ignores IV/theta/gamma).")
+        if q["status"] == "wide_spread":
+            lines.append("Wide spread — high entry/exit cost.")
+    comparison = q.get("expiration_comparison")
+    if comparison:
+        for key, label in (("zero_dte", "0DTE"), ("near_dte", "1–3 DTE")):
+            v = comparison["variants"][key]
+            if v.get("alias_of"):
+                lines.append(f"{label}: same contract as current; counted once.")
+            elif v.get("status") not in {"available", "wide_spread"}:
+                lines.append(f"{label}: unavailable ({v.get('reason', 'quote unavailable').replace('_', ' ')}).")
+            else:
+                c, cost = v["contract"], quality(v)
+                lines.append(f"{label}: ${c['strike']:g} CALL {c['expiration']} | Ask ${v['ask']:.2f} (${cost['premium_at_ask']:.2f}/contract) | Spread ${cost['spread_per_contract']:.2f} ({cost['spread_pct']:.1f}%)" + (" WIDE" if v["status"] == "wide_spread" else ""))
+    lines.append("CALL bias is stock direction, not an option recommendation. Quote only; no fill assumed. Fees assume $0.65/side; DTE = calendar days.")
+    return "\n".join(lines)
 
 
 def enqueue_option(conn, event_id, message_id, policy):
@@ -279,7 +325,7 @@ def enrich_one(engine, provider, now=None):
     if job["attempts"] >= 3:
         quote = {"status": "unavailable", "reason": "option_worker_retry_limit"}
     else:
-        quote = provider.lookup(signal, json.loads(job["policy_json"]))
+        quote = provider.lookup(signal, json.loads(job["policy_json"]), compare=True)
     original.pop("_option_policy", None)
     original["content"] = original["content"].replace("\n" + PENDING_TEXT, "") + "\n\n" + option_text(quote)
     original["_edit_message_id"] = job["message_id"]
@@ -304,4 +350,3 @@ def run_options_worker(engine, config, stop):
             except Exception:
                 worked = False  # Durable lease recovers; never log credentials/URLs.
             stop.wait(0.2 if worked else 1)
-
