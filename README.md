@@ -36,6 +36,19 @@ Set the following on the **collector**:
 
 Set COMPASS_PASSWORD (16+ characters) on **dashboard**. SESSION_SECRET is optional: the application generates a cryptographically random signing key once, inside PostgreSQL. Set OPENAI_API_KEY on dashboard for grounded Q&A. OPENAI_MODEL defaults to gpt-5-mini and can be changed to a model available to the API account.
 
+For additional direct Morning shadow delivery, set a random 32+ character
+`NATIVE_MORNING_INTAKE_TOKEN` on **dashboard** and use
+`https://YOUR-COMPASS-DOMAIN/hooks/native/morning/YOUR-NATIVE-INTAKE-TOKEN`
+in a clone of the active TradingView Morning alert. Retain its script snapshot,
+inputs, watchlist, interval and session, keep the original alert active, and
+disable extra app/email/sound notifications on the shadow copy. Keep the full
+webhook URL private. This credential authorizes intake only; it does not grant
+dashboard or source-feed access. Configuring it stops the source comparison
+token from authorizing native intake. If it is unset, native intake retains
+the legacy `MORNING_INTEGRATION_TOKEN` credential. Do not rotate that source
+token to configure TradingView. Schedule direct-shadow operation only after
+the additional alert is active. See [routing verification and rollback](docs/morning-direct-routing.md).
+
 Set DISCORD_WEBHOOK_URL on **engine** for the intended private notification destination. No webhook is reused from Atlas. Dashboard alerts work without Discord.
 
 All application services require DATABASE_URL referencing Postgres.DATABASE_URL and the appropriate COMPASS_ROLE. COMPASS_LOCAL must remain false/unset in Railway.

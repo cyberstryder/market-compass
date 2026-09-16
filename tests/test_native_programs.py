@@ -196,6 +196,37 @@ def test_native_route_uses_scoped_auth_without_dashboard_cookie(tmp_path):
         assert client.post('/hooks/native/morning/native-test-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',json={}).status_code==422
 
 
+def test_dedicated_native_credential_isolated_from_source_and_dashboard(tmp_path):
+    import time
+    from fastapi.testclient import TestClient
+    from compass.app import create_app
+    from compass.config import Config
+    source_token='source-feed-test-token-'+'s'*32
+    intake_token='native-intake-test-token-'+'n'*32
+    cfg=Config(local=True,role='web',db='sqlite:///'+str(tmp_path/'dedicated.db'),
+        password='owner-private-test-secret',morning_token=source_token,
+        native_morning_intake_token=intake_token)
+    event=signal_event(stamp=int(time.time()*1000))
+    with TestClient(create_app(cfg)) as client:
+        # A dedicated intake credential supersedes, rather than adds to, the
+        # legacy source credential. Neither grants owner management access.
+        assert client.post('/hooks/native/morning/'+source_token,json=event).status_code==401
+        assert client.post('/hooks/native/morning',headers={'Authorization':'Bearer '+source_token},json=event).status_code==401
+        assert client.post('/hooks/native/morning/'+intake_token,json=event).status_code==200
+        assert client.post('/hooks/native/morning',headers={'Authorization':'Bearer '+intake_token},json=event).json()['status']=='duplicate'
+        assert client.get('/api/native/morning/routing',headers={'Authorization':'Bearer '+intake_token}).status_code==401
+        assert client.post('/api/native/morning/routing',headers={'Authorization':'Bearer '+intake_token},json={'action':'cancel_future','reason':'test'}).status_code==401
+    assert cfg.morning_token==source_token
+    assert intake_token not in repr(cfg)
+
+
+def test_dedicated_native_credential_requires_entropy_length(monkeypatch):
+    from compass.config import Config
+    monkeypatch.setenv('NATIVE_MORNING_INTAKE_TOKEN','too-short')
+    with pytest.raises(ValueError,match='Integration tokens'):
+        Config(local=True).validate()
+
+
 def test_premium_eligible_rows_not_starved_by_rows_without_options(db):
     class Options:
         def snapshots(self,contracts):

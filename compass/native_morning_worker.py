@@ -165,11 +165,14 @@ async def run(db,cfg,role="intake"):
 def install(app,db,cfg):
     from fastapi import Request,HTTPException
     from sqlalchemy.exc import SQLAlchemyError
+    # A dedicated TradingView credential can be rotated without disrupting the
+    # read-only source comparison feed. Preserve legacy intake until configured.
+    intake_token=cfg.native_morning_intake_token or cfg.morning_token
     @app.post('/hooks/native/morning')
     @app.post('/hooks/native/morning/{token}')
     async def receive(request:Request,token:str=""):
         supplied=("Bearer "+token) if token else request.headers.get('authorization','')
-        if not cfg.morning_token or not secrets.compare_digest(supplied.encode(),('Bearer '+cfg.morning_token).encode()):
+        if not intake_token or not secrets.compare_digest(supplied.encode(),('Bearer '+intake_token).encode()):
             raise HTTPException(401,'Invalid native intake credentials')
         body=bytearray()
         async for chunk in request.stream():
