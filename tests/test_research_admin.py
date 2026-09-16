@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from compass.app import create_app
 from compass.config import Config
 from compass.flow_recovery import freshness
-from compass.research_admin import build
+from compass.research_admin import activity, build
 from compass.store import events, discord_jobs
 
 NOW = datetime(2026, 9, 16, 18, tzinfo=timezone.utc).timestamp()
@@ -20,6 +20,14 @@ def stream(report, key):
 
 def metrics(row):
     return {item['label']: item['value'] for item in row['metrics']}
+
+
+def test_worker_update_during_snapshot_is_not_a_stale_worker():
+    assert activity({'at': NOW+0.5}, NOW) == 'observing'
+    assert activity({'at': NOW+60}, NOW) == 'stale'
+    assert activity({'at': NOW-181}, NOW) == 'stale'
+    # Source-time validation remains strict even within the heartbeat grace.
+    assert freshness({'source_ts': NOW+0.5, 'received': NOW}, NOW)['status'] == 'clock_error'
 
 
 def test_missing_evidence_is_unknown_not_completed_or_profitable():
