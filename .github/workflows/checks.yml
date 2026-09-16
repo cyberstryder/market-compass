@@ -7,6 +7,18 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: compass_test
+          POSTGRES_PASSWORD: isolated_test_only
+          POSTGRES_DB: compass_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U compass_test -d compass_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -16,5 +28,6 @@ jobs:
       - run: python -m pytest -q
         env:
           COMPASS_LOCAL: 'true'
+          SMOOTHERS_TEST_DATABASE_URL: 'postgresql+psycopg://compass_test:isolated_test_only@localhost:5432/compass_test'
       - run: node --check compass/static/app.js && node --check compass/static/login.js && node --check compass/static/native.js
 

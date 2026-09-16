@@ -49,7 +49,11 @@ def bootstrap(db,now):
 
 def revise(db,expected,rows,reason,now,restore=None):
     if not isinstance(reason,str) or not 1<=len(reason.strip())<=300:raise ValueError('Provide a change reason, up to 300 characters')
-    with db.tx() as c:
+    from .native_outbox import delivery_guard
+    with delivery_guard(db) as c:
+        ownership=db.get(c,'native:ownership:smoothers',{})
+        if ownership.get('owner')=='compass' and not db.get(c,'native-smoothers-v1:week:'+ownership.get('effective_week',''),{}).get('config'):
+            raise RevisionConflict('Roll back the armed Smoothers handoff before changing its configuration')
         current=db.locked_get(c,KEY,{})
         if current.get('owner')!='compass' or current.get('revision')!=expected:raise RevisionConflict('Configuration changed; reload before saving')
         if restore:

@@ -23,7 +23,10 @@
     m.delivery.map(x=>'<details><summary>Preview '+esc(x.event_id)+'</summary><pre>'+esc(JSON.stringify(x.preview,null,2))+'</pre></details>').join('')+
     '<h3>Source signals without native counterparts</h3>'+table(['Signal','State'],m.source_only.map(x=>[esc(x.id),tag(x.status)]))+
     '<h3>Smoothers native week '+esc(s.week)+'</h3><p>Job '+esc(s.job.state||'not started')+'. '+esc(s.basis)+'</p>'+table(['Ticker','Direction / target','Outcome','Premium model','Source comparison'],s.rows.map(x=>[esc(x.native.ticker),esc(x.native.direction)+' / '+num(x.native.target_price),tag(x.native.status),esc(JSON.stringify(x.native.premium_model||{})),differences(x.comparison)]))+
-    '<p>Original-only weekly records: '+s.source_only.length+'. Download JSON for candle outcomes, option samples, differences, and source timestamps.</p>';
+    '<p>Original-only weekly records: '+s.source_only.length+'. '+esc(s.delivery_basis)+'</p>'+
+    table(['Weekly event','Native intent','Current format','Original delivery'],s.delivery.map(x=>[esc(x.event_id),tag(x.native_status),tag(x.current_format_matches?'matched':'needs review'),tag(x.source_status)]))+
+    s.delivery.map(x=>'<details><summary>Weekly preview '+esc(x.event_id)+'</summary><pre>'+esc(JSON.stringify(x.preview,null,2))+'</pre></details>').join('')+
+    '<p>Download JSON for candle outcomes, option quotes, configuration/contract comparisons, differences, and source timestamps.</p>';
   }catch(e){target.textContent=e.message;}finally{button.disabled=false;}
  };
  function choose(){const row=config?.current.configs?.find(x=>x.ticker===$('#native-config-ticker').value);if(!row)return;
@@ -63,4 +66,14 @@
   catch(e){$('#native-handoff-status').textContent=e.message;}
  }
  $('#native-handoff-load').onclick=()=>handoffAction();$('#native-handoff-prepare').onclick=()=>handoffAction('prepare');$('#native-handoff-activate').onclick=()=>handoffAction('activate');$('#native-handoff-rollback').onclick=()=>handoffAction('rollback');
+ let smoothersPlan=null;
+ async function smoothersAction(action){
+  const status=$('#smoothers-handoff-status');
+  try{
+   const r=await api('/api/native/smoothers/handoff',action?{action,review_week:$('#smoothers-handoff-review').value,effective_week:$('#smoothers-handoff-date').value,plan_id:smoothersPlan?.id||'',previous_sender_paused:$('#smoothers-handoff-paused').checked,operator_reviewed:$('#smoothers-handoff-reviewed').checked,original_alerts_reviewed:$('#smoothers-handoff-original').checked}:null);
+   smoothersPlan=r.plan||r;status.textContent=JSON.stringify(r,null,2);$('#smoothers-handoff-activate').disabled=smoothersPlan.state!=='prepared';
+   if(action==='prepare'||action==='rollback')for(const id of ['paused','reviewed','original'])$('#smoothers-handoff-'+id).checked=false;
+  }catch(e){status.textContent=e.message;}
+ }
+ for(const action of ['load','prepare','activate','rollback'])$('#smoothers-handoff-'+action).onclick=()=>smoothersAction(action==='load'?null:action);
 })();
