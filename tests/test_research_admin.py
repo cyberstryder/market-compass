@@ -141,3 +141,15 @@ def test_admin_api_requires_login_and_only_reads_saved_evidence(tmp_path):
         assert cfg.password not in response.text and cfg.secret not in response.text
         assert client.get('/api/state').json()['research_admin']['version'] == report['version']
         assert client.get('/static/research-admin.js').status_code == 200
+
+
+def test_closed_position_cache_entries_are_not_counted_as_open_options():
+    report = build({'asof': NOW, 'positions': [
+        {'asset': 'option', 'status': 'closed'},
+        {'asset': 'option', 'status': 'open'},
+        {'asset': 'future', 'status': 'open'}], 'trades': [
+        {'asset': 'option', 'status': 'closed'},
+        {'asset': 'option', 'status': 'open'}]}, {}, {})
+    values = metrics(stream(report, 'zero-dte'))
+    assert values['Open option positions'] == 1
+    assert values['Option trades in recent view'] == 2

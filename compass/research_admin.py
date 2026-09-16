@@ -234,7 +234,8 @@ def build(data, supplements, policy):
         next_step='Review saved confirmation evidence alongside the separate timing research.')
 
     trades = [p for p in data.get('trades', []) if p.get('asset') == 'option']
-    positions = [p for p in data.get('positions', []) if p.get('asset') == 'option']
+    positions = [p for p in data.get('positions', [])
+                 if p.get('asset') == 'option' and p.get('status') == 'open']
     add('zero-dte', '0DTE portfolio simulations', 'Independent ideas',
         activity(data.get('workers', {}).get('worker:engine', {}), now),
         'Selected same-day option positions and closed simulations are stored under the portfolio risk rules.',
