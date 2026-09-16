@@ -33,6 +33,42 @@ def test_sampling_rates_preserve_newest_quote_until_next_write():
     assert b.take(1)[0][0][1]['ts']==NOW+.1
 
 
+def test_stock_source_and_socket_receipt_clocks_are_distinct():
+    b=StockBuffer(['SPY'],['SPY'])
+    b.offer(q(),NOW+.25)
+    sample=b.take(0)[0][0][1]
+    assert sample['ts']==NOW and sample['socket_read_at']==NOW+.25
+    assert sample['collection_version']=='option-reliability-v4'
+    assert b.diagnostics['SPY']['source_age_at_read']==.25
+
+
+def test_slow_bar_storage_does_not_stop_quote_storage():
+    async def run():
+        bar_started,release,quote_saved=threading.Event(),threading.Event(),threading.Event()
+        class WS:
+            async def send(self,*args):pass
+            def __aiter__(self):return self.rows()
+            async def rows(self):
+                yield json.dumps([dict(T='success',msg='authenticated'),dict(T='b',S='SPY',t=NOW,o=100,h=101,l=99,c=100,v=50)])
+                assert await asyncio.to_thread(bar_started.wait,2)
+                yield json.dumps([q(i=500)])
+                await asyncio.Event().wait()
+        def bars(*args):
+            bar_started.set()
+            assert release.wait(3)
+        def quotes(source,batch):
+            if batch[0][1]['ts']==NOW+.5:quote_saved.set()
+        collector=SimpleNamespace(cfg=SimpleNamespace(stocks=('SPY',),feed='sip'),
+            stock_symbols=lambda:('SPY',),quote_batch=quotes,bars=bars,db=SimpleNamespace(health=lambda *a,**k:None))
+        task=asyncio.create_task(consume(WS(),collector))
+        try:
+            assert await asyncio.to_thread(quote_saved.wait,2)
+            assert bar_started.is_set() and not release.is_set()
+        finally:
+            release.set();task.cancel();await asyncio.gather(task,return_exceptions=True)
+    asyncio.run(run())
+
+
 def test_bars_are_batched_and_corrections_replace_only_same_symbol_minute():
     b=StockBuffer(['SPY','QQQ'],['SPY'])
     bar=dict(T='b',S='SPY',t=NOW,o=100,h=102,l=99,c=101,v=500)

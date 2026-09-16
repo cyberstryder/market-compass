@@ -190,7 +190,8 @@ class OptionIdeas:
                 last_option_ts=oq['ts'],last_underlying_ts=q['ts'],waiting_reason=None,
                 chain_asof=chain.get('asof'),chain_source=chain.get('source'),
                 pagination_complete=chain.get('complete'),last_quote=oq,last_underlying_quote=q,
-                observation_model='paired-recorded-quotes-v2',collection_version=oq.get('collection_version','pre-option-reliability'))
+                observation_model='paired-recorded-quotes-v2',collection_version=oq.get('collection_version','pre-option-reliability'),
+                underlying_collection_version=q.get('collection_version','unversioned'))
             self.notify(c,p,now,'new')
         self.save(c,p,now)
 
@@ -314,4 +315,3 @@ def snapshot(db, c, cfg, now):
     return dict(enabled=cfg.option_ideas,worker=db.get(c,'option_ideas:worker'),records=recent,counts=counts,
         min_dte=cfg.ideas_min_dte,max_dte=cfg.ideas_max_dte,target_dte=cfg.ideas_target_dte,
         basis='Last 100 ideas; status counts over 30 days. Independent one-contract intraday observations, not account returns.')
-

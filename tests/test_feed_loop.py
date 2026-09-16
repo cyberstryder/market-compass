@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import pytest
 from compass.feed_loop import FeedLoop
 
 
@@ -19,16 +20,17 @@ def test_one_blocked_exchange_does_not_block_another_and_loops_close():
     assert not a.thread.is_alive() and not b.thread.is_alive()
 
 
-def test_option_connection_receives_while_collector_loop_is_blocked():
+@pytest.mark.parametrize('method,connection',[('options','option_connection'),('stocks','stock_connection'),('option_recovery','recovery_connection')])
+def test_connection_receives_while_collector_loop_is_blocked(method,connection):
     from compass.providers import Collectors
     received=threading.Event()
-    class Collector:
-        async def option_connection(self):
-            await asyncio.sleep(.05)
-            received.set()
-            await asyncio.Event().wait()
+    async def receive(self):
+        await asyncio.sleep(.05)
+        received.set()
+        await asyncio.Event().wait()
+    Collector=type('Collector',(),{connection:receive})
     async def run():
-        task=asyncio.create_task(Collectors.options(Collector()))
+        task=asyncio.create_task(getattr(Collectors,method)(Collector()))
         await asyncio.sleep(.01)
         # Deliberately block the caller loop as a synchronous SQL call would.
         assert received.wait(2)

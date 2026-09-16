@@ -22,7 +22,7 @@ request, broker action, database migration or notification.
 | Secondary comparison | 30-day report, at most 5,000 reviews. Original-program/Obsidian candidates, including rejected verdicts; does not cover every raw TM print. |
 | Obsidian | Stored idea/event inventory; detailed recent and historical audit views retain their own assumptions. |
 | SPY daily plan | Latest saved plan and today's four possible confirmation checks; no complete live option-outcome ledger. |
-| 0DTE simulations | All current option positions plus option trades within the latest 100 portfolio trades across instruments. Not lifetime totals. |
+| 0DTE simulations | All current option positions plus option trades within the latest 100 portfolio trades across instruments. Feed health also reports recent retry diagnostics, exclusions and portfolio risk context. Not lifetime totals. |
 | Market research/exposure | Latest status per configured context feed; collection does not imply all returned symbols receive outcomes. |
 
 Unknown measurements remain `null`, distinct from observed zero. The completed
@@ -39,3 +39,21 @@ delivery confirmations remain independent from research coverage.
 The missing TM-wide study still needs frozen Compass assessments, coverage of
 delayed and rejected records, receipt-time prices and comparable forward outcomes
 before TM-only, Compass-only and combined selections can be evaluated fairly.
+
+## 0DTE selection diagnostics
+
+Feed health shows retries updated during the last 24 hours (maximum 5,000,
+explicitly marked if truncated). Each candidate contributes its last saved
+selection reason, rather than counting every retry as an opportunity. Reasons
+include chain availability, actual same-day listings, underlying price/quote
+gates, option quote age, spread and portfolio risk. Detailed contract rejections
+are preserved even when retries are quiet, and survive expiration. Unchanged
+diagnostics are stored at most every five seconds; changed reasons and fills
+are saved immediately. Notification behavior is unchanged.
+
+Historical retry records without detailed evidence remain unknown. Separately
+counted skip notifications can overlap retry candidates and are capped at 1,000
+with an explicit flag. The panel also reports current open positions and the
+cash-date/current futures-risk-date ledgers separately. Current risk is context,
+not evidence of the risk state at an earlier rejection. These diagnostics must
+be checked against real candidates during the next cash session.

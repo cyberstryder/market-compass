@@ -236,17 +236,20 @@ def build(data, supplements, policy):
     trades = [p for p in data.get('trades', []) if p.get('asset') == 'option']
     positions = [p for p in data.get('positions', [])
                  if p.get('asset') == 'option' and p.get('status') == 'open']
+    selection=data.get('forward_acceptance',{}).get('zero_dte',{})
     add('zero-dte', '0DTE portfolio simulations', 'Independent ideas',
         activity(data.get('workers', {}).get('worker:engine', {}), now),
         'Selected same-day option positions and closed simulations are stored under the portfolio risk rules.',
         'Underlying trigger, contract eligibility, executable quote and available portfolio capacity are required.',
         'Selected-position modeled returns. Portfolio limits mean this is not a study of every possible 0DTE opportunity.',
         [metric('Open option positions', len(positions) if 'positions' in data else None),
-         metric('Option trades in recent view', len(trades) if 'trades' in data else None)],
+         metric('Option trades in recent view', len(trades) if 'trades' in data else None),
+         metric('Retries with saved reasons, 24h',selection.get('instrumented')),
+         metric('Retries missing detail, 24h',selection.get('missing_diagnostics'))],
         'All current positions plus the latest 100 portfolio trades across instruments; counts here are not lifetime totals.', 'trades',
         route='options_0dte', alert_policy='Simulated entry and management notifications under existing portfolio rules.',
         checked_at=data.get('workers', {}).get('worker:engine', {}).get('at'),
-        next_step='Use selected-contract returns separately from the unlimited underlying setup study.', measured=None)
+        next_step='Review Feed health → 0DTE selection diagnostics for saved exclusions and portfolio risk. Validate new diagnostics during the next equity session.', measured=None)
 
     feeds = data.get('scanner', {}).get('feeds', [])
     add('vendor-research', 'Market research and exposure', 'Context feeds',

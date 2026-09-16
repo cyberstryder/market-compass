@@ -37,6 +37,32 @@ def feed_validation(rows):
         **option_validation([r for r in rows if r.get('opened_at',0)>=FEED_FIX_AT],'paired-recorded-quotes-v2')}
 
 
+def stream_summary(health):
+    compact={k:v for k,v in health.items() if k!='symbols'}
+    for field in ('source_age_at_read','silence_seconds','socket_to_commit_seconds','source_to_commit_seconds'):
+        values=[r[field] for r in health.get('symbols',{}).values() if r.get(field) is not None]
+        compact['max_'+field]=max(values) if values else None
+    return compact
+
+
+def failure_evidence(rows):
+    result=Counter()
+    for row in rows:
+        if row.get('status')!='unresolved': continue
+        archive=row.get('archive_check') or {}
+        for stream in ('option','underlying'):
+            check=archive.get(stream) or {}
+            if not check:
+                result[stream+': no archive diagnostic']+=1
+            elif check.get('stale_or_invalid_when_recorded',0):
+                result[stream+': stale or invalid archived samples']+=1
+            elif not check.get('usable_rows',0):
+                result[stream+': no usable archived samples']+=1
+            else:
+                result[stream+': usable samples present; inspect gap timing']+=1
+    return dict(result)
+
+
 def capture(db,cfg,now):
     with db.tx() as c:
         marker=db.locked_get(c,KEY+':activation',{'at':now,'option_model':'paired-recorded-quotes-v1'})
@@ -64,18 +90,18 @@ def capture(db,cfg,now):
             futures_persistence=list(db.prefix(c,'futures_persistence:').values()),
             note='Before/after creation cohorts, not retroactive reclassification or evidence of improvement.')
         from .option_continuity import cohorts
-        stream_health=db.get(c,'health:option_stream',{})
-        ages=[r['source_age_at_read'] for r in stream_health.get('symbols',{}).values() if r.get('source_age_at_read') is not None]
-        compact_stream={k:v for k,v in stream_health.items() if k!='symbols'}
-        compact_stream['max_source_age_at_read']=max(ages) if ages else None
         status['reliability']=dict(at=now,since=now-86400,truncated=options_truncated,**cohorts(options),
-            option_stream=compact_stream,
+            option_stream=stream_summary(db.get(c,'health:option_stream',{})),
+            stock_stream=stream_summary(db.get(c,'health:alpaca_stocks',{})),
+            failure_evidence=failure_evidence(options),
             recovery=db.get(c,'health:option_recovery',{}))
+        from .option_selection_audit import snapshot as selection_audit
+        status['zero_dte']=selection_audit(db,c,cfg,now)
         from .session_trace import tgt_trace, futures_session_audit
         status['tgt_quote_trace']=tgt_trace(db,c,now)
         status['futures_session_audit']=futures_session_audit(db,c,now)
         # Bounded failure details expose which stream went missing.
-        status['option_failures']=[{k:r.get(k) for k in ('id','underlying','contract','created_at','finished_at','exit_reason','gap_detail','archive_check','observation_model')}
+        status['option_failures']=[{k:r.get(k) for k in ('id','underlying','contract','created_at','finished_at','exit_reason','gap_detail','archive_check','observation_model','collection_version','underlying_collection_version')}
             for r in options if r['status']=='unresolved'][:12]
         future_rows=c.execute(select(trials.c.payload).where(trials.c.status=='unresolved')
             .order_by(trials.c.started.desc()).limit(20)).scalars().all()

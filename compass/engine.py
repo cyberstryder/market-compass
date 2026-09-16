@@ -168,9 +168,15 @@ class Engine:
             self.db.put(c,key,p)
             self.db.put(c,"trade:"+p["id"],p)
 
-    def options(self,c,signal,now,quiet=False):
+    def options(self,c,signal,now,quiet=False,diagnostics=None):
         chain=self.db.get(c,"chain:"+signal["symbol"],{})
+        audit=diagnostics if diagnostics is not None else {}
+        audit.update(version='0dte-selection-v1',at=now,status='blocked',reason=None,
+            chain_age_seconds=now-chain['asof'] if chain.get('asof') is not None else None,
+            chain_source=chain.get('source'),chain_complete=chain.get('complete'),
+            same_day_contracts=0,checked_contracts=0,rejections=[])
         if now-chain.get("asof",0)>120:
+            audit['reason']='No recent options chain'
             if not quiet:
                 self.alert(c,signal["symbol"],{**alert_context(signal),"status":"options_skipped","reason":"No recent options chain",
                     "parent_signal":signal["id"]},"option-skip:"+signal["id"])
@@ -178,9 +184,14 @@ class Engine:
         kind="call" if signal["side"]=="long" else "put"
         opts=[o for o in chain.get("contracts",[]) if o.get("expiry")==day(now) and o.get("type")==kind and o.get("multiplier")==100]
         opts.sort(key=lambda o:abs(o["strike"]-signal["signal_price"]))
-        rejected=[]
+        audit['same_day_contracts']=len(opts)
+        audit['contracts_truncated']=len(opts)>8
+        rejected=audit['rejections']
         for o in opts[:8]:
             q=self.db.get(c,"quote:"+o["symbol"])
+            audit['checked_contracts']+=1
+            evidence=dict(symbol=o['symbol'],quote_source=q.get('source') if q else None,
+                quote_age_seconds=now-q['ts'] if q and q.get('ts') is not None else None)
             if fresh(q,now):
                 option_signal={**signal,"id":identity(signal["id"],o["symbol"]),"symbol":o["symbol"],
                     "underlying":signal["symbol"],"underlying_side":signal['side'],
@@ -189,10 +200,15 @@ class Engine:
                     "stop_distance":max(.05,q["ask"]*.3)}
                 reason,_=self.entry_check(c,option_signal,now)
                 if reason:
-                    rejected.append({"symbol":o["symbol"],"reason":reason})
+                    rejected.append({**evidence,"reason":reason})
                     continue
-                if self.enter(c,{**option_signal,"selection_rejections":rejected},now): return True
-            else: rejected.append({"symbol":o["symbol"],"reason":"Missing or invalid fresh quote"})
+                if self.enter(c,{**option_signal,"selection_rejections":rejected},now):
+                    audit.update(status='entered',reason='Eligible contract entered',selected_contract=o['symbol'])
+                    return True
+                rejected.append({**evidence,'reason':'Entry recheck declined; see saved skip event'})
+            else: rejected.append({**evidence,"reason":"Missing or invalid fresh quote"})
+        reasons=list(dict.fromkeys(r['reason'] for r in rejected))
+        audit['reason']='No eligible listed same-day '+kind+' contract' if not opts else '; '.join(reasons)
         if not quiet:
             self.alert(c,signal["symbol"],{**alert_context(signal),"status":"options_skipped","reason":"No eligible 0DTE contract passes quote, spread and risk checks","rejections":rejected,
                 "parent_signal":signal["id"]},"option-skip:"+signal["id"])

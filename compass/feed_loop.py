@@ -1,4 +1,4 @@
-"""A receive loop per futures connection prevents cross-exchange callback stalls."""
+"""Dedicated feed loops prevent unrelated collector work from delaying receipt."""
 import asyncio
 import threading
 
@@ -14,7 +14,7 @@ class FeedLoop:
         self.thread = threading.Thread(target=run, daemon=True, name='feed-'+name)
         self.thread.start()
         if not ready.wait(5):
-            raise RuntimeError('Futures receive loop did not start')
+            raise RuntimeError('Feed loop did not start')
 
     def close(self):
         if self.loop.is_closed(): return
@@ -28,5 +28,5 @@ class FeedLoop:
             self.loop.call_soon_threadsafe(self.loop.stop)
             self.thread.join(timeout=5)
             if self.thread.is_alive():
-                raise RuntimeError('Futures receive loop did not stop')
+                raise RuntimeError('Feed loop did not stop')
             self.loop.close()

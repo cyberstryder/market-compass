@@ -6,6 +6,7 @@ import logging
 import time
 from .market import ts, number
 from .diagnostics import redacted_detail
+from .quote_collection import VERSION as COLLECTION_VERSION
 
 
 class OptionStreamError(RuntimeError):
@@ -30,7 +31,7 @@ class OptionBuffer:
                 return
             self.sources[symbol] = stamp
             value=(symbol,dict(ts=stamp,bid=item['bp'],ask=item['ap'],
-                bid_size=item.get('bs',0),ask_size=item.get('as',0),socket_read_at=now,collection_version='option-reliability-v3'),True)
+                bid_size=item.get('bs',0),ask_size=item.get('as',0),socket_read_at=now,collection_version=COLLECTION_VERSION),True)
             if monotonic-self.last_sample.get(symbol, float('-inf')) < 1:
                 self.pending[symbol]=value
                 return
@@ -130,7 +131,7 @@ async def consume(ws, collector):
                 now-buffer.diagnostics[s]['last_socket_read_at'] if s in buffer.diagnostics else None}
                 for s in subscribed}
             latest = max((r['last_source_ts'] for r in rows.values() if 'last_source_ts' in r),default=None)
-            report = dict(at=now,subscribed=len(subscribed),quote_queue=len(buffer.quotes),
+            report = dict(at=now,collection_version=COLLECTION_VERSION,subscribed=len(subscribed),quote_queue=len(buffer.quotes),
                 trade_queue=len(buffer.trades),pending_quotes=len(buffer.pending),committed=dict(committed),symbols=rows,
                 basis='Socket read is local application receipt, not wire arrival; source clocks unchanged')
             await asyncio.to_thread(collector.db.health,'option_stream','receiving' if latest else 'waiting',
