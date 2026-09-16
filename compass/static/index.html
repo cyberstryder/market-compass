@@ -33,6 +33,50 @@
 <div class="banner">Signals and outcomes from Morning Algo, New Smoothers, and the automated futures strategies. Market context is captured separately; each project keeps its original rules and results.</div>
 <div id="project-status" class="stats"></div>
 <article class="panel"><h2>Native Morning and Smoothers</h2><div id="native-programs"></div></article>
+<article class="panel"><h2>Native reports and delivery reconciliation</h2>
+<p>Calculated from Compass records. Original-source comparisons remain optional; missing data stays visible.</p>
+<label>Ticker <input id="native-ticker" maxlength="50" placeholder="All tickers"></label>
+<label>Morning from <input id="native-start" type="date"></label><label>through <input id="native-end" type="date"></label>
+<label>Smoothers week (Monday) <input id="native-week" type="date"></label>
+<button id="native-report-load" type="button">Load native report</button> <a id="native-report-download" href="/api/native/report?download=true">Download JSON</a>
+<div id="native-report-result" aria-live="polite"></div></article>
+<article class="panel"><h2>Smoothers configurations</h2>
+<p>Compass owns the settings. Changes affect future weekly jobs; a started cohort keeps its original revision.</p>
+<button id="native-config-load" type="button">Load configurations</button>
+<div id="native-config-status" aria-live="polite"></div>
+<label>Ticker <select id="native-config-ticker"></select></label>
+<label>S1 <input id="native-s1" type="number" min="1" max="500"></label>
+<label>S2 <input id="native-s2" type="number" min="1" max="500"></label>
+<label>S3 <input id="native-s3" type="number" min="1" max="500"></label>
+<label>Target fraction <input id="native-pm" type="number" step="0.001" min="0.001" max="0.999"></label>
+<label><input id="native-enabled" type="checkbox"> Enabled</label>
+<label>Change reason <input id="native-config-reason" maxlength="300"></label>
+<button id="native-config-save" type="button" disabled>Save new revision</button>
+<label>Earlier revision <select id="native-config-history"></select></label>
+<button id="native-config-restore" type="button" disabled>Restore settings as new revision</button>
+</article>
+<article class="panel"><h2>Morning routing preparation</h2>
+<p>Prepare a future-session shadow route. This does not change TradingView or the official sender. Arrange an additional shadow delivery and retain the existing TradingView-to-Morning route before scheduling. Do not replace the primary webhook.</p>
+<button id="native-route-load" type="button">Load routing</button>
+<label>Session <input id="native-route-date" type="date"></label>
+<label>Mode <select id="native-route-mode"><option value="direct_shadow">Direct TradingView shadow intake</option><option value="relay_shadow">Original-feed relay (rollback)</option></select></label>
+<label>Reason <input id="native-route-reason" maxlength="300"></label>
+<button id="native-route-prepare" type="button" disabled>Prepare route</button>
+<button id="native-route-schedule" type="button" disabled>Schedule prepared route</button>
+<button id="native-route-cancel" type="button" disabled>Cancel future changes</button>
+<pre id="native-route-status" aria-live="polite"></pre>
+<details><summary>Official sender handoff — after forward acceptance</summary>
+<p>Preparing a plan checks a completed direct-intake session. Activation also requires accepted previews, the original sender paused, and dedicated sender configuration. It takes effect at the next market session; old shadow messages stay shadow. No external service is paused or resumed by this control.</p>
+<label>Completed review session <input id="native-handoff-review" type="date"></label>
+<label>Handoff session <input id="native-handoff-date" type="date"></label>
+<button id="native-handoff-load" type="button">Load handoff status</button>
+<button id="native-handoff-prepare" type="button">Prepare evidence check</button>
+<label><input id="native-handoff-paused" type="checkbox"> I have paused the original official sender</label>
+<label><input id="native-handoff-reviewed" type="checkbox"> I reviewed and accepted the session and message previews</label>
+<button id="native-handoff-activate" type="button" disabled>Arm accepted handoff</button>
+<button id="native-handoff-rollback" type="button">Stop Compass official sending</button>
+<p>After rollback, resolve in-flight or unknown deliveries before manually resuming the original sender.</p>
+<pre id="native-handoff-status" aria-live="polite"></pre></details></article>
 <article class="panel"><h2>Program replacement checks</h2><div id="program-parity"></div></article>
 <article class="panel"><h2>Transfer to Compass</h2><div id="strategy-migration"></div></article>
 <article class="panel"><h2>Morning stock research</h2><p>Original candles and research candidates. Underlying outcomes are not option returns or executed trades.</p><label>Ticker <input id="morning-ticker" maxlength="50" placeholder="All tickers"></label> <label>From <input id="morning-start" type="date"></label> <label>Through <input id="morning-end" type="date"></label> <label>Stream <input id="morning-stream" maxlength="32" placeholder="All streams"></label> <button id="morning-load" type="button">Load report</button> <a id="morning-download" href="/api/projects/morning/report?download=true">Download JSON</a><div id="morning-report"><p>Load the latest 100 matching signals and 100 candidates. Narrow dates or ticker if the report is truncated.</p></div></article>
@@ -100,4 +144,4 @@
 <p class="muted">Connections are checked. Live readiness still requires advancing source times, usable option inputs, and a recorded simulated entry, exit, and confirmed alert.</p>
 <p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></section>
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
-<script src="/static/app.js"></script></body></html>
+<script src="/static/app.js"></script><script src="/static/native.js"></script></body></html>

@@ -13,14 +13,16 @@ outbox=Table('native_program_outbox_v1',meta,
     Column('status',String(24),nullable=False),Column('payload',JSON,nullable=False),Column('delivery',JSON,nullable=False))
 
 
-def owner(db,c,program):
+def owner(db,c,program,now=None):
     o=db.get(c,'native:ownership:'+program,{})
-    return o if o.get('owner')=='compass' and o.get('previous_sender_paused') is True and o.get('accepted_at') and o.get('epoch') else None
+    now=time.time() if now is None else now
+    return o if o.get('effective_from',0)<=now and o.get('owner')=='compass' and o.get('previous_sender_paused') is True and o.get('accepted_at') and o.get('epoch') else None
 
 
-def queue(db,c,program,event_key,payload,now,parent_event=None):
+def queue(db,c,program,event_key,payload,now,parent_event=None,event_time=None):
     key=identity('native-outbox-v1',program,event_key)
-    ownership=owner(db,c,program)
+    ownership=owner(db,c,program,now)
+    if ownership and ownership.get('effective_from') and (event_time is None or event_time<ownership['effective_from']):ownership=None
     c.execute(db.insert(outbox).values(id=key,program=program,event_key=event_key,created=now,
         status='pending' if ownership else 'shadow',payload=payload,
         delivery={'attempts':0,'owner_epoch':ownership['epoch'] if ownership else None,'parent_event':parent_event})
@@ -41,7 +43,7 @@ def deliver_one(db,client,webhooks,enabled=False,now=None):
                 if d.get('lease_until',0)<now:
                     c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='ambiguous',delivery=dict(d,error='interrupted_send_requires_reconciliation')))
                 continue
-            ownership=owner(db,c,row['program'])
+            ownership=owner(db,c,row['program'],now)
             if not ownership or ownership['epoch']!=d.get('owner_epoch') or d.get('next_attempt',0)>now:continue
             url=webhooks.get(row['program'],'')
             if not re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',url):continue
@@ -79,6 +81,8 @@ def deliver_one(db,client,webhooks,enabled=False,now=None):
     with db.tx() as c:
         current=c.execute(select(outbox.c.delivery).where(outbox.c.id==job['id']).with_for_update()).scalar_one()
         if current.get('lease')==job['delivery']['lease']:
+            if current.get('error')=='handoff_rollback_requires_delivery_reconciliation':
+                status='ambiguous';error='handoff_rollback_requires_delivery_reconciliation'
             current.update(job['delivery'],error=error,message_id=message_id,finished_at=now,lease_until=0)
             c.execute(outbox.update().where(outbox.c.id==job['id']).values(status=status,delivery=current))
     return True

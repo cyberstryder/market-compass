@@ -17,6 +17,7 @@ from .smoothers_quality import score_signal,rank_signals
 from .smoothers_factors import atr
 from .smoothers_blackscholes import value_at_target
 from .native_outbox import queue
+from .native_config import bootstrap, effective
 
 VERSION='native-smoothers-v1'
 weekly=Table('native_smoothers_signals_v1',meta,Column('id',String(64),primary_key=True),
@@ -32,7 +33,10 @@ def refresh_config(db,cfg,client,now):
     if not cfg.smoothers_url or not cfg.smoothers_token:return
     with db.tx() as c:
         old=db.get(c,VERSION+':config',{})
-    if now-old.get('received_at',0)<3600:return
+    if old.get('owner')=='compass':return
+    if now-old.get('received_at',0)<3600:
+        bootstrap(db,now)
+        return
     r=client.get(cfg.smoothers_url.rstrip('/')+'/api/compass/config',headers={'Authorization':'Bearer '+cfg.smoothers_token})
     if r.status_code!=200:raise ValueError('Source config HTTP '+str(r.status_code))
     if len(r.content)>2*1024*1024:raise ValueError('Source config too large')
@@ -49,8 +53,11 @@ def refresh_config(db,cfg,client,now):
         if type(row['enabled']) is not bool:raise ValueError('Invalid enabled flag')
     stamp=identity(data['configs'],data.get('alltime',[]))
     with db.tx() as c:
+        current=db.locked_get(c,VERSION+':config',{})
+        if current.get('owner')=='compass':return
         db.put(c,VERSION+':config',dict(data,received_at=now,revision=stamp))
         db.append(c,'native_config','smoothers','',now,data,identity(VERSION,'config',stamp))
+    bootstrap(db,now)
 
 
 def make_signal(config,bars,daily,first_session,now,week):
@@ -104,8 +111,10 @@ def schedule(db,data,now):
         with db.tx() as c:db.put(c,key,state)
         return
     if 'config' not in state:
-        with db.tx() as c: config=db.get(c,VERSION+':config',{})
-        if now-config.get('received_at',0)>7200:return
+        with db.tx() as c:
+            config=db.get(c,VERSION+':config',{})
+            if config.get('owner')=='compass':config=effective(db,c,config)
+        if not config.get('configs') or (config.get('owner')!='compass' and now-config.get('received_at',0)>7200):return
         state['config']=config;state['started']=now;state['state']='running'
         with db.tx() as c:db.put(c,key,state)
     configs=[r for r in state['config']['configs'] if r['enabled']]
@@ -251,7 +260,8 @@ async def run(db,cfg,role='schedule'):
                 if active and cfg.alpaca_key and cfg.alpaca_secret:
                     data.deadline=time.monotonic()+60
                     if role=='schedule':
-                        await asyncio.to_thread(refresh_config,db,cfg,client,now)
+                        with db.tx() as c:owned=db.get(c,VERSION+':config',{}).get('owner')=='compass'
+                        if not owned:await asyncio.to_thread(refresh_config,db,cfg,client,now)
                         await asyncio.to_thread(schedule,db,data,now)
                     elif role=='target':await asyncio.to_thread(monitor,db,data,now)
                     else:await asyncio.to_thread(premium,db,data,now)
