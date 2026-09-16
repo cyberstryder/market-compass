@@ -18,7 +18,7 @@ request, broker action, database migration or notification.
 | Smoothers | Stored configuration count, source history and current native weekly observations. Full weekly comparison remains required for retirement. |
 | Swing Ideas | 90-day status totals for admitted ideas; technical candidates without flow are shown separately from trades. |
 | Intraday Options Ideas | 30-day status totals for admitted ideas. Option expiration and holding period are distinct. |
-| Stock / ETF and futures setup studies | Separate instrument groups; 30 days, at most 10,000 trials across groups. Unresolved/excluded paths are not losses. |
+| Stock / ETF and futures setup studies | Separate instrument groups; all stored trials in the 30-day window; individual details paginated in groups of 100. Unresolved/excluded paths are not losses. |
 | Secondary comparison | 30-day report, at most 5,000 reviews. Original-program/Obsidian candidates, including rejected verdicts; does not cover every raw TM print. |
 | Obsidian | Stored idea/event inventory; detailed recent and historical audit views retain their own assumptions. |
 | SPY daily plan | Latest saved plan and today's four possible confirmation checks; no complete live option-outcome ledger. |

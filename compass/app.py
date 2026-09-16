@@ -290,6 +290,18 @@ def create_app(cfg=None):
     def get_setup_study():
         with db.tx() as c: return study_snapshot(db,c,cfg,time.time())
 
+    @app.get('/api/setup-study/records')
+    def get_setup_records(cohort:str=Query('all',pattern=r'^(all|alerted|quiet)$'),
+            limit:int=Query(100,ge=1,le=100),
+            asof:float|None=Query(None,gt=0,allow_inf_nan=False),
+            cursor:str=Query('',max_length=1024)):
+        from .setup_reporting import record_page
+        try:
+            with db.tx() as c:
+                return record_page(c,setup_trials,time.time(),cohort=cohort,limit=limit,asof=asof,cursor=cursor)
+        except ValueError as error:
+            raise HTTPException(400,str(error)) from error
+
     @app.get("/api/setup-study/record")
     def get_setup_record(id: str):
         with db.tx() as c:

@@ -41,9 +41,22 @@ between samples. Excluded entries, open trades and unresolved paths remain visib
 Results include wins/losses/breakeven after modeled costs, target/stop counts,
 mean R, duration, sampled favorable/adverse excursion and quote gaps. A target
 touch and net profitability are separate fields. Overlapping independent trials
-are not an account equity curve. Reports cover the latest 30 days, at most 10,000
-trials, disclose truncation and show the latest 100 individual records; all rows
-remain retained. Owner-authenticated full-record endpoints expose each trial.
+are not an account equity curve. Reports cover every stored trial started in the latest 30 days. Database-side
+aggregation has no trial-count cutoff and retains the separate setup, market-state
+and entry-variant cohorts. The worker caches the summary every 30 seconds; the
+browser does not download all trial payloads to calculate totals.
+
+Individual outcomes are paginated, 100 per page, with Previous records, Next
+records and Newest records controls. `/api/setup-study/records` accepts `cohort`
+(`all`, `alerted`, `quiet`), `limit` (1–100), an optional `asof` and the returned
+`next_cursor`. Cohort filtering happens before pagination. Pages keep the same
+30-day window and sort by start time plus unique ID, so equal-time trials and new
+arrivals do not shift existing pages. Outcomes may advance while browsing; this
+is not an immutable historical outcome snapshot. Summary and page timestamps are
+explicit. All rows remain retained beyond this reporting window, and the
+owner-authenticated `/api/setup-study/record?id=…` endpoint exposes a full trial.
+`coverage=full_window`, `truncated=false` and `limit=null` describe summary coverage;
+`records_limit=100` and `records_has_more` describe only the embedded preview.
 Primary alerted experiments emit separate **SETUP RESULT** notifications.
 
 ## September 14 reliability release

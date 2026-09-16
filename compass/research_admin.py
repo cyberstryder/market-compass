@@ -188,7 +188,7 @@ def build(data, supplements, policy):
              metric('Closed outcomes', stats['closed'] if 'groups' in study else None),
              metric('Positive modeled outcomes', stats['wins'] if 'groups' in study else None),
              metric('Unresolved paths', stats['unresolved'] if 'groups' in study else None)],
-            str(study.get('window_days', 30))+'-day report; at most 10,000 trials across stock and futures groups. Overlapping trials are not portfolio returns.', 'setup-study',
+            str(study.get('window_days', 30))+'-day report; '+('all stored trials in this window; individual records paginated in groups of 100.' if study.get('coverage') == 'full_window' else 'saved summary coverage has not yet been verified as complete.')+' Overlapping trials are not portfolio returns.', 'setup-study',
             route=route, alert_policy='Setup and primary-result alerts enabled when scanner is on; cooldown candidates are still measured.' if policy.get('scanner') else 'Scanner disabled.',
             checked_at=(study.get('worker') or {}).get('at'), issues=issues,
             next_step='Compare resolved outcomes and observation gaps across setup, direction and market conditions.',

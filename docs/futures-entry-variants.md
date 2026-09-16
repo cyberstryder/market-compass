@@ -38,8 +38,8 @@ never retrospectively classified.
 Setup results and `/api/setup-study` expose counts grouped by dated contract,
 strategy, direction, outcome model, fill model, and alert cohort. Selected,
 skipped, unknown, excluded, open, unresolved, and closed outcomes remain separate.
-Win rate and mean R use closed selected observations only. The existing 30-day /
-10,000-record reporting bound applies; the dashboard discloses truncation. Full
+Win rate and mean R use closed selected observations only. Every stored trial in the 30-day
+window contributes; only individual detail pages are limited to 100 records. Full
 trial records include entry decisions, their reason, regime clock, and reset
 clocks. A bounded 30-second log reports selection and missing-context counts.
 
