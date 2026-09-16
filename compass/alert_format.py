@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 CT = ZoneInfo('America/Chicago')
 CATEGORIES = {
+    'spy_morning': ('SPY MORNING PLAN', '0DTE morning'),
     'smoothers': ('SMOOTHERS', 'Weekly swing'),
     'futures': ('FUTURES', 'Intraday futures'),
     'morning': ('MORNING ALGO', 'Morning intraday'),
@@ -103,6 +104,9 @@ def alert_identity(row, now=None):
         origin = 'TradingView mirror' if category == 'futures' else label.title() + ' mirror'
     elif status == 'notification_test':
         mode, origin = 'TEST — no trade', 'Market Compass'
+    elif status == 'spy_morning_brief':
+        event = 'DATED PLAN' if now >= p.get('expires_at', 0) else 'MORNING PLAN'
+        mode, origin = '[CONDITIONAL PLAN]', 'Compass SPY morning brief'
     elif status == 'setup_triggered':
         event = 'EXPIRED SETUP' if now >= p.get('expires_at', 0) else 'SETUP'
         mode = '[SIMULATED SETUP] — no broker order'
@@ -157,6 +161,10 @@ def alert_identity(row, now=None):
 def message_for(row, now=None):
     now = time.time() if now is None else now
     p = row['payload']
+    if p.get('status') == 'spy_morning_brief':
+        from .spy_brief import delivery_payload
+        body=delivery_payload(row,now)
+        return (body['content']+'\n'+ '\n\n'.join(e['title']+'\n'+e['description'] for e in body.get('embeds',[])))[:1900]
     identity = alert_identity(row, now)
     if p.get('status','').startswith('swing_idea_'):
         return swing_idea_message(row, identity, now)
