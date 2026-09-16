@@ -29,8 +29,13 @@ def outbox_status(db,c,now):
 
 async def dispatch(client,db,webhook,row):
     p=row['payload']
-    response=await client.post(confirmed_url(webhook),json={"content":message_for(row),
-        "username":"Market Compass · "+alert_identity(row)['label'].title(),"allowed_mentions":{"parse":[]}})
+    if p.get('status')=='spy_morning_brief':
+        from .spy_brief import delivery_payload
+        body=delivery_payload(row,time.time())
+    else:
+        body={"content":message_for(row),
+            "username":"Market Compass · "+alert_identity(row)['label'].title(),"allowed_mentions":{"parse":[]}}
+    response=await client.post(confirmed_url(webhook),json=body)
     if response.status_code==429:
         try: retry=max(1,min(60,float(response.json().get("retry_after",5))))
         except (ValueError,TypeError): retry=5

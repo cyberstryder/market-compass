@@ -25,6 +25,7 @@ class Config:
     openai: str = field(default_factory=lambda: env("OPENAI_API_KEY"))
     model: str = field(default_factory=lambda: env("OPENAI_MODEL","gpt-5-mini"))
     discord: str = field(default_factory=lambda: env("DISCORD_WEBHOOK_URL"))
+    spy_morning_brief: bool = field(default_factory=lambda: env("SPY_MORNING_BRIEF_ENABLED", "true") == "true")
     risk: float = field(default_factory=lambda: float(env("SHADOW_RISK_DOLLARS","100")))
     daily_loss: float = field(default_factory=lambda: float(env("SHADOW_MAX_DAILY_LOSS","300")))
     max_entries: int = field(default_factory=lambda: int(env("SHADOW_MAX_ENTRIES","0")))
@@ -105,4 +106,3 @@ class Config:
         for url in (self.morning_url, self.smoothers_url):
             if url and not url.startswith("https://"): raise ValueError("Source connections require HTTPS")
         if not set(self.observer_streams)<= {"mnq","mgc"}: raise ValueError("Unknown configured observer stream")
-
