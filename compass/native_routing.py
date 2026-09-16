@@ -30,7 +30,7 @@ def routing_guard(db,shared=False):
 def snapshot(db,c,now):
     state=db.get(c,KEY,{'revision':None,'schedule':[],'prepared':None})
     return dict(state,effective_mode=mode_for(state,day(now)),
-        endpoint='/hooks/native/morning',credential='Existing scoped Morning token; not included in this response',
+        endpoint='/hooks/native/morning',credential='NATIVE_MORNING_INTAKE_TOKEN (legacy fallback: MORNING_INTEGRATION_TOKEN); not included in this response',
         official_sender=db.get(c,'native:ownership:morning',{}).get('owner','original'),external_routing_changed=False,
         instructions=['Prepare a future-session additional shadow delivery; retain the existing TradingView-to-Morning route.',
             'Schedule only after arranging the additional shadow alert. Never replace the primary webhook while the original remains the official sender. This control does not edit TradingView.',
