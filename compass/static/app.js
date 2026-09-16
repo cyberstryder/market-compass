@@ -188,7 +188,7 @@ $('#map-metric').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};
 function renderProjects(data){
  if(!data)return;
  const native=data.native_programs||{}, nm=native.morning||{}, ns=native.smoothers||{};
- $('#native-programs').innerHTML='<p>Morning notification owner: '+esc(native.morning_sender||'original')+'. Smoothers retains its original official sender. Native observations remain separate from executed trades.</p>'+table(['Workflow','Progress','Forward check'],[
+ $('#native-programs').innerHTML='<p>Morning notification owner: '+esc(native.morning_sender||'original')+'. Smoothers notification owner: '+esc(ns.sender||'original')+'. Native observations remain separate from executed trades.</p>'+table(['Workflow','Progress','Forward check'],[
  ['Morning',esc(String(nm.signals||0))+' native signals; '+esc(String(nm.samples||0))+' scheduled samples','Opening-session intake, contract choice, option observations and delivery comparison'],
  ['Smoothers',esc(ns.state||'not started')+' · '+esc(String(ns.enabled_tickers||0))+' enabled tickers; '+esc(String(ns.processed||0))+' processed','Complete weekly cycle, including target checks, premiums and final-session closure']])+
  '<p>Morning checked '+when(nm.at)+'. Smoothers config owner '+esc(ns.config_owner||'source')+'; received '+when(ns.config_received_at)+'.</p><p>Notification intents: '+esc(JSON.stringify(native.notifications?.counts||{}))+'</p><p class="fine">A missed weekly window is not replayed with current option prices. Stock target outcomes and option valuations remain separate. Historical shadow messages will never be sent after activation.</p>';
@@ -379,4 +379,3 @@ $('#morning-load').onclick=async()=>{
  }catch(e){target.textContent=e.message;}finally{button.disabled=false;}
 };
 for(const id of ['morning-ticker','morning-start','morning-end','morning-stream'])$('#'+id).onchange=()=>{$('#morning-download').href='/api/projects/morning/report?'+morningParams()+'&download=true';};
-

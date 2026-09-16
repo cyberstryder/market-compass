@@ -11,9 +11,11 @@ def snapshot(db,c,now):
     counts={s:n for s,n in c.execute(select(weekly.c.status,func.count()).where(weekly.c.week==week).group_by(weekly.c.status))}
     ownership=db.get(c,'native:ownership:morning',{})
     sender='compass' if ownership.get('owner')=='compass' and ownership.get('effective_from',0)<=now else 'compass_armed' if ownership.get('owner')=='compass' else 'original'
+    so=db.get(c,'native:ownership:smoothers',{})
+    smoothers_sender='compass' if so.get('owner')=='compass' and so.get('effective_from',0)<=now else 'compass_armed' if so.get('owner')=='compass' else 'original'
     return {'morning_sender':sender,'morning':db.get(c,'native-morning-v1:status',{}),
         'morning_intake':db.get(c,'native_morning:last_intake',{}),
-        'smoothers':{'week':week,'config_received_at':config.get('received_at'),
+        'smoothers':{'week':week,'sender':smoothers_sender,'config_received_at':config.get('received_at'),
             'config_owner':config.get('owner','source'),'config_revision':config.get('revision'),'config_count':len(config.get('configs',[])),
             'enabled_tickers':sum(r.get('enabled',False) for r in config.get('configs',[])),
             'state':job.get('state','not_started'),'processed':job.get('index',0),

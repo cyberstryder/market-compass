@@ -3,8 +3,9 @@ import asyncio
 import re
 import time
 import uuid
+from contextlib import contextmanager
 import httpx
-from sqlalchemy import Table,Column,String,Float,JSON,select,func
+from sqlalchemy import Table,Column,String,Float,JSON,select,func,text
 from .store import meta,identity
 
 outbox=Table('native_program_outbox_v1',meta,
@@ -19,13 +20,30 @@ def owner(db,c,program,now=None):
     return o if o.get('effective_from',0)<=now and o.get('owner')=='compass' and o.get('previous_sender_paused') is True and o.get('accepted_at') and o.get('epoch') else None
 
 
-def queue(db,c,program,event_key,payload,now,parent_event=None,event_time=None):
+def delivery_lock(c,shared=False):
+    if c.dialect.name=='postgresql':
+        name='pg_advisory_xact_lock_shared' if shared else 'pg_advisory_xact_lock'
+        c.execute(text('SELECT '+name+'(8675309062)'))
+
+
+@contextmanager
+def delivery_guard(db,shared=False):
+    with db.tx() as c:
+        delivery_lock(c,shared)
+        yield c
+
+
+def queue(db,c,program,event_key,payload,now,parent_event=None,event_time=None,cohort_time=None):
+    delivery_lock(c,shared=True)
     key=identity('native-outbox-v1',program,event_key)
     ownership=owner(db,c,program,now)
     if ownership and ownership.get('effective_from') and (event_time is None or event_time<ownership['effective_from']):ownership=None
+    # A late recovery/closure for the old sender's cohort never changes owner.
+    if ownership and program=='smoothers' and (cohort_time is None or cohort_time<ownership.get('effective_from',0)):ownership=None
     c.execute(db.insert(outbox).values(id=key,program=program,event_key=event_key,created=now,
         status='pending' if ownership else 'shadow',payload=payload,
-        delivery={'attempts':0,'owner_epoch':ownership['epoch'] if ownership else None,'parent_event':parent_event})
+        delivery={'attempts':0,'owner_epoch':ownership['epoch'] if ownership else None,'parent_event':parent_event,
+                  'event_time':event_time,'cohort_time':cohort_time})
         .on_conflict_do_nothing(index_elements=['id']))
     return key
 
@@ -33,7 +51,7 @@ def queue(db,c,program,event_key,payload,now,parent_event=None,event_time=None):
 def deliver_one(db,client,webhooks,enabled=False,now=None):
     if not enabled:return False
     now=time.time() if now is None else now
-    with db.tx() as c:
+    with delivery_guard(db,shared=True) as c:
         candidates=c.execute(select(outbox).where(outbox.c.status.in_(['pending','sending']))
             .order_by(outbox.c.created).limit(50).with_for_update(skip_locked=True)).mappings().all()
         job=None
@@ -62,9 +80,10 @@ def deliver_one(db,client,webhooks,enabled=False,now=None):
     try:
         response=client.patch(url+'/messages/'+message_id,json=job['payload']) if message_id else client.post(url,params={'wait':'true'},json=job['payload'])
         if 200<=response.status_code<300:
-            status='delivered'
             try:message_id=response.json().get('id',message_id)
             except (ValueError,AttributeError):pass
+            if isinstance(message_id,str) and re.fullmatch(r'[0-9]{1,32}',message_id):status='delivered'
+            else:error='missing_discord_receipt'
         elif response.status_code==429:
             status='pending';error='rate_limited'
             try:delay=max(1,min(3600,float(response.json().get('retry_after',30))))
@@ -78,7 +97,7 @@ def deliver_one(db,client,webhooks,enabled=False,now=None):
     if status=='pending':
         job['delivery'].setdefault('next_attempt',now+30)
         if job['delivery']['attempts']>=10:status='failed'
-    with db.tx() as c:
+    with delivery_guard(db,shared=True) as c:
         current=c.execute(select(outbox.c.delivery).where(outbox.c.id==job['id']).with_for_update()).scalar_one()
         if current.get('lease')==job['delivery']['lease']:
             if current.get('error')=='handoff_rollback_requires_delivery_reconciliation':
