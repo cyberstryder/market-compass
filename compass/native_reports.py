@@ -176,7 +176,10 @@ async def run(db):
                 def compute():
                     with db.tx() as c:
                         r=report(db,c,time.time())
-                        summary={'at':r['at'],'morning':r['morning']['summary'],'smoothers':r['smoothers']['summary'],'cutover_ready':False}
+                        config=db.get(c,'native-smoothers-v1:config',{})
+                        summary={'at':r['at'],'morning':r['morning']['summary'],'smoothers':r['smoothers']['summary'],
+                            'config_owner':config.get('owner','source'),'config_revision':config.get('revision'),
+                            'configured_tickers':len(config.get('configs',[])),'cutover_ready':False}
                         db.put(c,'native-program-report-v1:summary',summary)
                     logging.getLogger('uvicorn.error').info('Native program report: %s',summary)
                 await asyncio.to_thread(compute)
