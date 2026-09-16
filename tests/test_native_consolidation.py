@@ -134,3 +134,69 @@ def test_weekly_comparison_exposes_quality_and_ranking_differences(db):
         result=report(db,c,NOW)['smoothers']['rows'][0]
     assert result['comparison']['status']=='different'
     assert set(result['comparison']['differences'])=={'quality_score','quality_rank','is_featured'}
+
+
+def test_empty_session_blocks_official_handoff(db,monkeypatch):
+    from compass.native_handoff import prepare,activate
+    initialize(db)
+    plan=prepare(db,'2026-09-15','2026-09-17',NOW)
+    assert plan['state']=='blocked' and plan['blockers']
+    monkeypatch.setenv('NATIVE_PROGRAM_SEND_ENABLED','true')
+    monkeypatch.setenv('NATIVE_MORNING_DISCORD_WEBHOOK','https://discord.com/api/webhooks/123/test')
+    with pytest.raises(RevisionConflict):activate(db,plan['id'],True,True,NOW)
+
+
+def test_sender_boundary_and_rollback_never_promote_old_messages(db,monkeypatch):
+    import httpx
+    from compass.native_handoff import rollback
+    from compass.native_outbox import queue,deliver_one
+    with db.tx() as c:
+        db.put(c,'native:ownership:morning',dict(owner='compass',previous_sender_paused=True,accepted_at=NOW-1,epoch='test',effective_from=NOW))
+        queue(db,c,'morning','old',{'content':'historical'},NOW+1,event_time=NOW-60)
+        queue(db,c,'morning','new',{'content':'new'},NOW+1,event_time=NOW+1)
+    def handler(request):
+        rollback(db,NOW+3)
+        return httpx.Response(200,json={'id':'1234'})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert deliver_one(db,client,{'morning':'https://discord.com/api/webhooks/123/test'},True,NOW+2)
+        assert not deliver_one(db,client,{'morning':'https://discord.com/api/webhooks/123/test'},True,NOW+4)
+    with db.tx() as c:
+        statuses=dict(c.execute(select(outbox.c.event_key,outbox.c.status)).all())
+        assert statuses=={'old':'shadow','new':'ambiguous'}
+        assert db.get(c,'native:ownership:morning')['owner']=='original'
+
+
+def test_handoff_arming_requires_environment_and_next_session(db,monkeypatch):
+    from compass.native_handoff import activate,KEY as HANDOFF
+    from compass.market import session
+    after_close=datetime(2026,9,16,22,tzinfo=timezone.utc).timestamp()
+    opening=session('2026-09-17')[0]
+    with db.tx() as c:
+        db.put(c,HANDOFF,dict(id='prepared-test',state='prepared',review_session='2026-09-16',effective_session='2026-09-17',effective_from=opening,prepared_at=after_close))
+    with pytest.raises(ValueError,match='environment'):activate(db,'prepared-test',True,True,after_close+1)
+    monkeypatch.setenv('NATIVE_PROGRAM_SEND_ENABLED','true')
+    monkeypatch.setenv('NATIVE_MORNING_DISCORD_WEBHOOK','https://discord.com/api/webhooks/123/test')
+    result=activate(db,'prepared-test',True,True,after_close+2)
+    assert result['plan']['state']=='armed'
+    assert result['ownership']['effective_from']==opening
+    with db.tx() as c:
+        from compass.native_outbox import owner
+        assert owner(db,c,'morning',after_close+3) is None
+        assert owner(db,c,'morning',opening)['owner']=='compass'
+        assert c.execute(select(func.count()).select_from(outbox)).scalar_one()==0
+
+
+def test_source_gaps_are_separate_from_native_inventory_loss(db):
+    from compass.morning_history import save as mirror
+    initialize(db);accept(db,signal_event(stamp=int(NOW*1000)),NOW)
+    bar=dict(open_at_ms=int(NOW*1000),open=100.,high=100.1,low=99.9,close=100.,volume=10.)
+    with db.tx() as c:
+        m.insert_many_once(c,m.stock_bars,[dict(signal_id='fixture-1',open_at_ms=bar['open_at_ms'],bar_json=m.canonical(bar),bar_hash=m.digest(bar),received_at_ms=int((NOW+60)*1000))])
+        mirror(db,c,'stock_inventory','fixture-1','fixture-1',{'payload':{'bars':[{'payload':bar}]}},NOW+60,NOW+61)
+        r=report(db,c,NOW+7200)['morning']['signals'][0]
+        assert r['coverage']['status']=='incomplete'
+        assert r['source_candles']['status']=='matched_source_inventory'
+        c.execute(m.stock_bars.delete())
+        r=report(db,c,NOW+7200)['morning']['signals'][0]
+        assert r['source_candles']['status']=='different'
+        assert r['source_candles']['missing']==[int(NOW*1000)]

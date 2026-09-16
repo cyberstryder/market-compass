@@ -1,10 +1,10 @@
-"""Private dashboard APIs. These controls never enable official notifications."""
+"""Private dashboard APIs. Official activation is gated and never automatic."""
 import time
 from typing import Literal
 from pydantic import BaseModel,Field,ConfigDict
 from fastapi import HTTPException,Query
 from fastapi.responses import JSONResponse
-from . import native_config,native_routing,native_reports
+from . import native_config,native_routing,native_reports,native_handoff
 
 
 class ConfigChange(BaseModel):
@@ -24,7 +24,30 @@ class RouteChange(BaseModel):
     reason:str=Field(min_length=1,max_length=300)
 
 
+
+class HandoffChange(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    action:Literal['prepare','activate','rollback']
+    review_session:str=Field(default='',max_length=10)
+    effective_session:str=Field(default='',max_length=10)
+    plan_id:str=Field(default='',max_length=64)
+    previous_sender_paused:bool=False
+    operator_reviewed:bool=False
+
 def install(app,db):
+    @app.get('/api/native/morning/handoff')
+    def get_handoff():
+        with db.tx() as c:return native_handoff.snapshot(db,c)
+
+    @app.post('/api/native/morning/handoff')
+    def set_handoff(change:HandoffChange):
+        try:
+            if change.action=='prepare':return native_handoff.prepare(db,change.review_session,change.effective_session,time.time())
+            if change.action=='activate':return native_handoff.activate(db,change.plan_id,change.previous_sender_paused,change.operator_reviewed,time.time())
+            return native_handoff.rollback(db,time.time())
+        except native_config.RevisionConflict as e:raise HTTPException(409,str(e)) from None
+        except ValueError as e:raise HTTPException(422,str(e)) from None
+
     @app.get('/api/native/report')
     def get_report(limit:int=Query(100,ge=1,le=200),start:str=Query('',max_length=10),end:str=Query('',max_length=10),
             ticker:str=Query('',max_length=50,pattern=r'^[A-Za-z0-9_:!.\-]*$'),week:str=Query('',max_length=10),download:bool=False):

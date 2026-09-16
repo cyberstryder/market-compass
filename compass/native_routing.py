@@ -31,10 +31,10 @@ def snapshot(db,c,now):
     state=db.get(c,KEY,{'revision':None,'schedule':[],'prepared':None})
     return dict(state,effective_mode=mode_for(state,day(now)),
         endpoint='/hooks/native/morning',credential='Existing scoped Morning token; not included in this response',
-        official_sender='original',external_routing_changed=False,
+        official_sender=db.get(c,'native:ownership:morning',{}).get('owner','original'),external_routing_changed=False,
         instructions=['Prepare a future-session additional shadow delivery; retain the existing TradingView-to-Morning route.',
             'Schedule only after arranging the additional shadow alert. Never replace the primary webhook while the original remains the official sender. This control does not edit TradingView.',
-            'Keep the original official sender active during comparisons. No live sender activation is provided here.',
+            'Keep the original official sender active during comparisons. The separate handoff control requires completed evidence and explicit sender preparation.',
             'Cancel a future route before it starts, or prepare the next-session relay route for rollback.'])
 
 

@@ -64,7 +64,19 @@
 <button id="native-route-prepare" type="button" disabled>Prepare route</button>
 <button id="native-route-schedule" type="button" disabled>Schedule prepared route</button>
 <button id="native-route-cancel" type="button" disabled>Cancel future changes</button>
-<pre id="native-route-status" aria-live="polite"></pre></article>
+<pre id="native-route-status" aria-live="polite"></pre>
+<details><summary>Official sender handoff — after forward acceptance</summary>
+<p>Preparing a plan checks a completed direct-intake session. Activation also requires accepted previews, the original sender paused, and dedicated sender configuration. It takes effect at the next market session; old shadow messages stay shadow. No external service is paused or resumed by this control.</p>
+<label>Completed review session <input id="native-handoff-review" type="date"></label>
+<label>Handoff session <input id="native-handoff-date" type="date"></label>
+<button id="native-handoff-load" type="button">Load handoff status</button>
+<button id="native-handoff-prepare" type="button">Prepare evidence check</button>
+<label><input id="native-handoff-paused" type="checkbox"> I have paused the original official sender</label>
+<label><input id="native-handoff-reviewed" type="checkbox"> I reviewed and accepted the session and message previews</label>
+<button id="native-handoff-activate" type="button" disabled>Arm accepted handoff</button>
+<button id="native-handoff-rollback" type="button">Stop Compass official sending</button>
+<p>After rollback, resolve in-flight or unknown deliveries before manually resuming the original sender.</p>
+<pre id="native-handoff-status" aria-live="polite"></pre></details></article>
 <article class="panel"><h2>Program replacement checks</h2><div id="program-parity"></div></article>
 <article class="panel"><h2>Transfer to Compass</h2><div id="strategy-migration"></div></article>
 <article class="panel"><h2>Morning stock research</h2><p>Original candles and research candidates. Underlying outcomes are not option returns or executed trades.</p><label>Ticker <input id="morning-ticker" maxlength="50" placeholder="All tickers"></label> <label>From <input id="morning-start" type="date"></label> <label>Through <input id="morning-end" type="date"></label> <label>Stream <input id="morning-stream" maxlength="32" placeholder="All streams"></label> <button id="morning-load" type="button">Load report</button> <a id="morning-download" href="/api/projects/morning/report?download=true">Download JSON</a><div id="morning-report"><p>Load the latest 100 matching signals and 100 candidates. Narrow dates or ticker if the report is truncated.</p></div></article>

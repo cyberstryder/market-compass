@@ -1,4 +1,4 @@
-/* Private native workflow controls. No sender activation or credential display. */
+/* Private native workflow controls. Sender activation is guarded; credentials are never displayed. */
 (()=>{
  let config=null,routing=null;
  async function api(path,body){
@@ -55,4 +55,11 @@
   catch(e){$('#native-route-status').textContent=e.message;}
  }
  $('#native-route-prepare').onclick=()=>route('prepare');$('#native-route-schedule').onclick=()=>route('schedule');$('#native-route-cancel').onclick=()=>route('cancel_future');
+ let handoff=null;
+ function showHandoff(r){handoff=r.plan||r;$('#native-handoff-status').textContent=JSON.stringify(r,null,2);$('#native-handoff-activate').disabled=handoff.state!=='prepared';}
+ async function handoffAction(action){
+  try{showHandoff(await api('/api/native/morning/handoff',action?{action,review_session:$('#native-handoff-review').value,effective_session:$('#native-handoff-date').value,plan_id:handoff?.id||'',previous_sender_paused:$('#native-handoff-paused').checked,operator_reviewed:$('#native-handoff-reviewed').checked}:null));}
+  catch(e){$('#native-handoff-status').textContent=e.message;}
+ }
+ $('#native-handoff-load').onclick=()=>handoffAction();$('#native-handoff-prepare').onclick=()=>handoffAction('prepare');$('#native-handoff-activate').onclick=()=>handoffAction('activate');$('#native-handoff-rollback').onclick=()=>handoffAction('rollback');
 })();

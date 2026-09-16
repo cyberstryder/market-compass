@@ -16,7 +16,7 @@ from .native_morning.candidate_store import accept_research
 from .native_morning.discord import signal_message
 from .native_morning.options import AlpacaQuotes, OptionsConfig, POLICY, option_text, PENDING_TEXT
 from .native_morning.option_history import schedule_history, sample_batch
-from .native_outbox import queue
+from .native_outbox import queue, owner as notification_owner
 from .projects import records
 from .native_routing import routing_guard, allowed, record, day
 
@@ -68,7 +68,8 @@ def flush_previews(db,now):
             message=json.loads(row['payload_json'])
             if isinstance(message,dict):
                 message.pop('_option_policy',None)
-                queue(db,c,'morning',row['event_id'],message,now)
+                stamp=c.execute(select(source.signals.c.signal_at_ms).where(source.signals.c.signal_id==row['event_id'].removesuffix('-signal'))).scalar_one_or_none()
+                queue(db,c,'morning',row['event_id'],message,now,event_time=stamp/1000 if stamp else None)
             c.execute(source.outbox.update().where(source.outbox.c.event_id==row['event_id']).values(status='shadow_previewed'))
 
 
@@ -119,7 +120,7 @@ def enrich(db,provider,now):
             schedule_history(c,signal,quote,completed)
             message=signal_message(signal,int(now*1000),None)
             message['content']+='\n\n'+option_text(quote)
-            queue(db,c,'morning',job['event_id']+'-option',message,completed/1000,parent_event=job['event_id'])
+            queue(db,c,'morning',job['event_id']+'-option',message,completed/1000,parent_event=job['event_id'],event_time=signal['signal_at_ms']/1000)
     return True
 
 
@@ -133,7 +134,8 @@ def report(db,now):
             values['sample_results'][status]=values['sample_results'].get(status,0)+1
         values['sample_result_limit']=1000
         values['option_jobs']={status:n for status,n in c.execute(select(source.option_jobs.c.status,func.count()).group_by(source.option_jobs.c.status))}
-        db.put(c,VERSION+':status',dict(values,at=now,mode='shadow',direct_intake_ready=True,bridge='fresh_source_signals',sending_enabled=False))
+        sending=notification_owner(db,c,'morning',now) is not None and os.getenv('NATIVE_PROGRAM_SEND_ENABLED','false').lower()=='true'
+        db.put(c,VERSION+':status',dict(values,at=now,mode='official_notifications' if sending else 'shadow',direct_intake_ready=True,bridge='fresh_source_signals',sending_enabled=sending))
     logging.getLogger('uvicorn.error').info('Native Morning: %s',values)
 
 

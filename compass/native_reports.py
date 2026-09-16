@@ -16,6 +16,7 @@ from .morning_schema.outcomes import stock_coverage,stock_exit,path_outcome,exte
 from .projects import records
 from .program_parity import morning_options
 from .store import identity
+from .morning_history import history
 
 
 def filtered(q,stamp,symbol,lower,upper,ticker):
@@ -75,6 +76,7 @@ def morning(db,c,now,limit=100,start='',end='',ticker=''):
         tape=c.execute(select(research.research_bars).where(research.research_bars.c.session_id.in_(session_ids)).order_by(research.research_bars.c.session_id,research.research_bars.c.open_at_ms).limit(50001)).mappings().all()
         truncated['research_bars']=len(tape)>50000
         for r in tape[:50000]:tapes[r['session_id']].append(json.loads(r['bar_json']))
+    inventories={r['parent']:r for r in c.execute(select(history).where(history.c.kind=='stock_inventory',history.c.parent.in_(ids))).mappings()} if ids else {}
     output=[];delivery=[]
     for r in rows:
         sid=r['signal_id'];s=json.loads(r['signal_json']);job=jobs.get(sid,{})
@@ -85,11 +87,20 @@ def morning(db,c,now,limit=100,start='',end='',ticker=''):
         link={'record':json.loads(link['record_json']),'session':json.loads(link['session_json'])} if link else None
         merged,coverage,extended=extend_baseline(s,bars[sid],link,tapes,int(now*1000))
         if not extended:extended={str(h):path_outcome(s['price'],s['signal_at_ms'],merged,h,int(now*1000)) for h in (120,180)}
+        inventory=inventories.get(sid)
+        reconciliation={'status':'source_inventory_unavailable'}
+        if inventory:
+            source_bars={b['payload']['open_at_ms']:b['payload'] for b in inventory['payload']['payload']['bars'] if b['payload']['open_at_ms']+60000<=now*1000}
+            native_bars={b['open_at_ms']:b for b in bars[sid]}
+            missing=sorted(source_bars.keys()-native_bars.keys());extra=sorted(native_bars.keys()-source_bars.keys())
+            changed=sorted(t for t in source_bars.keys()&native_bars.keys() if source_bars[t]!=native_bars[t])
+            reconciliation={'status':'different' if missing or extra or changed else 'matched_source_inventory','missing':missing,'extra':extra,'changed':changed,'source_count':len(source_bars),'native_count':len(native_bars),'snapshot_imported_at':inventory['imported_at']}
         output.append({'id':sid,'ticker':s['ticker'],'at':s['signal_at_ms']/1000,'received_at':r['received_at_ms']/1000,
             'initial_received_at_ms':r['initial_received_at_ms'],'origins':origins[sid],'signal':s,'config_id':identity(s['settings'],s['script_version'],s['timeframe_min'],s['stream_id']),
             'coverage':stock_coverage(s,bars[sid],True,int(now*1000)),
             'stock_exits':[stock_exit(s,bars[sid],h) for h in (5,15,30,60)]+[stock_exit(s,bars[sid],target=t,stop=v) for t,v in ((1.,.5),(2.,1.))],
             'extended':extended,'extended_coverage':coverage,'option':ref,'option_samples':samples[sid],'option_calculations':checked,
+            'source_candles':reconciliation,'source_option_status':((original or {}).get('option') or {}).get('status'),
             'source_signal':comparison(s,original.get('original') if original else None,('price','setup','script_version','settings','features')),
             'source_option':option_comparison(ref,original),
             'source_option_samples':(original or {}).get('option_samples',[]),
@@ -127,7 +138,8 @@ def morning(db,c,now,limit=100,start='',end='',ticker=''):
     source_only=[{'id':r.source_id,'at':r.source_ts,'status':'source_entry_not_received' if not r.payload.get('initial_received_at_ms') else 'awaiting_native' if now-r.source_ts<=120 else 'missing_native'} for r in src[:limit] if r.source_id not in present]
     return {'signals':output,'stock_groups':stock_groups,'candidates':candidates,'delivery':delivery,'source_only':source_only,'truncated':truncated,
         'summary':{'signals':len(output),'candidates':len(candidates),'coverage':dict(Counter(r['coverage']['status'] for r in output)),
-            'delivery':dict(Counter(r['status'] for r in delivery)),'source_only':len(source_only)},
+            'delivery':dict(Counter(r['status'] for r in delivery)),'source_only':len(source_only),
+            'option_availability':dict(Counter((v.get('quote') or {}).get('status',v['status']) for p in output for v in p['option_samples']))},
         'basis':'Native candles and quotes only. Original records are optional comparison evidence. Option returns are quote measurements, not fills. Preview identity does not prove Discord delivery or message-content parity.'}
 
 
