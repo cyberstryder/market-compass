@@ -7,6 +7,7 @@ import uuid
 from collections import Counter,defaultdict
 from sqlalchemy import select
 from .native_morning import store as m
+from .native_morning.expiration import load_zero_samples, summarize_signal, aggregates
 from .native_morning import candidate_store as research
 from .native_smoothers import weekly,VERSION,monday_for
 from .native_outbox import outbox
@@ -45,6 +46,7 @@ def morning(db,c,now,limit=100,start='',end='',ticker=''):
     lower,upper=boundaries(start,end)
     rows=c.execute(filtered(select(m.signals).where(m.signals.c.is_test.is_(False)),m.signals.c.signal_at_ms,m.signals.c.ticker,lower,upper,ticker).order_by(m.signals.c.signal_at_ms.desc(),m.signals.c.signal_id).limit(limit+1)).mappings().all()
     truncated={'signals':len(rows)>limit};rows=rows[:limit];ids=[r['signal_id'] for r in rows]
+    zero_samples=load_zero_samples(c,ids)
     bars=defaultdict(list);samples=defaultdict(list);jobs={};source={};intents={};origins=defaultdict(list)
     if ids:
         for r in c.execute(select(m.stock_bars).where(m.stock_bars.c.signal_id.in_(ids)).order_by(m.stock_bars.c.open_at_ms)).mappings():
@@ -104,6 +106,7 @@ def morning(db,c,now,limit=100,start='',end='',ticker=''):
             'coverage':stock_coverage(s,bars[sid],True,int(now*1000)),
             'stock_exits':[stock_exit(s,bars[sid],h) for h in (5,15,30,60)]+[stock_exit(s,bars[sid],target=t,stop=v) for t,v in ((1.,.5),(2.,1.))],
             'extended':extended,'extended_coverage':coverage,'option':ref,'option_samples':samples[sid],'option_calculations':checked,
+            'expiration_comparison':summarize_signal(ref,samples[sid],zero_samples[sid],int(now*1000)),'zero_dte_samples':zero_samples[sid],
             'source_candles':reconciliation,'source_option_status':((original or {}).get('option') or {}).get('status'),
             'source_signal':comparison(s,original.get('original') if original else None,('price','setup','script_version','settings','features')),
             'source_option':option_comparison(ref,original),
@@ -140,7 +143,7 @@ def morning(db,c,now,limit=100,start='',end='',ticker=''):
     # Query existence beyond the displayed native page to avoid false missing alerts.
     present=set(c.execute(select(m.signals.c.signal_id).where(m.signals.c.signal_id.in_([r.source_id for r in src[:limit]]))).scalars()) if src else set()
     source_only=[{'id':r.source_id,'at':r.source_ts,'status':'source_entry_not_received' if not r.payload.get('initial_received_at_ms') else 'awaiting_native' if now-r.source_ts<=120 else 'missing_native'} for r in src[:limit] if r.source_id not in present]
-    return {'signals':output,'stock_groups':stock_groups,'candidates':candidates,'delivery':delivery,'source_only':source_only,'truncated':truncated,
+    return {'expiration_comparison':aggregates(r['expiration_comparison'] for r in output),'signals':output,'stock_groups':stock_groups,'candidates':candidates,'delivery':delivery,'source_only':source_only,'truncated':truncated,
         'summary':{'signals':len(output),'candidates':len(candidates),'coverage':dict(Counter(r['coverage']['status'] for r in output)),
             'delivery':dict(Counter(r['status'] for r in delivery)),'source_only':len(source_only),
             'option_availability':dict(Counter((v.get('quote') or {}).get('status',v['status']) for p in output for v in p['option_samples']))},

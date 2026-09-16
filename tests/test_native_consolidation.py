@@ -27,7 +27,7 @@ def reconciled_session(db,origin='direct'):
     ev=signal_event(stamp=int(NOW*1000))
     accept(db,ev,NOW,origin=origin)
     class Unavailable:
-        def lookup(self,*args):return dict(status='unavailable',reason='synthetic_missing_quote')
+        def lookup(self,*args, **kwargs):return dict(status='unavailable',reason='synthetic_missing_quote')
         def clock(self):return int((NOW+1)*1000)
     enrich(db,Unavailable(),NOW)
     bars=[dict(open_at_ms=int((NOW+minute*60)*1000),open=100.,high=100.1,low=99.9,close=100.,volume=10.) for minute in range(60)]

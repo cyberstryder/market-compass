@@ -31,7 +31,7 @@ def test_native_options_do_not_depend_on_discord_identity(db):
     initialize(db);event=signal_event(stamp=int(NOW*1000));accept(db,event,NOW)
     class Provider:
         def clock(self):return int((NOW+1)*1000)
-        def lookup(self,signal,policy):
+        def lookup(self,signal,policy, *, compare=False):
             return dict(status='available',quote_at_ms=int((NOW+1)*1000),bid=1,ask=1.1,midpoint=1.05,
                 ask_contract_cost=110,spread_pct=9,contract=dict(symbol='DEMO260918C00100000',underlying='DEMO',strike=100,expiration='2026-09-18',multiplier=100))
     assert enrich(db,Provider(),NOW)
@@ -47,7 +47,7 @@ def test_checkpoint_recovery_cannot_enqueue_initial_option_job(db):
     initialize(db);event=signal_event(stamp=int(NOW*1000))
     accept(db,checkpoint_event(event,5),NOW+300)
     class Provider:
-        def lookup(self,*args):raise AssertionError('Unexpected option lookup')
+        def lookup(self,*args, **kwargs):raise AssertionError('Unexpected option lookup')
     assert not enrich(db,Provider(),NOW+300)
 
 
@@ -252,3 +252,29 @@ def test_native_preview_resumes_after_intake_commit(db):
     with db.tx() as c:
         assert c.execute(select(func.count()).select_from(outbox)).scalar_one()==1
         assert c.execute(select(outbox.c.status)).scalar_one()=='shadow'
+
+
+def test_native_expiration_study_survives_without_original_or_official_sender(db):
+    import json
+    from test_morning_expiration import provider_case, STAMP, Quotes
+    from compass.native_morning.options import POLICY
+    from compass.native_morning.option_history import sample_batch
+    from compass.native_reports import morning
+    initialize(db);ev=signal_event(stamp=STAMP);accept(db,ev,STAMP/1000)
+    q,_=provider_case()
+    class Provider:
+        def clock(self):return STAMP+2000
+        def lookup(self,signal,policy,*,compare=False):
+            assert compare and policy==POLICY
+            return q
+    assert enrich(db,Provider(),STAMP/1000)
+    for h in (5,15,30,60):sample_batch(db.engine,Quotes(STAMP+h*60000+5000))
+    with db.tx() as c:
+        r=morning(db,c,(STAMP+3700000)/1000,ticker='DEMO')
+        assert r['expiration_comparison']['pairs'][0]['paired']==1
+        assert r['signals'][0]['source_signal']['status']=='source_unavailable'
+        assert len(r['signals'][0]['zero_dte_samples'])==60
+        assert c.execute(select(func.count()).select_from(outbox)).scalar_one()==2
+        assert set(c.execute(select(outbox.c.status)).scalars())=={'shadow'}
+        assert r['expiration_comparison']['execution_eligible'] is False
+        assert morning(db,c,(STAMP+3700000)/1000,ticker='OTHER')['expiration_comparison']['signals']==0

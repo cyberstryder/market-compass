@@ -73,6 +73,24 @@ option_samples = Table("compass_native_morning_option_samples_v2", metadata,
 )
 
 
+# Only 0DTE needs a separate tape. The 1–3 DTE arm aliases the baseline.
+expiration_tracks = Table("compass_native_morning_expiration_tracks_v1", metadata,
+    Column("signal_id", String(500), primary_key=True),
+    Column("contract_json", Text, nullable=False),
+    Column("reference_json", Text, nullable=False),
+    Column("created_at_ms", BigInteger, nullable=False),
+)
+expiration_samples = Table("compass_native_morning_expiration_samples_v1", metadata,
+    Column("signal_id", String(500), primary_key=True),
+    Column("minute", Integer, primary_key=True),
+    Column("due_at_ms", BigInteger, nullable=False, index=True),
+    Column("status", String(20), nullable=False, index=True),
+    Column("quote_json", Text, nullable=True),
+    Column("lease_until_ms", BigInteger, nullable=False, default=0),
+    Column("lease_token", String(40), nullable=True),
+)
+
+
 def insert_many_once(conn, table, values):
     if values:
         insert = pg_insert if conn.dialect.name == "postgresql" else sqlite_insert

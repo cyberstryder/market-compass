@@ -17,6 +17,7 @@
    target.innerHTML='<p>Calculated '+when(r.at)+'. '+esc(m.basis)+'</p>'+(cut.length?'<p><strong>Truncated: '+esc(cut.join(', '))+'. Narrow filters before comparing cohorts.</strong></p>':'')+
     '<h3>Morning native stock and options</h3>'+table(['Signal','Intake','Coverage','Source fields','Contract / source comparison','Option samples'],m.signals.map(x=>[
       esc(x.ticker)+' · '+when(x.at),esc(x.origins.map(o=>o.origin+' ('+o.packets+' packets; '+o.entry_packets+' entry)').join(', ')||'provenance not retained'),tag(x.coverage.status)+' '+x.coverage.recorded+'/60',differences(x.source_signal)+'<details><summary>Candle comparison: '+esc(x.source_candles.status)+'</summary><pre>'+esc(JSON.stringify(x.source_candles,null,2))+'</pre></details>',esc(x.option.contract?.symbol||'Unavailable')+' · '+tag(x.source_option.status),esc(JSON.stringify(x.option_calculations.sample_counts))]))+
+    expirationTables(m)+
     '<h3>Stock exits — complete shared cohorts only</h3>'+table(['Setup / configuration','Paired / total','Excluded','Rule','Mean stock return'],m.stock_groups.flatMap(g=>g.rules.map(v=>[esc(g.setup)+' '+esc(g.config_id.slice(0,10)),g.paired+'/'+g.signals,g.excluded,esc(v.rule),num(v.mean_return_pct)+'%'])))+
     '<h3>Research outcomes</h3>'+table(['Candidate','Kind','5m','15m','30m','60m','120m','180m'],m.candidates.map(x=>[esc(x.ticker),esc(x.record.kind),...[5,15,30,60,120,180].map(h=>tag(x.outcomes[h].status)+' '+num(x.outcomes[h].return_pct)+'%')]))+
     '<h3>Expected alerts and previews</h3><p>A preview is not a delivered message. Source delivery times remain separate.</p>'+table(['Event','Native intent','Original delivery'],m.delivery.map(x=>[esc(x.event_id),tag(x.native_status),tag(x.source_status)+(x.source_delivered_at_ms?' · '+when(x.source_delivered_at_ms/1000):'')]))+
@@ -29,6 +30,18 @@
     '<p>Download JSON for candle outcomes, option quotes, configuration/contract comparisons, differences, and source timestamps.</p>';
   }catch(e){target.textContent=e.message;}finally{button.disabled=false;}
  };
+ function expirationTables(m){
+  const summary=m.expiration_comparison;if(!summary)return '';
+  return '<h3>Morning expiration comparison</h3><p>'+esc(summary.notes)+'</p>'+
+   '<p>'+summary.collected+' of '+summary.signals+' displayed signals have comparison collection. Narrow date/ticker filters if truncated.</p>'+
+   table(['Signal','Contract group','Contract / quote','Premium / spread / fees','Delta / cost hurdle','5m net','15m net','30m net','60m net'],m.signals.flatMap(s=>Object.entries(s.expiration_comparison?.variants||{}).map(([k,v])=>[
+    esc(s.ticker)+' · '+when(s.at),esc(v.label)+(v.alias_of?' · same as current':''),esc(v.reference.contract?.symbol||v.reference.reason||v.reference.status)+' · '+tag(v.reference.status),
+    '$'+num(v.quality.premium_at_ask)+' / $'+num(v.quality.spread_per_contract)+' / $'+num(v.quality.round_trip_fees),
+    num(v.quality.delta)+' / $'+num(v.quality.approx_stock_cost_hurdle),...[5,15,30,60].map(h=>v.fixed_exits[h]?.status==='measured'?'$'+num(v.fixed_exits[h].net_pnl):esc(v.fixed_exits[h]?.reason||'Unavailable'))])))+
+   '<p>Cost hurdle is a fixed-delta estimate, not a target. It ignores changes in IV, theta and gamma. Net dollars are per contract.</p>'+
+   table(['Comparison','Same alerts at all four exits','Excluded','Exit','Current / 1–3 DTE median net','0DTE median net','Current / 1–3 DTE median return','0DTE median return'],summary.pairs.flatMap(p=>p.fixed_exits.map(h=>[
+    esc(p.left)+' vs '+esc(p.right),p.paired,p.excluded,h.minute+'m','$'+num(h.variants[p.left].median_net_pnl),'$'+num(h.variants[p.right].median_net_pnl),num(h.variants[p.left].median_net_return_pct)+'%',num(h.variants[p.right].median_net_return_pct)+'%'])));
+ }
  function choose(){const row=config?.current.configs?.find(x=>x.ticker===$('#native-config-ticker').value);if(!row)return;
   for(const k of ['s1','s2','s3','pm'])$('#native-'+k).value=row[k];$('#native-enabled').checked=row.enabled;
  }

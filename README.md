@@ -113,3 +113,6 @@ Each Railway Docker build runs the offline safety/behavior tests before producin
 Copy pine/market_compass_levels.pine into Pine Editor and use a **1-minute chart**. It calculates RTH session levels using TradingView's chart feed; this script does not yet mirror the engine's overnight range. Select the exact contract shown in Feed health when comparing futures levels. Externally calculated GEX/VEX levels require manual inputs with an as-of label. Pine cannot fetch this application's arbitrary external API. The script must be compiled and visually checked in your TradingView account before use.
 
 See docs/architecture.md and docs/operations.md for boundaries and first-session checks.
+
+
+Morning now collects a forward [expiration and trading-cost comparison](docs/morning-expiration-comparison.md) for 0DTE, 1–3 calendar DTE, and the unchanged current contract. Reports distinguish missing quotes and shared contracts; official entry rules and sender ownership stay in place.
