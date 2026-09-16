@@ -61,8 +61,12 @@ def morning(db,c,now,limit=100,start='',end='',ticker=''):
         grouped={}
         for r in origin_rows[:40000]:
             key=(r['payload']['signal_id'],r['origin'])
-            item=grouped.setdefault(key,{'origin':r['origin'],'first_received':r['received'],'last_received':r['received'],'packets':0})
+            item=grouped.setdefault(key,{'origin':r['origin'],'first_received':r['received'],'last_received':r['received'],'packets':0,'entry_packets':0})
             item.update(last_received=r['received'],packets=item['packets']+1)
+            # Older signal envelopes are unambiguous; older frames did not retain
+            # the entry flag and cannot establish direct entry delivery.
+            if r['payload'].get('entry') is True or r['payload'].get('event_type')=='signal':
+                item['entry_packets']+=1
         for (sid,_),item in grouped.items():origins[sid]=origins[sid]+[item]
     # Research outcomes use only the native research archive, with bounded tape reads.
     q=select(research.research_records,research.research_sessions.c.session_json).join(research.research_sessions,research.research_sessions.c.session_id==research.research_records.c.session_id).where(research.research_sessions.c.is_test.is_(False))

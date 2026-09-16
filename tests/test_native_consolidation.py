@@ -5,8 +5,8 @@ import json
 import pytest
 from sqlalchemy import select,func
 from test_projects import db
-from native_morning_fixtures import signal_event
-from compass.native_morning_worker import initialize,accept
+from native_morning_fixtures import signal_event,checkpoint_event
+from compass.native_morning_worker import initialize,accept,enrich
 from compass.native_morning import store as m
 from compass.native_reports import report
 from compass.native_config import bootstrap,revise,validate,effective,revisions,KEY,RevisionConflict
@@ -17,6 +17,28 @@ from compass.projects import ingest
 
 NOW=datetime(2026,9,16,14,30,tzinfo=timezone.utc).timestamp()
 ROW=dict(ticker='DEMO',s1=10,s2=20,s3=30,pm=.02,enabled=True,backtest_wr=.7)
+AFTER_CLOSE=datetime(2026,9,16,22,tzinfo=timezone.utc).timestamp()
+
+
+def reconciled_session(db,origin='direct'):
+    """Synthetic paired evidence exercises the real report and handoff checks."""
+    from compass.morning_history import save as mirror
+    initialize(db)
+    ev=signal_event(stamp=int(NOW*1000))
+    accept(db,ev,NOW,origin=origin)
+    class Unavailable:
+        def lookup(self,*args):return dict(status='unavailable',reason='synthetic_missing_quote')
+        def clock(self):return int((NOW+1)*1000)
+    enrich(db,Unavailable(),NOW)
+    bars=[dict(open_at_ms=int((NOW+minute*60)*1000),open=100.,high=100.1,low=99.9,close=100.,volume=10.) for minute in range(60)]
+    with db.tx() as c:
+        m.insert_many_once(c,m.stock_bars,[dict(signal_id='fixture-1',open_at_ms=b['open_at_ms'],bar_json=m.canonical(b),bar_hash=m.digest(b),received_at_ms=b['open_at_ms']+60000) for b in bars])
+        mirror(db,c,'stock_inventory','fixture-1','fixture-1',{'payload':{'bars':[{'payload':b} for b in bars]}},AFTER_CLOSE,AFTER_CLOSE)
+        ingest(db,c,'morning',dict(id='fixture-1',symbol='NASDAQ:DEMO',source_ts=NOW,original=ev['signal'],
+            initial_received_at_ms=int(NOW*1000),option={'status':'unavailable'},
+            delivery={'schema_version':1,'events':[{'event_id':'fixture-1'+suffix,'status':'delivered'} for suffix in ('-signal','-signal-option')]}),AFTER_CLOSE)
+        db.put(c,'health:project_morning',dict(status='connected',checked_at=AFTER_CLOSE))
+    return ev
 
 
 def own(db):
@@ -167,23 +189,85 @@ def test_sender_boundary_and_rollback_never_promote_old_messages(db,monkeypatch)
 
 
 def test_handoff_arming_requires_environment_and_next_session(db,monkeypatch):
-    from compass.native_handoff import activate,KEY as HANDOFF
+    from compass.native_handoff import prepare,activate
     from compass.market import session
-    after_close=datetime(2026,9,16,22,tzinfo=timezone.utc).timestamp()
+    reconciled_session(db)
+    after_close=AFTER_CLOSE
     opening=session('2026-09-17')[0]
-    with db.tx() as c:
-        db.put(c,HANDOFF,dict(id='prepared-test',state='prepared',review_session='2026-09-16',effective_session='2026-09-17',effective_from=opening,prepared_at=after_close))
-    with pytest.raises(ValueError,match='environment'):activate(db,'prepared-test',True,True,after_close+1)
+    plan=prepare(db,'2026-09-16','2026-09-17',after_close)
+    assert plan['state']=='prepared',plan['blockers']
+    with pytest.raises(ValueError,match='environment'):activate(db,plan['id'],True,True,after_close+1)
     monkeypatch.setenv('NATIVE_PROGRAM_SEND_ENABLED','true')
     monkeypatch.setenv('NATIVE_MORNING_DISCORD_WEBHOOK','https://discord.com/api/webhooks/123/test')
-    result=activate(db,'prepared-test',True,True,after_close+2)
+    result=activate(db,plan['id'],True,True,after_close+2)
     assert result['plan']['state']=='armed'
     assert result['ownership']['effective_from']==opening
     with db.tx() as c:
         from compass.native_outbox import owner
         assert owner(db,c,'morning',after_close+3) is None
         assert owner(db,c,'morning',opening)['owner']=='compass'
-        assert c.execute(select(func.count()).select_from(outbox)).scalar_one()==0
+        assert set(c.execute(select(outbox.c.status)).scalars())=={'shadow'}
+
+
+def test_direct_checkpoint_does_not_prove_direct_entry_delivery(db):
+    from compass.native_handoff import prepare
+    ev=reconciled_session(db,origin='source_summary_relay')
+    accept(db,checkpoint_event(ev),NOW+300)
+    with db.tx() as c:
+        origins=report(db,c,AFTER_CLOSE)['morning']['signals'][0]['origins']
+        assert next(x for x in origins if x['origin']=='direct')['entry_packets']==0
+    plan=prepare(db,'2026-09-16','2026-09-17',AFTER_CLOSE)
+    assert plan['state']=='blocked'
+    assert 'Every reviewed signal needs direct entry-intake provenance' in plan['blockers']
+    accept(db,ev,NOW+301)
+    assert prepare(db,'2026-09-16','2026-09-17',AFTER_CLOSE)['state']=='prepared'
+
+
+@pytest.mark.parametrize('mutation',['missing_preview','changed_preview','missing_bar','stale_source','source_only'])
+def test_arming_rechecks_evidence_after_preparation(db,monkeypatch,mutation):
+    from compass.native_handoff import prepare,activate,OWNER
+    reconciled_session(db)
+    plan=prepare(db,'2026-09-16','2026-09-17',AFTER_CLOSE)
+    assert plan['state']=='prepared'
+    with db.tx() as c:
+        if mutation=='missing_preview':c.execute(outbox.delete())
+        elif mutation=='changed_preview':c.execute(outbox.update().values(payload={'content':'Changed after review'}))
+        elif mutation=='missing_bar':c.execute(m.stock_bars.delete())
+        elif mutation=='stale_source':db.put(c,'health:project_morning',dict(status='connected',checked_at=NOW))
+        else:ingest(db,c,'morning',dict(id='missed-entry',symbol='DEMO',source_ts=NOW,initial_received_at_ms=int(NOW*1000)),AFTER_CLOSE)
+    monkeypatch.setenv('NATIVE_PROGRAM_SEND_ENABLED','true')
+    monkeypatch.setenv('NATIVE_MORNING_DISCORD_WEBHOOK','https://discord.com/api/webhooks/123/test')
+    with pytest.raises(RevisionConflict,match='[Ee]vidence'):activate(db,plan['id'],True,True,AFTER_CLOSE+1)
+    with db.tx() as c:assert db.get(c,OWNER) is None
+
+
+def test_handoff_protects_direct_route_and_restores_rehearsal_on_rollback(db,monkeypatch):
+    from compass.native_handoff import prepare,activate,rollback
+    from compass.native_routing import KEY as ROUTING
+    from compass.morning_history import history
+    from compass.projects import records
+    reconciled_session(db)
+    route=change(db,None,'prepare',AFTER_CLOSE,'relay_shadow','2026-09-18','Later relay rehearsal')
+    route=change(db,route['revision'],'schedule',AFTER_CLOSE,reason='Schedule relay')
+    plan=prepare(db,'2026-09-16','2026-09-17',AFTER_CLOSE)
+    # A fresh import of identical observations must not invalidate operator review.
+    with db.tx() as c:
+        c.execute(records.update().values(updated=AFTER_CLOSE+1))
+        c.execute(history.update().values(imported_at=AFTER_CLOSE+1))
+    monkeypatch.setenv('NATIVE_PROGRAM_SEND_ENABLED','true')
+    monkeypatch.setenv('NATIVE_MORNING_DISCORD_WEBHOOK','https://discord.com/api/webhooks/123/test')
+    activate(db,plan['id'],True,True,AFTER_CLOSE+2)
+    with db.tx() as c:assert mode_for(db.get(c,ROUTING),'2026-09-18')=='direct_shadow'
+    for action in ('prepare','schedule','cancel_future'):
+        with pytest.raises(RevisionConflict,match='Roll back'):
+            change(db,route['revision'],action,AFTER_CLOSE+3,'relay_shadow','2026-09-18','Would disable direct path')
+    with pytest.raises(RevisionConflict,match='Roll back'):prepare(db,'2026-09-16','2026-09-17',AFTER_CLOSE+3)
+    rollback(db,AFTER_CLOSE+4)
+    with db.tx() as c:
+        restored=db.get(c,ROUTING)
+        assert restored['schedule']==route['schedule']
+        assert restored['revision']!=route['revision']
+        assert mode_for(restored,'2026-09-18')=='relay_shadow'
 
 
 def test_source_gaps_are_separate_from_native_inventory_loss(db):

@@ -6,6 +6,7 @@
   const data=await r.json();if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:'Request rejected ('+r.status+'). Check values and sign in.');return data;
  }
  const params=()=>new URLSearchParams({ticker:$('#native-ticker').value.trim(),start:$('#native-start').value,end:$('#native-end').value,week:$('#native-week').value,limit:'100'});
+ function differences(pair){return tag(pair.status)+(Object.keys(pair.differences||{}).length?'<details><summary>Show field differences</summary><pre>'+esc(JSON.stringify(pair.differences,null,2))+'</pre></details>':'');}
  function download(){ $('#native-report-download').href='/api/native/report?'+params()+'&download=true'; }
  for(const id of ['native-ticker','native-start','native-end','native-week'])$('#'+id).onchange=download;
  $('#native-report-load').onclick=async()=>{
@@ -15,13 +16,13 @@
    const cut=Object.entries(m.truncated).filter(([,v])=>v).map(([k])=>'Morning '+k).concat(Object.entries(s.truncated).filter(([,v])=>v).map(([k])=>'Smoothers '+k));
    target.innerHTML='<p>Calculated '+when(r.at)+'. '+esc(m.basis)+'</p>'+(cut.length?'<p><strong>Truncated: '+esc(cut.join(', '))+'. Narrow filters before comparing cohorts.</strong></p>':'')+
     '<h3>Morning native stock and options</h3>'+table(['Signal','Intake','Coverage','Source fields','Contract / source comparison','Option samples'],m.signals.map(x=>[
-      esc(x.ticker)+' · '+when(x.at),esc(x.origins.map(o=>o.origin+' ('+o.packets+' packets)').join(', ')||'provenance not retained'),tag(x.coverage.status)+' '+x.coverage.recorded+'/60',tag(x.source_signal.status),esc(x.option.contract?.symbol||'Unavailable')+' · '+tag(x.source_option.status),esc(JSON.stringify(x.option_calculations.sample_counts))]))+
+      esc(x.ticker)+' · '+when(x.at),esc(x.origins.map(o=>o.origin+' ('+o.packets+' packets; '+o.entry_packets+' entry)').join(', ')||'provenance not retained'),tag(x.coverage.status)+' '+x.coverage.recorded+'/60',differences(x.source_signal)+'<details><summary>Candle comparison: '+esc(x.source_candles.status)+'</summary><pre>'+esc(JSON.stringify(x.source_candles,null,2))+'</pre></details>',esc(x.option.contract?.symbol||'Unavailable')+' · '+tag(x.source_option.status),esc(JSON.stringify(x.option_calculations.sample_counts))]))+
     '<h3>Stock exits — complete shared cohorts only</h3>'+table(['Setup / configuration','Paired / total','Excluded','Rule','Mean stock return'],m.stock_groups.flatMap(g=>g.rules.map(v=>[esc(g.setup)+' '+esc(g.config_id.slice(0,10)),g.paired+'/'+g.signals,g.excluded,esc(v.rule),num(v.mean_return_pct)+'%'])))+
     '<h3>Research outcomes</h3>'+table(['Candidate','Kind','5m','15m','30m','60m','120m','180m'],m.candidates.map(x=>[esc(x.ticker),esc(x.record.kind),...[5,15,30,60,120,180].map(h=>tag(x.outcomes[h].status)+' '+num(x.outcomes[h].return_pct)+'%')]))+
-    '<h3>Expected alerts and previews</h3><p>A preview is not a delivered message. Source delivery times remain separate.</p>'+table(['Event','Native intent','Original delivery'],m.delivery.map(x=>[esc(x.event_id),tag(x.native_status),tag(x.source_status)]))+
+    '<h3>Expected alerts and previews</h3><p>A preview is not a delivered message. Source delivery times remain separate.</p>'+table(['Event','Native intent','Original delivery'],m.delivery.map(x=>[esc(x.event_id),tag(x.native_status),tag(x.source_status)+(x.source_delivered_at_ms?' · '+when(x.source_delivered_at_ms/1000):'')]))+
     m.delivery.map(x=>'<details><summary>Preview '+esc(x.event_id)+'</summary><pre>'+esc(JSON.stringify(x.preview,null,2))+'</pre></details>').join('')+
     '<h3>Source signals without native counterparts</h3>'+table(['Signal','State'],m.source_only.map(x=>[esc(x.id),tag(x.status)]))+
-    '<h3>Smoothers native week '+esc(s.week)+'</h3><p>Job '+esc(s.job.state||'not started')+'. '+esc(s.basis)+'</p>'+table(['Ticker','Direction / target','Outcome','Premium model','Source comparison'],s.rows.map(x=>[esc(x.native.ticker),esc(x.native.direction)+' / '+num(x.native.target_price),tag(x.native.status),esc(JSON.stringify(x.native.premium_model||{})),tag(x.comparison.status)]))+
+    '<h3>Smoothers native week '+esc(s.week)+'</h3><p>Job '+esc(s.job.state||'not started')+'. '+esc(s.basis)+'</p>'+table(['Ticker','Direction / target','Outcome','Premium model','Source comparison'],s.rows.map(x=>[esc(x.native.ticker),esc(x.native.direction)+' / '+num(x.native.target_price),tag(x.native.status),esc(JSON.stringify(x.native.premium_model||{})),differences(x.comparison)]))+
     '<p>Original-only weekly records: '+s.source_only.length+'. Download JSON for candle outcomes, option samples, differences, and source timestamps.</p>';
   }catch(e){target.textContent=e.message;}finally{button.disabled=false;}
  };
