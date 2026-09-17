@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
 import time
 import uuid
@@ -31,7 +32,7 @@ def initialize(db):
         source.metadata.create_all(c)
 
 
-def accept(db,raw,now,body_size=0,origin='direct'):
+def accept(db,raw,now,body_size=0,origin='direct',request_meta=None):
     kind=raw.get('event_type')
     payload=(Frame if kind=='frame' else ResearchBatch if kind=='research' else Event).model_validate(raw)
     stamp=payload.observed_at_ms if kind in ('frame','research') else payload.observation.observed_at_ms if payload.observation else payload.signal.signal_at_ms
@@ -42,8 +43,20 @@ def accept(db,raw,now,body_size=0,origin='direct'):
             if origin=='source_summary_relay':return {'status':'route_disabled'}
             raise source.PayloadConflict('Direct intake is disabled for this session')
         result=commit_input(db,payload,kind,now,body_size,guard)
-        record(db,guard,payload,origin,now,result)
+        record(db,guard,payload,origin,now,result,request_meta=request_meta)
+        if request_meta:
+            # Per-HTTP-attempt identity is separate from deduplicated source
+            # receipts. Commit it atomically, including successful duplicates.
+            audit={**request_meta,'event_id':payload.event_id,'event_type':payload.event_type,
+                   'status':result['status'],'body_bytes':body_size,'write_at':time.time()}
+            db.append(guard,'morning_request','tradingview','MORNING',now,audit,
+                      'morning-request:'+request_meta['request_id'])
         db.put(guard,'native_morning:last_intake',{'at':now,'kind':kind,'origin':origin,'status':result['status']})
+    if request_meta:
+        # Runs in the worker even if the HTTP client has disconnected while the
+        # transaction completes. This log is emitted only after commit returns.
+        logging.getLogger('uvicorn.error').info('Morning request: %s',json.dumps(
+            {**audit,'stage':'committed','committed_at':time.time()},sort_keys=True))
     return result
 
 
@@ -170,6 +183,8 @@ async def run(db,cfg,role="intake"):
 
 def install(app,db,cfg):
     from fastapi import Request,HTTPException
+    from fastapi.responses import JSONResponse
+    from starlette.requests import ClientDisconnect
     from sqlalchemy.exc import SQLAlchemyError
     # A dedicated TradingView credential can be rotated without disrupting the
     # read-only source comparison feed. Preserve legacy intake until configured.
@@ -180,14 +195,39 @@ def install(app,db,cfg):
         supplied=("Bearer "+token) if token else request.headers.get('authorization','')
         if not intake_token or not secrets.compare_digest(supplied.encode(),('Bearer '+intake_token).encode()):
             raise HTTPException(401,'Invalid native intake credentials')
-        body=bytearray()
-        async for chunk in request.stream():
-            body.extend(chunk)
-            if len(body)>32768: raise HTTPException(413,'Input too large')
+        request_id=uuid.uuid4().hex
+        proxy_id=request.headers.get('x-railway-request-id') or request.headers.get('x-request-id')
+        proxy_id=proxy_id if proxy_id and re.fullmatch(r'[A-Za-z0-9._:-]{1,128}',proxy_id) else None
+        meta={'request_id':request_id,'proxy_request_id':proxy_id,'received_at':time.time()}
+        log=logging.getLogger('uvicorn.error')
+        log.info('Morning request: %s',json.dumps({**meta,'stage':'received'},sort_keys=True))
+        body=bytearray();outcome='interrupted';code=None;event_id=None
         try:
+            async for chunk in request.stream():
+                body.extend(chunk)
+                if len(body)>32768:raise HTTPException(413,'Input too large')
             raw=json.loads(body)
             if not isinstance(raw,dict): raise ValueError('Expected object')
-            return await asyncio.to_thread(accept,db,raw,time.time(),len(body))
-        except source.PayloadConflict: raise HTTPException(409,'Native source identity conflict') from None
-        except (ValueError,TypeError,KeyError): raise HTTPException(422,'Invalid Morning payload') from None
-        except SQLAlchemyError: raise HTTPException(503,'Native input not committed') from None
+            candidate=raw.get('event_id')
+            if isinstance(candidate,str):event_id=candidate[:600].replace(intake_token,'[redacted]')
+            result=await asyncio.to_thread(accept,db,raw,time.time(),len(body),request_meta=meta)
+            outcome='response_ready';code=200
+            return JSONResponse({**result,'request_id':request_id},headers={'X-Compass-Request-ID':request_id})
+        except ClientDisconnect:
+            outcome='client_disconnected';code=499
+            raise HTTPException(499,'Client disconnected before input completed') from None
+        except source.PayloadConflict:
+            outcome='identity_conflict';code=409
+            raise HTTPException(code,'Native source identity conflict') from None
+        except (ValueError,TypeError,KeyError):
+            outcome='invalid_payload';code=422
+            raise HTTPException(code,'Invalid Morning payload') from None
+        except SQLAlchemyError:
+            outcome='not_committed';code=503
+            raise HTTPException(code,'Native input not committed') from None
+        except HTTPException as error:
+            outcome='rejected';code=error.status_code
+            raise
+        finally:
+            log.info('Morning request: %s',json.dumps({**meta,'stage':outcome,'http_status':code,
+                'event_id':event_id,'body_bytes':len(body),'elapsed_ms':round((time.time()-meta['received_at'])*1000)},sort_keys=True))
