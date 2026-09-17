@@ -130,6 +130,9 @@ class Collectors:
 
     def quote_batch(self,source,items):
         """One transaction per socket batch for latest state and sampled history."""
+        # All concurrent stream/recovery writers must lock latest-quote keys in
+        # the same order. Preserve within-symbol source order and every sample.
+        items=sorted(items,key=lambda row:row[0])
         with self.db.tx() as c:
             retained=[]
             for symbol,q,record in items:
@@ -545,6 +548,12 @@ class Collectors:
 
     def option_trade(self,symbol,t,x):
         self.option_trade_batch([(symbol,t,x)])
+
+    def subscription_batch(self,items):
+        with self.db.tx() as c:
+            for row in items:
+                self.db.append(c,'option_subscription','massive',row['symbol'],row['at'],row,
+                    identity('option-subscription-v1',row['connection_id'],row['sequence']))
 
     def option_trade_batch(self,items):
         with self.db.tx() as c:
