@@ -1,5 +1,6 @@
 """Frozen, explanatory research rubric; neither TM's formula nor a probability."""
 from datetime import date, timedelta
+import re
 from .market import number, day, session, fresh
 
 VERSION='tm-receipt-study-v1'
@@ -21,7 +22,13 @@ def age_bucket(source,receipt):
 
 
 def dte_bucket(expiry,at):
-    try:dte=(date.fromisoformat(expiry)-date.fromisoformat(day(at))).days
+    try:
+        raw=str(expiry).strip()
+        # TM's live feed uses US dates; its archived records can use ISO dates.
+        us=re.fullmatch(r'(\d{1,2})/(\d{1,2})/(\d{2}|\d{4})',raw)
+        parsed=(date(int(us[3])+(2000 if len(us[3])==2 else 0),int(us[1]),int(us[2]))
+            if us else date.fromisoformat(raw))
+        dte=(parsed-date.fromisoformat(day(at))).days
     except (ValueError,TypeError):return 'unknown'
     return 'expired' if dte<0 else '0DTE' if dte==0 else '1–7DTE' if dte<=7 else '8–30DTE' if dte<=30 else '>30DTE'
 

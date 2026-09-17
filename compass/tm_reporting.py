@@ -4,7 +4,7 @@ import json
 import math
 from sqlalchemy import select,func,case,true
 from .store import tm_studies as studies,tm_checkpoints as checkpoints,flow_records
-from .tm_scoring import VERSION,PROTOCOL,TM_THRESHOLD,COMPASS_THRESHOLD
+from .tm_scoring import VERSION,PROTOCOL,TM_THRESHOLD,COMPASS_THRESHOLD,dte_bucket
 
 WINDOW_DAYS=30
 FILTERS=('all','prospective','scored','insufficient_data','historical_inventory','tm_selected','compass_selected','both_selected')
@@ -146,7 +146,9 @@ def record_page(c,now,*,cohort='all',limit=100,asof=None,cursor=''):
         for r in c.execute(select(checkpoints).where(checkpoints.c.study_id.in_([p['id'] for p in rows]))).mappings():
             outcomes.setdefault(r['study_id'],[]).append(dict(r))
     records=[dict(r['payload'],status=r['status'],tm_score=r['tm_score'],compass_score=r['compass_score'],
-        score_status=r['score_status'],age_bucket=r['age_bucket'],dte_bucket=r['dte_bucket'],
+        score_status=r['score_status'],age_bucket=r['age_bucket'],
+        dte_bucket=dte_bucket((r['payload'].get('inventory_snapshot') or {}).get('expiry'),r['first_seen'])
+            if r['origin']=='historical_inventory' else r['dte_bucket'],
         checkpoints=outcomes.get(r['id'],[])) for r in rows]
     next_cursor=base64.urlsafe_b64encode(json.dumps([VERSION,at,cohort,rows[-1]['first_seen'],rows[-1]['id']]).encode()).decode() if more else None
     return dict(records=records,total=total,asof=at,since=at-WINDOW_DAYS*86400,window_days=WINDOW_DAYS,
