@@ -217,6 +217,22 @@ class Paper(OptionIdeas):
         quality=assess(self.db,c,candidate['symbol'],now);underlying_quality=assess(self.db,c,'SPY',now)
         if not quality['ready'] or not underlying_quality['ready']:
             return wait('pre_entry_continuity_required',option=quality,underlying=underlying_quality)
+        from .quote_path import recorded_path
+        path,truncated,diagnostic=recorded_path(self.db,c,'SPY',p['signal_time']-.000001,now)
+        stamps=[r['ts'] for r in path]
+        gaps=[b-a for a,b in zip(stamps,stamps[1:])]
+        audit=dict(from_report=p['signal_time'],through=now,samples=len(path),truncated=truncated,
+            first=stamps[0] if stamps else None,last=stamps[-1] if stamps else None,
+            max_gap=max(gaps,default=0),archive=diagnostic)
+        p['pre_entry_stock_path']=audit
+        touched=next((r for r in path if (r['bid']<=p['underlying_stop'] or r['bid']>=p['underlying_target']
+            if long else r['ask']>=p['underlying_stop'] or r['ask']<=p['underlying_target'])),None)
+        if touched:
+            audit['first_bracket_touch']=touched
+            p.update(status='excluded',finished_at=now,exit_reason='pre_entry_frozen_bracket_touched')
+            return wait(p['exit_reason'],stock_path=audit)
+        if (truncated or not stamps or stamps[0]-p['signal_time']>5 or now-stamps[-1]>5 or audit['max_gap']>MAX_GAP):
+            return wait('pre_entry_stock_path_incomplete',stock_path=audit)
         entry=round(oq['ask']+SLIPPAGE,2)
         p.update(status='open',opened_at=now,entry=entry,entry_debit=entry*100+FEE,samples=1,
             entry_quote=dict(oq),entry_underlying_quote=dict(uq),entry_underlying_mid=(uq['bid']+uq['ask'])/2,

@@ -134,6 +134,31 @@ def test_option_premium_alone_does_not_add_a_new_exit_rule(db,clock):
         assert p['status']=='open' and p['mark_pct']>100 and p['samples']==2
 
 
+@pytest.mark.parametrize('side',['long','short'])
+def test_bracket_touch_while_waiting_is_not_erased_by_recovery(db,clock,side):
+    with db.tx() as c:
+        p=seed(db,c,side);symbol=CALL if side=='long' else PUT
+        adverse=q(NOW+5,98.9,98.92) if side=='long' else q(NOW+5,101.1,101.12)
+        archive(db,c,'SPY',adverse)
+        clock[0]=NOW+10
+        for name,quote in [('SPY',q(NOW+10)),(symbol,q(NOW+10,2,2.05))]:
+            db.put(c,'quote:'+name,quote);archive(db,c,name,quote)
+        Paper(db,cfg()).pending(c,p,NOW+10)
+        assert p['status']=='excluded' and p['exit_reason']=='pre_entry_frozen_bracket_touched'
+        assert p['entry'] is None and p['pre_entry_stock_path']['first_bracket_touch']['ts']==NOW+5
+
+
+def test_missing_stock_interval_before_entry_is_explicit(db,clock):
+    with db.tx() as c:
+        p=seed(db,c);clock[0]=NOW+40
+        for offset in (20,25,30,35,40):
+            archive(db,c,'SPY',q(NOW+offset));archive(db,c,CALL,q(NOW+offset,2,2.05))
+        db.put(c,'quote:SPY',q(NOW+40));db.put(c,'quote:'+CALL,q(NOW+40,2,2.05))
+        Paper(db,cfg()).pending(c,p,NOW+40)
+        assert p['status']=='pending' and p['waiting_reason']=='pre_entry_stock_path_incomplete'
+        assert p['entry'] is None and p['pre_entry_stock_path']['max_gap']==20
+
+
 @pytest.mark.parametrize('mutation,reason',[(lambda r:r.update(generated_at=NOW+1),'report_clock_or_deadline'),
     (lambda r:r.update(expires_at=NOW+1000),'report_clock_or_deadline'),
     (lambda r:r['plans']['call'].update(stop=103),'invalid_frozen_bracket')])
