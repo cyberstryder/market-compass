@@ -81,7 +81,7 @@ def allowed(db,c,origin,session_day):
     return True
 
 
-def record(db,c,payload,origin,now,result):
+def record(db,c,payload,origin,now,result,request_meta=None):
     event_id=payload.event_id
     key=identity('native-receipt-v1',event_id,origin)
     # No credentials or request headers are retained.
@@ -89,4 +89,5 @@ def record(db,c,payload,origin,now,result):
     data={'signal_id':signal.signal_id if signal else None,'status':result['status'],'schema_version':payload.schema_version,'event_type':payload.event_type,
           'entry':bool(signal and (payload.event_type=='signal' or (payload.event_type=='frame' and payload.entry))),
           'checksum':identity(payload.model_dump())}
+    if request_meta:data['request_id']=request_meta['request_id']
     c.execute(db.insert(receipts).values(id=key,signal_id=data['signal_id'],event_id=event_id,origin=origin,received=now,payload=data).on_conflict_do_nothing(index_elements=['id']))
