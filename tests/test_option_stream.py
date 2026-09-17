@@ -59,7 +59,7 @@ def test_slow_trade_persistence_does_not_block_option_receipt_or_quotes():
             assert batch[0][1]['ts']==NOW
             saved.set()
         c=SimpleNamespace(option_symbols={SYMBOL},cfg=SimpleNamespace(massive='secret'),
-            quote_batch=write,option_trade_batch=trade,db=SimpleNamespace(health=lambda *a,**k:None))
+            quote_batch=write,option_trade_batch=trade,subscription_batch=lambda rows:None,db=SimpleNamespace(health=lambda *a,**k:None))
         task=asyncio.create_task(consume(WS(),c))
         try:
             assert await asyncio.to_thread(saved.wait,2)
@@ -72,7 +72,7 @@ def test_slow_trade_persistence_does_not_block_option_receipt_or_quotes():
 def test_auth_rejection_is_redacted_and_propagates():
     class WS:
         async def recv(self):return json.dumps([dict(status='auth_failed',message='bad secret')])
-    c=SimpleNamespace(cfg=SimpleNamespace(massive='secret'))
+    c=SimpleNamespace(cfg=SimpleNamespace(massive='secret'),subscription_batch=lambda rows:None)
     async def run():
         with pytest.raises(OptionStreamError,match='auth_failed') as e:
             await consume(WS(),c)
@@ -95,7 +95,7 @@ def test_quote_writer_failure_is_not_hidden_by_idle_reader(caplog):
                 await asyncio.Event().wait()
         def broken(*args):raise RuntimeError('write failed')
         c=SimpleNamespace(option_symbols={SYMBOL},cfg=SimpleNamespace(massive='secret'),
-            quote_batch=broken,db=SimpleNamespace(health=lambda *a,**k:None))
+            quote_batch=broken,subscription_batch=lambda rows:None,db=SimpleNamespace(health=lambda *a,**k:None))
         with pytest.raises(RuntimeError,match='write failed'):
             await asyncio.wait_for(consume(WS(),c),2)
     asyncio.run(run())

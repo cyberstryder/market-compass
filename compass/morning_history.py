@@ -134,10 +134,13 @@ def accept_page(db, stream, payload, after, now):
     with db.tx() as c:
         changed = sum(ingest(db, c, stream, row, now) for row in rows)
         previous = db.get(c, 'morning_history:' + stream, {})
-        status = {'at': now, 'next': next_page or '', 'status': 'scanning' if next_page else 'scan_complete',
+        status = {k:previous[k] for k in ('failures','last_failure','recovered_at') if k in previous}
+        if previous.get('consecutive_failures'):status['recovered_at']=now
+        status.update({'at': now, 'next': next_page or '', 'status': 'scanning' if next_page else 'scan_complete',
             'last_complete_at': previous.get('last_complete_at') if next_page else now,
             'pages': previous.get('pages', 0) + 1, 'last_page_records': len(rows), 'last_page_new': changed,
-            'scope': 'All available non-test source history; repeated scans recover late arrivals'}
+            'last_success_at':now,'consecutive_failures':0,'retry_after':0,
+            'scope': 'All available non-test source history; repeated scans recover late arrivals'})
         if next_page is None:
             status['import_counts'] = dict(c.execute(select(history.c.kind, func.count()).group_by(history.c.kind)).all())
         db.put(c, 'morning_history:' + stream, status)
@@ -172,6 +175,33 @@ async def poll_page(db, cfg, client, stream):
     return status
 
 
+def record_failure(db,stream,error,now):
+    """Keep the cursor and last success; never turn a transport failure into an empty page."""
+    with db.tx() as c:
+        saved=db.locked_get(c,'morning_history:'+stream,{})
+        consecutive=saved.get('consecutive_failures',0)+1
+        failure={'at':now,'type':type(error).__name__,
+            'category':'transport' if isinstance(error,httpx.TransportError) else 'protocol_or_storage',
+            'cursor':saved.get('next','')}
+        db.put(c,'morning_history:'+stream,{**saved,'at':now,'status':'error',
+            'error':type(error).__name__,'last_failure':failure,
+            'failures':saved.get('failures',0)+1,'consecutive_failures':consecutive,
+            'retry_after':now+min(60,10*2**min(consecutive-1,3)),
+            'note':'Page not accepted; cursor retained; bounded retry scheduled'})
+    LOG.warning('Morning history retry: stream=%s type=%s category=%s cursor_retained=true',stream,failure['type'],failure['category'])
+
+
+async def poll_with_retry(db,cfg,client,stream):
+    try:
+        return await poll_page(db,cfg,client,stream)
+    except httpx.TransportError as error:
+        await asyncio.to_thread(record_failure,db,stream,error,time.time())
+        # A single reconnect/read retry uses the same committed cursor. Schema,
+        # identity and storage failures are never treated as transient HTTP errors.
+        await asyncio.sleep(1)
+        return await poll_page(db,cfg,client,stream)
+
+
 async def run(db, cfg):
     if not cfg.morning_url or not cfg.morning_token: return
     owner = uuid.uuid4().hex
@@ -182,19 +212,16 @@ async def run(db, cfg):
                     with db.tx() as c:
                         active = db.lease(c, 'morning-history-' + stream, owner, 120)
                         saved = db.get(c, 'morning_history:' + stream, {})
-                    if not active or (not saved.get('next') and time.time() - saved.get('last_complete_at', 0) < 60): continue
+                    if not active or time.time()<saved.get('retry_after',0) or (not saved.get('next') and time.time() - saved.get('last_complete_at', 0) < 60): continue
                     for _ in range(5):
-                        status = await poll_page(db, cfg, client, stream)
+                        status = await poll_with_retry(db, cfg, client, stream)
                         if status['status'] == 'scan_complete': break
                 except asyncio.CancelledError: raise
                 except Exception as exc:
                     LOG.error('Morning history import failed: stream=%s type=%s detail=%s', stream, type(exc).__name__,
                         str(exc)[:150] if isinstance(exc, ValueError) and not hasattr(exc, 'errors') else 'See source protocol or connectivity')
                     try:
-                        with db.tx() as c:
-                            saved = db.get(c, 'morning_history:' + stream, {})
-                            db.put(c, 'morning_history:' + stream, {**saved, 'at': time.time(), 'status': 'error',
-                                'error': type(exc).__name__, 'note': 'Page rolled back; cursor retained; retry scheduled'})
+                        await asyncio.to_thread(record_failure,db,stream,exc,time.time())
                     except Exception:
                         LOG.error('Morning history status unavailable; retry scheduled')
             await asyncio.sleep(10)
