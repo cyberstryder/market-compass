@@ -112,7 +112,12 @@ def tick(db, owner, now):
         # JSON completion filter avoids repeatedly processing old, finalized history.
         rows = c.execute(select(ledger).where(ledger.c.project == 'morning',
             ledger.c.measurements['complete'].as_boolean().is_(None))
-            .order_by(ledger.c.source_ts).limit(200)).mappings().all()
+            .order_by(ledger.c.source_ts, ledger.c.key).limit(200)
+            .with_for_update(skip_locked=True)).mappings().all()
+        # Source pages update latest revisions in provider order. Claim available
+        # rows without waiting for those transactions, preventing opposite-order
+        # batch deadlocks. Skipped rows remain incomplete for the next cycle;
+        # measure() still uses the original receipt deadline, never late quotes.
         for r in rows:
             measurements = dict(r['measurements'])
             for h in HORIZONS:
@@ -120,7 +125,8 @@ def tick(db, owner, now):
                     point = measure(c, r, h, now)
                     if point: measurements[str(h)] = point
             if all(str(h) in measurements for h in HORIZONS): measurements['complete'] = True
-            c.execute(ledger.update().where(ledger.c.key == r['key']).values(measurements=measurements))
+            if measurements != r['measurements']:
+                c.execute(ledger.update().where(ledger.c.key == r['key']).values(measurements=measurements))
         previous = db.get(c, 'strategy_tracking:status', {})
         if int(previous.get('at', 0) // 60) != int(now // 60):
             logging.getLogger('uvicorn.error').info('Strategy tracking shadow: version=%s processed=%s orders=false notifications=false', VERSION, len(rows))
