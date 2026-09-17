@@ -597,6 +597,9 @@ def create_app(cfg=None):
             "Never infer zero results, current eligibility or available risk capacity from omitted evidence. "
             "If entry_evidence_incomplete is true, say entry eligibility cannot be verified. "
             "The saved SPY brief is a dated scheduled decision, not a new live signal; respect its expiry, WAIT or NO ENTRY. "
+            "A SPY NO ENTRY decision is terminal for that session's scheduled strategy. "
+            "Do not suggest waiting for a later breakout or candle to enter under that closed plan. "
+            "Any different or discretionary strategy would need its own explicit rules and fresh eligibility evidence. "
             "If data cannot answer the question, say exactly what is missing.")
         try:
             assistant_input,context_size=build_input(body.question,context)
