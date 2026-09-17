@@ -11,6 +11,7 @@
 <button class="nav" data-tab="setup-study">◉ Setup results</button>
 <button class="nav" data-tab="option-ideas">◇ Options ideas</button>
 <button class="nav" data-tab="swing-ideas">↗ Swing ideas</button>
+<button class="nav" data-tab="swing-study">◇ Swing comparison</button>
 <button class="nav" data-tab="secondary">◇ Secondary review</button>
 <button class="nav" data-tab="flow">≋ Options flow</button><button class="nav" data-tab="trades">↗ Simulated trades</button>
 <button class="nav" data-tab="assistant">✧ Ask Compass</button><button class="nav" data-tab="health">◷ Feed health</button></nav>
@@ -129,11 +130,39 @@
 </section>
 <section id="swing-ideas" class="tab">
 <div class="banner">SWING IDEAS · Bullish and bearish daily setups with fresh, vendor-classified options flow. Selected contracts are tracked across stock sessions.</div>
+<p><a href="/#swing-study">Compare all technical candidates, including rejected flow →</a></p>
 <p id="swings-status" class="fine"></p><div id="swings-stats" class="stats"></div>
 <article class="panel"><div class="panel-head"><h2>Swing ideas and outcomes</h2><label for="swings-filter">Show <select id="swings-filter"><option value="all">All recent ideas</option><option value="active">Pending and open</option><option value="closed">Completed outcomes</option></select></label></div><div id="swings-records"></div>
 <p class="fine">Pending candidates have no option entry. Closed markets preserve the last observed mark. Overnight gaps can exceed stops; missing open-session observations remain unresolved. These overlapping one-contract experiments are separate from Smoothers and account performance.</p></article>
 <article class="panel"><h2>Results by swing setup</h2><div id="swings-groups"></div></article>
 <article class="panel"><h2>Swing scan coverage</h2><p id="swings-coverage-summary" class="fine"></p><details data-key="swing-coverage"><summary>Watchlist readiness</summary><div id="swings-coverage"></div></details></article>
+</section>
+<section id="swing-study" class="tab">
+<div class="banner">Swing candidate comparison · Technical-only, fresh flow and delayed flow · Underlying moves at the same candidate clock</div>
+<div id="swing-study-summary" class="stats"></div>
+<article class="panel"><h2>Candidate coverage and frozen rules</h2><div id="swing-study-coverage"></div>
+<p class="fine">Fresh flow meets the existing five-minute source-age and vendor gates. Delayed flow meets the same premium, directional and expiry rules with a latest aligned print older than five minutes and at most 30 minutes. Fresh prints blocked by vendor freshness and unavailable flow coverage remain separate. No confirming flow means none qualifies in the observed filtered feed.</p></article>
+<article class="panel"><div class="panel-head"><h2>Selection comparisons</h2><label for="swing-study-horizon">Checkpoint <select id="swing-study-horizon">
+<option value="5session">Five later session closes (primary)</option>
+<option value="60m">60 trading minutes</option>
+<option value="close">Candidate-session close</option>
+<option value="1session">One later session close</option>
+<option value="3session">Three later session closes</option>
+<option value="9session">Tenth session close, including candidate day</option>
+</select></label></div><div id="swing-study-comparisons"></div>
+<p class="fine">Selections share a technical-candidate universe and the same price and time definitions. Arms overlap. Unknown flow coverage is excluded from these comparisons and remains visible below. Positive endpoints do not establish a profitable option trade or an uninterrupted stop/target path.</p></article>
+<article class="panel"><div class="panel-head"><h2>Coverage and outcomes by group</h2><label for="swing-study-dimension">Group by <select id="swing-study-dimension">
+<option value="flow_group">Flow group</option><option value="rule">Technical setup</option><option value="side">Direction</option>
+<option value="source_age">Aligned print age</option><option value="receipt_day">Candidate session</option><option value="symbol">Symbol</option>
+<option value="flow_policy">Flow expiry policy</option><option value="price_tolerance">Reference price tolerance</option>
+</select></label></div><div id="swing-study-groups"></div></article>
+<article class="panel"><div class="panel-head"><h2>Individual technical candidates</h2><label for="swing-study-cohort">Show <select id="swing-study-cohort">
+<option value="all">All registered candidates</option><option value="prospective">Prospective candidates</option>
+<option value="fresh_flow">Fresh flow</option><option value="delayed_flow">Delayed flow</option><option value="fresh_vendor_blocked">Fresh prints, vendor gate blocked</option>
+<option value="no_confirming_flow">No confirming observed flow</option><option value="unavailable">Flow coverage unavailable</option><option value="historical_inventory">Historical inventory</option>
+</select></label></div><p id="swing-study-page-status" class="fine" aria-live="polite"></p><div id="swing-study-records"></div>
+<div class="research-controls"><button id="swing-study-prev" type="button">Previous</button><button id="swing-study-next" type="button">Next</button><button id="swing-study-newest" type="button">Newest candidates</button></div></article>
+<article class="panel"><h2>Separate option admission ledger</h2><div id="swing-study-options"></div><p><a href="/#swing-ideas">Open admitted Swing option observations →</a></p><p class="fine">Pending/excluded option ideas have no assumed fill. Option returns remain in their original ledger and are never substituted for this candidate study's stock moves.</p></article>
 </section>
 <section id="research" class="tab">
 <div class="banner">Explore the latest vendor scanners, flow, market conditions, calendars, and positioning. Source time and retrieval time remain separate.</div>
@@ -176,4 +205,4 @@
 <p class="muted">Connections are checked. Live readiness still requires advancing source times, usable option inputs, and a recorded simulated entry, exit, and confirmed alert.</p>
 <p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></section>
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
-<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/app.js"></script><script src="/static/native.js"></script></body></html>
+<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/app.js"></script><script src="/static/native.js"></script></body></html>

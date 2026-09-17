@@ -51,6 +51,13 @@ No earnings-avoidance rule or fundamental valuation model is asserted by this fi
 
 ## Operations
 
+The separate [Swing candidate comparison](swing-flow-study.md), available at
+`/#swing-study`, freezes raw pre-gate flow for every new technical candidate.
+Fresh, delayed and unconfirmed candidates receive the same underlying-price
+checkpoints when valid references exist. Unknown coverage and historical
+inventory remain explicit. This comparison helps diagnose the flow filter;
+actual option admissions and their net simulated results stay in this ledger.
+
 The existing engine service runs a separately leased swing worker; collection stays in the collector service and the owner-only dashboard reads shared PostgreSQL state. New table creation uses the existing startup advisory lock. No schema changes to original ledgers are required.
 
 Alpaca's socket reader is independent of database flushing. Quote bursts coalesce to the latest source timestamp per symbol while maintaining existing 4 Hz core / 1 Hz broad sampling limits. Completed bars and corrections are batched by symbol and minute. A bounded bar overflow is an explicit feed error, never a silent missing-history success. Quote freshness is measured at stored source time; an active socket alone does not make a quote usable. Massive option quote writes also run outside the collector event loop.

@@ -74,6 +74,7 @@ def build(data, supplements, policy):
     tm=data.get('tm_study',{})
     tm_counts=tm.get('counts',{})
     tm_inventory=tm.get('inventory',{})
+    swing_study=data.get('swing_study',{})
     flow_issues=[] if tm.get('version') else ['The TM receipt study has not reported yet.']
     if tm_inventory.get('unregistered_records',0):flow_issues.append('Historical inventory registration is still catching up.')
     if tm_counts.get('insufficient_data',0):flow_issues.append('Some new records lack inputs for a complete Compass score; inspect coverage.')
@@ -168,7 +169,8 @@ def build(data, supplements, policy):
         if counts.get('unresolved'):
             issues.append('Some observation paths are unresolved and excluded from win/loss results.')
         if key == 'swing_ideas':
-            issues.append('Only admitted swings receive option tracking; technical candidates without flow are saved without a full rejected-candidate outcome study.')
+            if not swing_study.get('version'):
+                issues.append('The separate rejected-candidate comparison has not reported yet.')
             if flow and not flow_freshness(flow, now, 300)['eligible_for_live_confirmation']:
                 issues.append('Current flow timing prevents new swing confirmation.')
         add(key, name, 'Independent ideas', activity(item.get('worker') or {}, now, item.get('enabled')),
@@ -183,6 +185,25 @@ def build(data, supplements, policy):
             checked_at=(item.get('worker') or {}).get('at'), issues=issues,
             next_step='Review coverage and outcomes by setup and direction before choosing rules.',
             version=(item.get('worker') or {}).get('version'), measured=counts.get('closed', 0) if 'counts' in item else None)
+
+    ss=swing_study;sc=ss.get('counts',{});si=ss.get('inventory',{})
+    swing_issues=[]
+    if si.get('unregistered',0):swing_issues.append('Historical candidate registration is catching up.')
+    if sc.get('flow_unavailable',0):swing_issues.append('Some candidates have unavailable flow coverage; inspect the separate cohort.')
+    if ss.get('overdue_checkpoints',0):swing_issues.append('Due price checkpoints are waiting for the study worker.')
+    if ss.get('collection',{}).get('outside_collection',0):swing_issues.append('Some pending symbols are outside price collection.')
+    add('swing-flow-study','Swing flow comparison','Comparison studies',activity(ss.get('worker',{}),now),
+        'Every newly retained Swing technical candidate keeps pre-gate flow evidence, including delayed and unconfirmed candidates. Older inventory is separate.',
+        'Frozen technical-only, fresh-flow and delayed-flow selections share the first candidate price reference; unknown flow coverage is separate.',
+        'Underlying checkpoints through the tenth session, with the five-later-session close as primary. Admitted option simulations remain in their original ledger.',
+        [metric('Retained candidates, lifetime',si.get('retained_candidates')),
+         metric('Registered, lifetime',si.get('registered')),metric('Prospective candidates, 30d',sc.get('prospective')),
+         metric('Known flow coverage, 30d',sc.get('classified'))],
+        'Complete 30-day receipt-window SQL totals; lifetime registration reconciled separately; individual candidates paginated.',
+        'swing-study',alert_policy='Research only; no new messages or changes to Swing admission rules.',
+        checked_at=ss.get('at'),issues=swing_issues,next_step='Verify first-session classification and endpoint coverage, then review later-session comparisons without retuning on the same outcomes.',
+        version=ss.get('version'),measured=sum(r.get('count',0) for r in ss.get('outcome_counts',[])
+            if r.get('origin')=='prospective' and r.get('horizon')=='5session' and r.get('status')=='completed'))
 
     study = data.get('setup_study', {})
     for futures, id, name, route in ((False, 'intraday', 'Stock / ETF setup research', 'intraday'), (True, 'futures', 'Futures setup research', 'futures')):
@@ -294,6 +315,7 @@ def build(data, supplements, policy):
             'technical_candidates': audit.get('swing_technical_candidates'),
             'without_flow_confirmation': audit.get('swing_without_flow'),
             'truncated': audit.get('swing_candidates_truncated')},
+        'swing_candidate_study':dict(version=ss.get('version'),inventory=si,counts=sc,at=ss.get('at')),
         'notes': ['Saved data, assessed candidates, usable measurements and delivered alerts are different counts.',
             'Filters can suppress alerts now. There is no blanket pause until research is profitable.',
             'A score is not a probability of profit. Completed observations do not establish an improved strategy.',

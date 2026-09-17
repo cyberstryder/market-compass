@@ -43,7 +43,10 @@ def connected_symbols(db, c, now):
 def data_symbols(db, c, cfg, now):
     """Expand collection only; connected projects do not change scanner entries."""
     from .tm_study import requested_symbols,symbol_for
+    from .swing_study import requested_symbols as swing_symbols
     base=list(symbols((*cfg.watch_symbols,*connected_symbols(db,c,now))))
+    for symbol in swing_symbols(c):
+        if not symbol_for({'symbol':symbol})[1]:base.append(symbol)
     for row in requested_symbols(c,now):
         if symbol_for({'symbol':row.symbol})[1]:continue
         try:base.extend(symbols((row.symbol,)))

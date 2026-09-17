@@ -6,7 +6,7 @@ import uuid
 from types import SimpleNamespace
 from collections import Counter
 from sqlalchemy import Table, Column, String, Float, JSON, Index, select, update, func
-from .store import meta, identity, flow_records
+from .store import meta, identity, flow_records,events
 from .market import day, session, number
 from .option_ideas import current, liquid, eligible_contracts, FEE, SLIPPAGE
 from .swing_signals import daily_context, minute_context, technical_setups, summarize_flow, confirms, trading_seconds, hold_deadline
@@ -43,6 +43,7 @@ class SwingIdeas:
         self.db, self.cfg, self.clock = db, cfg, clock
         self.owner, self.cursor = uuid.uuid4().hex, 0
         self.flow_cache, self.flow_at, self.flow_coverage = {}, 0, {}
+        self.study_flow = None
 
     def now(self, fallback):
         return self.clock() if self.clock else fallback
@@ -253,6 +254,9 @@ class SwingIdeas:
                 freshness=check,
                 vendor_limited=matrix.get('limited'),recovery=self.db.get(c,'recovery:flow:'+day(now),{}),
                 note='Observed filtered records only; missing or unclassified flow cannot confirm a swing')
+            from .swing_study import flow_snapshot
+            self.study_flow=flow_snapshot(rows[:5000],matrix,self.flow_coverage,now,
+                self.cfg.swing_min_dte,self.cfg.swing_max_dte)
             self.flow_at = now
         # Twelve symbols per two-second turn bounds work and covers 144 in ~24s.
         chunk = (universe[self.cursor:]+universe[:self.cursor])[:12]
@@ -275,9 +279,13 @@ class SwingIdeas:
             # Retain every technical candidate even when flow prevents an entry.
             for signal in signals:
                 key=identity('swing-technical-v1',symbol,signal['side'],signal['rule'],signal['signal_time'])
-                self.db.append(c,'swing_candidate','swing_research',symbol,now,
+                inserted=self.db.append(c,'swing_candidate','swing_research',symbol,now,
                     dict(id=key,signal=signal,flow_confirmed=confirms(flow,signal['side'],now),
                          flow=flow,coverage=self.flow_coverage),key)
+                if inserted:
+                    from .swing_study import register
+                    event=c.execute(select(events).where(events.c.key==key)).mappings().one()
+                    register(self.db,c,event,self.now(now),snapshot=self.study_flow)
             scan_state='qualified' if qualified else 'waiting_for_flow' if signals else 'market_closed' if not entry_open else 'warming_up' if daily['status']!='ready' else 'waiting_for_price' if not price_ready else 'scanning'
             # Freeze cash-session evidence before overnight refresh overwrites current status.
             if entry_open:
