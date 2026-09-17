@@ -86,15 +86,26 @@ def record_page(c,now,*,cohort='all',limit=100,asof=None,cursor=''):
         else observations.c.status==cohort)&scope(at)
     joined=checks.outerjoin(observations,observations.c.id==checks.c.id)
     total=c.execute(select(func.count()).select_from(joined).where(condition)).scalar_one()
-    with_delivery=joined.outerjoin(events,(events.c.key==checks.c.source_key)&(events.c.kind=='alert')).outerjoin(discord_jobs,discord_jobs.c.event_id==events.c.id)
-    q=select(checks,observations.c.payload.label('option'),discord_jobs.c.status.label('delivery_status'),
-        discord_jobs.c.confirmation.label('delivery')).select_from(with_delivery).where(condition)
+    # Page the small research ledger first. Joining the entire quote/event
+    # archive before LIMIT lets the planner scan millions of unrelated events.
+    q=select(checks,observations.c.payload.label('option')).select_from(joined).where(condition)
     if anchor:
         stamp,id=anchor;q=q.where((checks.c.created<stamp)|((checks.c.created==stamp)&(checks.c.id<id)))
     rows=c.execute(q.order_by(checks.c.created.desc(),checks.c.id.desc()).limit(limit+1)).mappings().all()
     more=len(rows)>limit;rows=rows[:limit]
+    keys=[r['source_key'] for r in rows if r['source_key']]
+    deliveries={}
+    if keys:
+        event_rows=c.execute(select(events.c.id,events.c.key)
+            .where(events.c.key.in_(keys),events.c.kind=='alert')).all()
+        by_id={r.id:r.key for r in event_rows}
+        if by_id:
+            jobs=c.execute(select(discord_jobs.c.event_id,discord_jobs.c.status,discord_jobs.c.confirmation)
+                .where(discord_jobs.c.event_id.in_(by_id))).all()
+            deliveries={by_id[r.event_id]:(r.status,r.confirmation) for r in jobs}
     records=[dict(r['payload'],record_kind=r['kind'],decision_state=r['decision'],option=r['option'],
-        delivery_status=r['delivery_status'],delivery=r['delivery']) for r in rows]
+        delivery_status=deliveries.get(r['source_key'],(None,None))[0],
+        delivery=deliveries.get(r['source_key'],(None,None))[1]) for r in rows]
     return dict(records=records,total=total,asof=at,cohort=cohort,limit=limit,has_more=more,
         next_cursor=token([VERSION,'records',at,cohort,rows[-1]['created'],rows[-1]['id']]) if more else None,
         since_day=first_day(at),through_day=day(at))

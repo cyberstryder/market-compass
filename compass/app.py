@@ -287,8 +287,11 @@ def create_app(cfg=None):
             data['research_admin']=research_admin_snapshot(db,c,cfg,data)
             return data
 
+    from .snapshot_cache import SnapshotCache
+    dashboard_cache = SnapshotCache()
+
     @app.get("/api/state")
-    def get_state(): return snapshot()
+    def get_state(): return dashboard_cache.get(snapshot)
 
     @app.get('/api/research-admin')
     def get_research_admin(download:bool=False):
