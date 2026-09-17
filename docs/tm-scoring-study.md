@@ -43,6 +43,9 @@ Missing inputs produce an incomplete assessment and a points interval, not a
 zero score. Only complete numeric scores enter the primary matched comparison.
 Frozen thresholds: TM at least 85; Compass at least 70. No optimization or alert
 promotion is part of v1. Preserve score, delay, expiry and direction buckets.
+Expiry groups accept the feed's MM/DD/YY and MM/DD/YYYY dates as well as ISO
+dates. Historical display groups are derived from the frozen inventory snapshot,
+without altering that snapshot or inventing a receipt-time assessment.
 
 ## Measurements and comparison
 

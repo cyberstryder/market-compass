@@ -7,7 +7,7 @@ from compass.app import create_app
 from compass.config import Config
 from compass.store import Store,flow_records,tm_studies as studies,tm_checkpoints as checkpoints,events,identity,state
 from compass.flow_recovery import ingest
-from compass.tm_scoring import score,checkpoint_times,VERSION,HORIZONS
+from compass.tm_scoring import score,checkpoint_times,VERSION,HORIZONS,dte_bucket
 from compass.tm_study import register,inventory,observe,Study
 from compass.tm_reporting import report,record_page,detail
 from compass.universe import data_symbols
@@ -63,6 +63,26 @@ def test_compass_score_is_separate_from_tm_and_missing_is_not_zero():
     thin=score(row(open_interest=5,volume=100000),quote(),facts(),NOW)
     assert thin['compass_score']==90
     assert score(row(sentiment='Neutral'),quote(),facts(),NOW)['compass_score'] is None
+
+
+@pytest.mark.parametrize('expiry,expected',[
+    ('09/17/26','0DTE'),('9/18/26','1–7DTE'),('09/18/2026','1–7DTE'),
+    ('2026-09-18','1–7DTE'),('10/16/26','8–30DTE'),('12/18/26','>30DTE'),
+    ('09/16/26','expired'),('17/09/26','unknown'),('02/30/26','unknown'),(None,'unknown')])
+def test_tm_expiry_groups_accept_documented_live_and_archived_formats(expiry,expected):
+    assert dte_bucket(expiry,NOW)==expected
+
+
+def test_historical_expiry_display_keeps_the_snapshot_and_scores_frozen(db,monkeypatch):
+    monkeypatch.setattr('compass.store.time.time',lambda:NOW)
+    with db.tx() as c:
+        register(db,c,DAY,[row(expiry='09/18/26')],NOW,at=NOW,historical=True)
+        c.execute(update(studies).values(dte_bucket='unknown'))  # Initial inventory's old parser.
+        page=record_page(c,NOW)
+        assert page['records'][0]['dte_bucket']=='1–7DTE'
+        assert page['records'][0]['inventory_snapshot']['expiry']=='09/18/26'
+        assert page['records'][0]['compass_score'] is None
+        assert c.execute(select(studies.c.dte_bucket)).scalar_one()=='unknown'
 
 
 def test_receipt_freeze_survives_vendor_correction_and_repeated_polls(storage,monkeypatch):
