@@ -92,3 +92,37 @@ def test_bootstrap_does_not_rewind_live_revision(db):
         r=c.execute(select(ledger)).mappings().one()
         assert r['latest']['status']=='observed_60m'
         assert len(db.recent(c,'strategy_revision'))==1
+
+
+def test_committed_cycle_clears_old_failure_without_claiming_market_freshness(db):
+    db.health('strategy_tracking', 'error', 'OperationalError')
+    tick(db, 'worker', 14000)
+    with db.tx() as c:
+        health = db.get(c, 'health:strategy_tracking')
+        assert health['status'] == 'available'
+        assert health['checked_at'] == 14000
+        assert 'source_ts' not in health
+        assert db.get(c, 'strategy_tracking:status')['at'] == 14000
+
+
+def test_nonowning_worker_cannot_clear_failure(db):
+    with db.tx() as c:
+        assert db.lease(c, 'strategy-tracking', 'owner', 30)
+    db.health('strategy_tracking', 'error', 'OperationalError')
+    tick(db, 'other-worker', 14001)
+    with db.tx() as c:
+        assert db.get(c, 'health:strategy_tracking')['status'] == 'error'
+
+
+def test_failed_cycle_does_not_commit_recovery(db, monkeypatch):
+    db.health('strategy_tracking', 'error', 'OperationalError')
+    original_put = db.put
+    def failed_commit(c, key, value):
+        original_put(c, key, value)
+        if key == 'health:strategy_tracking':
+            raise RuntimeError('transaction failed')
+    monkeypatch.setattr(db, 'put', failed_commit)
+    with pytest.raises(RuntimeError, match='transaction failed'):
+        tick(db, 'worker', 14000)
+    with db.tx() as c:
+        assert db.get(c, 'health:strategy_tracking')['status'] == 'error'

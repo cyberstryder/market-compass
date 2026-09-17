@@ -127,6 +127,11 @@ def tick(db, owner, now):
         db.put(c, 'strategy_tracking:status', {'at': now, 'version': VERSION,
             'mode': 'shadow', 'notifications_enabled': False, 'orders_enabled': False,
             'bootstrap_complete': db.get(c, 'strategy_tracking:bootstrap_cursor') == 'complete'})
+        # Publish recovery only with a committed, lease-owning cycle. A previous
+        # transient database failure must not remain the current health forever.
+        db.put(c, 'health:strategy_tracking', {'name': 'strategy_tracking',
+            'status': 'available', 'checked_at': now,
+            'detail': VERSION+' shadow ledger checked; orders=false notifications=false'})
 
 
 def snapshot(db, c):

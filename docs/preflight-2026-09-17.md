@@ -102,6 +102,23 @@ a mismatch between these saved alerts or prove a historical/live parity result.
 
 ## Due later
 
+07:50–07:52 refresh: SPY quote age 0.3 seconds; all twelve futures roots showed
+ready quotes around 0.4–0.7 seconds. Discord queue remained zero, latest confirmed
+event 74,694,027 at 07:45:04 CT. Stock maximum receipt-to-storage delay was 1.29
+seconds in the sampled audit; option queue zero, futures queues 0–2 and recent
+maximum queue ages below one second. Quiet premarket symbols are not assumed to
+have fresh quotes just because SPY is current.
+
+Three health warnings were resolved to their evidence: TM flow event staleness;
+Obsidian historical reconstruction lacks API credentials; strategy tracking
+retained a 22-hour-old `OperationalError` despite successful minute logs through
+07:51. The latter was a health-reporting defect: successful worker cycles did not
+clear the old error. Recovery health is now written in the same transaction as
+the successful lease-owning cycle; a failed or nonowning cycle cannot clear it.
+This does not rewrite observations or assert that historical gaps are repaired.
+Obsidian live idea collection and unavailable historical reconstruction remain
+separate, and no credentials or paid history were added.
+
 08:20: verify exactly one daily SPY plan plus one drawing prompt and their saved
 delivery confirmations; verify the actual levels on both 1-minute and 15-minute
 charts. 08:45: inspect the saved opening confirmation. 09:00/09:15/09:30 are
