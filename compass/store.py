@@ -32,6 +32,26 @@ flow_records=Table("flow_records",meta,
     Column("first_seen",Float,nullable=False),Column("last_seen",Float,nullable=False))
 Index("flow_records_day_time",flow_records.c.day,flow_records.c.source_ts)
 
+# Immutable receipt assessments; forward checkpoints have their own lifecycle.
+tm_studies=Table('tm_flow_study_v1',meta,
+    Column('id',String(64),primary_key=True),Column('day',String(10),nullable=False),
+    Column('vendor_id',String(200),nullable=False),Column('version',String(50),nullable=False),
+    Column('symbol',String(100),nullable=False),Column('first_seen',Float,nullable=False),
+    Column('assessed_at',Float,nullable=False),Column('origin',String(30),nullable=False),
+    Column('status',String(20),nullable=False),Column('score_status',String(30),nullable=False),
+    Column('direction',String(10),nullable=False),Column('age_bucket',String(30),nullable=False),
+    Column('dte_bucket',String(20),nullable=False),Column('tm_score',Float),Column('compass_score',Float),
+    Column('payload',JSON,nullable=False))
+Index('tm_study_source',tm_studies.c.day,tm_studies.c.vendor_id,tm_studies.c.version,unique=True)
+Index('tm_study_receipt_id',tm_studies.c.first_seen,tm_studies.c.id)
+Index('tm_study_active_symbols',tm_studies.c.status,tm_studies.c.symbol)
+tm_checkpoints=Table('tm_flow_checkpoints_v1',meta,
+    Column('study_id',String(64),primary_key=True),Column('horizon',String(20),primary_key=True),
+    Column('target_at',Float),Column('due_at',Float),Column('status',String(20),nullable=False),
+    Column('reason',String(100)),Column('price',Float),Column('source_ts',Float),Column('received_at',Float),
+    Column('raw_return_pct',Float),Column('directional_return_pct',Float),Column('checked_at',Float))
+Index('tm_checkpoints_due',tm_checkpoints.c.status,tm_checkpoints.c.due_at)
+
 def identity(*args):
     return hashlib.sha256(json.dumps(args,sort_keys=True,default=str).encode()).hexdigest()
 
@@ -135,4 +155,3 @@ class Store:
             if source_ts is not None:
                 value["source_ts"]=max(source_ts,previous.get("source_ts") or source_ts) if monotonic_source else source_ts
             self.put(c,"health:"+name,value)
-

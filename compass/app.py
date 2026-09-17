@@ -102,6 +102,8 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(run_forward_audit(db,cfg)))
             from .observation_audit import run as run_observation_audit
             tasks.append(asyncio.create_task(run_observation_audit(db,cfg)))
+            from .tm_study import Study as TMStudy
+            tasks.append(asyncio.create_task(TMStudy(db,cfg).run()))
         tasks.append(asyncio.create_task(heartbeat()))
         yield
         if collectors: await collectors.close()
@@ -253,6 +255,7 @@ def create_app(cfg=None):
                 "projects":projects_snapshot(db,c,cfg,now),
                 "obsidian":obsidian_snapshot(db,c,now),
                 "forward_acceptance":db.get(c,"forward-acceptance-v1:report",{}),
+                "tm_study":{**db.get(c,'tm-study-v1:report',{}),'worker':db.get(c,'tm-study-v1:worker',{})},
                 "secondary":secondary_snapshot(db,c,now,clock=time.time),
                 "setup_study":study_snapshot(db,c,cfg,now),
                 "option_ideas":ideas_snapshot(db,c,cfg,now),
@@ -289,6 +292,26 @@ def create_app(cfg=None):
     @app.get("/api/setup-study")
     def get_setup_study():
         with db.tx() as c: return study_snapshot(db,c,cfg,time.time())
+
+    @app.get('/api/tm-study')
+    def get_tm_study():
+        with db.tx() as c:
+            return {**db.get(c,'tm-study-v1:report',{}),'worker':db.get(c,'tm-study-v1:worker',{})}
+
+    @app.get('/api/tm-study/records')
+    def get_tm_records(cohort:str=Query('all',max_length=30),limit:int=Query(100,ge=1,le=100),
+            asof:float|None=Query(None,gt=0,allow_inf_nan=False),cursor:str=Query('',max_length=1024)):
+        from .tm_reporting import record_page
+        try:
+            with db.tx() as c:return record_page(c,time.time(),cohort=cohort,limit=limit,asof=asof,cursor=cursor)
+        except ValueError as error:raise HTTPException(400,str(error)) from error
+
+    @app.get('/api/tm-study/record')
+    def get_tm_record(id:str=Query(...,pattern=r'^[a-f0-9]{64}$')):
+        from .tm_reporting import detail
+        with db.tx() as c:result=detail(c,id)
+        if result is None:raise HTTPException(404,'Unknown TM study record')
+        return result
 
     @app.get('/api/setup-study/records')
     def get_setup_records(cohort:str=Query('all',pattern=r'^(all|alerted|quiet)$'),

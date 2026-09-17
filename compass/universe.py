@@ -42,7 +42,13 @@ def connected_symbols(db, c, now):
 
 def data_symbols(db, c, cfg, now):
     """Expand collection only; connected projects do not change scanner entries."""
-    return tuple(s for s in symbols((*cfg.watch_symbols, *connected_symbols(db, c, now))) if s not in EXCLUDED_STOCKS)[:500]
+    from .tm_study import requested_symbols,symbol_for
+    base=list(symbols((*cfg.watch_symbols,*connected_symbols(db,c,now))))
+    for row in requested_symbols(c,now):
+        if symbol_for({'symbol':row.symbol})[1]:continue
+        try:base.extend(symbols((row.symbol,)))
+        except ValueError:continue
+    return tuple(s for s in dict.fromkeys(base) if s not in EXCLUDED_STOCKS)[:500]
 
 
 def focus_symbols(db, c, cfg, now, limit=12):
@@ -57,4 +63,3 @@ def focus_symbols(db, c, cfg, now, limit=12):
     active = [r['symbol'] for r in requests if 0 <= now-r.get('at', 0) <= 600]
     core = [s for s in ('SPY', 'QQQ', 'IWM', *cfg.stocks) if s in allowed]
     return list(dict.fromkeys(s for s in held+active+swing_held+core if s in allowed))[:limit]
-

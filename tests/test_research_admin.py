@@ -55,7 +55,7 @@ def test_poll_collection_and_entry_freshness_are_separate(source_age, vendor_sta
     # The web process need not carry the collector's provider credentials.
     assert stream(report, 'tm-flow')['stage'] == 'observing'
     assert metrics(stream(report, 'tm-flow'))['Unique records stored today'] == 1200
-    assert report['flow_research']['coverage'] == 'not_implemented'
+    assert report['flow_research']['coverage'] == 'awaiting_first_report'
     blocked = 'Current flow timing prevents new swing confirmation.'
     assert (blocked in stream(report, 'swing_ideas')['issues']) == swing_blocked
 
