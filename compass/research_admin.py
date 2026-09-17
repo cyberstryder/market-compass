@@ -71,7 +71,15 @@ def build(data, supplements, policy):
     flow = data.get('matrix', {}).get('matrix:unusual_activity', {})
     freshness = flow.get('flow_freshness', {})
     recovery = flow.get('recovery', {})
-    flow_issues = ['Independent Compass ratings and forward outcomes for every received TM record are not built.']
+    tm=data.get('tm_study',{})
+    tm_counts=tm.get('counts',{})
+    tm_inventory=tm.get('inventory',{})
+    flow_issues=[] if tm.get('version') else ['The TM receipt study has not reported yet.']
+    if tm_inventory.get('unregistered_records',0):flow_issues.append('Historical inventory registration is still catching up.')
+    if tm_counts.get('insufficient_data',0):flow_issues.append('Some new records lack inputs for a complete Compass score; inspect coverage.')
+    if tm.get('overdue_checkpoints',0):flow_issues.append('Due price checkpoints are waiting for the study worker.')
+    if tm.get('version') and activity(tm.get('worker',{}),now)!='observing':
+        flow_issues.append('The TM study worker has no current heartbeat; check Feed health.')
     if freshness and not freshness.get('eligible_for_live_confirmation'):
         flow_issues.append('Flow is not eligible for current entry confirmation: '+freshness.get('status', 'unknown')+'.')
     if flow.get('limited') or recovery.get('estimated_gap', 0):
@@ -79,16 +87,19 @@ def build(data, supplements, policy):
     add('tm-flow', 'TraderMatrix unusual options', 'Flow research',
         activity({'at': flow.get('received')}, now, bool(flow.get('received')) or policy.get('matrix'), 120),
         'Returned API records are stored by vendor ID; repeated IDs update the saved record and retain correction events. The feed requests $50k+ activity.',
-        'TM score is preserved. Compass applies age, premium, score and price-breakout rules; it does not independently rate every record.',
-        'Qualifying setups can enter the setup study. Delayed and rejected raw records do not all receive outcome tracking.',
+        'New records freeze TM score and a separate versioned Compass rubric at first receipt processing. Missing inputs remain incomplete; older inventory is separate.',
+        'Underlying checkpoints at 15/60 trading minutes and session closes compare TM-only, Compass-only and combined selection. They are not option returns.',
         [metric('Unique records stored today', flow.get('unique_rows')),
          metric('Vendor count in latest response', flow.get('total')),
          metric('Latest trade age (seconds)', freshness.get('event_age')),
-         metric('Estimated missing IDs', recovery.get('estimated_gap'))],
-        'Session '+str(flow.get('day') or day(now))+'; received filtered activity, not complete market coverage.', 'flow',
+         metric('Estimated missing IDs', recovery.get('estimated_gap')),
+         metric('Prospective assessments, 30d',tm_counts.get('prospective')),
+         metric('Complete Compass scores, 30d',tm_counts.get('scored'))],
+        'Feed counts: session '+str(flow.get('day') or day(now))+'; study: full 30-day receipt window plus separate lifetime inventory.', 'tm-study',
         route='unusual_options', alert_policy='Enabled for qualifying setups when the scanner is on. Requires score 85+, $100k+, flow age ≤2 minutes and a price breakout.' if policy.get('scanner') else 'Scanner disabled; no new setup alerts.',
         checked_at=flow.get('received'), issues=flow_issues,
-        next_step='Build and compare frozen TM and Compass assessments, including delayed and rejected candidates; measure from receipt-time prices.')
+        next_step='Verify first-receipt coverage, then review later-session matched outcomes by score, delay and expiry. Keep the rubric fixed during evaluation.',
+        version=tm.get('version'),measured=sum(r.get('count',0) for r in tm.get('outcome_counts',[]) if r.get('horizon')=='60m' and r.get('origin')=='prospective' and r.get('status')=='completed'))
 
     morning_issues = []
     if any(source_report.get('truncated', {}).values()):
@@ -273,8 +284,12 @@ def build(data, supplements, policy):
             'status': storage.get('status', 'unobserved'), 'checked_at': storage.get('at'),
             'database_bytes': storage.get('database_bytes'),
             'archive_scheduler': storage.get('scheduled_archive', {}).get('status', 'unobserved')},
-        'flow_research': {'records_rated_by_compass': None, 'all_record_outcomes': None,
-            'coverage': 'not_implemented', 'tm_score_preserved': True},
+        'flow_research': {'records_rated_by_compass': tm_counts.get('scored'),
+            'prospective_assessments':tm_counts.get('prospective'),
+            'all_record_outcomes':tm.get('outcome_counts'),
+            'coverage':tm.get('coverage','awaiting_first_report'), 'tm_score_preserved': True,
+            'inventory':tm_inventory,'incomplete_assessments':tm_counts.get('insufficient_data'),
+            'historical_inventory':tm_counts.get('historical_inventory'),'at':tm.get('at')},
         'swing_audit': {'since': audit.get('since'), 'checked_at': audit.get('at'),
             'technical_candidates': audit.get('swing_technical_candidates'),
             'without_flow_confirmation': audit.get('swing_without_flow'),

@@ -1,5 +1,6 @@
 """Durable rotating reconciliation of a paginated, moving vendor feed."""
 import math
+import asyncio
 import logging
 from datetime import date,timedelta
 from sqlalchemy import select,func
@@ -27,8 +28,11 @@ def ingest(db,label,page,part,now):
     with db.tx() as c:
         cp=checkpoint(db,c,label)
         if page!=part["page"]: raise ValueError("TraderMatrix returned an unexpected page")
-        prior = {r.vendor_id: r.payload for r in c.execute(select(flow_records.c.vendor_id, flow_records.c.payload)
-            .where(flow_records.c.day == label, flow_records.c.vendor_id.in_([r['vendor_id'] for r in part['rows']])))}
+        existing = c.execute(select(flow_records.c.vendor_id, flow_records.c.payload,flow_records.c.first_seen)
+            .where(flow_records.c.day == label, flow_records.c.vendor_id.in_([r['vendor_id'] for r in part['rows']]))).all()
+        prior = {r.vendor_id:r.payload for r in existing}
+        from .tm_study import register
+        register(db,c,label,part['rows'],now,existing={r.vendor_id:r.first_seen for r in existing},envelope=part)
         new_ages, changed = [], 0
         for row in part["rows"]:
             previous = prior.get(row['vendor_id'])
@@ -80,7 +84,7 @@ async def collect(collector,now,page_cap=5):
         data,received=await collector.matrix_request(
             f"/unusual-activity?timeFrame={frame}&minPremium=50000&page={page}&pageSize=100","unusual_activity")
         part=flow_page(data,received)
-        cp=ingest(db,label,page,part,received)
+        cp=await asyncio.to_thread(ingest,db,label,page,part,received)
         requests+=1
         request_pages.append(dict(day=label,page=page))
         current_rows+=part["raw_count"]

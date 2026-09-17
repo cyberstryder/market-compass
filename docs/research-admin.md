@@ -12,7 +12,7 @@ request, broker action, database migration or notification.
 
 | Stream | Stored evidence and reporting scope |
 | --- | --- |
-| TraderMatrix unusual options | Received $50k+ API records and correction events; today's unique count and source/receipt clocks. TM score preserved. No independent rating and outcome for every received record. |
+| TraderMatrix unusual options | Received $50k+ API records and correction events; frozen first-receipt TM score and a separate Compass rubric for new records. Full 30-day score/checkpoint coverage, plus lifetime received/registered reconciliation. Missing inputs and historical inventory stay separate. |
 | Morning Algo | Source and native signal inventory, stock reports and option sample slots. Bounded report coverage remains explicit. |
 | Morning expiration comparison | Latest 100 native signals by default; common complete quote cohorts, separately from sample-slot inventory. Cached report refreshed by the existing worker. |
 | Smoothers | Stored configuration count, source history and current native weekly observations. Full weekly comparison remains required for retirement. |
@@ -36,9 +36,12 @@ archive scheduler status are visible, but a scheduler heartbeat does not prove a
 backup or successful restoration. Sender ownership, route health and pending
 delivery confirmations remain independent from research coverage.
 
-The missing TM-wide study still needs frozen Compass assessments, coverage of
-delayed and rejected records, receipt-time prices and comparable forward outcomes
-before TM-only, Compass-only and combined selections can be evaluated fairly.
+Open `/#tm-study` for the new received-record study. Every valid new ID gets an
+assessment, including delayed and rejected records. Complete scores, incomplete
+inputs, scheduled/missing measurements and historical inventory have separate
+counts. Its uncalibrated rubric and primary comparison are frozen in
+`docs/tm-scoring-study.md`; later-session outcomes are required before judging
+TM-only, Compass-only and combined selection. Stock movement is not option profit.
 
 ## 0DTE selection diagnostics
 
