@@ -52,6 +52,23 @@ tm_checkpoints=Table('tm_flow_checkpoints_v1',meta,
     Column('raw_return_pct',Float),Column('directional_return_pct',Float),Column('checked_at',Float))
 Index('tm_checkpoints_due',tm_checkpoints.c.status,tm_checkpoints.c.due_at)
 
+swing_trials=Table('swing_flow_trials_v1',meta,
+    Column('id',String(64),primary_key=True),Column('version',String(50),nullable=False),
+    Column('source_id',Integer,nullable=False),Column('symbol',String(100),nullable=False),
+    Column('side',String(10),nullable=False),Column('rule',String(50),nullable=False),
+    Column('first_seen',Float,nullable=False),Column('assessed_at',Float,nullable=False),
+    Column('origin',String(30),nullable=False),Column('flow_group',String(30),nullable=False),
+    Column('status',String(20),nullable=False),Column('payload',JSON,nullable=False))
+Index('swing_trial_source',swing_trials.c.version,swing_trials.c.source_id,unique=True)
+Index('swing_trial_receipt',swing_trials.c.first_seen,swing_trials.c.id)
+Index('swing_trial_active',swing_trials.c.status,swing_trials.c.symbol)
+swing_checkpoints=Table('swing_flow_checkpoints_v1',meta,
+    Column('study_id',String(64),primary_key=True),Column('horizon',String(20),primary_key=True),
+    Column('target_at',Float),Column('due_at',Float),Column('status',String(20),nullable=False),
+    Column('reason',String(100)),Column('price',Float),Column('source_ts',Float),Column('received_at',Float),
+    Column('raw_return_pct',Float),Column('directional_return_pct',Float),Column('checked_at',Float))
+Index('swing_trial_checkpoints_due',swing_checkpoints.c.status,swing_checkpoints.c.due_at)
+
 def identity(*args):
     return hashlib.sha256(json.dumps(args,sort_keys=True,default=str).encode()).hexdigest()
 

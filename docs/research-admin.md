@@ -17,6 +17,7 @@ request, broker action, database migration or notification.
 | Morning expiration comparison | Latest 100 native signals by default; common complete quote cohorts, separately from sample-slot inventory. Cached report refreshed by the existing worker. |
 | Smoothers | Stored configuration count, source history and current native weekly observations. Full weekly comparison remains required for retirement. |
 | Swing Ideas | 90-day status totals for admitted ideas; technical candidates without flow are shown separately from trades. |
+| Swing flow comparison | Frozen pre-gate flow evidence for every newly retained technical candidate; full 30-day underlying endpoint comparisons, lifetime candidate/registration reconciliation and paginated records. Historical inventory and unknown flow coverage stay separate. |
 | Intraday Options Ideas | 30-day status totals for admitted ideas. Option expiration and holding period are distinct. |
 | Stock / ETF and futures setup studies | Separate instrument groups; all stored trials in the 30-day window; individual details paginated in groups of 100. Unresolved/excluded paths are not losses. |
 | Secondary comparison | 30-day report, at most 5,000 reviews. Original-program/Obsidian candidates, including rejected verdicts; does not cover every raw TM print. |
@@ -42,6 +43,14 @@ inputs, scheduled/missing measurements and historical inventory have separate
 counts. Its uncalibrated rubric and primary comparison are frozen in
 `docs/tm-scoring-study.md`; later-session outcomes are required before judging
 TM-only, Compass-only and combined selection. Stock movement is not option profit.
+
+Open `/#swing-study` for the rejected-candidate comparison. Technical-only,
+fresh-flow and delayed-flow selections use the same candidate-time price
+references and endpoint definitions. Five later session closes is the primary
+checkpoint; coverage extends through the tenth session including the candidate
+day. Actual option admissions are linked separately. The frozen protocol is
+`docs/swing-flow-study.md`; early output diagnoses coverage and filtering, while
+selection decisions require matured outcomes and later untouched evaluation.
 
 ## 0DTE selection diagnostics
 
