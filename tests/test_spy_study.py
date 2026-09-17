@@ -150,6 +150,7 @@ def test_ask_entry_and_costed_bid_exit_preserve_separate_underlying_result(stora
     with storage.tx() as c:
         p=opened(storage,c,side);service=Paper(storage,cfg())
         assert p['entry']==2.06 and p['entry_debit']==pytest.approx(206.65)
+        assert p['entry_chain']['asof']==NOW and p['entry_chain']['complete'] and p['entry_contract_metadata']==p['contract']
         assert p['entry_spread']==pytest.approx(.05) and p['contract']['expiry']==day(NOW)
         assert not storage.prefix(c,'position:') and not storage.prefix(c,'risk:') and len(storage.recent(c,'alert'))==1
         at=NOW+5;stock=q(at,102,102.02) if side=='long' else q(at,97.98,98)

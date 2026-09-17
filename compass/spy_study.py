@@ -220,6 +220,7 @@ class Paper(OptionIdeas):
         entry=round(oq['ask']+SLIPPAGE,2)
         p.update(status='open',opened_at=now,entry=entry,entry_debit=entry*100+FEE,samples=1,
             entry_quote=dict(oq),entry_underlying_quote=dict(uq),entry_underlying_mid=(uq['bid']+uq['ask'])/2,
+            entry_contract_metadata=candidate,entry_chain={k:chain.get(k) for k in ('asof','source','complete')},
             entry_spread=oq['ask']-oq['bid'],entry_spread_pct=100*(oq['ask']-oq['bid'])/((oq['ask']+oq['bid'])/2),
             entry_continuity=quality,underlying_entry_continuity=underlying_quality,
             entry_delay_seconds=now-p['signal_time'],entry_delay_after_delivery=now-p['delivery']['at'],option_source=oq.get('source'),
