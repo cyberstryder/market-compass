@@ -22,9 +22,12 @@ def parse_quotes(data, now):
 
 
 def targets(collector, now):
+    from .store import spy_options
     with collector.db.tx() as c:
         opened=c.execute(select(ideas.c.payload).where(ideas.c.status=='open')
             .order_by(ideas.c.created).limit(201)).scalars().all()
+        opened+=c.execute(select(spy_options.c.payload).where(spy_options.c.status=='open')
+            .order_by(spy_options.c.created).limit(201)).scalars().all()
         symbols=list(dict.fromkeys(p['contract']['symbol'] for p in opened[:200]))
         candidates=[]
         for symbol in symbols:
@@ -66,7 +69,7 @@ async def recover(collector):
     opra=await recover_alpaca(collector,[r['symbol'] for r in results if r.get('fresh_rows',0)==0])
     report=dict(at=time.time(),collection_version=COLLECTION_VERSION,requests=len(selected),opra_requests=int(bool(opra)),waiting=waiting,truncated=truncated,results=results,opra_results=opra,
         backoff_until=getattr(collector,'option_recovery_backoff',0),
-        note='Open intraday observations only; max four Massive requests plus one OPRA batch per cycle, five-second per-contract cooldown, two-second timeout. Only original quotes still fresh at receipt; no historical gap rewriting.')
+        note='Open intraday and SPY plan observations; max four Massive requests plus one OPRA batch per cycle, five-second per-contract cooldown, two-second timeout. Only original quotes still fresh at receipt; no historical gap rewriting.')
     await asyncio.to_thread(collector.db.health,'option_recovery','running','Bounded original-timestamp quote recovery',None,**report)
     if results:LOG.info('Option recovery: %s',__import__('json').dumps(report,sort_keys=True))
 

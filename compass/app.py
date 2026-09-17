@@ -106,6 +106,8 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(TMStudy(db,cfg).run()))
             from .swing_study import Study as SwingStudy
             tasks.append(asyncio.create_task(SwingStudy(db,cfg).run()))
+            from .spy_study import Study as SPYStudy
+            tasks.append(asyncio.create_task(SPYStudy(db,cfg).run()))
         tasks.append(asyncio.create_task(heartbeat()))
         yield
         if collectors: await collectors.close()
@@ -259,6 +261,7 @@ def create_app(cfg=None):
                 "forward_acceptance":db.get(c,"forward-acceptance-v1:report",{}),
                 "tm_study":{**db.get(c,'tm-study-v1:report',{}),'worker':db.get(c,'tm-study-v1:worker',{})},
                 "swing_study":{**db.get(c,'swing-flow-study-v1:report',{}),'worker':db.get(c,'swing-flow-study-v1:worker',{})},
+                "spy_study":{**db.get(c,'spy-plan-0dte-v1:report',{}),'worker':db.get(c,'spy-plan-0dte-v1:worker',{})},
                 "secondary":secondary_snapshot(db,c,now,clock=time.time),
                 "setup_study":study_snapshot(db,c,cfg,now),
                 "option_ideas":ideas_snapshot(db,c,cfg,now),
@@ -305,6 +308,28 @@ def create_app(cfg=None):
     def get_swing_study():
         with db.tx() as c:
             return {**db.get(c,'swing-flow-study-v1:report',{}),'worker':db.get(c,'swing-flow-study-v1:worker',{})}
+
+    @app.get('/api/spy-study')
+    def get_spy_study():
+        with db.tx() as c:
+            return {**db.get(c,'spy-plan-0dte-v1:report',{}),'worker':db.get(c,'spy-plan-0dte-v1:worker',{})}
+
+    @app.get('/api/spy-study/records')
+    def get_spy_study_records(cohort:str=Query('all',max_length=30),limit:int=Query(100,ge=1,le=100),
+            asof:float|None=Query(None,gt=0,allow_inf_nan=False),cursor:str=Query('',max_length=1024)):
+        from .spy_study_report import record_page
+        try:
+            with db.tx() as c:return record_page(c,time.time(),cohort=cohort,limit=limit,asof=asof,cursor=cursor)
+        except ValueError as error:raise HTTPException(400,str(error)) from error
+
+    @app.get('/api/spy-study/marks/{id}')
+    def get_spy_study_marks(id:str,limit:int=Query(100,ge=1,le=100),
+            asof:float|None=Query(None,gt=0,allow_inf_nan=False),cursor:str=Query('',max_length=1024)):
+        from .spy_study_report import mark_page
+        try:
+            with db.tx() as c:return mark_page(c,time.time(),id,limit=limit,asof=asof,cursor=cursor)
+        except ValueError as error:raise HTTPException(400,str(error)) from error
+        except LookupError as error:raise HTTPException(404,str(error)) from error
 
     @app.get('/api/swing-study/records')
     def get_swing_study_records(cohort:str=Query('all',max_length=30),limit:int=Query(100,ge=1,le=100),

@@ -68,6 +68,15 @@ observations, not fills or independently measured trade P&L. The historical stud
 allowed later checks through 10:30 ET. This extension is not a claim of proven
 profitability and adds no afternoon entry schedule.
 
+The [prospective 0DTE outcome ledger](spy-plan-outcomes.md), available at
+`/#spy-study`, now links these exact reports to one-contract SPY observations.
+It waits for the plan's confirmed Discord receipt and eligible actual quotes
+within the original check deadline, then follows the frozen underlying bracket
+and a session exit. Missing contracts, unfilled entries and unresolved paths
+remain explicit. Historical reports receive no reconstructed trades. The ledger
+uses its own declared liquidity/continuity gates and retains complete quote
+evidence; scheduled plan and chart messages are unchanged.
+
 Only same-day standard 100-share SPY contracts are displayed, nearest whole-dollar
 strike to spot with ties lower. Before the open, premiums are withheld. During RTH,
 positive-size, uncrossed bid/ask quotes must be no more than ten seconds old;

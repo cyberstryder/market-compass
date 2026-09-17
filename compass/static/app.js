@@ -7,7 +7,7 @@ const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notati
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
 const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated','event_stale','poll_stale','vendor_stale','mixed'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
-const titles={'swing-study':'Swing comparison','tm-study':'TM scoring study','research-admin':'Research admin',obsidian:'Obsidian Watchlist','swing-ideas':'Swing ideas','option-ideas':'Options ideas','setup-study':'Setup results',secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
+const titles={'spy-study':'SPY 0DTE outcomes','swing-study':'Swing comparison','tm-study':'TM scoring study','research-admin':'Research admin',obsidian:'Obsidian Watchlist','swing-ideas':'Swing ideas','option-ideas':'Options ideas','setup-study':'Setup results',secondary:'Secondary review',projects:'Connected projects',scanner:'Live scanner',research:'Research desk',overview:'Session overview',exposure:'Exposure context',flow:'Options flow',trades:'Simulated trades',assistant:'Ask Compass',health:'Feed health'};
 let lastState=null,first=true,testEvent=null;
 function selectTab(tab){
  if(!Object.hasOwn(titles,tab))return;
@@ -19,6 +19,7 @@ function selectTab(tab){
  if(tab==='setup-study'&&lastState)renderSetupStudy(lastState.setup_study);
  if(tab==='tm-study'&&lastState)renderTMStudy(lastState.tm_study);
  if(tab==='swing-study'&&lastState)renderSwingStudy(lastState.swing_study);
+ if(tab==='spy-study'&&lastState)renderSPYStudy(lastState.spy_study);
 }
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>selectTab(b.dataset.tab));
 window.addEventListener('hashchange',()=>selectTab(location.hash.slice(1)));
@@ -65,6 +66,7 @@ function render(d){
  renderResearchAdmin(d.research_admin);
  renderTMStudy(d.tm_study);
  renderSwingStudy(d.swing_study);
+ renderSPYStudy(d.spy_study);
  renderObsidian(d.obsidian);
  const openDetails=new Set([...document.querySelectorAll('details[open][data-key]')].map(e=>e.dataset.key));
  lastState=d;

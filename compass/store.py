@@ -69,6 +69,26 @@ swing_checkpoints=Table('swing_flow_checkpoints_v1',meta,
     Column('raw_return_pct',Float),Column('directional_return_pct',Float),Column('checked_at',Float))
 Index('swing_trial_checkpoints_due',swing_checkpoints.c.status,swing_checkpoints.c.due_at)
 
+spy_checks=Table('spy_plan_checks_v1',meta,
+    Column('id',String(64),primary_key=True),Column('version',String(50),nullable=False),
+    Column('source_key',String(150),nullable=False),Column('day',String(10),nullable=False),
+    Column('phase',String(30),nullable=False),Column('kind',String(24),nullable=False),
+    Column('origin',String(30),nullable=False),Column('decision',String(30),nullable=False),
+    Column('created',Float,nullable=False),Column('payload',JSON,nullable=False))
+Index('spy_plan_check_source',spy_checks.c.version,spy_checks.c.source_key,unique=True)
+Index('spy_plan_check_created',spy_checks.c.created,spy_checks.c.id)
+spy_options=Table('spy_plan_options_v1',meta,
+    Column('id',String(64),primary_key=True),Column('version',String(50),nullable=False),
+    Column('day',String(10),nullable=False),Column('status',String(24),nullable=False),
+    Column('created',Float,nullable=False),Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
+Index('spy_plan_one_observation',spy_options.c.version,spy_options.c.day,unique=True)
+Index('spy_plan_options_active',spy_options.c.status,spy_options.c.created)
+spy_marks=Table('spy_plan_marks_v1',meta,
+    Column('id',String(64),primary_key=True),Column('study_id',String(64),nullable=False),
+    Column('at',Float,nullable=False),Column('processed_at',Float,nullable=False),
+    Column('payload',JSON,nullable=False))
+Index('spy_plan_mark_path',spy_marks.c.study_id,spy_marks.c.at,spy_marks.c.id)
+
 def identity(*args):
     return hashlib.sha256(json.dumps(args,sort_keys=True,default=str).encode()).hexdigest()
 

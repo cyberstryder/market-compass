@@ -254,16 +254,24 @@ def build(data, supplements, policy):
 
     spy = supplements.get('spy', {})
     latest = spy.get('latest') or {}
-    add('spy', 'SPY daily plan and confirmation', 'Daily plans', 'scheduled' if policy.get('spy') else 'disabled',
-        'Daily levels, chart instructions and scheduled opening/follow-up decisions are saved.',
+    spystudy=data.get('spy_study',{});spyc=spystudy.get('counts',{})
+    spystates={r['status']:r['count'] for r in spystudy.get('statuses',[])}
+    spyissues=[] if spystudy.get('version') else ['The linked SPY option study has not reported yet.']
+    if spystates.get('unresolved'):spyissues.append('Some option paths are unresolved; they are excluded from completed return statistics.')
+    if spystudy.get('inventory',{}).get('unregistered'):spyissues.append('Saved plan registration is still catching up.')
+    if spystudy.get('collection',{}).get('outside_subscription'):spyissues.append('A requested study contract is outside current subscriptions; actual quotes determine entry readiness.')
+    add('spy', 'SPY daily plan and 0DTE outcomes', 'Daily plans', 'scheduled' if policy.get('spy') else 'disabled',
+        'Frozen daily plans, opening/follow-up decisions, missed schedule slots and linked option paths are stored.',
         'Opening confirmation and conditional follow-ups through 09:30 CT; SPX/XSP projections remain estimates.',
-        'Saved plans and confirmation decisions. This is not a complete daily option-entry/outcome or timing-comparison ledger.',
+        'One same-day SPY paper contract after an eligible saved confirmation; original underlying bracket, fresh paired quotes, spread, fees and excursions. Historical plans have no reconstructed trades.',
         [metric('Confirmation checks saved today', spy.get('checks_today')),
-         metric('Latest decision', latest.get('decision'))],
-        'Today’s saved confirmation checks and latest scheduled plan; historical timing research is separate.', 'research-admin',
+         metric('Latest decision', latest.get('decision')),metric('Prospective reports, 30d',spyc.get('prospective_reports')),
+         metric('Completed option paths, 30d',spystates.get('closed',0) if spystudy.get('version') else None)],
+        'Full 30-day session-window SQL totals, paginated reports and individual quote paths; separate lifetime saved-report reconciliation.', 'spy-study',
         route='spy_morning', alert_policy='Scheduled plan and chart messages enabled.' if policy.get('spy') else 'Scheduled messages disabled.',
-        checked_at=latest.get('generated_at'), issues=['A complete live plan-to-option-outcome comparison is not implemented here.'],
-        next_step='Review saved confirmation evidence alongside the separate timing research.')
+        checked_at=spystudy.get('at') or latest.get('generated_at'),issues=spyissues,version=spystudy.get('version'),
+        next_step='Verify the next session’s plan-to-check linkage, contract selection and complete quote paths before comparing opening versus later entries.',
+        measured=spystates.get('closed',0) if spystudy.get('version') else None)
 
     trades = [p for p in data.get('trades', []) if p.get('asset') == 'option']
     positions = [p for p in data.get('positions', [])
