@@ -421,13 +421,25 @@ class Scanner:
                 audit={}
                 if engine.options(c,signal,now,quiet=True,diagnostics=audit):
                     pending.update(status='entered',updated_at=now)
-                self.save_option_diagnostic(c,key,pending,audit,now)
+                self.save_option_diagnostic(c,key,pending,audit,now,quote)
             else:
                 reason='Fresh underlying quote required' if not fresh(quote,now) else 'Underlying moved beyond entry tolerance'
                 self.save_option_diagnostic(c,key,pending,dict(version='0dte-selection-v1',at=now,
-                    status='waiting',reason=reason,rejections=[],checked_contracts=0),now)
+                    status='waiting',reason=reason,rejections=[],checked_contracts=0),now,quote)
 
-    def save_option_diagnostic(self,c,key,pending,audit,now):
+    def save_option_diagnostic(self,c,key,pending,audit,now,quote=None):
+        # Freeze the exact quote used by retry_options and the contemporaneous
+        # risk context. A later dashboard quote/risk balance cannot explain an
+        # earlier rejection, and a future-at-check quote is not a stale quote.
+        audit['underlying_evidence']={
+            'quote':{k:quote.get(k) for k in ('ts','bid','ask','bid_size','ask_size','source','collection_version')} if quote else None,
+            'age_seconds':now-quote['ts'] if quote and quote.get('ts') is not None else None,
+            'fresh':fresh(quote,now),
+            'basis':'Exact scanner retry quote at saved attempt time; not a later source lookup'}
+        risk=self.db.get(c,'risk:'+risk_day(now),{'realized':0,'entries':0})
+        audit['risk_context']={**risk,'day':risk_day(now),'daily_loss_limit':self.cfg.daily_loss,
+            'daily_loss_locked':risk['realized']<=-self.cfg.daily_loss,
+            'basis':'Contemporaneous portfolio context; selection may stop at an earlier gate'}
         previous=pending.get('last_selection',{})
         def signature(row):
             return (row.get('status'),row.get('reason'),[(r['symbol'],r['reason']) for r in row.get('rejections',[])])

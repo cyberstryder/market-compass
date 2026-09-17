@@ -103,3 +103,25 @@ def test_archive_evidence_does_not_claim_a_usable_stream_was_missing():
         'underlying':dict(usable_rows=0,stale_or_invalid_when_recorded=1)})]
     assert failure_evidence(rows)=={'option: usable samples present; inspect gap timing':1,
         'underlying: stale or invalid archived samples':1}
+
+
+@pytest.mark.parametrize('offset', [-6, 2])
+def test_retry_freezes_exact_underlying_clock_and_contemporaneous_loss_lock(db,offset):
+    cfg=Config(local=True,stocks=('SPY',),futures=(),setup_study=False)
+    scanner,engine=Scanner(db,cfg),Engine(db,cfg)
+    with db.tx() as c:
+        seed(db,c)
+        db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
+        db.put(c,'risk:'+risk_day(NOW),dict(realized=-390.5,entries=40))
+        q=quote(NOW+offset)
+        scanner.retry_options(c,{'SPY':q},NOW,engine)
+        saved=db.get(c,'pending_options:test')['last_selection']
+        assert saved['underlying_evidence']['age_seconds']==-offset
+        assert saved['underlying_evidence']['fresh'] is False
+        assert saved['underlying_evidence']['quote']['ts']==q['ts']
+        assert saved['risk_context']['daily_loss_locked'] is True
+        assert saved['reason']=='Fresh underlying quote required'
+        db.put(c,'risk:'+risk_day(NOW),dict(realized=0,entries=0))
+        scanner.retry_options(c,{'SPY':quote(NOW+121)},NOW+121,engine)
+        assert db.get(c,'pending_options:test')['last_selection']==saved
+        assert not db.prefix(c,'trade:')
