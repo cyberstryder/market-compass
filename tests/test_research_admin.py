@@ -134,7 +134,7 @@ def test_admin_api_requires_login_and_only_reads_saved_evidence(tmp_path):
         assert response.headers['content-disposition'].endswith('"compass-research-status.json"')
         assert 'no-store' in response.headers['cache-control']
         report = response.json()
-        assert report['version'] == 'research-admin-v1'
+        assert report['version'] == 'research-admin-v2'
         assert report['storage']['database'] == 'sqlite'
         assert report['flow_research']['all_record_outcomes'] is None
         assert stored_counts() == before
@@ -153,3 +153,64 @@ def test_closed_position_cache_entries_are_not_counted_as_open_options():
     values = metrics(stream(report, 'zero-dte'))
     assert values['Open option positions'] == 1
     assert values['Option trades in recent view'] == 2
+
+
+def test_placeholder_summaries_are_not_observed_zero_cohorts():
+    data = {'asof': NOW, 'setup_study': {'groups': [], 'records': [], 'count': 0},
+            'secondary': {'report_at': None, 'window': {'reviewed': 0},
+                          'counts': {'supported': 0, 'rejected': 0}}}
+    report = build(data, {}, {})
+    assert metrics(stream(report, 'intraday'))['Closed outcomes'] is None
+    assert metrics(stream(report, 'secondary'))['Reviewed in report'] is None
+    assert stream(report, 'intraday')['coverage']['sections'][0]['status'] == 'unobserved'
+    data['setup_study'].update(at=NOW, coverage='full_window', version='setup-outcomes-v3')
+    data['secondary']['report_at'] = NOW
+    report = build(data, {}, {})
+    assert metrics(stream(report, 'intraday'))['Closed outcomes'] == 0
+    assert metrics(stream(report, 'secondary'))['Reviewed in report'] == 0
+
+
+def test_nested_report_limits_prevent_claiming_complete_coverage():
+    report = build({'asof': NOW}, {'native_report': {'at': NOW-12,
+        'morning': {'signals': 80, 'coverage': {'complete': 70, 'incomplete': 10}},
+        'morning_truncated': {'signals': False, 'candidates': True,
+            'research_bars': True, 'source_inventory': False}}}, {})
+    c = stream(report, 'morning-expirations')['coverage']
+    sections = {s['name']: s for s in c['sections']}
+    assert not c['complete_scope']
+    assert sections['Native report: signals']['status'] == 'complete_scope'
+    assert sections['Native report: research bars']['status'] == 'truncated'
+    assert sections['Native report: receipts']['status'] == 'coverage_unknown'
+    assert c['report_age_seconds'] == 12
+    assert c['source_age_seconds'] is None
+    assert c['states'] == {'complete': 70, 'incomplete': 10}
+
+
+def test_window_totals_and_unflagged_preview_are_distinct():
+    report = build({'asof': NOW, 'option_ideas': {
+        'counts': {'closed': 300, 'unresolved': 20}, 'records': [{}]*100},
+        'obsidian': {'total_ideas': 59, 'total_events': 116,
+            'ideas': [{}]*59, 'events': [{}]*100}}, {}, {})
+    scopes = stream(report, 'option_ideas')['coverage']['sections']
+    assert scopes[0]['status'] == 'complete_scope'
+    assert scopes[1]['status'] == 'coverage_unknown'
+    assert stream(report, 'option_ideas')['measured'] == 300
+    obs = {s['name']: s for s in stream(report, 'obsidian')['coverage']['sections']}
+    assert obs['Ideas detail']['truncated'] is False
+    assert obs['Events detail']['truncated'] is True
+
+
+def test_all_active_cards_have_versioned_protocols_without_resetting_existing_studies():
+    report = build({'asof': NOW}, {}, {})
+    assert len(report['planned']) == 2
+    for row in report['streams']:
+        p = row['protocol']
+        assert p['primary'] and p['model'] and p['evaluation']
+        if row['id'] in ('tm-flow', 'swing-flow-study', 'spy'):
+            assert p['status'] == 'existing_frozen_protocol'
+            assert p['frozen_on'] == '2026-09-16'
+        else:
+            assert all(p.get(k) for k in ('population', 'entry', 'contract', 'exit', 'costs', 'exclusions', 'uncertainty'))
+    # A response must not mutate the canonical definition or a later response.
+    stream(report, 'morning')['protocol']['primary'] = 'changed'
+    assert stream(build({'asof': NOW}, {}, {}), 'morning')['protocol']['primary'] != 'changed'

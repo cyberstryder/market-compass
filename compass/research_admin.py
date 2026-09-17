@@ -7,8 +7,10 @@ from a running process, a connected webhook or a nonempty vendor feed.
 from .instruments import future_root
 from .flow_recovery import freshness as flow_freshness
 from .market import day
+from .research_protocols import protocol
+from .research_coverage import coverage
 
-VERSION = 'research-admin-v1'
+VERSION = 'research-admin-v2'
 
 
 def total(values):
@@ -62,6 +64,7 @@ def build(data, supplements, policy):
             issues=problems, needs_attention=bool(problems) or stage in
                 ('awaiting_evidence', 'not_built', 'disabled', 'stale'),
             next_step=next_step, version=version, measured=measured,
+            protocol=protocol(id), coverage=coverage(id, data, supplements),
             alerts={'policy': alert_policy, 'owner': owner, 'route': route,
                 'channel': dest.get('channel'), 'destination': dest.get('destination_mode'),
                 'health': health.get('status', 'unobserved'),
@@ -206,6 +209,7 @@ def build(data, supplements, policy):
             if r.get('origin')=='prospective' and r.get('horizon')=='5session' and r.get('status')=='completed'))
 
     study = data.get('setup_study', {})
+    study_observed = bool(study.get('at') or study.get('version') or study.get('groups'))
     for futures, id, name, route in ((False, 'intraday', 'Stock / ETF setup research', 'intraday'), (True, 'futures', 'Futures setup research', 'futures')):
         groups = [g for g in study.get('groups', []) if bool(future_root(g.get('symbol', ''))) == futures]
         stats = {k: sum(g.get(k, 0) for g in groups) for k in ('total', 'closed', 'wins', 'unresolved')}
@@ -216,15 +220,15 @@ def build(data, supplements, policy):
             'Qualifying price setups and qualifying cooldown candidates receive separate experiments, independent of portfolio entry limits.',
             'Versioned setup rules; '+('market-state and entry-variant comparisons are also recorded.' if futures else 'TM/exposure context is supporting evidence when available.'),
             'Underlying/instrument target, stop, modeled net result, duration and favorable/adverse excursion. These are not option returns.',
-            [metric('Setup trials', stats['total'] if 'groups' in study else None),
-             metric('Closed outcomes', stats['closed'] if 'groups' in study else None),
-             metric('Positive modeled outcomes', stats['wins'] if 'groups' in study else None),
-             metric('Unresolved paths', stats['unresolved'] if 'groups' in study else None)],
+            [metric('Setup trials', stats['total'] if study_observed else None),
+             metric('Closed outcomes', stats['closed'] if study_observed else None),
+             metric('Positive modeled outcomes', stats['wins'] if study_observed else None),
+             metric('Unresolved paths', stats['unresolved'] if study_observed else None)],
             str(study.get('window_days', 30))+'-day report; '+('all stored trials in this window; individual records paginated in groups of 100.' if study.get('coverage') == 'full_window' else 'saved summary coverage has not yet been verified as complete.')+' Overlapping trials are not portfolio returns.', 'setup-study',
             route=route, alert_policy='Setup and primary-result alerts enabled when scanner is on; cooldown candidates are still measured.' if policy.get('scanner') else 'Scanner disabled.',
             checked_at=(study.get('worker') or {}).get('at'), issues=issues,
             next_step='Compare resolved outcomes and observation gaps across setup, direction and market conditions.',
-            version=study.get('version'), measured=stats['closed'] if 'groups' in study else None)
+            version=study.get('version'), measured=stats['closed'] if study_observed else None)
 
     secondary = data.get('secondary', {})
     sec_status = secondary.get('status', {})
@@ -232,10 +236,10 @@ def build(data, supplements, policy):
         'Reviews received Morning, Smoothers, linked futures and Obsidian candidates, with the original evidence retained.',
         'Supported / watch / rejected / insufficient-data verdicts. Paired comparisons remove TM flow and levels while keeping the same candidate and prices.',
         'Supported and rejected candidates share 15/30/60-minute underlying checkpoints; Smoothers also has weekly source comparisons.',
-        [metric('Reviewed in report', secondary.get('window', {}).get('reviewed')),
-         metric('Supported', secondary.get('counts', {}).get('supported')),
-         metric('Rejected', secondary.get('counts', {}).get('rejected')),
-         metric('Insufficient data', secondary.get('counts', {}).get('insufficient_data'))],
+        [metric('Reviewed in report', secondary.get('window', {}).get('reviewed') if secondary.get('report_at') else None),
+         metric('Supported', secondary.get('counts', {}).get('supported') if secondary.get('report_at') else None),
+         metric('Rejected', secondary.get('counts', {}).get('rejected') if secondary.get('report_at') else None),
+         metric('Insufficient data', secondary.get('counts', {}).get('insufficient_data') if secondary.get('report_at') else None)],
         '30-day secondary report, limited to 5,000 reviews; this comparison does not cover every raw TM unusual-flow record.', 'secondary',
         route='research', alert_policy='Timely secondary notices enabled.' if sec_status.get('alerts_enabled') else 'Secondary notices disabled or not observed.',
         checked_at=secondary.get('report_at'), issues=['TM-wide scoring and outcome comparisons are outside this study.'] +
@@ -297,7 +301,7 @@ def build(data, supplements, policy):
         'Vendor screeners, exposure levels, sector context and other research responses are stored with source and receipt clocks.',
         'Dated context can support a price setup; a fetched response is not automatically an entry or a Compass rating.',
         'Linked setup and secondary studies evaluate selected uses; not every vendor screener result receives independent outcome tracking.',
-        [metric('Configured research feeds', len(feeds)), metric('Current feed reports', sum(f.get('status') == 'current' for f in feeds))],
+        [metric('Configured research feeds', len(feeds) if 'feeds' in data.get('scanner', {}) else None), metric('Current feed reports', sum(f.get('status') == 'current' for f in feeds) if 'feeds' in data.get('scanner', {}) else None)],
         'Latest status per configured source; source freshness and collection health are separate.', 'research',
         route='exposure', alert_policy='Exposure price setups use their dedicated channel; raw context feeds are not broadcast automatically.',
         checked_at=data.get('scanner', {}).get('status', {}).get('at'),
@@ -324,6 +328,9 @@ def build(data, supplements, policy):
             'without_flow_confirmation': audit.get('swing_without_flow'),
             'truncated': audit.get('swing_candidates_truncated')},
         'swing_candidate_study':dict(version=ss.get('version'),inventory=si,counts=sc,at=ss.get('at')),
+        'planned': [dict(name='Overnight trend test', status='specification_only',
+            reason='Dedicated 3-minute trend/trail and daily profit-goal study is not implemented; existing futures setup results cannot stand in for it.'),
+            dict(name='End-of-day program', status='not_built', reason='No active producer or frozen entry/exit study exists.')],
         'notes': ['Saved data, assessed candidates, usable measurements and delivered alerts are different counts.',
             'Filters can suppress alerts now. There is no blanket pause until research is profitable.',
             'A score is not a probability of profit. Completed observations do not establish an improved strategy.',
