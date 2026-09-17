@@ -288,6 +288,8 @@ class BriefWorker:
             self.db.append(c, 'alert', 'spy_brief', 'SPY', now, companion(report), key + ':chart')
             self.db.put(c, key, report)
             self.db.put(c, 'spy-brief:latest', report)
+            from .spy_study import register
+            register(self.db,c,report,now)
         self.db.health('spy_morning_brief', 'queued', phase + ' 0DTE morning plan', now)
         return report
 

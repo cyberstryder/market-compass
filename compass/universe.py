@@ -45,6 +45,9 @@ def data_symbols(db, c, cfg, now):
     from .tm_study import requested_symbols,symbol_for
     from .swing_study import requested_symbols as swing_symbols
     base=list(symbols((*cfg.watch_symbols,*connected_symbols(db,c,now))))
+    from sqlalchemy import select
+    from .store import spy_options
+    if c.execute(select(spy_options.c.id).where(spy_options.c.status.in_(('pending','open'))).limit(1)).first():base.append('SPY')
     for symbol in swing_symbols(c):
         if not symbol_for({'symbol':symbol})[1]:base.append(symbol)
     for row in requested_symbols(c,now):

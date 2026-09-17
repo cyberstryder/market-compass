@@ -37,7 +37,7 @@ function renderResearchAdminCards(){
    '<p class="fine research-window">'+esc(r.window)+'</p><dl class="research-stages"><dt>Collection</dt><dd>'+esc(r.collection)+'</dd><dt>Assessment</dt><dd>'+esc(r.assessment)+'</dd><dt>Outcomes</dt><dd>'+esc(r.outcomes)+'</dd><dt>Alerts</dt><dd>'+esc(a.policy)+'<span class="research-owner">Owner: '+esc(a.owner)+'</span></dd></dl>'+route+
    (r.issues.length?'<div class="research-issues"><strong>Needs attention</strong><ul>'+r.issues.map(v=>'<li>'+esc(v)+'</li>').join('')+'</ul></div>':'')+
    '<p class="research-next"><strong>Next check</strong> '+esc(r.next_step)+'</p><div class="research-card-foot"><span class="fine">Checked '+when(r.checked_at)+(r.version?' · '+esc(r.version):'')+'</span>'+
-   (r.id==='spy'?'<a href="/api/spy-morning-brief" target="_blank" rel="noopener">Open plan details ↗</a>':'<a href="'+esc(r.href)+'" data-research-link>Open details →</a>')+'</div></article>';
+   '<a href="'+esc(r.href)+'" data-research-link>Open details →</a></div></article>';
  }).join('')||empty('No matching research','Change the program name or filter.');
 }
 document.addEventListener('DOMContentLoaded',()=>{

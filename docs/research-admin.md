@@ -22,7 +22,7 @@ request, broker action, database migration or notification.
 | Stock / ETF and futures setup studies | Separate instrument groups; all stored trials in the 30-day window; individual details paginated in groups of 100. Unresolved/excluded paths are not losses. |
 | Secondary comparison | 30-day report, at most 5,000 reviews. Original-program/Obsidian candidates, including rejected verdicts; does not cover every raw TM print. |
 | Obsidian | Stored idea/event inventory; detailed recent and historical audit views retain their own assumptions. |
-| SPY daily plan | Latest saved plan and today's four possible confirmation checks; no complete live option-outcome ledger. |
+| SPY daily plan and 0DTE outcomes | Immutable scheduled reports, confirmed delivery clocks, audited missing/unused slots and linked same-day option paths. Full 30-day session totals, lifetime report registration and paginated paired marks; old plans stay historical. |
 | 0DTE simulations | All current option positions plus option trades within the latest 100 portfolio trades across instruments. Feed health also reports recent retry diagnostics, exclusions and portfolio risk context. Not lifetime totals. |
 | Market research/exposure | Latest status per configured context feed; collection does not imply all returned symbols receive outcomes. |
 
@@ -51,6 +51,13 @@ checkpoint; coverage extends through the tenth session including the candidate
 day. Actual option admissions are linked separately. The frozen protocol is
 `docs/swing-flow-study.md`; early output diagnoses coverage and filtering, while
 selection decisions require matured outcomes and later untouched evaluation.
+
+Open `/#spy-study` for the plan-to-option ledger. A confirmation can become one
+SPY 0DTE paper observation only after acknowledged plan delivery, before its
+original deadline and with usable quotes. Recorded paths use the report's
+underlying stop/target and a session exit; costs, exclusions and unresolved paths
+are visible. The frozen protocol is `docs/spy-plan-outcomes.md`. The next full cash
+session must verify the connection before timing comparisons are interpreted.
 
 ## 0DTE selection diagnostics
 
