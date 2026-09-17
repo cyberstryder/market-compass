@@ -3,6 +3,13 @@ let researchAdminData=null;
 function researchMetricValue(value){
  return value===null||value===undefined?'Not measured':typeof value==='number'?num(value,Number.isInteger(value)?0:1):esc(value);
 }
+function researchCoverageDetails(row,open=false){
+ const c=row.coverage||{},p=row.protocol||{};
+ const scopes=(c.sections||[]).map(s=>'<li><strong>'+esc(s.name)+':</strong> '+esc(s.scope)+' · '+esc(s.status.replaceAll('_',' '))+(s.limit!=null?' · limit '+num(s.limit,0):'')+(s.count!=null?' · observed '+num(s.count,0):'')+'</li>').join('');
+ const states=Object.entries(c.states||{}).map(([k,v])=>esc(k.replaceAll('_',' '))+': '+researchMetricValue(v)).join(' · ');
+ const fields=[['Model','model'],['Population','population'],['Entry','entry'],['Contract','contract'],['Exit','exit'],['Costs','costs'],['Primary comparison','primary'],['Exclusions','exclusions'],['Untouched evaluation','evaluation'],['Uncertainty','uncertainty']];
+ return '<details class="research-scope"'+(open?' open':'')+'><summary>Coverage, display limits and frozen protocol</summary><p class="fine">Report '+when(c.report_at)+' · report age '+researchMetricValue(c.report_age_seconds)+' seconds · source age '+researchMetricValue(c.source_age_seconds)+' seconds</p><ul>'+scopes+'</ul>'+(states?'<p class="fine">'+states+'</p>':'')+'<p class="fine">'+esc(c.basis||'')+'</p><p><strong>Protocol '+esc(p.frozen_on||'unobserved')+'</strong> · '+esc((p.status||'unobserved').replaceAll('_',' '))+'</p><dl class="research-stages">'+fields.filter(([,key])=>p[key]).map(([label,key])=>'<dt>'+label+'</dt><dd>'+esc(p[key])+'</dd>').join('')+'</dl>'+(p.href?'<p><a href="'+esc(p.href)+'" target="_blank" rel="noopener">Read frozen protocol →</a></p>':'')+'</details>';
+}
 function renderResearchAdmin(data){
  if(!data)return;
  researchAdminData=data;
@@ -19,11 +26,12 @@ function renderResearchAdmin(data){
  $('#research-admin-coverage').innerHTML+='<p><strong>Swing candidate comparison:</strong> '+researchMetricValue(si.registered)+' registered of '+researchMetricValue(si.retained_candidates)+' lifetime retained candidates; '+researchMetricValue(sc.prospective)+' prospective observations. Historical inventory remains separate. <a href="/#swing-study">Open Swing comparison →</a></p>';
  const store=data.storage||{};
  $('#research-admin-storage').innerHTML='<div class="research-storage"><p><strong>Primary store</strong><br>'+esc(store.database==='postgresql'?'PostgreSQL':store.database)+' · '+tag(store.status)+'</p><p><strong>Database size</strong><br>'+(store.database_bytes==null?'Not measured':num(store.database_bytes/1e9,2)+' GB')+'</p><p><strong>Archive scheduler</strong><br>'+tag(store.archive_scheduler)+'</p><p><strong>Storage check</strong><br>'+when(store.checked_at)+'</p></div><p class="fine">Stored evidence includes source records, native observations, research ledgers and delivery receipts. Each card keeps its own reporting window. Recent-row views are not lifetime totals, and an archive scheduler heartbeat does not establish a verified backup or restoration.</p>';
- $('#research-admin-notes').innerHTML='<ul class="research-notes">'+data.notes.map(n=>'<li>'+esc(n)+'</li>').join('')+'</ul><p class="fine">Status captured '+when(data.asof)+' · '+esc(data.version)+'</p>';
+ $('#research-admin-notes').innerHTML='<ul class="research-notes">'+data.notes.map(n=>'<li>'+esc(n)+'</li>').join('')+'</ul>'+(data.planned||[]).map(p=>'<p class="fine"><strong>'+esc(p.name)+'</strong> · '+esc(p.status.replaceAll('_',' '))+': '+esc(p.reason)+'</p>').join('')+'<p class="fine">Status captured '+when(data.asof)+' · '+esc(data.version)+'</p>';
  renderResearchAdminCards();
 }
 function renderResearchAdminCards(){
  if(!researchAdminData)return;
+ const expanded=new Set([...document.querySelectorAll('#research-admin-streams details[open]')].map(d=>d.closest('[data-research-id]').dataset.researchId));
  const term=$('#research-admin-search').value.toLowerCase().trim();
  const filter=$('#research-admin-filter').value;
  const rows=researchAdminData.streams.filter(r=>(!term||[r.name,r.family,r.collection,r.assessment,r.outcomes].join(' ').toLowerCase().includes(term))&&
@@ -32,11 +40,11 @@ function renderResearchAdminCards(){
  $('#research-admin-streams').innerHTML=rows.map(r=>{
   const a=r.alerts||{};
   const route=a.route?'<p class="fine">'+esc(a.channel?'#'+a.channel:a.route.replaceAll('_',' '))+' · '+esc(a.destination||'destination unobserved')+' · '+tag(a.health)+' · queue '+researchMetricValue(a.pending)+(a.last_confirmed_at?' · last confirmed '+when(a.last_confirmed_at):' · no confirmed delivery recorded')+'</p>':'';
-  return '<article class="panel research-card'+(r.needs_attention?' research-attention':'')+'"><div class="panel-head"><div><p class="eyebrow">'+esc(r.family)+'</p><h2>'+esc(r.name)+'</h2></div>'+tag(r.stage)+'</div>'+
+  return '<article data-research-id="'+esc(r.id)+'" class="panel research-card'+(r.needs_attention?' research-attention':'')+'"><div class="panel-head"><div><p class="eyebrow">'+esc(r.family)+'</p><h2>'+esc(r.name)+'</h2></div>'+tag(r.stage)+'</div>'+
    '<div class="research-card-metrics">'+r.metrics.map(m=>'<div><strong>'+researchMetricValue(m.value)+'</strong><span>'+esc(m.label)+'</span></div>').join('')+'</div>'+
    '<p class="fine research-window">'+esc(r.window)+'</p><dl class="research-stages"><dt>Collection</dt><dd>'+esc(r.collection)+'</dd><dt>Assessment</dt><dd>'+esc(r.assessment)+'</dd><dt>Outcomes</dt><dd>'+esc(r.outcomes)+'</dd><dt>Alerts</dt><dd>'+esc(a.policy)+'<span class="research-owner">Owner: '+esc(a.owner)+'</span></dd></dl>'+route+
    (r.issues.length?'<div class="research-issues"><strong>Needs attention</strong><ul>'+r.issues.map(v=>'<li>'+esc(v)+'</li>').join('')+'</ul></div>':'')+
-   '<p class="research-next"><strong>Next check</strong> '+esc(r.next_step)+'</p><div class="research-card-foot"><span class="fine">Checked '+when(r.checked_at)+(r.version?' · '+esc(r.version):'')+'</span>'+
+   researchCoverageDetails(r,expanded.has(r.id))+'<p class="research-next"><strong>Next check</strong> '+esc(r.next_step)+'</p><div class="research-card-foot"><span class="fine">Checked '+when(r.checked_at)+(r.version?' · '+esc(r.version):'')+'</span>'+
    '<a href="'+esc(r.href)+'" data-research-link>Open details →</a></div></article>';
  }).join('')||empty('No matching research','Change the program name or filter.');
 }
