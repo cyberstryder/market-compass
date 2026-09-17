@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 import httpx
 from fastapi import FastAPI,HTTPException,Request,Query
-from fastapi.responses import HTMLResponse,JSONResponse,RedirectResponse
+from fastapi.responses import HTMLResponse,JSONResponse,RedirectResponse,StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import URLSafeTimedSerializer,BadSignature,SignatureExpired
 from pydantic import BaseModel,Field
@@ -25,6 +25,7 @@ from .alert_format import alert_identity
 from .market import is_open
 from .diagnostics import assistant_error
 from .assistant_context import build_input
+from .assistant_progress import evidence_summary,event_stream
 from .readiness import decorate_health,quote_checks,clock
 from .futures import futures_session,active_selection
 from .instruments import configured
@@ -504,8 +505,8 @@ def create_app(cfg=None):
     class Ask(BaseModel):
         question:str=Field(min_length=1,max_length=2000)
 
-    @app.post("/api/ask")
-    async def ask(body:Ask):
+    async def answer(body,notify=lambda event:None):
+        notify({'type':'stage','stage':'gathering'})
         context=await asyncio.to_thread(snapshot,assistant=True)
         if not cfg.openai:
             return {"answer":"The assistant is waiting for OPENAI_API_KEY. Live facts remain available on the dashboard.",
@@ -519,6 +520,7 @@ def create_app(cfg=None):
             used["count"]+=1
             db.put(c,"assistant:budget",used)
         # Bounded grounded context: no arbitrary SQL, web scraping or execution tools.
+        notify({'type':'stage','stage':'preparing'})
         known=set(cfg.watch_symbols)
         mentioned=list(dict.fromkeys(word.upper() for word in re.findall(r'\b[A-Za-z][A-Za-z0-9.]{0,14}\b',body.question)
             if word.upper() in known and (word.isupper() or word.upper() not in {'NOW','OPEN','APP','ARM','CL','ON','ALL'})))[:8]
@@ -613,6 +615,8 @@ def create_app(cfg=None):
         # Keep model-specific parameters off arbitrary OPENAI_MODEL overrides.
         if cfg.model=="gpt-5-mini" or cfg.model.startswith("gpt-5-mini-"):
             payload.update(reasoning={"effort":"low"},text={"verbosity":"low"})
+        notify({'type':'context',**evidence_summary(assistant_input)})
+        notify({'type':'stage','stage':'generating'})
         try:
             async with httpx.AsyncClient(timeout=40) as client:
                 r=await client.post("https://api.openai.com/v1/responses",
@@ -643,6 +647,16 @@ def create_app(cfg=None):
             raise HTTPException(502,"Assistant provider temporarily unavailable")
         db.health("assistant","available","A grounded Responses API answer completed",time.time(),generation=generation,context_size=context_size)
         return {"answer":answer,"asof":context["asof"],"configured":True}
+
+    @app.post('/api/ask')
+    async def ask(body:Ask):
+        return await answer(body)
+
+    @app.post('/api/ask/stream')
+    async def ask_stream(body:Ask):
+        return StreamingResponse(event_stream(lambda notify:answer(body,notify)),
+            media_type='application/x-ndjson',
+            headers={'Cache-Control':'no-store','X-Accel-Buffering':'no'})
 
     return app
 

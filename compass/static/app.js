@@ -144,9 +144,6 @@ async function poll(){
  catch(e){$('#connection').textContent='Connection interrupted. Displayed observations are not being refreshed. '+e.message;}
  finally{setTimeout(poll,3000);}
 }
-$('#ask').addEventListener('submit',async e=>{e.preventDefault();const button=$('#ask button');button.disabled=true;$('#answer').textContent='Reading the recorded market context…';
- try{const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:$('#question').value})});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Unable to answer');$('#answer').textContent=d.answer;$('#answer-time').textContent='Context captured '+when(d.asof);}
- catch(e){$('#answer').textContent=e.message;}finally{button.disabled=false;}});
 $('#test-alert').onclick=async()=>{const button=$('#test-alert');button.disabled=true;$('#test-result').textContent='Queuing a clearly labeled test…';
  try{const r=await fetch('/api/alerts/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:crypto.randomUUID(),route:$('#test-route').value})});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Test request failed');testEvent=d.event_id;$('#test-result').textContent='Test event #'+testEvent+' queued. Waiting for Discord’s saved-message confirmation.';}
  catch(e){$('#test-result').textContent=e.message;}finally{button.disabled=false;}};
