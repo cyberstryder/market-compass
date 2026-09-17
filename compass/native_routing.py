@@ -18,7 +18,7 @@ def day(stamp):return datetime.fromtimestamp(stamp,ET).date().isoformat()
 
 @contextmanager
 def routing_guard(db,shared=False):
-    # Intake holds a shared lock across its commits; an operator change takes
+    # Intake holds a shared lock across its transaction; an operator change takes
     # the exclusive lock. Independent intake requests may run concurrently.
     with db.engine.begin() as c:
         if c.dialect.name=='postgresql':

@@ -6,11 +6,12 @@ import os
 import secrets
 import time
 import uuid
+from contextlib import nullcontext
 import httpx
 from sqlalchemy import select, func, text
 from .native_morning import store as source
 from .native_morning.models import Event
-from .native_morning.frames import Frame, accept_frame, FRAME_LIMIT
+from .native_morning.frames import Frame, accept_frame, FRAME_LIMIT, TransactionEngine
 from .native_morning.candidate_models import ResearchBatch
 from .native_morning.candidate_store import accept_research
 from .native_morning.discord import signal_message
@@ -40,29 +41,32 @@ def accept(db,raw,now,body_size=0,origin='direct'):
         if not allowed(db,guard,origin,day(session_stamp/1000)):
             if origin=='source_summary_relay':return {'status':'route_disabled'}
             raise source.PayloadConflict('Direct intake is disabled for this session')
-        result=commit_input(db,payload,kind,now,body_size)
+        result=commit_input(db,payload,kind,now,body_size,guard)
         record(db,guard,payload,origin,now,result)
-    with db.tx() as c:
-        db.put(c,'native_morning:last_intake',{'at':now,'kind':kind,'origin':origin,'status':result['status']})
+        db.put(guard,'native_morning:last_intake',{'at':now,'kind':kind,'origin':origin,'status':result['status']})
     return result
 
 
-def commit_input(db,payload,kind,now,body_size):
+def commit_input(db,payload,kind,now,body_size,connection):
     received=int(now*1000)
+    # Keep the routing lock, input, preview and receipt on one connection.
+    # Holding a guard connection while each webhook checks out another can
+    # exhaust the entire pool during a simultaneous TradingView burst.
+    engine=TransactionEngine(connection)
     if kind=='frame':
         if body_size>FRAME_LIMIT: raise ValueError('Frame too large')
-        result=accept_frame(db.engine,payload,received,body_size,False,POLICY)
-    elif kind=='research': result=accept_research(db.engine,payload,received)
+        result=accept_frame(engine,payload,received,body_size,False,POLICY)
+    elif kind=='research': result=accept_research(engine,payload,received)
     else:
         message=signal_message(payload.signal,received,POLICY) if kind=='signal' else None
-        result=source.accept_event(db.engine,payload,message,False,received)
-    flush_previews(db,now)
+        result=source.accept_event(engine,payload,message,False,received)
+    flush_previews(db,now,connection)
     return result
 
 
-def flush_previews(db,now):
+def flush_previews(db,now,connection=None):
     # Resume even if a crash occurred after the source event committed.
-    with db.tx() as c:
+    with (nullcontext(connection) if connection is not None else db.tx()) as c:
         pending=c.execute(select(source.outbox).where(source.outbox.c.status=='disabled').limit(200).with_for_update(skip_locked=True)).mappings().all()
         for row in pending:
             message=json.loads(row['payload_json'])
