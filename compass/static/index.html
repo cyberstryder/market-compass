@@ -212,7 +212,14 @@
 <section id="assistant" class="tab"><article class="panel ask-panel"><p class="eyebrow">SHARED MARKET CONTEXT</p><h2>What would you like to understand?</h2>
 <p class="muted">Ask about recorded levels, current feed quality, exposure assumptions, or why a simulated trade was skipped.</p>
 <form id="ask"><label for="question">Your question</label><textarea id="question" maxlength="2000" rows="3" placeholder="What is missing before we can trust the SPY exposure view?" required></textarea>
-<button type="submit">Ask Compass →</button></form><p id="answer" class="answer"></p><p id="answer-time" class="fine"></p></article></section>
+<div class="ask-actions"><button type="submit">Ask Compass →</button><button id="ask-cancel" type="button" class="quiet" hidden>Cancel</button></div></form>
+<section id="ask-progress" class="ask-progress" hidden aria-label="Answer status">
+<div class="ask-progress-heading"><strong id="ask-status" role="status" aria-live="polite"></strong><span id="ask-elapsed" class="fine" aria-hidden="true"></span></div>
+<progress id="ask-meter" max="1" aria-label="Answer progress"></progress>
+<ol class="ask-stages"><li data-ask-stage="gathering">Gather data</li><li data-ask-stage="preparing">Prepare context</li><li data-ask-stage="generating">Write answer</li></ol>
+<p id="ask-wait-note" class="fine"></p>
+<details id="ask-evidence" hidden open><summary id="ask-evidence-title">Data supplied to this answer</summary><p id="ask-evidence-note" class="fine"></p><div id="ask-facts" class="ask-facts"></div></details>
+</section><p id="answer" class="answer" aria-live="polite"></p><p id="answer-time" class="fine"></p></article></section>
 <section id="health" class="tab"><div class="banner">A running server does not mean market data is ready. Check both source timestamps and collector heartbeats during open sessions.</div>
 <article class="panel"><h2>Quotes required for simulation</h2><div id="quote-checks"></div></article>
 <article class="panel"><h2>Futures session & contracts</h2><div id="future-readiness"></div></article>
@@ -224,4 +231,4 @@
 <p class="muted">Connections are checked. Live readiness still requires advancing source times, usable option inputs, and a recorded simulated entry, exit, and confirmed alert.</p>
 <p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></section>
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
-<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/native.js"></script></body></html>
+<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script></body></html>
