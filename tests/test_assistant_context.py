@@ -103,3 +103,5 @@ def test_ask_large_saved_reports_keep_spy_decision_and_send_one_bounded_request(
     assert packed['risk']['risk:2026-09-17']['realized'] == -390.5
     assert packed['question_scope']['symbols'] == ['SPY']
     assert 'respect its expiry, WAIT or NO ENTRY' in calls[0]['instructions']
+    assert 'A SPY NO ENTRY decision is terminal' in calls[0]['instructions']
+    assert 'Do not suggest waiting for a later breakout or candle' in calls[0]['instructions']
