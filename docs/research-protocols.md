@@ -135,7 +135,7 @@ Implementation and existing evidence: [docs/swing-ideas.md](swing-ideas.md).
 
 **Status:** frozen review definition; frozen 2026-09-17.
 
-- **Model:** secondary-context-v3
+- **Model:** secondary-context-v4
 - **Universe / population:** Received Morning, Smoothers, TradingView futures, native futures and Obsidian candidates; source families separate.
 - **Entry:** Same timely review-time underlying midpoint for every selection arm; original 60-second availability window.
 - **Expiry / strike:** Underlying direction only; original option identity retained as context.
@@ -152,7 +152,7 @@ Implementation and existing evidence: [docs/secondary-review.md](secondary-revie
 
 **Status:** frozen observation definition; frozen 2026-09-17.
 
-- **Model:** watchlist-v1 / existing independent option observations
+- **Model:** watchlist_ideas_v1 / retained unversioned option observations
 - **Universe / population:** Retained provider ideas and revisions; exclude configured DJT from active tracking; update messages do not mean failure.
 - **Entry:** First fresh option ask after timely receipt; may wait for open; preserve anchor delay and late imports.
 - **Expiry / strike:** Exact source-listed OCC contract; no changed strike/expiry or synthetic replacement.
@@ -169,7 +169,7 @@ Implementation and existing evidence: [docs/obsidian-watchlist.md](obsidian-watc
 
 **Status:** frozen review definition; frozen 2026-09-17.
 
-- **Model:** 0dte-underlying-orb-v2 / saved portfolio fill version
+- **Model:** 0dte-selection-v1 / saved ORB or scanner strategy / sampled-bracket-v2
 - **Universe / population:** Same-day portfolio option candidates and admitted positions; shared loss, risk, position and entry limits retained.
 - **Entry:** Fresh post-trigger bid/ask within original pending deadline and available portfolio capacity.
 - **Expiry / strike:** Listed same-day standard CALL/PUT chosen by existing engine; actual contract metadata and selection reasons retained.
