@@ -1,8 +1,11 @@
 import hashlib
 import json
 import time
+import threading
+import logging
 from contextlib import contextmanager
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, JSON, Index, select, text, update, cast
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, JSON, Index, select, text, update, cast, event
+from sqlalchemy.engine import make_url
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sq_insert
 
@@ -96,8 +99,52 @@ class Store:
     def __init__(self,url):
         url=url.replace("postgres://","postgresql+psycopg://",1).replace("postgresql://","postgresql+psycopg://",1)
         self.engine=create_engine(url,pool_pre_ping=True,
-            connect_args={"check_same_thread":False,"timeout":30} if url.startswith("sqlite") else {"connect_timeout":10})
+            connect_args={"check_same_thread":False,"timeout":30} if url.startswith("sqlite") else {"connect_timeout":10,
+                "options":str(make_url(url).query.get("options", ""))+" -c statement_timeout=30000 -c lock_timeout=5000 -c idle_in_transaction_session_timeout=30000",
+                "keepalives":1,"keepalives_idle":10,"keepalives_interval":5,
+                "keepalives_count":3,"tcp_user_timeout":30000})
+        if not url.startswith("sqlite"):
+            @event.listens_for(self.engine, "connect")
+            def bound_transaction(connection, record):
+                # PostgreSQL 17+ can also bound a transaction doing client-side work.
+                if connection.info.server_version >= 170000:
+                    with connection.cursor() as cursor:
+                        cursor.execute("SET SESSION transaction_timeout = '60s'")
+                    connection.commit()
         self.insert=sq_insert if url.startswith("sqlite") else pg_insert
+        self._closing = False
+        self._connections = {}
+        self._condition = threading.Condition()
+        @event.listens_for(self.engine, "checkout")
+        def track(connection, record, proxy):
+            with self._condition:
+                self._connections[record] = connection
+        @event.listens_for(self.engine, "checkin")
+        def returned(connection, record):
+            with self._condition:
+                self._connections.pop(record, None)
+                self._condition.notify_all()
+
+    def shutdown(self, timeout=10):
+        """Cancel this process's checked-out PostgreSQL queries, then drain them."""
+        with self._condition:
+            self._closing = True
+            connections = list(self._connections.values())
+        for connection in connections:
+            if self.engine.dialect.name == 'postgresql':
+                try:
+                    # psycopg binary ships libpq 17+; no unbounded legacy cancel.
+                    from psycopg import capabilities
+                    if capabilities.has_cancel_safe():
+                        connection.cancel_safe(timeout=1)
+                except Exception:
+                    logging.getLogger('uvicorn.error').warning('Database shutdown cancellation failed')
+        with self._condition:
+            drained = self._condition.wait_for(lambda: not self._connections, timeout)
+        if not drained:
+            logging.getLogger('uvicorn.error').warning('Database shutdown drain timed out; server timeouts remain active')
+        self.engine.dispose()
+        return drained
 
     def initialize(self):
         with self.engine.begin() as c:
@@ -107,7 +154,11 @@ class Store:
 
     @contextmanager
     def tx(self):
+        if self._closing:
+            raise RuntimeError("Database is shutting down")
         with self.engine.begin() as c:
+            if self._closing:
+                raise RuntimeError("Database is shutting down")
             yield c
 
     def append(self,c,kind,source,symbol,ts,payload,key=None):
@@ -192,3 +243,4 @@ class Store:
             if source_ts is not None:
                 value["source_ts"]=max(source_ts,previous.get("source_ts") or source_ts) if monotonic_source else source_ts
             self.put(c,"health:"+name,value)
+

@@ -116,3 +116,21 @@ def test_old_completed_missing_observations_are_not_rewritten(db):
     with db.tx() as c:
         archive(db,c,NOW+900)
         assert advance_recorded_measurement(db,c,m,'long',None,NOW+4000) == m
+
+
+
+def test_futures_burst_updates_latest_once_and_keeps_ordered_samples(tmp_path):
+    from sqlalchemy import event
+    from compass.store import Store
+    db=Store('sqlite:///'+str(tmp_path/'burst.db'));db.initialize()
+    collector=SimpleNamespace(db=db)
+    collector.future_quote_batch=lambda items:Collectors.future_quote_batch(collector,items)
+    statements=[]
+    event.listen(db.engine,'before_cursor_execute',lambda c,cu,s,p,ctx,m:statements.append(s))
+    rows=[('SIZ6@701',dict(ts=100+i,bid=1,ask=2),True) for i in range(64)]
+    Collectors.quote_batch(collector,'databento',rows+[('SIZ6@701',dict(ts=99,bid=1,ask=2),True)])
+    assert len(statements)==4  # insert/lock/latest/archive, independent of burst length
+    with db.tx() as c:
+        assert db.get(c,'quote:SIZ6@701')['ts']==163
+        assert len(db.recent(c,'quote','SIZ6@701',limit=100))==64
+    db.engine.dispose()

@@ -5,6 +5,9 @@ separate experiments, not a realizable account equity curve. Only observations
 received after activation may open a trial; missing paths are not reconstructed.
 """
 import logging
+import asyncio
+import time
+import uuid
 from sqlalchemy import Table, Column, String, Float, JSON, Index, select, update
 from .store import meta, identity
 from .market import fresh, number, session, day
@@ -31,6 +34,7 @@ class SetupStudy:
     def __init__(self, db, cfg, clock=None):
         self.db, self.cfg = db, cfg
         self.clock = clock
+        self.report_owner = uuid.uuid4().hex
 
     def start(self, c, signal, now, spec, alerted=True, primary=True):
         if not self.cfg.setup_study or spec['asset'] not in ('future', 'stock') or signal.get('track') == 'swing':
@@ -114,7 +118,7 @@ class SetupStudy:
     def tick(self, c, now):
         if not self.cfg.setup_study:
             return
-        feed_activation = futures_feed_study.activate(self.db, c, now)
+        futures_feed_study.activate(self.db, c, now)
         if self.db.get(c, 'setup_study:activation') is None:
             self.db.put(c, 'setup_study:activation', {'at':now, 'version':VERSION})
         rows = c.execute(select(trials.c.payload).where(trials.c.status == 'open')).scalars().all()
@@ -153,6 +157,12 @@ class SetupStudy:
                     self.save(c,p)
                 continue
             self.observe(c,p,q,observed)
+        self.db.put(c, 'setup_study:worker', {'at':now, 'version':VERSION})
+
+    def refresh_report(self, c, now):
+        if not self.cfg.setup_study:
+            return
+        feed_activation = self.db.get(c, futures_feed_study.KEY)
         report = self.db.get(c, 'setup_study:report', {})
         if now-report.get('at', 0) >= 30:
             report = report_for(c, now)
@@ -166,7 +176,27 @@ class SetupStudy:
                 {name:sum(g['selected'] for g in groups if g['variant']==name) for name in futures_variants.NAMES},
                 sum(g['unknown'] for g in groups if g['variant']=='first_per_trend'),
                 sum(g['unresolved'] for g in groups if g['variant']=='repeated'))
-        self.db.put(c, 'setup_study:worker', {'at':now, 'version':VERSION})
+
+    def report_tick(self, now=None):
+        now = time.time() if now is None else now
+        with self.db.tx() as c:
+            if self.db.lease(c, 'setup_study:report', self.report_owner, 60):
+                self.refresh_report(c, now)
+
+    async def run_reports(self):
+        while True:
+            try:
+                await asyncio.to_thread(self.report_tick)
+                self.db.health('setup_reports', 'running', 'Research reports refreshed independently of engine scans')
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logging.getLogger('uvicorn.error').exception('Research report refresh failed')
+                try:
+                    self.db.health('setup_reports', 'error', 'Report refresh failed; see runtime logs')
+                except Exception:
+                    logging.getLogger('uvicorn.error').exception('Cannot record research report health')
+            await asyncio.sleep(30)
 
     def observe(self, c, p, q, observed, recorded=False):
         # Legacy trials keep their original latest-quote method. V2 may

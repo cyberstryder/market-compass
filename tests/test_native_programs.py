@@ -278,3 +278,29 @@ def test_native_expiration_study_survives_without_original_or_official_sender(db
         assert set(c.execute(select(outbox.c.status)).scalars())=={'shadow'}
         assert r['expiration_comparison']['execution_eligible'] is False
         assert morning(db,c,(STAMP+3700000)/1000,ticker='OTHER')['expiration_comparison']['signals']==0
+
+
+
+def test_smoothers_history_continues_past_ten_small_pages():
+    from types import SimpleNamespace
+    from compass.native_smoothers_data import Data
+    import httpx
+    seen=[]
+    def handler(request):
+        page=int(request.url.params.get('page_token','0'));seen.append(page)
+        return httpx.Response(200,json={'bars':{'A':[{'t':f'2026-09-14T13:{page:02d}:00Z','o':1,'h':2,'l':1,'c':2,'v':10}]},
+            'next_page_token':str(page+1) if page<12 else None})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        data=Data(SimpleNamespace(alpaca_key='test',alpaca_secret='test'),client)
+        result=data.bar_batch(['A'],'30Min',NOW,NOW+86400)
+    assert seen==list(range(13))
+    assert len(result['A'])==13
+
+
+def test_smoothers_repeated_history_token_still_fails_closed():
+    from types import SimpleNamespace
+    from compass.native_smoothers_data import Data
+    import httpx
+    with httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(200,json={'bars':{},'next_page_token':'same'}))) as client:
+        data=Data(SimpleNamespace(alpaca_key='test',alpaca_secret='test'),client)
+        with pytest.raises(ValueError,match='Repeated pagination'):data.bar_batch(['A'],'30Min',NOW,NOW+86400)

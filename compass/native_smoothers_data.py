@@ -16,6 +16,7 @@ class Data:
     def __init__(self,cfg,client):
         self.cfg,self.client=cfg,client
         self.deadline=None
+        self.history_pages=[]
         self.headers={'APCA-API-KEY-ID':cfg.alpaca_key,'APCA-API-SECRET-KEY':cfg.alpaca_secret}
         self.options=AlpacaQuotes(OptionsConfig(True,cfg.alpaca_key,cfg.alpaca_secret),client)
 
@@ -48,8 +49,11 @@ class Data:
         params={'symbols':','.join(symbols),'timeframe':frame,'start':iso(start),'end':iso(end),
                 'adjustment':'split','feed':'sip','sort':'asc','limit':10000}
         all_rows={symbol:[] for symbol in symbols};seen=set()
-        for _ in range(10):
+        self.history_pages=[]
+        for _ in range(100):
             data=self.get('https://data.alpaca.markets/v2/stocks/bars',params)
+            self.history_pages.append(sum(len(data.get('bars',{}).get(s,[])) for s in symbols))
+            if sum(self.history_pages)>150000:raise ValueError('Bar history row limit exceeded')
             for symbol in symbols:
                 rows=data.get('bars',{}).get(symbol,[])
                 if not isinstance(rows,list): raise ValueError('Invalid bars')
@@ -123,3 +127,4 @@ class Data:
 
     def quote(self,contract):
         return self.options.snapshots([contract])[contract['symbol']]
+
