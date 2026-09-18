@@ -64,7 +64,7 @@ def build(data, supplements, policy):
             issues=problems, needs_attention=bool(problems) or stage in
                 ('awaiting_evidence', 'not_built', 'disabled', 'stale'),
             next_step=next_step, version=version, measured=measured,
-            protocol=protocol(id), coverage=coverage(id, data, supplements),
+            protocol=protocol('zero-dte-v2' if id=='zero-dte' else id), coverage=coverage(id, data, supplements),
             alerts={'policy': alert_policy, 'owner': owner, 'route': route,
                 'channel': dest.get('channel'), 'destination': dest.get('destination_mode'),
                 'health': health.get('status', 'unobserved'),
@@ -283,14 +283,14 @@ def build(data, supplements, policy):
     selection=data.get('forward_acceptance',{}).get('zero_dte',{})
     add('zero-dte', '0DTE portfolio simulations', 'Independent ideas',
         activity(data.get('workers', {}).get('worker:engine', {}), now),
-        'Selected same-day option positions and closed simulations are stored under the portfolio risk rules.',
+        'Selected same-day option positions use their own v2 paper risk account; legacy admissions retain their original policy.',
         'Underlying trigger, contract eligibility, executable quote and available portfolio capacity are required.',
         'Selected-position modeled returns. Portfolio limits mean this is not a study of every possible 0DTE opportunity.',
         [metric('Open option positions', len(positions) if 'positions' in data else None),
          metric('Option trades in recent view', len(trades) if 'trades' in data else None),
          metric('Retries with saved reasons, 24h',selection.get('instrumented')),
          metric('Retries missing detail, 24h',selection.get('missing_diagnostics'))],
-        'All current positions plus the latest 100 portfolio trades across instruments; counts here are not lifetime totals.', 'trades',
+        'All current positions plus the latest 100 portfolio trades across instruments; counts are not lifetime totals and can include separate legacy and v2 cohorts.', 'trades',
         route='options_0dte', alert_policy='Simulated entry and management notifications under existing portfolio rules.',
         checked_at=data.get('workers', {}).get('worker:engine', {}).get('at'),
         next_step='Review Feed health → 0DTE selection diagnostics for saved exclusions and portfolio risk. Validate new diagnostics during the next equity session.', measured=None)

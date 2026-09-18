@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from compass.config import Config
 from compass.store import Store
 from compass.engine import Engine, spec
+from compass.paper_risk import key, ledgers
 from compass.setup_study import SetupStudy, trials, report_for
 from compass.market import CT
 from compass.futures import selection, futures_session, risk_day
@@ -40,10 +41,11 @@ def rows(c):
 def test_entry_cap_zero_allows_more_than_ten_without_erasing_history(db,cfg):
     engine=Engine(db,cfg)
     with db.tx() as c:
-        db.put(c,'risk:'+risk_day(NOW),dict(entries=100,realized=-1))
+        risk=ledgers(db,c,NOW,persist=True)['future'];risk.update(entries=100,realized=-1)
+        db.put(c,key(NOW,'future'),risk)
         db.put(c,'quote:MESZ6@1',quote())
         assert engine.enter(c,signal(),NOW)
-        assert db.get(c,'risk:'+risk_day(NOW))['entries']==101
+        assert db.get(c,key(NOW,'future'))['entries']==101
     cfg.max_entries=2
     with db.tx() as c:
         reason,_=engine.entry_check(c,signal(),NOW)
@@ -214,3 +216,4 @@ def test_extra_configuration_keeps_case_and_limits_validated(cfg):
     defaults.validate()
     cfg.max_entries=-1
     with pytest.raises(ValueError): cfg.validate()
+

@@ -86,7 +86,7 @@ def test_overnight_entry_and_overdue_flatten_keep_original_day_deadline(db):
         assert engine.enter(c,sig,SUNDAY)
         p=db.get(c,"position:MESZ6@1")
         assert p["flatten_at"]==stamp("2026-09-14T15:45:00")
-        assert db.get(c,"risk:2026-09-14")["entries"]==1
+        assert db.get(c,"paper_risk:v2:2026-09-14:futures")["entries"]==1
         later=stamp("2026-09-14T17:02:00")
         db.put(c,"quote:MESZ6@1",quote(later))
         engine.exits(c,later)
@@ -373,4 +373,5 @@ def test_explicit_discord_test_is_authenticated_idempotent_and_never_a_position(
         state=web.get("/api/state").json()
         assert state["delivery"]["last_test_confirmation"]["event_id"]==one.json()["event_id"]
         assert state["delivery"]["pending"]==0 and state["trades"]==[]
+
 

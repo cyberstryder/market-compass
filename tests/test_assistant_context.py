@@ -100,7 +100,9 @@ def test_ask_large_saved_reports_keep_spy_decision_and_send_one_bounded_request(
     assert len(calls) == 1
     packed = json.loads(calls[0]['input'])['market_context']
     assert packed['spy_brief'] == brief
-    assert packed['risk']['risk:2026-09-17']['realized'] == -390.5
+    assert packed['risk']['legacy_combined']['risk:2026-09-17']['realized'] == -390.5
+    assert packed['risk']['paper_portfolios']['policy'] == 'paper-portfolios-v2'
+    assert {a['portfolio'] for a in packed['risk']['paper_portfolios']['accounts']} == {'futures','zero_dte','stocks'}
     assert packed['question_scope']['symbols'] == ['SPY']
     assert 'respect its expiry, WAIT or NO ENTRY' in calls[0]['instructions']
     assert 'A SPY NO ENTRY decision is terminal' in calls[0]['instructions']

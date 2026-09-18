@@ -253,6 +253,7 @@ def create_app(cfg=None):
                 if 'recovery' in item:
                     from .flow_recovery import freshness as flow_freshness
                     item['flow_freshness']=flow_freshness(item,now)
+            from .paper_risk import snapshot as paper_risk_snapshot
             positions=list(db.prefix(c,"position:").values())
             trades=sorted(db.prefix(c,"trade:").values(),key=lambda p:p.get("entered_at",0),reverse=True)[:100]
             data={"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","markets":markets,
@@ -277,8 +278,9 @@ def create_app(cfg=None):
                 "exposure":{k[9:]:v for k,v in db.prefix(c,"exposure:").items()},
                 "positions":positions,"trades":trades,"alerts":[{**row,"presentation":alert_identity(row,now)} for row in db.recent(c,"alert",limit=60)],
                 "flow":db.recent(c,"flow",limit=60),"matrix":matrix,
-                "risk":db.prefix(c,"risk:"),"ai_configured":bool(cfg.openai),
-                "limits":{"risk_per_trade":cfg.risk,"daily_realized_loss":cfg.daily_loss,"max_positions":3,"max_entries":cfg.max_entries},
+                "risk":{"paper_portfolios":paper_risk_snapshot(db,c,cfg,now),
+                    "legacy_combined":db.prefix(c,"risk:")},"ai_configured":bool(cfg.openai),
+                "limits":{"scope":"Each paper portfolio separately (paper-portfolios-v2)","risk_per_trade":cfg.risk,"daily_realized_loss":cfg.daily_loss,"max_positions":3,"max_entries":cfg.max_entries},
                 "notes":["Quotes are sampled up to 4 Hz; minute-bar decisions, not tick-perfect execution.",
                     "GEX/VEX are OI-based proxies. Open interest is daily; dealer inventory is unobserved.",
                     "TraderMatrix matrix fields are normalized from paid responses; flow rows follow the official schema and await open-session verification.",
