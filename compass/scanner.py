@@ -400,12 +400,17 @@ class Scanner:
             'prop_account_rules':'Not configured: simulated risk limits do not model a prop-firm drawdown floor'})
 
     def retry_options(self,c,quotes,now,engine):
+        scan_started_at=now
         for key,pending in self.db.prefix(c,'pending_options:').items():
             if pending.get('status')!='waiting':
                 continue
             signal=pending['signal']
             symbol=signal['symbol']
-            quote=quotes.get(symbol)
+            # Live retries may run seconds after the scan began. Read the current
+            # underlying, then sample the same live clock used by entry_check.
+            # Explicit-time replay/tests keep their supplied snapshot and clock.
+            quote=self.db.get(c,'quote:'+symbol) if engine.clock else quotes.get(symbol)
+            now=engine.clock() if engine.clock else scan_started_at
             reason=None
             if now>=pending['expires_at'] or not session_open(symbol,now):
                 reason='Option selection window ended without an eligible same-day contract, fresh quote and available risk'
@@ -418,13 +423,14 @@ class Scanner:
                 self.db.put(c,key,pending)
                 engine.alert(c,symbol,{**alert_context(signal),'status':'options_skipped','reason':reason,'parent_signal':signal['id']},'pending-option-expired:'+signal['id'])
             elif fresh(quote,now) and abs((quote['bid']+quote['ask'])/2-signal['signal_price'])<=signal['context']['atr14']*.5:
-                audit={}
+                audit={'scan_started_at':scan_started_at,'underlying_checked_at':now}
                 if engine.options(c,signal,now,quiet=True,diagnostics=audit):
                     pending.update(status='entered',updated_at=now)
                 self.save_option_diagnostic(c,key,pending,audit,now,quote)
             else:
                 reason='Fresh underlying quote required' if not fresh(quote,now) else 'Underlying moved beyond entry tolerance'
-                self.save_option_diagnostic(c,key,pending,dict(version='0dte-selection-v1',at=now,
+                self.save_option_diagnostic(c,key,pending,dict(version='0dte-selection-v2',at=now,
+                    scan_started_at=scan_started_at,underlying_checked_at=now,
                     status='waiting',reason=reason,rejections=[],checked_contracts=0),now,quote)
 
     def save_option_diagnostic(self,c,key,pending,audit,now,quote=None):
@@ -432,6 +438,7 @@ class Scanner:
         # risk context. A later dashboard quote/risk balance cannot explain an
         # earlier rejection, and a future-at-check quote is not a stale quote.
         audit['underlying_evidence']={
+            'checked_at':now,
             'quote':{k:quote.get(k) for k in ('ts','bid','ask','bid_size','ask_size','source','collection_version')} if quote else None,
             'age_seconds':now-quote['ts'] if quote and quote.get('ts') is not None else None,
             'fresh':fresh(quote,now),

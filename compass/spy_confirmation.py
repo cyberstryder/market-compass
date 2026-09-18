@@ -114,7 +114,12 @@ def assess(context, reports, now, phase):
     kind = None if now < opening else 'opening' if minute == 15 else 'later'
     label = ('PREOPEN' if phase == 'preopen' or now < opening else
              ('OPENING CHECK' if minute == 15 else 'LATER CHECK') + ' · ' + clock(boundary))
+    price_condition='not_observed'
+    if valid_range and candle['complete'] and now >= boundary:
+        price_condition=('call_breakout' if candle['close'] > frozen['high'] else
+                         'put_breakout' if candle['close'] < frozen['low'] else 'inside_range')
     return {'decision': decision, 'decision_state': state, 'phase_label': label,
+            'price_condition': price_condition, 'data_status': 'blocked' if blocks else 'passed',
             'check_minute': minute, 'confirmation_kind': kind, 'data_blocks': blocks,
             'frozen_premarket': frozen, 'next_check_at': next_check,
             'session_complete': bool(prior_confirmation or final_no_entry or state in ('confirmed', 'no_entry')
