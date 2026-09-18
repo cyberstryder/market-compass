@@ -28,7 +28,10 @@ def inspect(data, config, now):
         item=dict(ticker=row['ticker'])
         try:
             data.deadline=time.monotonic()+45
-            hourly=data.hourly(row['ticker'],now);daily=data.daily(row['ticker'],now)
+            hourly=data.hourly(row['ticker'],now)
+            item['hourly_pages']=list(data.history_pages)
+            daily=data.daily(row['ticker'],now)
+            item['daily_pages']=list(data.history_pages)
             required=4*max(row[k] for k in ('s1','s2','s3'))+10
             warm=not hourly.empty and len(hourly)>=required and all(
                 compute_smoother(hourly,row[k]).notna().iloc[-1] for k in ('s1','s2','s3'))
@@ -44,7 +47,7 @@ def inspect(data, config, now):
         except Exception as error:
             item.update(status='error',error=type(error).__name__,reason=str(error)[:120])
         result['rows'].append(item)
-        print('PREFLIGHT_PROGRESS '+row['ticker']+' '+item['status'],flush=True)
+        print('PREFLIGHT_PROGRESS '+row['ticker']+' '+item['status']+' '+item.get('reason',''),flush=True)
     result['ready']=sum(r['status']=='ready_for_live_capture' for r in result['rows'])
     return result
 

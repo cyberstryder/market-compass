@@ -8,6 +8,8 @@ Futures bursts lock a contract once and update its latest quote once, while arch
 
 The separate `provider-minute-inventory-v1` diagnostic compares an explicitly bounded SPY provider response with retained minute timestamps. Complete pagination is required to label a minute absent from the provider. Source omissions and missing collector bars are separate lists. It runs once per minute during the morning window and is exposed as `provider_coverage_comparison` on `/api/spy-morning-brief`. It does not supply synthetic candles, change the 90% entry gate, change Discord plans or rewrite frozen studies.
 
+The provider preflight exposed that all 76 long history requests exceed the previous ten-page cap. History pagination now permits up to 100 pages, still bounded by the worker deadline, a 150,000-row cap and repeated-token detection. Incomplete histories fail closed.
+
 Run `python -m scripts.smoothers_preflight` with the existing database/provider environment for a read-only next-week check of every enabled configuration, calendar, hourly warmup, daily history and both option directions. It creates no weekly signals or deliveries. Monday's first completed hour and full native weekly acceptance remain live gates. Original Morning and Smoothers sender ownership stays in place.
 
 Validation includes PostgreSQL contention, timeout rollback and subsequent lease acquisition, cancellation/draining, report/engine lease independence, futures archival preservation and source-inventory classification. Provider omissions do not prove odd-lot causation; late historical quotes never repair a missing live path.
