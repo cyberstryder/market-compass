@@ -337,6 +337,7 @@ function renderSetupStudy(d){
  window.renderSetupRecords(d);
  renderFuturesFeeds(d);
 }
+let futuresFeedsPage=0;
 function renderFuturesFeeds(d){
  const study=d.feed_comparison||{},activation=study.activation||d.feed_comparison_activation;
  const names={price_only:'Price only',cross_market:'Cross-market',flow:'Flow',combined:'Both confirmations'};
@@ -350,8 +351,11 @@ function renderFuturesFeeds(d){
  contract.value=symbols.includes(saved)?saved:'';
  const phase=$('#study-feeds-phase').value,arm=$('#study-feeds-arm').value,cohort=$('#study-feeds-cohort').value;
  const rows=(study[$('#study-feeds-view').value]||[]).filter(g=>g.phase===phase&&(!contract.value||g.symbol===contract.value)&&(!arm||g.arm===arm)&&(cohort==='all'||g.alerted===(cohort==='alerted')));
- const preview=rows.slice(0,200);
- $('#study-feeds-coverage').textContent=rows.length?'Showing '+preview.length+' of '+rows.length+' matching aggregate rows; calculations include all retained trials in the frozen period. Narrow the filters to inspect a contract. Counts repeat across filters; do not add them as separate trades. Times use America/Chicago.':
+ futuresFeedsPage=Math.min(futuresFeedsPage,Math.max(0,Math.ceil(rows.length/200)-1));
+ const offset=futuresFeedsPage*200,preview=rows.slice(offset,offset+200);
+ $('#study-feeds-previous').disabled=futuresFeedsPage===0;
+ $('#study-feeds-next').disabled=offset+200>=rows.length;
+ $('#study-feeds-coverage').textContent=rows.length?'Showing '+(offset+1)+'–'+(offset+preview.length)+' of '+rows.length+' matching aggregate rows; calculations include all retained trials in the frozen period. Counts repeat across filters; do not add them as separate trades. Times use America/Chicago.':
   (phase==='evaluation'?'No evaluation observations in this selection yet. Collection begins at the first full session shown above.':'No partial-session observations in this selection yet.');
  $('#study-feeds').innerHTML=preview.length?table(['Contract / setup / side','Filter / context','Selected / skipped / all','Unknown / not mapped / excluded','Common resolved / open / unresolved','Price only / filtered R per opportunity','Difference / 95% interval'],preview.map(g=>[
   esc(g.symbol)+'<br>'+esc(g.strategy)+' · '+esc(g.side)+'<br><span class="fine">'+esc(g.model)+' · '+esc(g.fill_version)+' · '+(g.alerted?'Alerted':'Cooldown')+'</span>',
@@ -362,7 +366,9 @@ function renderFuturesFeeds(d){
   g.outcomes_locked?'—':num(g.difference_r_per_opportunity,3)+(g.session_cluster_95?'<br>['+g.session_cluster_95.map(v=>num(v,3)).join(', ')+']<br><span class="fine">Exploratory; unadjusted across setups</span>':'<br><span class="fine">Inconclusive / exploratory</span>')
  ])):empty('Awaiting forward comparison data','Missing feeds remain unknown. Metals and energy retain their price-only and market-condition studies.');
 }
-for(const id of ['phase','view','contract','arm','cohort'])$('#study-feeds-'+id).onchange=()=>{if(lastState)renderFuturesFeeds(lastState.setup_study||{});};
+for(const id of ['phase','view','contract','arm','cohort'])$('#study-feeds-'+id).onchange=()=>{futuresFeedsPage=0;if(lastState)renderFuturesFeeds(lastState.setup_study||{});};
+$('#study-feeds-previous').onclick=()=>{futuresFeedsPage=Math.max(0,futuresFeedsPage-1);if(lastState)renderFuturesFeeds(lastState.setup_study||{});};
+$('#study-feeds-next').onclick=()=>{futuresFeedsPage++;if(lastState)renderFuturesFeeds(lastState.setup_study||{});};
 $('#study-cohort').onchange=()=>{if(lastState)renderSetupStudy(lastState.setup_study);};
 if(location.hash==='#setup-study')document.querySelector('[data-tab="setup-study"]').click();
 
