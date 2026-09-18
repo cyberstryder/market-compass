@@ -88,6 +88,7 @@ class Collectors:
     def tasks(self):
         c=self.cfg
         from .obsidian_history import step as history_obsidian
+        from .provider_coverage import collect as provider_coverage
         from .obsidian import poll as poll_obsidian
         from .extra_futures import tasks as extra_tasks
         from .secondary_data import refresh as refresh_secondary_data
@@ -98,6 +99,7 @@ class Collectors:
             self.supervise("obsidian",bool(c.obsidian_url),lambda:poll_obsidian(self),5),
             self.supervise("alpaca_stocks",bool(c.alpaca_key and c.alpaca_secret),self.stocks),
             self.supervise("alpaca_history",bool(c.alpaca_key and c.alpaca_secret),self.history,3600),
+            self.supervise("provider_coverage",bool(c.alpaca_key and c.alpaca_secret),lambda:provider_coverage(self),60),
             self.supervise("secondary_data",bool(c.secondary and c.alpaca_key and c.alpaca_secret),lambda:refresh_secondary_data(self),2),
             self.supervise("databento_futures",bool(c.databento),self.futures),
             self.supervise("futures_history",bool(c.databento),self.future_history,3600),
@@ -133,6 +135,8 @@ class Collectors:
         # All concurrent stream/recovery writers must lock latest-quote keys in
         # the same order. Preserve within-symbol source order and every sample.
         items=sorted(items,key=lambda row:row[0])
+        if source == 'databento':
+            return self.future_quote_batch(items)
         with self.db.tx() as c:
             retained=[]
             for symbol,q,record in items:
@@ -147,6 +151,25 @@ class Collectors:
                     retained.append((symbol,q))
 
             self.db.append_quotes(c,source,retained)
+
+    def future_quote_batch(self, items):
+        """Lock each contract once, retain samples, update its latest quote once."""
+        from itertools import groupby
+        with self.db.tx() as c:
+            retained=[]
+            for symbol, group in groupby(items, key=lambda row:row[0]):
+                quotes=[(q,record) for _,q,record in group if q.get('ts')
+                    and number(q.get('bid')) is not None and number(q.get('ask')) is not None]
+                if not quotes:continue
+                latest=self.db.locked_get(c,'quote:'+symbol,{'ts':0})
+                changed=False
+                for q,record in quotes:
+                    if q['ts'] < latest.get('ts',0):continue
+                    latest={**q,'source':'databento','symbol':symbol,'received':time.time()}
+                    changed=True
+                    if record:retained.append((symbol,latest))
+                if changed:self.db.put(c,'quote:'+symbol,latest)
+            self.db.append_quotes(c,'databento',retained)
 
     def bars(self,source,items,kind="bar"):
         items=sorted((row for row in items if row[1] is not None and

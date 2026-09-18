@@ -1,5 +1,6 @@
 """Versioned deterministic scans and simulated fills. No order routing."""
 import asyncio
+import logging
 import time
 import uuid
 import re
@@ -289,5 +290,10 @@ class Engine:
                 await asyncio.to_thread(self.tick)
                 self.db.health("engine","running","Closed-bar scans and simulated position management",time.time())
             except asyncio.CancelledError: raise
-            except Exception as e: self.db.health("engine","error",type(e).__name__)
+            except Exception as e:
+                logging.getLogger('uvicorn.error').exception('Engine scan failed')
+                try:
+                    self.db.health("engine","error",type(e).__name__)
+                except Exception:
+                    logging.getLogger('uvicorn.error').exception('Cannot record engine health')
             await asyncio.sleep(2)

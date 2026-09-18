@@ -86,6 +86,8 @@ def test_frozen_trial_is_unchanged_by_feed_updates_duplicate_signals_and_exits(d
         p=rows(c)[0]
         assert p['feed_comparison']==original['feed_comparison']
         assert p['exit_reason']=='target' and p['pnl']==17
+        assert db.get(c,'setup_study:report') is None
+        study.refresh_report(c,NOW+2)
         assert db.get(c,'setup_study:report')['feed_comparison']['groups']
 
 

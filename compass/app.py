@@ -80,7 +80,9 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(run_sources(db,cfg)))
             tasks.append(asyncio.create_task(run_morning_history(db,cfg)))
         if cfg.role in {"all","engine"}:
-            tasks.extend([asyncio.create_task(Engine(db,cfg,clock=time.time).run()),asyncio.create_task(deliver(db,cfg))])
+            engine = Engine(db,cfg,clock=time.time)
+            tasks.extend([asyncio.create_task(engine.run()),asyncio.create_task(deliver(db,cfg))])
+            tasks.append(asyncio.create_task(engine.study.run_reports()))
             tasks.append(asyncio.create_task(Secondary(db,cfg,clock=time.time).run()))
             tasks.append(asyncio.create_task(SwingIdeas(db,cfg).run()))
             tasks.append(asyncio.create_task(run_obsidian(db,cfg)))
@@ -113,11 +115,15 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(SPYStudy(db,cfg).run()))
             tasks.append(asyncio.create_task(SPYTimeframes(db,cfg).run()))
         tasks.append(asyncio.create_task(heartbeat()))
-        yield
-        if collectors: await collectors.close()
-        for t in tasks: t.cancel()
-        await asyncio.gather(*tasks,return_exceptions=True)
-        db.engine.dispose()
+        try:
+            yield
+        finally:
+            for t in tasks: t.cancel()
+            try:
+                if collectors: await collectors.close()
+            finally:
+                await asyncio.gather(*tasks,return_exceptions=True)
+                await asyncio.to_thread(db.shutdown)
 
     app=FastAPI(title="Market Compass",lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
 
@@ -131,12 +137,14 @@ def create_app(cfg=None):
         with db.tx() as c:
             report=build(db,c,now)
             latest=db.get(c,'spy-brief:latest')
+            provider_coverage=db.get(c,'provider_coverage:SPY:'+day(now))
             history=[p for p in reports_for_day(db,c,day(now)).values() if p]
         row={'id':'preview','symbol':'SPY','source':'spy_brief','ts':now,'payload':report}
         return {'preview':report,'discord_preview':delivery_payload(row,now),'latest_scheduled':latest,
                 'tradingview_prompt':prompt(report,now),'chart_discord_preview':chart_payload(row,now),
                 'enabled':cfg.spy_morning_brief,'schedule_ct':list(SCHEDULE_CT),
                 'confirmation_history':history,
+                'provider_coverage_comparison':provider_coverage,
                 'delivery':'Two messages per check through spy_morning; later checks only after opening WAIT; stop after confirmation or 09:30 CT'}
 
     @app.get('/api/alerts/routes')
