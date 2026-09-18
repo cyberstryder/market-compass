@@ -84,8 +84,10 @@ def flow_context(db, c, proxy, side, now, cash_open):
         return dict(selection='unknown', reason='cash_market_closed', proxy=proxy)
     summary = db.get(c, 'matrix:unusual_activity', {})
     check = flow_freshness(summary, now)
-    if not check['eligible_for_live_confirmation'] or summary.get('source_ts', now+1) > summary.get('received', 0):
+    if not check['eligible_for_live_confirmation']:
         return dict(selection='unknown', reason='flow_'+check['status'], proxy=proxy, freshness=check)
+    if summary['source_ts'] > summary['received']:
+        return dict(selection='unknown', reason='flow_clock_error', proxy=proxy, freshness=check)
     seen, rows = set(), []
     for row in summary.get('rows', []):
         if (row.get('symbol') != proxy or not current(row.get('source_ts'), now, 120)
