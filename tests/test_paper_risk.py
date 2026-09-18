@@ -110,3 +110,16 @@ def test_read_only_preview_has_no_side_effects_and_includes_carryover(report_db)
         assert view['accounts'][0]['daily_loss_locked']
         assert not view['accounts'][1]['daily_loss_locked']
         assert db.prefix(c,'')==before
+
+
+def test_missing_all_account_states_never_resets_recorded_v2_activity(report_db):
+    from sqlalchemy import delete
+    from compass.store import state
+    db=report_db
+    with db.tx() as c:
+        seed(db,c)
+        assert Engine(db,Config(local=True,setup_study=False)).options(c,signal(),NOW)
+        c.execute(delete(state).where(state.c.key.startswith('paper_risk:v2:')))
+        accounts=paper_risk.ledgers(db,c,NOW,persist=True)
+        assert not any(a['ready'] for a in accounts.values())
+        assert all(a['migration']['problems'] for a in accounts.values())

@@ -35,8 +35,13 @@ def ledgers(db, c, now, persist=False):
     for trade_id, trade in db.prefix(c, 'trade:').items():
         entered = trade.get('entered_at')
         exited = trade.get('exited_at')
-        entry = entered is not None and risk_day(entered) == day and trade.get('risk_policy') != VERSION
-        exit_ = exited is not None and risk_day(exited) == day and trade.get('exit_risk_policy') != VERSION
+        entered_today = entered is not None and risk_day(entered) == day
+        exited_today = exited is not None and risk_day(exited) == day
+        if ((entered_today and trade.get('risk_policy') == VERSION) or
+                (exited_today and trade.get('exit_risk_policy') == VERSION)):
+            problems.append('V2 activity exists without complete account state: '+trade_id)
+        entry = entered_today and trade.get('risk_policy') != VERSION
+        exit_ = exited_today and trade.get('exit_risk_policy') != VERSION
         if not (entry or exit_):
             continue
         asset = trade.get('asset')
