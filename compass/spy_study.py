@@ -162,6 +162,20 @@ def stream_requests(c,now,status):
 
 class Paper(OptionIdeas):
     """Reuse bounded paired replay; keep this ledger's frozen brackets and fees."""
+    marks_table = marks
+
+    def release(self,c,p,now):
+        """Official observations require a real plan-delivery receipt."""
+        if not p.get('delivery'):
+            delivery=c.execute(select(discord_jobs.c.confirmation).join(events,events.c.id==discord_jobs.c.event_id)
+                .where(events.c.key==p['source_key'],events.c.kind=='alert',discord_jobs.c.status=='sent',
+                    discord_jobs.c.route=='spy_morning')).scalar_one_or_none()
+            at=number((delivery or {}).get('at'))
+            if at is None or not p['signal_time']<=at<=now or not (delivery or {}).get('message_id'):
+                return None
+            p['delivery']=delivery
+        return p['delivery']['at']
+
     def save(self,c,p,now):
         p['updated_at']=now
         c.execute(update(observations).where(observations.c.id==p['id']).values(status=p['status'],updated=now,payload=p))
@@ -201,18 +215,12 @@ class Paper(OptionIdeas):
             return wait('frozen_contract_missing_from_latest_chain')
         if not p.get('contract'):
             p.update(contract=candidate,contract_selected_at=now,chain_at_selection={k:chain.get(k) for k in ('asof','source','complete')})
-        if not p.get('delivery'):
-            delivery=c.execute(select(discord_jobs.c.confirmation).join(events,events.c.id==discord_jobs.c.event_id)
-                .where(events.c.key==p['source_key'],events.c.kind=='alert',discord_jobs.c.status=='sent',
-                    discord_jobs.c.route=='spy_morning')).scalar_one_or_none()
-            delivered_at=number((delivery or {}).get('at'))
-            if delivered_at is None or not p['signal_time']<=delivered_at<=now or not (delivery or {}).get('message_id'):
-                return wait('confirmed_plan_delivery_required')
-            p['delivery']=delivery
+        released_at=self.release(c,p,now)
+        if released_at is None:return wait('confirmed_plan_delivery_required')
         oq=observed_quote(c,candidate['symbol'],now)
-        if not liquid(oq,now) or oq['ts']<p['delivery']['at']:
+        if not liquid(oq,now) or oq['ts']<released_at:
             return wait('fresh_liquid_option_after_delivery_required',option_quote=oq)
-        if uq['ts']<p['delivery']['at']:return wait('fresh_underlying_after_delivery_required',underlying_quote=uq)
+        if uq['ts']<released_at:return wait('fresh_underlying_after_delivery_required',underlying_quote=uq)
         from .option_continuity import assess
         quality=assess(self.db,c,candidate['symbol'],now);underlying_quality=assess(self.db,c,'SPY',now)
         if not quality['ready'] or not underlying_quality['ready']:
@@ -239,7 +247,8 @@ class Paper(OptionIdeas):
             entry_contract_metadata=candidate,entry_chain={k:chain.get(k) for k in ('asof','source','complete')},
             entry_spread=oq['ask']-oq['bid'],entry_spread_pct=100*(oq['ask']-oq['bid'])/((oq['ask']+oq['bid'])/2),
             entry_continuity=quality,underlying_entry_continuity=underlying_quality,
-            entry_delay_seconds=now-p['signal_time'],entry_delay_after_delivery=now-p['delivery']['at'],option_source=oq.get('source'),
+            entry_delay_seconds=now-p['signal_time'],entry_delay_after_delivery=now-p['delivery']['at'] if p.get('delivery') else None,
+            entry_delay_after_release=now-released_at,option_source=oq.get('source'),
             last_option_ts=oq['ts'],last_underlying_ts=uq['ts'],last_quote=dict(oq),last_underlying_quote=dict(uq),
             observation_model='paired-recorded-quotes-v2',collection_version=oq.get('collection_version','unversioned'),
             underlying_collection_version=uq.get('collection_version','unversioned'),waiting_reason=None)
@@ -263,7 +272,7 @@ class Paper(OptionIdeas):
         payload=dict(event=event,source_at=now,option_quote=dict(oq),underlying_quote=dict(uq),
             liquidation_price=price,net_pnl=round(net,4),net_return_pct=pct,
             underlying_mid=underlying,underlying_directional_pct=p['underlying_directional_pct'])
-        c.execute(self.db.insert(marks).values(id=id,study_id=p['id'],at=now,processed_at=self.clock() if self.clock else now,
+        c.execute(self.db.insert(self.marks_table).values(id=id,study_id=p['id'],at=now,processed_at=self.clock() if self.clock else now,
             payload=payload).on_conflict_do_nothing(index_elements=['id']))
         return price
 

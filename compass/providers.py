@@ -427,6 +427,7 @@ class Collectors:
         from .option_ideas import stream_requests, choose_streams
         from .swing_ideas import stream_requests as swing_requests
         from .spy_study import stream_requests as spy_requests
+        from .spy_timeframes import stream_requests as timeframe_requests
         from .obsidian import contracts as watchlist_contracts
         def reconcile():
             now=time.time()
@@ -435,7 +436,8 @@ class Collectors:
                       if p.get("status")=="open" and p.get("asset")=="option"]
                 # Every open contract precedes every unfilled candidate in both studies.
                 requested=(stream_requests(c,now,'open')+swing_requests(c,now,'open')+spy_requests(c,now,'open')
-                    +stream_requests(c,now,'pending')+swing_requests(c,now,'pending')+spy_requests(c,now,'pending')+watchlist_contracts(c,now))
+                    +timeframe_requests(c,now,'open')+stream_requests(c,now,'pending')+swing_requests(c,now,'pending')
+                    +spy_requests(c,now,'pending')+watchlist_contracts(c,now)+timeframe_requests(c,now,'pending'))
                 selected=choose_streams(held,requested,self.background_option_symbols,self.cfg.stream_limit)
                 self.option_symbols=set(selected)
                 # This is requested subscription state; opening still requires actual fresh quotes.

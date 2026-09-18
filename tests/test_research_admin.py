@@ -32,7 +32,7 @@ def test_worker_update_during_snapshot_is_not_a_stale_worker():
 
 def test_missing_evidence_is_unknown_not_completed_or_profitable():
     report = build({'asof': NOW}, {}, {})
-    assert len({row['id'] for row in report['streams']}) == 14
+    assert len({row['id'] for row in report['streams']}) == 15
     assert report['flow_research']['records_rated_by_compass'] is None
     assert report['flow_research']['all_record_outcomes'] is None
     assert report['counts']['with_measured_results'] == 0
