@@ -59,8 +59,32 @@
   el('summary').innerHTML=[['Prospective reports',n.prospective_reports],['Confirmed checks',n.confirmations],['Completed option paths',report.version?(statuses.closed||0):null],['Unresolved paths',report.version?(statuses.unresolved||0):null]].map(([label,value])=>'<div class="stat"><div class="label">'+esc(label)+'</div><div class="value">'+num(value,0)+'</div><div class="fine">Full 30-day session window</div></div>').join('');
   el('coverage').innerHTML='<p>Report '+when(report.at)+' · Worker '+when(report.worker?.at)+' · '+esc(report.version||'Awaiting report')+'</p><p>Lifetime saved '+num(i.saved_reports,0)+' · Registered '+num(i.registered,0)+' · Awaiting registration '+num(i.unregistered,0)+' · Historical reports in window '+num(n.historical_reports,0)+'</p><p>WAIT checks '+num(n.waits,0)+' · NO ENTRY checks '+num(n.no_entry,0)+' · Missed or unused schedule slots '+num(n.schedule_slots_without_report,0)+' · Requested contracts in subscriptions '+num(c.in_subscription,0)+' / '+num(c.requested,0)+'</p><p class="fine">'+esc(report.note||'Awaiting first worker cycle.')+'</p>'+table(['Origin','Record type','Check','Decision','Count'],(report.decisions||[]).map(r=>[esc(r.origin),esc(r.kind),esc(phases[r.phase]||r.phase),esc(r.decision),num(r.count,0)]))+table(['Option path state','Count'],(report.statuses||[]).map(r=>[tag(r.status),num(r.count,0)]));
   el('rules').innerHTML=table(['Rule','Definition'],['entry','contract','liquidity','continuity','prices','exits','primary','limitations'].map(k=>[esc(k),esc(p[k]||'Awaiting frozen protocol')]));
-  groups();if(document.getElementById('spy-study').classList.contains('active')&&!page&&!loading&&!failed)load('',0,report.at);controls();
+  timing(report.timeframes||{});groups();if(document.getElementById('spy-study').classList.contains('active')&&!page&&!loading&&!failed)load('',0,report.at);controls();
  };
+ function timing(t){
+  const cash=x=>x==null?'Not measured':'$'+num(x);
+  el('timeframes').innerHTML='<p>Worker '+when(t.worker?.at)+' · Complete calendar sessions '+num(t.completed_calendar_sessions,0)+' / '+num(t.required_sessions,0)+' · Evaluation '+(t.version?(t.evaluation_locked?'results held until '+when(t.activation?.evaluation_end):'period ended; review coverage before conclusions'):'awaiting activation')+'</p>'+
+   '<p>'+esc(t.note||'Awaiting prospective capture; no timeframe has been established as best.')+'</p>'+
+   table(['Cohort','Minutes','Days','Path states','Blocked / missed checks','Completed net P&L'],(t.groups||[]).map(r=>[esc(r.cohort),num(r.timeframe,0),num(r.days,0),esc(JSON.stringify(r.statuses)),num(r.blocked_checks,0)+' / '+num(r.missed_checks,0),r.cohort==='evaluation'&&t.evaluation_locked?'Held out':cash(r.results?.net_pnl)]))+
+   '<h3>Matched days — all four timeframes observed</h3>'+table(['Cohort','Minutes','Matched days','No-signal days','Mean daily net','Net P&L','Drawdown','Win rate','Profit factor','Mean hold','Mean giveback'],(t.paired||[]).map(r=>[esc(r.cohort),num(r.timeframe,0),num(r.matched_days,0),num(r.no_signal_days,0),cash(r.mean_daily_net),cash(r.results?.net_pnl),cash(r.results?.closed_equity_drawdown),pct(r.results?.win_rate==null?null:r.results.win_rate*100),r.results?.profit_factor==null?'Not measured':num(r.results.profit_factor),r.results?.mean_hold_seconds==null?'Not measured':age(r.results.mean_hold_seconds),r.results?.mean_giveback_pct_points==null?'Not measured':num(r.results.mean_giveback_pct_points)+' pp']))+
+   '<h3>Paired daily differences versus 15 minutes</h3>'+table(['Minutes','Matched days','Status','Mean difference','Adjusted bootstrap interval'],(t.comparisons||[]).map(r=>[num(r.timeframe,0),num(r.matched_days,0),esc(r.status),cash(r.mean_difference),r.interval?cash(r.interval[0])+' to '+cash(r.interval[1]):'Not available']))+
+   '<details><summary>Time of day, opening gap and frozen definitions</summary>'+table(['Cohort','Minutes','Cut','Group','Completed','Net P&L'],(t.cuts||[]).map(r=>[esc(r.cohort),num(r.timeframe,0),esc(r.dimension),esc(r.bucket),num(r.results.completed,0),cash(r.results.net_pnl)]))+'<pre>'+esc(JSON.stringify(t.protocol||{},null,2))+'</pre></details>';
+ }
+ let timingOffset=0,timingBusy=false;
+ async function timingPage(reset){
+  if(timingBusy)return;timingBusy=true;const filter=document.getElementById('spy-timing-filter');
+  const next=document.getElementById('spy-timing-next'),refresh=document.getElementById('spy-timing-refresh');
+  if(reset)timingOffset=0;next.disabled=true;refresh.disabled=true;filter.disabled=true;
+  try{const response=await fetch('/api/spy-timeframes/records?timeframe='+filter.value+'&offset='+timingOffset);
+   if(!response.ok)throw Error('Decision audit unavailable');const d=await response.json();
+   document.getElementById('spy-timing-audit').innerHTML='<p>'+num(d.offset+1,0)+'–'+num(d.offset+d.records.length,0)+' of '+num(d.total,0)+' · '+esc(d.note)+'</p>'+table(['Day','Minutes','Candle end','Observed','Decision','Close','Blocks'],d.records.map(r=>[esc(r.day),num(r.timeframe,0),when(r.boundary),when(r.observed_at),esc(r.status),num(r.close),esc(r.data_blocks.join(', '))]));
+   timingOffset=d.offset+d.records.length;next.disabled=!d.has_more;
+  }catch(error){document.getElementById('spy-timing-audit').textContent=error.message;}
+  finally{timingBusy=false;refresh.disabled=false;filter.disabled=false;}
+ }
+ document.getElementById('spy-timing-refresh').onclick=()=>timingPage(true);
+ document.getElementById('spy-timing-filter').onchange=()=>timingPage(true);
+ document.getElementById('spy-timing-next').onclick=()=>timingPage(false);
  el('dimension').onchange=groups;
  el('cohort').onchange=()=>{token++;cohort=el('cohort').value;page=null;loading=false;failed=false;index=0;cursors=[''];el('records').innerHTML='';load('',0);};
  el('prev').onclick=()=>{if(!loading&&index>0)load(cursors[index-1],index-1,page.asof);};

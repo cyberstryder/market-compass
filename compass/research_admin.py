@@ -277,6 +277,21 @@ def build(data, supplements, policy):
         next_step='Verify the next session’s plan-to-check linkage, contract selection and complete quote paths before comparing opening versus later entries.',
         measured=spystates.get('closed',0) if spystudy.get('version') else None)
 
+    timing=spystudy.get('timeframes',{})
+    add('spy-timeframes','SPY 1/3/5/15-minute comparison','Comparison studies',
+        activity(timing.get('worker',{}),now),
+        'Separate immutable completed-candle decisions and paired option paths; no live-alert or account writes.',
+        'Same frozen range, coverage gates and exits for all four intervals; first eligible breakout in the opening hour.',
+        'Matched fully observed days, net costs, drawdown, entry delay, duration and profit giveback; missing paths remain separate.',
+        [metric('Calendar sessions finished',timing.get('completed_calendar_sessions')),
+         metric('Required sessions',timing.get('required_sessions')),
+         metric('Completed paths',timing.get('coverage',{}).get('closed',0) if timing.get('version') else None)],
+        'Full finite frozen period; warmup separate; evaluation returns withheld until the final close. Decision audit is paginated.',
+        'spy-study',alert_policy='Research only; no messages.',checked_at=timing.get('at'),
+        issues=[] if timing.get('version') else ['Timeframe comparison has not reported yet.'],
+        version=timing.get('version'),measured=timing.get('coverage',{}).get('closed',0) if timing.get('version') else None,
+        next_step='Verify coverage for every timeframe and finish the fixed comparison period before assessing a winner.')
+
     trades = [p for p in data.get('trades', []) if p.get('asset') == 'option']
     positions = [p for p in data.get('positions', [])
                  if p.get('asset') == 'option' and p.get('status') == 'open']

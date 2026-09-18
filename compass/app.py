@@ -17,6 +17,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select,func,text
 from .config import Config
 from .store import Store,events
+from .spy_timeframes import Study as SPYTimeframes
 from .providers import Collectors
 from .obsidian import run as run_obsidian, snapshot as obsidian_snapshot
 from .engine import Engine
@@ -110,6 +111,7 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(SwingStudy(db,cfg).run()))
             from .spy_study import Study as SPYStudy
             tasks.append(asyncio.create_task(SPYStudy(db,cfg).run()))
+            tasks.append(asyncio.create_task(SPYTimeframes(db,cfg).run()))
         tasks.append(asyncio.create_task(heartbeat()))
         yield
         if collectors: await collectors.close()
@@ -264,7 +266,8 @@ def create_app(cfg=None):
                 "forward_acceptance":db.get(c,"forward-acceptance-v1:report",{}),
                 "tm_study":{**db.get(c,'tm-study-v1:report',{}),'worker':db.get(c,'tm-study-v1:worker',{})},
                 "swing_study":{**db.get(c,'swing-flow-study-v1:report',{}),'worker':db.get(c,'swing-flow-study-v1:worker',{})},
-                "spy_study":{**db.get(c,'spy-plan-0dte-v1:report',{}),'worker':db.get(c,'spy-plan-0dte-v1:worker',{})},
+                "spy_study":{**db.get(c,'spy-plan-0dte-v1:report',{}),'worker':db.get(c,'spy-plan-0dte-v1:worker',{}),
+                    'timeframes':{**db.get(c,'spy-timeframes-v1:report',{}),'worker':db.get(c,'spy-timeframes-v1:worker',{})}},
                 "secondary":secondary_snapshot(db,c,now,clock=time.time),
                 "setup_study":study_snapshot(db,c,cfg,now),
                 "option_ideas":ideas_snapshot(db,c,cfg,now),
@@ -320,7 +323,15 @@ def create_app(cfg=None):
     @app.get('/api/spy-study')
     def get_spy_study():
         with db.tx() as c:
-            return {**db.get(c,'spy-plan-0dte-v1:report',{}),'worker':db.get(c,'spy-plan-0dte-v1:worker',{})}
+            return {**db.get(c,'spy-plan-0dte-v1:report',{}),'worker':db.get(c,'spy-plan-0dte-v1:worker',{}),
+                'timeframes':{**db.get(c,'spy-timeframes-v1:report',{}),'worker':db.get(c,'spy-timeframes-v1:worker',{})}}
+
+    @app.get('/api/spy-timeframes/records')
+    def get_spy_timeframe_records(timeframe:int=Query(0),offset:int=Query(0,ge=0),limit:int=Query(100,ge=1,le=100)):
+        from .spy_timeframe_report import records
+        try:
+            with db.tx() as c:return records(c,time.time(),timeframe=timeframe,offset=offset,limit=limit)
+        except ValueError as error:raise HTTPException(400,str(error)) from error
 
     @app.get('/api/spy-study/records')
     def get_spy_study_records(cohort:str=Query('all',max_length=30),limit:int=Query(100,ge=1,le=100),

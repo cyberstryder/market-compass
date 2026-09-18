@@ -19,7 +19,15 @@ def coverage(key, data, supplements):
     sections, stamp, source_stamp = [], None, None
     states = {}
     basis = 'Counts describe received evidence, not all market opportunities.'
-    if key in ('tm-flow', 'swing-flow-study', 'spy'):
+    if key == 'spy-timeframes':
+        item=data.get('spy_study',{}).get('timeframes',{})
+        stamp=item.get('at')
+        sections=[section('Timeframe totals','All arms in the frozen 20-session period plus separate warmup',
+            truncated=False,observed=stamp is not None),
+            section('Decision audit','Paginated checks; page size does not define totals',100,observed=stamp is not None)]
+        states=item.get('coverage',{})
+        basis='Matched days require all four arms fully observed; blocked, missed and unresolved evidence is separate from no-signal.'
+    elif key in ('tm-flow', 'swing-flow-study', 'spy'):
         item = data.get({'tm-flow':'tm_study', 'swing-flow-study':'swing_study', 'spy':'spy_study'}[key], {})
         stamp = item.get('at')
         full = item.get('coverage') == 'full_window'

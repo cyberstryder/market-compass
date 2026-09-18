@@ -145,5 +145,20 @@ for key, model, document, primary in (
         evaluation='Retain the original dated protocol and activation cohort; this registry does not restart or reclassify it.')
 
 
+PROTOCOLS['spy-timeframes'] = dict(registry_version='research-protocols-2026-09-18-timing-v1',
+    model='spy-timeframes-v1', status='frozen_prospective_comparison', frozen_on='2026-09-18',
+    href='https://github.com/cyberstryder/market-compass/blob/main/docs/spy-timeframe-comparison.md',
+    implementation_document='docs/spy-timeframe-comparison.md',
+    population='SPY 1/3/5/15-minute arms over the next 20 complete cash sessions; warmup separate.',
+    entry='First eligible completed-candle PM breakout in the opening hour; common frozen context and 50-second deadline.',
+    contract='Observed same-day standard SPY, nearest whole-dollar strike to signal close, ties lower; selection frozen.',
+    exit='Identical sampled underlying 1R stop / 2R target, R=0.2 daily ATR; five minutes before exchange close.',
+    costs='Ask plus $0.01 entry, bid minus $0.01 exit; $0.65 per side; one contract.',
+    exclusions='Blocked/missed decisions, excluded entries and unresolved quote paths retain their denominators; primary requires all four arms fully observed.',
+    uncertainty='Paired session bootstrap only after the fixed endpoint and at least ten matched sessions; three planned contrasts versus 15m use Bonferroni-adjusted percentile intervals. Small samples remain inconclusive; no automatic promotion.',
+    primary='Matched daily net option returns for 1/3/5/15-minute confirmations; fixed common breakout and exit rules.',
+    evaluation='Next 20 complete cash sessions after activation; partial day warmup; evaluation returns locked until the fixed final close. No automatic winner or rule promotion.')
+
+
 def protocol(key):
     return deepcopy(PROTOCOLS[key])

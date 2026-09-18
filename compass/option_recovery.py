@@ -23,11 +23,14 @@ def parse_quotes(data, now):
 
 def targets(collector, now):
     from .store import spy_options
+    from .spy_timeframes import arms
     with collector.db.tx() as c:
         opened=c.execute(select(ideas.c.payload).where(ideas.c.status=='open')
             .order_by(ideas.c.created).limit(201)).scalars().all()
         opened+=c.execute(select(spy_options.c.payload).where(spy_options.c.status=='open')
             .order_by(spy_options.c.created).limit(201)).scalars().all()
+        opened+=c.execute(select(arms.c.payload).where(arms.c.status=='open')
+            .order_by(arms.c.created).limit(4)).scalars().all()
         symbols=list(dict.fromkeys(p['contract']['symbol'] for p in opened[:200]))
         candidates=[]
         for symbol in symbols:
