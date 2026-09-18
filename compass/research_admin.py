@@ -218,7 +218,7 @@ def build(data, supplements, policy):
             issues.append('The setup report reached its 10,000-record limit; these are bounded cohort results.')
         add(id, name, 'Setup studies', activity(study.get('worker') or {}, now, study.get('enabled')),
             'Qualifying price setups and qualifying cooldown candidates receive separate experiments, independent of portfolio entry limits.',
-            'Versioned setup rules; '+('market-state and entry-variant comparisons are also recorded.' if futures else 'TM/exposure context is supporting evidence when available.'),
+            'Versioned setup rules; '+('market-state, entry variants and separately frozen feed comparisons by time of day are recorded in Setup studies.' if futures else 'TM/exposure context is supporting evidence when available.'),
             'Underlying/instrument target, stop, modeled net result, duration and favorable/adverse excursion. These are not option returns.',
             [metric('Setup trials', stats['total'] if study_observed else None),
              metric('Closed outcomes', stats['closed'] if study_observed else None),

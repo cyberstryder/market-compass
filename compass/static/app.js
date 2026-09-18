@@ -335,7 +335,40 @@ function renderSetupStudy(d){
  const groups=(d.groups||[]).filter(allowed);
  $('#study-groups').innerHTML=groups.length?table(['Contract / setup / side','Cohort','Trials / closed','Wins / losses / flat','Target / stop','Win rate','Mean R','Mean duration','Open / unresolved / excluded'],groups.map(g=>[esc(g.symbol)+'<br>'+esc(g.strategy)+' · '+esc(g.side)+'<br><span class="fine">'+esc(g.version)+'</span>',g.alerted?'Alerted':'Cooldown candidate',num(g.total,0)+' / '+num(g.closed,0),g.wins+' / '+g.losses+' / '+g.breakeven,g.targets+' / '+g.stops,g.win_rate===null?'—':num(g.win_rate*100,1)+'%',num(g.mean_r,2),g.mean_seconds===null?'—':num(g.mean_seconds/60,1)+'m',g.open+' / '+g.unresolved+' / '+g.excluded])):empty('Waiting for completed setup observations','New qualifying setups are measured from activation. Earlier signals are not assigned reconstructed trades.');
  window.renderSetupRecords(d);
+ renderFuturesFeeds(d);
 }
+let futuresFeedsPage=0;
+function renderFuturesFeeds(d){
+ const study=d.feed_comparison||{},activation=study.activation||d.feed_comparison_activation;
+ const names={price_only:'Price only',cross_market:'Cross-market',flow:'Flow',combined:'Both confirmations'};
+ $('#study-feeds-status').textContent=activation?
+  'Capture started '+when(activation.at)+'. Ten-session evaluation: '+activation.first_full_session+' through '+(activation.sessions?.at(-1)?.day||'—')+'. '+
+  (study.evaluation_locked!==false?'Evaluation returns stay hidden until the final session closes. Coverage remains visible.':'Evaluation period ended. Sparse or incomplete comparisons remain inconclusive.')+' Summary through '+when(study.at)+'.':
+  'Waiting for the research worker to register a forward start. Earlier trials will not receive reconstructed feed evidence.';
+ const contract=$('#study-feeds-contract'),saved=contract.value;
+ const symbols=[...new Set((study.groups||[]).map(g=>g.symbol))].sort();
+ contract.innerHTML='<option value="">All contracts</option>'+symbols.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
+ contract.value=symbols.includes(saved)?saved:'';
+ const phase=$('#study-feeds-phase').value,arm=$('#study-feeds-arm').value,cohort=$('#study-feeds-cohort').value;
+ const rows=(study[$('#study-feeds-view').value]||[]).filter(g=>g.phase===phase&&(!contract.value||g.symbol===contract.value)&&(!arm||g.arm===arm)&&(cohort==='all'||g.alerted===(cohort==='alerted')));
+ futuresFeedsPage=Math.min(futuresFeedsPage,Math.max(0,Math.ceil(rows.length/200)-1));
+ const offset=futuresFeedsPage*200,preview=rows.slice(offset,offset+200);
+ $('#study-feeds-previous').disabled=futuresFeedsPage===0;
+ $('#study-feeds-next').disabled=offset+200>=rows.length;
+ $('#study-feeds-coverage').textContent=rows.length?'Showing '+(offset+1)+'–'+(offset+preview.length)+' of '+rows.length+' matching aggregate rows; calculations include all retained trials in the frozen period. Counts repeat across filters; do not add them as separate trades. Times use America/Chicago.':
+  (phase==='evaluation'?'No evaluation observations in this selection yet. Collection begins at the first full session shown above.':'No partial-session observations in this selection yet.');
+ $('#study-feeds').innerHTML=preview.length?table(['Contract / setup / side','Filter / context','Selected / skipped / all','Unknown / not mapped / excluded','Common resolved / open / unresolved','Price only / filtered R per opportunity','Difference / 95% interval'],preview.map(g=>[
+  esc(g.symbol)+'<br>'+esc(g.strategy)+' · '+esc(g.side)+'<br><span class="fine">'+esc(g.model)+' · '+esc(g.fill_version)+' · '+(g.alerted?'Alerted':'Cooldown')+'</span>',
+  esc(names[g.arm]||g.arm)+(g.daypart?'<br>'+esc(g.daypart)+' / '+esc(g.regime):g.gex?'<br>GEX '+esc(g.gex)+' / VEX '+esc(g.vex):'')+'<br><span class="fine">'+g.usable_sessions+' sessions with common outcomes</span>',
+  g.selected+' / '+g.skipped+' / '+g.total,g.unknown+' / '+g.not_applicable+' / '+g.excluded,
+  g.paired_closed+' / '+g.open+' / '+g.unresolved,
+  g.outcomes_locked?'Locked until evaluation ends':num(g.baseline_r_per_opportunity,3)+' / '+num(g.filtered_r_per_opportunity,3),
+  g.outcomes_locked?'—':num(g.difference_r_per_opportunity,3)+(g.session_cluster_95?'<br>['+g.session_cluster_95.map(v=>num(v,3)).join(', ')+']<br><span class="fine">Exploratory; unadjusted across setups</span>':'<br><span class="fine">Inconclusive / exploratory</span>')
+ ])):empty('Awaiting forward comparison data','Missing feeds remain unknown. Metals and energy retain their price-only and market-condition studies.');
+}
+for(const id of ['phase','view','contract','arm','cohort'])$('#study-feeds-'+id).onchange=()=>{futuresFeedsPage=0;if(lastState)renderFuturesFeeds(lastState.setup_study||{});};
+$('#study-feeds-previous').onclick=()=>{futuresFeedsPage=Math.max(0,futuresFeedsPage-1);if(lastState)renderFuturesFeeds(lastState.setup_study||{});};
+$('#study-feeds-next').onclick=()=>{futuresFeedsPage++;if(lastState)renderFuturesFeeds(lastState.setup_study||{});};
 $('#study-cohort').onchange=()=>{if(lastState)renderSetupStudy(lastState.setup_study);};
 if(location.hash==='#setup-study')document.querySelector('[data-tab="setup-study"]').click();
 

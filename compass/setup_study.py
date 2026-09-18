@@ -12,7 +12,7 @@ from .futures import futures_session, research_session
 from .instruments import tick_price
 from .simulation import bracket, exit_price, FILL_VERSION, FILL_DESCRIPTION
 from .quote_path import recorded_path
-from . import futures_variants, futures_assessment
+from . import futures_variants, futures_assessment, futures_feed_study, futures_feed_reporting
 from .setup_reporting import summaries, WINDOW_DAYS
 
 VERSION = 'setup-outcomes-v3'
@@ -85,6 +85,9 @@ class SetupStudy:
         if future:
             p['market_assessment'] = futures_assessment.freeze(self.db, c, signal, now, q, spec)
             p['entry_variants'] = futures_variants.classify(self.db, c, signal, now, cause is None)
+            comparison = futures_feed_study.freeze(self.db, c, signal, now, cause is None, p['market_assessment'])
+            if comparison is not None:
+                p['feed_comparison'] = comparison
         c.execute(self.db.insert(trials).values(id=key, source_id=signal['id'], symbol=p['symbol'],
             strategy=p['strategy'], side=p['side'], version=VERSION, status=p['status'], started=now,
             finished=p['finished'], payload=p).on_conflict_do_nothing(index_elements=['id']))
@@ -111,6 +114,7 @@ class SetupStudy:
     def tick(self, c, now):
         if not self.cfg.setup_study:
             return
+        feed_activation = futures_feed_study.activate(self.db, c, now)
         if self.db.get(c, 'setup_study:activation') is None:
             self.db.put(c, 'setup_study:activation', {'at':now, 'version':VERSION})
         rows = c.execute(select(trials.c.payload).where(trials.c.status == 'open')).scalars().all()
@@ -152,6 +156,7 @@ class SetupStudy:
         report = self.db.get(c, 'setup_study:report', {})
         if now-report.get('at', 0) >= 30:
             report = report_for(c, now)
+            report['feed_comparison'] = futures_feed_reporting.report(c, trials, now, feed_activation)
             self.db.put(c, 'setup_study:report', report)
             logging.getLogger('uvicorn.error').info('Futures market research: model=%s cohorts=%s census_contracts=%s', VERSION, len(report['market_assessment']['groups']), sum('snapshot' in v for v in self.db.prefix(c,'futures_research:').values()))
             groups = report['entry_variants']['groups']
@@ -224,4 +229,5 @@ def snapshot(db, c, cfg, now):
         'enabled':cfg.setup_study, 'activation':db.get(c, 'setup_study:activation'),
         'model_activation':db.get(c, 'setup_study:model_activation:'+VERSION),
         'entry_variants_activation':db.get(c, futures_variants.PREFIX+'activation'),
+        'feed_comparison_activation':db.get(c, futures_feed_study.KEY),
         'worker':db.get(c, 'setup_study:worker'), 'max_entries':cfg.max_entries}
