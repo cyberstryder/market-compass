@@ -129,3 +129,45 @@ def test_retry_freezes_exact_underlying_clock_and_contemporaneous_loss_lock(db,o
         scanner.retry_options(c,{'SPY':quote(NOW+121)},NOW+121,engine)
         assert db.get(c,'pending_options:test')['last_selection']==saved
         assert not db.prefix(c,'trade:')
+
+
+def test_live_retry_uses_current_underlying_and_clock_after_slow_scan(db):
+    cfg=Config(local=True,stocks=('SPY',),futures=(),setup_study=False)
+    at=NOW+4
+    with db.tx() as c:
+        seed(db,c)
+        db.put(c,'quote:SPY',quote(at))
+        db.put(c,'quote:'+CONTRACT,quote(at,2,2.01))
+        db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
+        # The scan snapshot predates a quote that is valid at the real retry.
+        Scanner(db,cfg).retry_options(c,{'SPY':quote(NOW-10)},NOW,Engine(db,cfg,clock=lambda:at))
+        p=db.get(c,'pending_options:test');a=p['last_selection']
+        assert p['status']=='entered' and a['at']==at and a['scan_started_at']==NOW
+        assert a['underlying_evidence']['checked_at']==at
+        assert a['underlying_evidence']['age_seconds']==0
+        assert a['selected_quote_evidence']['quote_age_seconds']==0
+        assert next(iter(db.prefix(c,'trade:').values()))['entered_at']==at
+
+
+@pytest.mark.parametrize('offset',[-6,2])
+def test_live_retry_still_rejects_truly_stale_or_future_underlying(db,offset):
+    cfg=Config(local=True,stocks=('SPY',),futures=(),setup_study=False)
+    at=NOW+4
+    with db.tx() as c:
+        seed(db,c);db.put(c,'quote:SPY',quote(at+offset))
+        db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
+        Scanner(db,cfg).retry_options(c,{'SPY':quote()},NOW,Engine(db,cfg,clock=lambda:at))
+        a=db.get(c,'pending_options:test')['last_selection']
+        assert a['reason']=='Fresh underlying quote required'
+        assert a['underlying_evidence']['age_seconds']==-offset
+        assert not db.prefix(c,'trade:')
+
+
+def test_live_retry_expiration_uses_actual_time_not_scan_start(db):
+    cfg=Config(local=True,stocks=('SPY',),futures=(),setup_study=False)
+    with db.tx() as c:
+        seed(db,c);db.put(c,'quote:SPY',quote(NOW+121))
+        db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
+        Scanner(db,cfg).retry_options(c,{'SPY':quote()},NOW,Engine(db,cfg,clock=lambda:NOW+121))
+        assert db.get(c,'pending_options:test')['status']=='expired'
+        assert not db.prefix(c,'trade:')

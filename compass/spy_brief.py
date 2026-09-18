@@ -1,6 +1,7 @@
 """Timestamped morning plan. Informational alerts only; no order or entry-rule writes."""
 import asyncio
 from datetime import datetime
+import math
 import time
 import uuid
 
@@ -42,6 +43,9 @@ def bar_context(db, c, now, phase='preview'):
     rth = [r for r in rows if opening <= r['ts'] < closing]
     first = [r for r in rth if r['ts'] < opening + 900]
     expected_pm = max(0, int((min(now, opening) - pm_start) // 60))
+    expected_minutes = {pm_start + i*60 for i in range(expected_pm)}
+    observed_minutes = {r['ts'] for r in pm}
+    missing_minutes = sorted(expected_minutes - observed_minutes)
     pm_complete = (expected_pm >= 60 and len(pm) >= .9 * expected_pm and pm
                    and min(now, opening) - (pm[-1]['ts'] + 60) <= 120)
     first_complete = {r['ts'] for r in first} == {opening + i * 60 for i in range(15)}
@@ -102,6 +106,14 @@ def bar_context(db, c, now, phase='preview'):
         'spot_basis': 'quote midpoint' if valid_quote else 'completed minute close',
         'prior': {k: number(prior.get(k)) for k in ('h', 'l', 'c')}, 'atr14_daily': atr,
         'premarket_complete': bool(pm_complete), 'premarket_expected_bars': expected_pm,
+        'premarket_coverage_evidence': {
+            'basis': 'Observed valid minute bars versus elapsed clock minutes; absence alone does not identify a feed failure',
+            'required_bars': math.ceil(.9 * expected_pm), 'threshold_fraction': .9,
+            'missing_minutes': missing_minutes, 'missing_count': len(missing_minutes),
+            'first_observed': pm[0]['ts'] if pm else None,
+            'last_observed': pm[-1]['ts'] if pm else None,
+            'provider_omission_status': 'not_verified',
+        },
         'first15_complete': first_complete, 'first15_close': first[-1]['payload']['c'] if first_complete else None,
         'first15_asof': opening + 900 if first_complete else None,
         'confirmation_candle': candle, 'confirmation_history_complete': history_complete,
@@ -333,6 +345,11 @@ def delivery_payload(row, now):
     if candle:
         lines.append('This 15m check: ' + stamp(candle['start']) + ' → ' + stamp(candle['end']) +
                      '; close ' + money(candle['close']) + f"; {candle['bars']}/15 minutes")
+    if p.get('price_condition'):
+        labels={'put_breakout':'close below PM low', 'call_breakout':'close above PM high',
+                'inside_range':'close inside PM range', 'not_observed':'complete price comparison unavailable'}
+        lines.append('Price condition: ' + labels[p['price_condition']] +
+                     ('; entry blocked by data checks' if p.get('data_blocks') else '; see saved decision'))
     if p.get('confirmation_kind') == 'later':
         lines.append('Later 15m check · frozen PM range ' + money(ctx['premarket']['low']) +
                      '–' + money(ctx['premarket']['high']))

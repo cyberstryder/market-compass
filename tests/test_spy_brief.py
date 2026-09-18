@@ -444,6 +444,30 @@ def test_premarket_coverage_can_recover_only_with_same_frozen_range(db):
     assert r['frozen_premarket']==first['frozen_premarket']
 
 
+def test_data_block_keeps_breakout_price_evidence_and_exact_missing_minutes(db):
+    worker=BriefWorker(db,Config(local=True))
+    seed_checks(db,NOW,{15:761},pm_gap=34)
+    first=worker.tick(NOW)
+    assert first['decision'].startswith('WAIT')
+    assert first['price_condition']=='call_breakout'
+    assert first['data_status']=='blocked'
+    evidence=first['context']['premarket_coverage_evidence']
+    assert evidence['missing_count']==len(evidence['missing_minutes'])==34
+    assert evidence['required_bars']==297
+    assert evidence['provider_omission_status']=='not_verified'
+    assert first['context']['premarket']['bars']==296
+    with db.tx() as c:
+        row=next(r for r in db.recent(c,'alert') if r['payload']['status']=='spy_morning_brief')
+    payload=json.dumps(delivery_payload(row,NOW))
+    assert 'close above PM high' in payload and 'entry blocked by data checks' in payload
+    # Later data recovery cannot rewrite the report already sent.
+    seed_checks(db,OPEN+1807,{30:759})
+    with db.tx() as c:
+        saved=db.get(c,'spy-brief:'+day(NOW)+':opening')
+    assert saved['decision']==first['decision']
+    assert saved['context']['premarket_coverage_evidence']==evidence
+
+
 def test_recovered_range_discrepancy_blocks_confirmation_and_keeps_drawn_levels(db):
     worker=BriefWorker(db,Config(local=True))
     seed_checks(db,NOW,pm_gap=58); worker.tick(NOW)

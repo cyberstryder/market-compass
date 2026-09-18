@@ -175,8 +175,9 @@ class Engine:
 
     def options(self,c,signal,now,quiet=False,diagnostics=None):
         chain=self.db.get(c,"chain:"+signal["symbol"],{})
+        now=self.clock() if self.clock else now
         audit=diagnostics if diagnostics is not None else {}
-        audit.update(version='0dte-selection-v1',at=now,status='blocked',reason=None,
+        audit.update(version='0dte-selection-v2',at=now,status='blocked',reason=None,
             chain_age_seconds=now-chain['asof'] if chain.get('asof') is not None else None,
             chain_source=chain.get('source'),chain_complete=chain.get('complete'),
             same_day_contracts=0,checked_contracts=0,rejections=[])
@@ -194,21 +195,23 @@ class Engine:
         rejected=audit['rejections']
         for o in opts[:8]:
             q=self.db.get(c,"quote:"+o["symbol"])
+            checked_at=self.clock() if self.clock else now
             audit['checked_contracts']+=1
-            evidence=dict(symbol=o['symbol'],quote_source=q.get('source') if q else None,
-                quote_age_seconds=now-q['ts'] if q and q.get('ts') is not None else None)
-            if fresh(q,now):
+            evidence=dict(symbol=o['symbol'],checked_at=checked_at,quote_source=q.get('source') if q else None,
+                quote_age_seconds=checked_at-q['ts'] if q and q.get('ts') is not None else None)
+            if fresh(q,checked_at):
                 option_signal={**signal,"id":identity(signal["id"],o["symbol"]),"symbol":o["symbol"],
                     "underlying":signal["symbol"],"underlying_side":signal['side'],
                     "underlying_invalidation":signal.get('invalidation'),
                     "strategy":"0dte-"+signal['strategy'] if signal.get('strategy','').startswith('compass-scanner') else "0dte-underlying-orb-v2","side":"long",
                     "stop_distance":max(.05,q["ask"]*.3)}
-                reason,_=self.entry_check(c,option_signal,now)
+                reason,_=self.entry_check(c,option_signal,checked_at)
                 if reason:
                     rejected.append({**evidence,"reason":reason})
                     continue
-                if self.enter(c,{**option_signal,"selection_rejections":rejected},now):
-                    audit.update(status='entered',reason='Eligible contract entered',selected_contract=o['symbol'])
+                if self.enter(c,{**option_signal,"selection_rejections":rejected},checked_at):
+                    audit.update(status='entered',reason='Eligible contract entered',selected_contract=o['symbol'],
+                        selected_quote_evidence=evidence)
                     return True
                 rejected.append({**evidence,'reason':'Entry recheck declined; see saved skip event'})
             else: rejected.append({**evidence,"reason":"Missing or invalid fresh quote"})
@@ -288,4 +291,3 @@ class Engine:
             except asyncio.CancelledError: raise
             except Exception as e: self.db.health("engine","error",type(e).__name__)
             await asyncio.sleep(2)
-
