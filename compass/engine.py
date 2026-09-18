@@ -11,6 +11,7 @@ from .instruments import future_spec, tick_price
 from .setup_study import SetupStudy
 from .option_ideas import OptionIdeas
 from .simulation import bracket, exit_price, FILL_VERSION, FILL_DESCRIPTION
+from . import paper_risk
 
 VERSION="orb15-breakout-v1"
 
@@ -72,11 +73,12 @@ class Engine:
         elif q["ts"]<signal["signal_time"]: reason="No quote after signal"
         elif q["ask"]-q["bid"]>max(s["tick"]*8,(q["ask"]+q["bid"])/2*(.08 if s["asset"]=="option" else .002)):
             reason="Spread exceeds simulation liquidity limit"
-        risk=self.db.get(c,"risk:"+risk_day(now),{"realized":0,"entries":0})
+        risk=paper_risk.account(self.db,c,now,s["asset"],persist=True)
         if risk["realized"]<=-self.cfg.daily_loss: reason="Daily simulated loss limit"
         if self.cfg.max_entries and risk["entries"]>=self.cfg.max_entries: reason="Configured simulated entry limit"
-        if sum(p.get("status")=="open" for p in self.db.prefix(c,"position:").values())>=3:
+        if sum(p.get("status")=="open" and p.get("asset")==s["asset"] for p in self.db.prefix(c,"position:").values())>=3:
             reason="Portfolio cap: three simultaneous simulated positions"
+        if not risk["ready"]: reason="Paper risk migration requires reconciliation"
         if reason:
             return reason,None
         try:
@@ -109,11 +111,12 @@ class Engine:
             "stop":plan['stop'],"target":plan['target'],"qty":qty,"initial_risk":per_unit*qty,
             "fill_model":FILL_DESCRIPTION,"fill_version":FILL_VERSION,
             "last_quote_ts":q["ts"],"last_bar_checked":signal["signal_time"]-60,
-            "risk_day":risk_day(now),"flatten_at":plan["flatten_at"]}
+            "risk_day":risk_day(now),"risk_policy":paper_risk.VERSION,
+            "paper_portfolio":paper_risk.portfolio(s["asset"]),"flatten_at":plan["flatten_at"]}
         self.db.put(c,"position:"+symbol,trade)
         self.db.put(c,"trade:"+signal["id"],trade)
         risk["entries"]+=1
-        self.db.put(c,"risk:"+risk_day(now),risk)
+        self.db.put(c,paper_risk.key(now,s["asset"]),risk)
         if quiet:
             self.db.append(c,'paper_decision','engine',symbol,now,{**trade,'status':'entered'},'entry:'+signal['id'])
         else:
@@ -161,9 +164,11 @@ class Engine:
             p["unrealized"]=(price-p["entry"])*(1 if long else -1)*p["qty"]*p["multiplier"]-2*p["fee"]*p["qty"]
             if reason:
                 p.update(status="closed",exit=price,exited_at=now,exit_reason=reason,pnl=p["unrealized"])
-                risk=self.db.get(c,"risk:"+risk_day(now),{"realized":0,"entries":0})
+                risk=paper_risk.account(self.db,c,now,p["asset"],persist=True)
                 risk["realized"]+=p["pnl"]
-                self.db.put(c,"risk:"+risk_day(now),risk)
+                self.db.put(c,paper_risk.key(now,p["asset"]),risk)
+                p.update(exit_risk_policy=paper_risk.VERSION,exit_risk_day=risk_day(now),
+                         exit_paper_portfolio=paper_risk.portfolio(p["asset"]))
                 self.alert(c,p["symbol"],p,"exit:"+p["id"])
             self.db.put(c,key,p)
             self.db.put(c,"trade:"+p["id"],p)
@@ -238,6 +243,7 @@ class Engine:
         now=now or time.time()
         with self.db.tx() as c:
             if not self.db.lease(c,"engine",self.owner,30): return
+            paper_risk.ledgers(self.db,c,now,persist=True)
             self.study.tick(c,now)
             self.exits(c,now)
             active={p["raw_symbol"] for p in active_selection(self.db,c,self.cfg,now)}
@@ -282,3 +288,4 @@ class Engine:
             except asyncio.CancelledError: raise
             except Exception as e: self.db.health("engine","error",type(e).__name__)
             await asyncio.sleep(2)
+

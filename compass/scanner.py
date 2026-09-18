@@ -436,10 +436,11 @@ class Scanner:
             'age_seconds':now-quote['ts'] if quote and quote.get('ts') is not None else None,
             'fresh':fresh(quote,now),
             'basis':'Exact scanner retry quote at saved attempt time; not a later source lookup'}
-        risk=self.db.get(c,'risk:'+risk_day(now),{'realized':0,'entries':0})
+        from .paper_risk import account
+        risk=account(self.db,c,now,'option')
         audit['risk_context']={**risk,'day':risk_day(now),'daily_loss_limit':self.cfg.daily_loss,
             'daily_loss_locked':risk['realized']<=-self.cfg.daily_loss,
-            'basis':'Contemporaneous portfolio context; selection may stop at an earlier gate'}
+            'basis':'Contemporaneous 0DTE paper account; selection may stop at an earlier gate'}
         previous=pending.get('last_selection',{})
         def signature(row):
             return (row.get('status'),row.get('reason'),[(r['symbol'],r['reason']) for r in row.get('rejections',[])])

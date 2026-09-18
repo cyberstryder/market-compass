@@ -124,6 +124,16 @@ PROTOCOLS = {
         'docs/vendor-freshness-and-review-periods.md', status='frozen_context_definition'),
 }
 
+# Separate admission policy; the original zero-dte definition above stays frozen.
+PROTOCOLS['zero-dte-v2'] = {
+    **PROTOCOLS['zero-dte'], 'registry_version': 'research-protocols-2026-09-18-v2',
+    'frozen_on': '2026-09-18', 'model': 'paper-portfolios-v2 / 0dte-selection-v1 / sampled-bracket-v2',
+    'population': 'Only v2 same-day option portfolio admissions; futures and stocks have separate paper budgets. Never pool legacy shared-risk admissions.',
+    'evaluation': 'First ten complete cash sessions beginning on or after 2026-09-21 after deployment; September 18 is transition/development evidence. Existing independent study windows do not restart.',
+    'implementation_document': 'docs/paper-portfolios.md',
+    'href': 'https://github.com/cyberstryder/market-compass/blob/main/docs/paper-portfolios.md',
+}
+
 # Existing prospective protocols are linked without changing their original cohorts.
 for key, model, document, primary in (
     ('tm-flow', 'tm-receipt-study-v1', 'docs/tm-scoring-study.md', '60 trading-minute common-score directional underlying comparison.'),

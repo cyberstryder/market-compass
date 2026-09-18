@@ -4,6 +4,7 @@ from sqlalchemy import select
 from .store import state, events
 from .market import day
 from .futures import risk_day
+from .paper_risk import snapshot as paper_risk_snapshot
 
 
 def snapshot(db,c,cfg,now):
@@ -29,8 +30,10 @@ def snapshot(db,c,cfg,now):
             reason=r.get('reason'),selection=r.get('last_selection')) for r in rows[:12]],
         notification_skip_reasons=dict(Counter(r.get('reason','Unknown') for r in skips[:1000])),
         notification_skips_truncated=len(skips)>1000,
-        risk=[dict(day=d,**db.get(c,'risk:'+d,{'realized':0,'entries':0})) for d in risk_dates],
+        paper_portfolios=paper_risk_snapshot(db,c,cfg,now),
+        legacy_risk=[dict(day=d,**db.get(c,'risk:'+d,{'realized':0,'entries':0})) for d in risk_dates],
         current_risk_day=risk_day(now),cash_date=day(now),
         open_positions=dict(Counter(p.get('asset','unknown') for p in positions)),
         limits=dict(daily_loss=cfg.daily_loss,risk_per_entry=cfg.risk,max_entries=cfg.max_entries,concurrent_positions=3),
         note='Retries updated in the last 24 hours, counted once per candidate using the last saved attempt. Contract counts can include several contracts per candidate. Notification reasons overlap retry candidates. Current risk is context, not proof of a historical rejection; older retries may have no detailed evidence.')
+

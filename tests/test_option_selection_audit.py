@@ -4,6 +4,7 @@ from compass.config import Config
 from compass.engine import Engine
 from compass.scanner import Scanner
 from compass.futures import risk_day
+from compass.paper_risk import key, ledgers
 from compass.option_selection_audit import snapshot
 from compass.forward_audit import failure_evidence
 from test_scanner import db, NOW, quote
@@ -40,9 +41,11 @@ def test_quiet_selection_exposes_real_gate_without_changing_it(db,case,reason):
             chain=db.get(c,'chain:SPY');chain['contracts'][0]['expiry']='2026-09-15';db.put(c,'chain:SPY',chain)
         if case=='quote':db.put(c,'quote:'+CONTRACT,quote(NOW-6,2,2.01))
         if case=='spread':db.put(c,'quote:'+CONTRACT,quote(NOW,1,2))
-        if case=='daily_loss':db.put(c,'risk:'+risk_day(NOW),dict(realized=-cfg.daily_loss,entries=1))
+        if case=='daily_loss':
+            risk=ledgers(db,c,NOW,persist=True)['option'];risk.update(realized=-cfg.daily_loss,entries=1)
+            db.put(c,key(NOW,'option'),risk)
         if case=='portfolio':
-            for symbol in ('A','B','C'):db.put(c,'position:'+symbol,dict(status='open',asset='stock'))
+            for symbol in ('A','B','C'):db.put(c,'position:'+symbol,dict(status='open',asset='option'))
         if case=='premium':db.put(c,'quote:'+CONTRACT,quote(NOW,10,10.01))
         audit={}
         assert not Engine(db,cfg).options(c,signal(),NOW,quiet=True,diagnostics=audit)
@@ -94,7 +97,7 @@ def test_audit_keeps_unknown_history_and_separate_cash_and_overnight_risk(db,mon
     assert report['candidates']==2 and report['instrumented']==report['missing_diagnostics']==1
     assert report['last_attempt_reasons']=={'Daily simulated loss limit':1}
     assert report['open_positions']=={'stock':1}
-    assert report['risk']==[dict(day='2026-09-14',realized=-350,entries=4),dict(day='2026-09-15',realized=0,entries=0)]
+    assert report['legacy_risk']==[dict(day='2026-09-14',realized=-350,entries=4),dict(day='2026-09-15',realized=0,entries=0)]
 
 
 def test_archive_evidence_does_not_claim_a_usable_stream_was_missing():
@@ -112,7 +115,8 @@ def test_retry_freezes_exact_underlying_clock_and_contemporaneous_loss_lock(db,o
     with db.tx() as c:
         seed(db,c)
         db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
-        db.put(c,'risk:'+risk_day(NOW),dict(realized=-390.5,entries=40))
+        risk=ledgers(db,c,NOW,persist=True)['option'];risk.update(realized=-390.5,entries=40)
+        db.put(c,key(NOW,'option'),risk)
         q=quote(NOW+offset)
         scanner.retry_options(c,{'SPY':q},NOW,engine)
         saved=db.get(c,'pending_options:test')['last_selection']
@@ -121,7 +125,7 @@ def test_retry_freezes_exact_underlying_clock_and_contemporaneous_loss_lock(db,o
         assert saved['underlying_evidence']['quote']['ts']==q['ts']
         assert saved['risk_context']['daily_loss_locked'] is True
         assert saved['reason']=='Fresh underlying quote required'
-        db.put(c,'risk:'+risk_day(NOW),dict(realized=0,entries=0))
+        risk.update(realized=0,entries=0);db.put(c,key(NOW,'option'),risk)
         scanner.retry_options(c,{'SPY':quote(NOW+121)},NOW+121,engine)
         assert db.get(c,'pending_options:test')['last_selection']==saved
         assert not db.prefix(c,'trade:')
