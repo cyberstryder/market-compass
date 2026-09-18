@@ -23,10 +23,14 @@ def compare(start, end, provider_minutes, stored_minutes, fetched_at, complete):
 async def collect(collector, now=None):
     now=time.time() if now is None else now
     hours=session(day(now))
-    if not hours:return
+    if not hours:
+        collector.db.health("provider_coverage","scheduled","Provider inventory comparison resumes next equity session")
+        return
     start=datetime.fromisoformat(day(now)).replace(hour=4,tzinfo=NY).timestamp()
     end=min(int(now//60)*60,hours[0])
-    if end<=start or now>hours[0]+7200:return
+    if end<=start or now>hours[0]+7200:
+        collector.db.health("provider_coverage","scheduled","Independent SPY inventory comparison runs during the morning window")
+        return
     params=dict(timeframe='1Min',start=datetime.fromtimestamp(start,timezone.utc).isoformat(),
         end=datetime.fromtimestamp(end-.001,timezone.utc).isoformat(),feed=collector.cfg.feed,
         adjustment='split',sort='asc',limit=1000)
@@ -40,4 +44,6 @@ async def collect(collector, now=None):
         result=compare(start,end,stamps,stored,time.time(),not data.get('next_page_token'))
         result.update(symbol='SPY',feed=collector.cfg.feed,request=params)
         collector.db.put(c,'provider_coverage:SPY:'+day(now),result)
+    collector.db.health("provider_coverage","available" if result["provider_inventory_complete"] else "partial",
+        "Independent source inventory; entry gate unchanged",result["fetched_at"])
     return result
