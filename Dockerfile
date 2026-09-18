@@ -6,6 +6,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY compass ./compass
 COPY tests ./tests
 COPY pine ./pine
+COPY ops ./ops
 RUN COMPASS_LOCAL=true python -m pytest -q
 RUN useradd --create-home --uid 10001 compass && chown -R compass:compass /app
 USER compass
