@@ -434,10 +434,10 @@ class Collectors:
             with self.db.tx() as c:
                 held=[p["symbol"] for p in self.db.prefix(c,"position:").values()
                       if p.get("status")=="open" and p.get("asset")=="option"]
-                # Every open contract precedes every unfilled candidate in both studies.
+                # Preserve existing requests' priority; timing research uses remaining capacity.
                 requested=(stream_requests(c,now,'open')+swing_requests(c,now,'open')+spy_requests(c,now,'open')
-                    +timeframe_requests(c,now,'open')+stream_requests(c,now,'pending')+swing_requests(c,now,'pending')
-                    +spy_requests(c,now,'pending')+watchlist_contracts(c,now)+timeframe_requests(c,now,'pending'))
+                    +stream_requests(c,now,'pending')+swing_requests(c,now,'pending')+spy_requests(c,now,'pending')
+                    +watchlist_contracts(c,now)+timeframe_requests(c,now,'open')+timeframe_requests(c,now,'pending'))
                 selected=choose_streams(held,requested,self.background_option_symbols,self.cfg.stream_limit)
                 self.option_symbols=set(selected)
                 # This is requested subscription state; opening still requires actual fresh quotes.
