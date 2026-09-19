@@ -525,6 +525,17 @@ class Secondary:
             return
         self.review(c, source_candidate(project, payload, key), source_result(payload, project), now)
 
+    def morning_entry(self, c, event, now):
+        p = event['payload']
+        payload = dict(id=p['signal_id'], symbol=p['ticker'], source_ts=p['signal_at_ms']/1000,
+            side='long', strategy=p['setup'], version=p['script_version'], stream=p['stream_id'],
+            entry=p['price'])
+        candidate = source_candidate('morning', payload, identity('morning', p['signal_id']))
+        candidate['intake_origin'] = 'direct'
+        candidate['received_at'] = event['ts']
+        self.review(c, candidate, {'status': 'tracking',
+            'basis': 'Direct Compass entry; independent research measurements, no original-app outcome'}, now)
+
     def native_event(self, c, event, now):
         p = event["payload"]
         if event["source"] not in ("scanner", "engine") or not future_root(event["symbol"]):
@@ -561,6 +572,7 @@ class Secondary:
             # visible after a higher one. Durable per-event acknowledgements,
             # rather than id > cursor, prevent that candidate from being lost.
             eligible = or_(and_(events.c.kind == "project_update", events.c.source.in_(("morning", "smoothers", "futures"))),
+                           and_(events.c.kind == "morning_entry", events.c.source == "native_morning"),
                            and_(events.c.kind == "alert", events.c.source.in_(("scanner", "engine"))))
             batch = c.execute(select(events).outerjoin(handled, events.c.id == handled.c.event_id)
                 .where(handled.c.event_id.is_(None), events.c.ts >= activation["at"], eligible)
@@ -573,6 +585,8 @@ class Secondary:
                     with c.begin_nested():
                         if event["kind"] == "project_update" and event["source"] in ("morning", "smoothers", "futures"):
                             self.source_event(c, event, now)
+                        elif event['kind'] == 'morning_entry' and event['source'] == 'native_morning':
+                            self.morning_entry(c, event, now)
                         elif self.cfg.secondary_native:
                             self.native_event(c, event, now)
                 except (ValueError, TypeError, KeyError, OverflowError):
