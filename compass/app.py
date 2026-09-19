@@ -320,14 +320,15 @@ def create_app(cfg=None):
 
     @app.get('/api/session-gaps')
     def get_session_gaps(asset:str=Query('future',pattern=r'^(future|option)$'),
+            scope:str=Query('cash',pattern=r'^(cash|full)$'),
             session_day:str|None=Query(None,pattern=r'^\d{4}-\d{2}-\d{2}$'),
             limit:int=Query(100,ge=1,le=100),cursor:str=Query('',max_length=1024)):
         from .session_gaps import window, totals, gap_page
         now=time.time()
         try:
             with db.tx() as c:
-                page=gap_page(c,now,asset=asset,session_day=session_day,limit=limit,cursor=cursor)
-                return {**page,'summary':totals(c,window(page['asof'],page['day'],asset))}
+                page=gap_page(c,now,asset=asset,session_day=session_day,limit=limit,cursor=cursor,scope=scope)
+                return {**page,'summary':totals(c,window(page['asof'],page['day'],asset,scope))}
         except (ValueError,OverflowError) as error:raise HTTPException(400,str(error)) from error
 
     @app.get('/api/tm-study')

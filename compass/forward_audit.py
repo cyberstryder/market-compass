@@ -100,6 +100,7 @@ def capture(db,cfg,now):
         from .session_trace import tgt_trace, futures_session_audit
         status['tgt_quote_trace']=tgt_trace(db,c,now)
         status['futures_session_audit']=futures_session_audit(db,c,now)
+        status['futures_full_session_audit']=futures_session_audit(db,c,now,scope='full')
         # Bounded failure details expose which stream went missing.
         status['option_failures']=[{k:r.get(k) for k in ('id','underlying','contract','created_at','finished_at','exit_reason','gap_detail','archive_check','observation_model','collection_version','underlying_collection_version')}
             for r in options if r['status']=='unresolved'][:12]

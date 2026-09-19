@@ -2,16 +2,19 @@
 (()=>{
  const root=document.querySelector('#session-gaps');
  if(!root)return;
+ const scope=root.querySelector('[name=scope]');
  const asset=root.querySelector('[name=asset]'),day=root.querySelector('[name=session_day]');
  const load=root.querySelector('[data-load]'),next=root.querySelector('[data-next]');
  const status=root.querySelector('[data-status]'),summary=root.querySelector('[data-summary]'),records=root.querySelector('[data-records]');
  let request=0,page=null,shown=0;
  function invalidate(){request++;page=null;shown=0;next.disabled=true;load.disabled=false;summary.textContent='';records.textContent='';status.textContent='Load the selected session.';}
- asset.onchange=day.onchange=invalidate;
+ asset.onchange=()=>{scope.value=asset.value==='option'?'cash':'full';scope.disabled=asset.value==='option';day.value='';invalidate();};
+ scope.onchange=()=>{day.value='';invalidate();};
+ day.onchange=invalidate;
  async function fetchPage(append){
   const token=++request;
   load.disabled=true;next.disabled=true;status.textContent='Loading session observations…';
-  const params=new URLSearchParams({asset:asset.value,limit:'100'});
+  const params=new URLSearchParams({asset:asset.value,scope:scope.value,limit:'100'});
   if(day.value)params.set('session_day',day.value);
   if(append&&page?.next_cursor)params.set('cursor',page.next_cursor);
   try{
