@@ -19,7 +19,7 @@ const page={day:'2026-09-18',summary:{total:2105,states:{closed:2000,unresolved:
  assert.match(calls[1],/cursor=next/);assert.match(calls[1],/session_day=2026-09-18/);
  assert.equal(elements['[data-next]'].disabled,true);
  assert.match(elements['[data-status]'].textContent,/All records in this view shown/);
- elements['[name=scope]','[name=asset]'].value='option';elements['[name=scope]','[name=asset]'].onchange();
+ elements['[name=asset]'].value='option';elements['[name=asset]'].onchange();
  assert.equal(elements['[data-next]'].disabled,true);
  assert.equal(elements['[data-summary]'].textContent,'');
  response={...page,records:[],has_more:false};await elements['[data-load]'].onclick();

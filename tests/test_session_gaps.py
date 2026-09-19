@@ -111,7 +111,6 @@ def test_api_auth_validation_and_complete_counts(tmp_path,monkeypatch):
     app.state.db.engine.dispose()
 
 def ct(value):
-    from compass.market import CT
     return datetime.fromisoformat(value).replace(tzinfo=CT).timestamp()
 
 @pytest.mark.parametrize('clock,expected',[
