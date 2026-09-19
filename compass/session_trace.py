@@ -41,13 +41,11 @@ def tgt_trace(db,c,now):
 
 
 def futures_session_audit(db,c,now):
-    hours=session(day(now))
-    start=hours[0] if hours else now-3600
-    data=c.execute(select(trials.c.payload).where(trials.c.started>=start,trials.c.started<=now)
-        .order_by(trials.c.started.desc()).limit(2001)).scalars().all()
-    selected=[r for r in data[:2000] if r.get('asset')=='future']
-    gaps=[r for r in selected if r.get('status')=='unresolved']
-    return dict(since=start,through=now,states=dict(Counter(r.get('status') for r in selected)),
-        truncated=len(data)>2000,gaps=[{k:r.get(k) for k in ('symbol','started','finished','exit_reason','gap_detail','archive_check')}
-            for r in gaps[:12]],gap_details_truncated=len(gaps)>12,
-        basis='Trials started since cash open, including futures; bounded cohort, not full-history performance.')
+    from .session_gaps import window, totals, gap_page
+    w=window(now)
+    result=totals(c,w)
+    page=gap_page(c,now,session_day=w['day'],limit=12)
+    return dict(**result,gaps=page['records'],gap_details_truncated=page['has_more'],
+        gap_total=page['total'],gap_next_cursor=page['next_cursor'],
+        gap_records_url='/api/session-gaps?asset=future&session_day='+w['day'],
+        at=now)
