@@ -6,7 +6,6 @@ cannot stop ES/MES/NQ/MNQ. No historical API download or new plan purchase.
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone, timedelta
 from .instruments import FUTURES, DATED
 from .futures import risk_day, lead_contract
 from .diagnostics import redacted_detail
@@ -159,8 +158,10 @@ async def collect_group(collector, exchange, aliases):
 
             def run():
                 try:
+                    # Available replay shrinks on weekends and maintenance.
+                    # Zero requests the gateway's retained bars, not epoch data.
                     client.subscribe(dataset='GLBX.MDP3',schema='ohlcv-1m',stype_in=stype,symbols=requested,
-                        start=(datetime.now(timezone.utc)-timedelta(hours=23)).isoformat())
+                        start=0)
                     client.subscribe(dataset='GLBX.MDP3',schema='mbp-1',stype_in=stype,symbols=requested)
                     client.start()
                     client.block_for_close()

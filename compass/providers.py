@@ -337,8 +337,10 @@ class Collectors:
                 client.terminate()
             try:
                 client.add_callback(probe.wrap(callback),exception_callback=on_error)
+                # Weekend/maintenance replay can be shorter than 23 hours.
+                # Let the gateway select its earliest retained bar; keep BBO live.
                 client.subscribe(dataset="GLBX.MDP3",schema="ohlcv-1m",stype_in="raw_symbol",symbols=symbols,
-                    start=(datetime.now(timezone.utc)-timedelta(hours=23)).isoformat())
+                    start=0)
                 client.subscribe(dataset="GLBX.MDP3",schema="mbp-1",stype_in="raw_symbol",symbols=symbols)
                 client.start()
                 self.db.health("databento_futures","connected","Waiting for CME market events: "+", ".join(symbols))
