@@ -20,6 +20,7 @@ from .native_morning.options import AlpacaQuotes, OptionsConfig, POLICY, option_
 from .native_morning.option_history import schedule_history, sample_batch
 from .native_outbox import queue, owner as notification_owner
 from .projects import records
+from .store import identity
 from .native_routing import routing_guard, allowed, record, day
 
 VERSION='native-morning-v1'
@@ -44,6 +45,14 @@ def accept(db,raw,now,body_size=0,origin='direct',request_meta=None):
             raise source.PayloadConflict('Direct intake is disabled for this session')
         result=commit_input(db,payload,kind,now,body_size,guard)
         record(db,guard,payload,origin,now,result,request_meta=request_meta)
+        if origin=='direct' and result['status']=='accepted':
+            signal=payload.signal() if kind=='frame' and payload.entry else payload.signal if kind=='signal' else None
+            if signal is not None and not signal.is_test and 0<=now-signal.signal_at_ms/1000<=60:
+                # Research consumes the direct entry independently of the old
+                # app. Recovery frames/checkpoints never invent a fresh entry.
+                # Commit the candidate with intake; retries cannot duplicate it.
+                db.append(guard,'morning_entry','native_morning',signal.ticker,now,
+                          signal.model_dump(),'native-morning-research:'+identity(signal.signal_id))
         if request_meta:
             # Per-HTTP-attempt identity is separate from deduplicated source
             # receipts. Commit it atomically, including successful duplicates.
