@@ -217,3 +217,55 @@ def test_extra_configuration_keeps_case_and_limits_validated(cfg):
     cfg.max_entries=-1
     with pytest.raises(ValueError): cfg.validate()
 
+
+
+def test_slow_archive_read_does_not_age_cached_evidence_into_a_gap(db,cfg,monkeypatch):
+    import compass.setup_study as module
+    from compass.store import events
+    clock=[NOW]
+    study=SetupStudy(db,cfg,clock=lambda:clock[0])
+    with db.tx() as c:
+        db.put(c,'quote:MESZ6@1',quote())
+        for identity in ('a','b'):
+            study.start(c,signal(identity),NOW,spec('MESZ6@1'),alerted=False)
+        clock[0]=NOW+1
+        original=module.recorded_path
+        def slow_read(db,connection,symbol,after,until):
+            result=original(db,connection,symbol,after,until)
+            # Quotes arrive while the old archive query is being processed.
+            # They were fresh when stored and form a complete path.
+            for offset in (4,8,12,16,20):
+                payload=quote(NOW+offset)
+                connection.execute(db.insert(events).values(key='slow-'+str(offset),
+                    kind='quote',source='databento',symbol=symbol,ts=payload['ts'],
+                    received=payload['ts']+.01,payload=payload))
+            db.put(connection,'quote:'+symbol,quote(NOW+20))
+            clock[0]=NOW+21
+            return result
+        monkeypatch.setattr(module,'recorded_path',slow_read)
+        study.tick(c,NOW+1)
+        assert all(p['status']=='open' for p in rows(c))
+        monkeypatch.setattr(module,'recorded_path',original)
+        study.tick(c,NOW+21)
+        assert all(p['status']=='open' and p['last_quote_ts']==NOW+20 for p in rows(c))
+
+
+def test_slow_archive_read_preserves_real_gap_at_evidence_cutoff(db,cfg,monkeypatch):
+    import compass.setup_study as module
+    clock=[NOW]
+    study=SetupStudy(db,cfg,clock=lambda:clock[0])
+    with db.tx() as c:
+        db.put(c,'quote:MESZ6@1',quote())
+        study.start(c,signal(),NOW,spec('MESZ6@1'),alerted=False)
+        clock[0]=NOW+16
+        original=module.recorded_path
+        def slow_read(*args):
+            result=original(*args)
+            clock[0]=NOW+36
+            return result
+        monkeypatch.setattr(module,'recorded_path',slow_read)
+        study.tick(c,NOW+16)
+        p=rows(c)[0]
+        assert p['status']=='unresolved' and p['pnl'] is None
+        assert p['gap_detail']['checked_at']==p['observation_evidence_at']==NOW+16
+        assert p['finished']==NOW+16
