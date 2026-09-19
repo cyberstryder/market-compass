@@ -136,12 +136,15 @@ class SetupStudy:
                     paths[symbol] = recorded_path(self.db,c,symbol,after,observed)
                 path, truncated, archive_check = paths[symbol]
                 p['archive_check'] = archive_check
+                # The cached history only covers this cutoff. Advancing the
+                # decision clock after a slow query (or for another trial)
+                # would treat time we never queried as missing market data.
+                observed = archive_check['checked_at']
+                p['observation_evidence_at'] = observed
                 if truncated and not path:
                     p['gap_detail'] = {'reason':'recorded_batch_contains_no_usable_quotes','checked_at':observed}
                     self.finish(c,p,observed,'observation_gap')
                     continue
-                if self.clock:
-                    observed = self.clock()
                 for recorded in path:
                     if recorded['ts'] <= p['last_quote_ts']:
                         continue
