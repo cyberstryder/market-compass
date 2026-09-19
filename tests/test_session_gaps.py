@@ -4,6 +4,7 @@ import json
 import pytest
 from sqlalchemy import insert
 from compass.store import Store
+from compass.market import CT
 from compass.setup_study import trials
 from compass.option_ideas import ideas
 from compass.session_gaps import window, totals, gap_page
@@ -101,4 +102,63 @@ def test_api_auth_validation_and_complete_counts(tmp_path,monkeypatch):
     assert response.status_code==200
     assert response.json()['summary']['counts_complete']
     assert response.json()['summary']['total']==0
+    response=client.get('/api/session-gaps?scope=full&session_day=2026-09-18')
+    assert response.status_code==200
+    assert response.json()['since']==ct('2026-09-17T17:00')
+    assert response.json()['summary']['scope']=='full'
+    assert client.get('/api/session-gaps?asset=option&scope=full').status_code==400
+    assert client.get('/api/session-gaps?scope=invalid').status_code==422
     app.state.db.engine.dispose()
+
+def ct(value):
+    return datetime.fromisoformat(value).replace(tzinfo=CT).timestamp()
+
+@pytest.mark.parametrize('clock,expected',[
+    ('2026-09-18T17:00','2026-09-18'),  # Friday evening
+    ('2026-09-19T12:00','2026-09-18'),
+    ('2026-09-20T16:59:59','2026-09-18'),
+    ('2026-09-20T17:00','2026-09-21'),  # Sunday reopen
+    ('2026-09-21T02:00','2026-09-21'),
+    ('2026-09-21T16:30','2026-09-21'),  # maintenance break
+    ('2026-09-21T17:00','2026-09-22'),
+    ('2026-11-01T17:00','2026-11-02'),  # standard time
+    ('2026-03-08T17:00','2026-03-09'),  # daylight time
+])
+def test_full_session_default_tracks_last_opened_session(clock,expected):
+    w=window(ct(clock),scope='full')
+    assert w['day']==expected
+    assert w['since']<=w['through']<=w['until']
+    local=datetime.fromtimestamp(w['since'],CT)
+    assert local.hour==17
+
+
+def test_full_session_includes_overnight_without_changing_cash_comparison(db):
+    w=window(NOW,'2026-09-18',scope='full')
+    cash=window(NOW,'2026-09-18')
+    assert w['since']==ct('2026-09-17T17:00')
+    assert w['until']==ct('2026-09-18T16:00')
+    with db.tx() as c:
+        c.execute(insert(trials),[trial('overnight',w['since']),trial('premarket',cash['since']-1),
+            trial('cash',cash['since']),trial('before',w['since']-1),trial('close',w['until'])])
+        full=futures_session_audit(db,c,NOW,scope='full')
+        assert full['total']==full['gap_total']==3
+        assert futures_session_audit(db,c,NOW)['total']==1
+        page=gap_page(c,NOW,scope='full',limit=1)
+        ids=[r['id'] for r in page['records']]
+        with pytest.raises(ValueError):gap_page(c,NOW,cursor=page['next_cursor'])
+        while page['has_more']:
+            page=gap_page(c,NOW,scope='full',cursor=page['next_cursor'],limit=1)
+            ids.extend(r['id'] for r in page['records'])
+        assert ids==['overnight','premarket','cash']
+        assert 'scope=full' in full['gap_records_url']
+
+
+def test_full_scope_validates_calendar_and_honors_early_close():
+    from compass.futures import hours_for
+    # CME trades on Labor Day even though the equity exchange is closed.
+    w=window(ct('2026-09-07T16:00'),'2026-09-07',scope='full')
+    assert w['until']==hours_for('2026-09-07')['close']
+    assert w['until']<ct('2026-09-07T16:00')
+    with pytest.raises(ValueError):window(NOW,'2026-09-19',scope='full')
+    with pytest.raises(ValueError):window(NOW,asset='option',scope='full')
+    with pytest.raises(ValueError):window(NOW,scope='unknown')

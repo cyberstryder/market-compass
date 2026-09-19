@@ -14,9 +14,27 @@ from .setup_study import trials
 from .option_ideas import ideas
 
 
-def window(now, session_day=None, asset='future'):
+def window(now, session_day=None, asset='future', scope='cash'):
     if asset not in ('future', 'option'):
         raise ValueError('Unknown observation asset')
+    if scope not in ('cash', 'full') or (asset == 'option' and scope != 'cash'):
+        raise ValueError('Full-session scope is available only for futures')
+    if scope == 'full':
+        from .futures import futures_session, hours_for
+        cal = calendar('CMES')
+        if session_day is None:
+            hours = futures_session(now)
+            if hours['open'] > now:
+                previous = cal.previous_session(hours['day'])
+                hours = hours_for(str(previous.date()))
+        else:
+            hours = hours_for(session_day)
+            if hours['day'] != session_day:
+                raise ValueError('Choose a CME trading day for the full-session cohort')
+        return dict(day=hours['day'], asset=asset, scope=scope,
+                    since=hours['open'], until=hours['close'],
+                    through=max(hours['open'], min(now, hours['close'])),
+                    basis='Full futures creation cohort from session open to calendar close (normally 17:00–16:00 CT). Counts do not prove quote continuity.')
     if session_day is None:
         label = calendar('XNYS').date_to_session(day(now), direction='previous')
         session_day = str(label.date())
@@ -26,7 +44,7 @@ def window(now, session_day=None, asset='future'):
     # This deliberately preserves the cash-open cohort, including futures
     # observations after the equity close. It is not a 23-hour session census.
     cutoff = datetime.combine(datetime.fromisoformat(session_day).date(), time(16), CT).timestamp() if asset == 'future' else hours[1]
-    return dict(day=session_day, asset=asset, since=hours[0], until=cutoff,
+    return dict(day=session_day, asset=asset, scope=scope, since=hours[0], until=cutoff,
                 through=min(now, cutoff), basis='Trials started since cash open; futures reporting cutoff 16:00 CT. Not a 23-hour census.')
 
 
@@ -49,16 +67,16 @@ def totals(c, w):
                 truncated=False, counts_basis='Current saved statuses; complete creation-window aggregate')
 
 
-def gap_page(c, now, asset='future', session_day=None, limit=100, cursor=''):
+def gap_page(c, now, asset='future', session_day=None, limit=100, cursor='', scope='cash'):
     if not isinstance(limit, int) or not 1 <= limit <= 100:
         raise ValueError('Page size must be 1–100')
-    w = window(now, session_day, asset)
+    w = window(now, session_day, asset, scope)
     after = None
     asof = now
     if cursor:
         try:
             token = json.loads(base64.urlsafe_b64decode(cursor.encode()))
-            if token['v'] != 1 or token['asset'] != asset or token['day'] != w['day']:
+            if token['v'] != 1 or token['asset'] != asset or token['day'] != w['day'] or token.get('scope', 'cash') != scope:
                 raise ValueError()
             asof = float(token['asof'])
             after = (float(token['started']), token['id'])
@@ -85,7 +103,7 @@ def gap_page(c, now, asset='future', session_day=None, limit=100, cursor=''):
     next_cursor = ''
     if has_more:
         last = page[-1]
-        next_cursor = base64.urlsafe_b64encode(json.dumps(dict(v=1, asset=asset, day=w['day'],
+        next_cursor = base64.urlsafe_b64encode(json.dumps(dict(v=1, asset=asset, scope=scope, day=w['day'],
             asof=asof, started=last['started'], id=last['id']), separators=(',',':')).encode()).decode()
     return dict(**w, asof=asof, total=total, records=records, has_more=has_more,
                 next_cursor=next_cursor, page_complete=not has_more,

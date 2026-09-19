@@ -40,12 +40,12 @@ def tgt_trace(db,c,now):
     return result
 
 
-def futures_session_audit(db,c,now):
+def futures_session_audit(db,c,now,scope='cash'):
     from .session_gaps import window, totals, gap_page
-    w=window(now)
+    w=window(now,scope=scope)
     result=totals(c,w)
-    page=gap_page(c,now,session_day=w['day'],limit=12)
+    page=gap_page(c,now,session_day=w['day'],limit=12,scope=scope)
     return dict(**result,gaps=page['records'],gap_details_truncated=page['has_more'],
         gap_total=page['total'],gap_next_cursor=page['next_cursor'],
-        gap_records_url='/api/session-gaps?asset=future&session_day='+w['day'],
+        gap_records_url='/api/session-gaps?asset=future&scope='+scope+'&session_day='+w['day'],
         at=now)
