@@ -75,6 +75,8 @@ def register(db,c,report,at,*,historical=False):
         closing=session(label)[1]
         opt=report.get('options',{}).get('call' if side=='long' else 'put',{})
         candidate=dict(id=id,version=VERSION,day=label,source_key=source,phase=phase,
+            report_version=report.get('version','unversioned'),
+            premarket_coverage_basis=ctx.get('premarket_coverage_basis','minute_clock_coverage'),
             check_minute=minute,confirmation_kind=report.get('confirmation_kind'),
             status='excluded' if reason else 'pending',created_at=at,updated_at=at,
             signal_time=generated,signal_price=reference,underlying='SPY',underlying_side=side,

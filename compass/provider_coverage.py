@@ -1,6 +1,8 @@
-"""Separate source-inventory diagnostics; never supplies bars or entry decisions."""
+"""Source inventory, real minute recovery, and independent SPY range verification."""
 from datetime import datetime, timezone
 import time
+import asyncio
+from .spy_range import valid_bars, verify
 from .market import day, session, NY
 
 VERSION = 'provider-minute-inventory-v1'
@@ -35,15 +37,24 @@ async def collect(collector, now=None):
         end=datetime.fromtimestamp(end-.001,timezone.utc).isoformat(),feed=collector.cfg.feed,
         adjustment='split',sort='asc',limit=1000)
     data=await collector.get('https://data.alpaca.markets/v2/stocks/SPY/bars',collector.alpaca_headers,params)
-    rows=data.get('bars')
-    if rows is not None and not isinstance(rows,list):raise ValueError('Invalid provider minute inventory')
-    stamps=[datetime.fromisoformat(b['t'].replace('Z','+00:00')).timestamp() for b in rows or []]
+    minutes=valid_bars(data,start,end,60)
+    # Repair actual source bars only; no interpolation or synthetic clock minutes.
+    await asyncio.to_thread(collector.bars,'alpaca', [('SPY',t,b) for t,b in minutes.items()])
+    stamps=list(minutes)
+    proof=None
+    if end==hours[0]:
+        five_data=await collector.get('https://data.alpaca.markets/v2/stocks/SPY/bars',
+            collector.alpaca_headers,{**params,'timeframe':'5Min'})
+        five=valid_bars(five_data,start,end,300)
+        proof=verify(start,end,minutes,five,time.time(),collector.cfg.feed)
     # Provider I/O completes before opening the short database transaction.
     with collector.db.tx() as c:
         stored=[r[0] for r in collector.db.get(c,'bar_window:SPY',[]) if len(r)>=6]
         result=compare(start,end,stamps,stored,time.time(),not data.get('next_page_token'))
         result.update(symbol='SPY',feed=collector.cfg.feed,request=params)
         collector.db.put(c,'provider_coverage:SPY:'+day(now),result)
+        if proof is not None:
+            collector.db.put(c,'spy-provider-range:'+day(now),proof)
     collector.db.health("provider_coverage","available" if result["provider_inventory_complete"] else "partial",
-        "Independent source inventory; entry gate unchanged",result["fetched_at"])
+        "SPY source inventory and verified-range check; timeframe research unchanged",result["fetched_at"])
     return result

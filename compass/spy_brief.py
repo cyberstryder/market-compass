@@ -12,7 +12,7 @@ from .spy_confirmation import (CONFIRMED, SCHEDULE_CT, assess, check_minute, rep
                                reports_for_day, scheduled_phase)
 from .vendor_freshness import confirmation, context_check
 
-VERSION = 'spy-morning-brief-v2'
+VERSION = 'spy-morning-brief-v3'
 
 
 def stamp(value):
@@ -207,6 +207,8 @@ def option_reference(db, c, now, kind, reference):
 
 def build(db, c, now, phase='preview'):
     context = bar_context(db, c, now, phase)
+    from .spy_range import apply_verified_range
+    apply_verified_range(db, c, context, now, day(now))
     out = {'version': VERSION, 'status': 'spy_morning_brief', 'alert_category': 'spy_morning',
            'phase': phase, 'day': day(now), 'generated_at': now, 'context': context, 'symbol': 'SPY'}
     if context['status'] == 'closed':
@@ -339,7 +341,8 @@ def delivery_payload(row, now):
         'VWAP ' + money(group['vwap']) + ' · ' + group['vwap_basis'],
         'Prior H/L/C: ' + ' / '.join(money(ctx['prior'][k]) for k in ('h', 'l', 'c')),
         ctx['structure'] + '; latest minute volume / prior 20: ' + (f"{ctx['minute_volume_ratio']:.2f}×" if ctx['minute_volume_ratio'] is not None else 'unavailable'),
-        f"Premarket coverage {ctx['premarket']['bars']}/{ctx['premarket_expected_bars']} minutes; " + ('usable' if ctx['premarket_complete'] else 'incomplete'),
+        f"Premarket coverage {ctx['premarket']['bars']}/{ctx['premarket_expected_bars']} minutes; " + ('usable' if ctx['premarket_complete'] else 'incomplete') +
+        ' · ' + ctx.get('premarket_coverage_basis', 'minute_clock_coverage'),
         'First 15m close: ' + money(ctx['first15_close']) + ' · ' + stamp(ctx['first15_asof'])]
     candle = ctx.get('confirmation_candle')
     if candle:
