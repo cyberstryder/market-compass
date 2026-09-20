@@ -34,7 +34,9 @@ def report(db,c,at):
     statuses=[dict(r) for r in c.execute(select(observations.c.status,func.count().label('count')).select_from(joined)
         .where(scope(at)).group_by(observations.c.status)).mappings()]
     closed=observations.c.status=='closed';p=observations.c.payload
-    dimensions=dict(confirmation=checks.c.phase,side=p['underlying_side'].as_string(),
+    dimensions=dict(report_version=func.coalesce(p['report_version'].as_string(),'legacy'),
+        premarket_coverage=func.coalesce(p['premarket_coverage_basis'].as_string(),'minute_clock_coverage'),
+        confirmation=checks.c.phase,side=p['underlying_side'].as_string(),
         exit_reason=p['exit_reason'].as_string(),collection=p['collection_version'].as_string())
     groups=[]
     for name,dimension in dimensions.items():
