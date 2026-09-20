@@ -35,6 +35,19 @@ flow_records=Table("flow_records",meta,
     Column("first_seen",Float,nullable=False),Column("last_seen",Float,nullable=False))
 Index("flow_records_day_time",flow_records.c.day,flow_records.c.source_ts)
 
+# Independent discovery cohorts never enter the frozen swing study.
+discovery_trials=Table('discovery_trials_v1',meta,
+    Column('id',String(64),primary_key=True),Column('symbol',String(100),nullable=False),
+    Column('created',Float,nullable=False),Column('status',String(24),nullable=False),
+    Column('payload',JSON,nullable=False))
+Index('discovery_created',discovery_trials.c.created,discovery_trials.c.id)
+Index('discovery_pending',discovery_trials.c.status,discovery_trials.c.symbol)
+discovery_checks=Table('discovery_checks_v1',meta,
+    Column('trial_id',String(64),primary_key=True),Column('horizon',String(24),primary_key=True),
+    Column('target_at',Float,nullable=False),Column('status',String(24),nullable=False),
+    Column('payload',JSON,nullable=False))
+Index('discovery_due',discovery_checks.c.status,discovery_checks.c.target_at)
+
 # Immutable receipt assessments; forward checkpoints have their own lifecycle.
 tm_studies=Table('tm_flow_study_v1',meta,
     Column('id',String(64),primary_key=True),Column('day',String(10),nullable=False),

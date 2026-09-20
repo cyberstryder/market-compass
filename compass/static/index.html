@@ -11,6 +11,7 @@
 <button class="nav" data-tab="setup-study">◉ Setup results</button>
 <button class="nav" data-tab="option-ideas">◇ Options ideas</button>
 <button class="nav" data-tab="swing-ideas">↗ Swing ideas</button>
+<button class="nav" data-tab="discovery">◇ Discovery research</button>
 <button class="nav" data-tab="swing-study">◇ Swing comparison</button>
 <button class="nav" data-tab="spy-study">◈ SPY 0DTE outcomes</button>
 <button class="nav" data-tab="secondary">◇ Secondary review</button>
@@ -159,6 +160,12 @@
 <article class="panel"><h2>Recorded option and underlying path</h2><p id="spy-study-path-status" class="fine">Open an entered observation’s recorded path below its decision.</p><div id="spy-study-path"></div>
 <div class="research-controls"><button id="spy-study-path-next" type="button" disabled>Next path page</button><button id="spy-study-path-reset" type="button" disabled>Refresh path</button></div></article>
 </section>
+<section id="discovery" class="tab">
+<div class="notice">Independent flow-led continuation and bounce research. No orders or Discord alerts.</div>
+<article class="panel"><h2>Discovery coverage</h2><div id="discovery-coverage"></div></article>
+<article class="panel"><h2>Why a symbol did not qualify</h2><label>Symbol <input id="discovery-filter" placeholder="AMD" maxlength="15"></label><div id="discovery-reasons"></div></article>
+<article class="panel"><h2>Forward observations</h2><div id="discovery-records"></div></article>
+</section>
 <section id="swing-study" class="tab">
 <div class="banner">Swing candidate comparison · Technical-only, fresh flow and delayed flow · Underlying moves at the same candidate clock</div>
 <div id="swing-study-summary" class="stats"></div>
@@ -245,4 +252,4 @@
 <p class="muted">Connections are checked. Live readiness still requires advancing source times, usable option inputs, and a recorded simulated entry, exit, and confirmed alert.</p>
 <p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></section>
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
-<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script></body></html>
+<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script></body></html>
