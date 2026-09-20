@@ -85,6 +85,8 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(engine.study.run_reports()))
             tasks.append(asyncio.create_task(Secondary(db,cfg,clock=time.time).run()))
             tasks.append(asyncio.create_task(SwingIdeas(db,cfg).run()))
+            from .discovery import Discovery
+            tasks.append(asyncio.create_task(Discovery(db,cfg).run()))
             tasks.append(asyncio.create_task(run_obsidian(db,cfg)))
             tasks.append(asyncio.create_task(run_strategy_tracking(db)))
             from .native_reports import run as run_native_reports
@@ -335,6 +337,12 @@ def create_app(cfg=None):
     def get_tm_study():
         with db.tx() as c:
             return {**db.get(c,'tm-study-v1:report',{}),'worker':db.get(c,'tm-study-v1:worker',{})}
+
+    @app.get('/api/discovery')
+    def get_discovery():
+        from .discovery import report
+        with db.tx() as c:
+            return report(db,c,time.time())
 
     @app.get('/api/swing-study')
     def get_swing_study():

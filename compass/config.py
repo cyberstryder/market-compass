@@ -49,6 +49,9 @@ class Config:
     stream_limit: int = field(default_factory=lambda: min(900,max(10,int(env("OPTION_STREAM_CONTRACTS","100")))))
     history_budget: float = field(default_factory=lambda: float(env("FUTURES_HISTORY_BUDGET_USD","0.10")))
     watchlist: tuple = field(default_factory=lambda: symbols(env("WATCH_SYMBOLS")))
+    discovery: bool = field(default_factory=lambda: env("DISCOVERY_RESEARCH_ENABLED","false")=="true")
+    discovery_seeds: tuple = field(default_factory=lambda: symbols(env("DISCOVERY_SEED_SYMBOLS","PONY,FLY,ENPH,AAOI,DAL,S,TTWO,RIG,CARR,PGEN,SDGR,EWTX,ASX")))
+    discovery_limit: int = field(default_factory=lambda: int(env("DISCOVERY_DYNAMIC_LIMIT","50")))
     scanner: bool = field(default_factory=lambda: env("SCANNER_ENABLED","true")=="true")
     scanner_paper: bool = field(default_factory=lambda: env("SCANNER_PAPER_TRADES","true")=="true")
     research: bool = field(default_factory=lambda: env("RESEARCH_FEEDS_ENABLED","true")=="true")
@@ -104,6 +107,10 @@ class Config:
             raise ValueError("Options chain horizon must cover the swing expiration range")
         if not 1<=self.option_focus<=30 or not 1<=self.chain_dte<=180:
             raise ValueError("Invalid options focus or expiration horizon")
+        if not 0<=self.discovery_limit<=100 or len(self.discovery_seeds)>100:
+            raise ValueError("Discovery limits must be between zero and 100")
+        if self.discovery and len(set(self.watch_symbols)|set(self.discovery_seeds))>500:
+            raise ValueError("Discovery base coverage exceeds 500 symbols")
         if not self.watch_symbols or len(self.watch_symbols)>500:
             raise ValueError("Watchlist must contain 1–500 symbols")
         for token in (self.morning_token, self.native_morning_intake_token, self.smoothers_token, self.futures_observer_token):

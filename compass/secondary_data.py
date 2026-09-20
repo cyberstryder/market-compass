@@ -22,11 +22,15 @@ def coverage(db, c, cfg, now):
     rows = []
     universe=set(connected_symbols(db,c,now))
     if cfg.swing_ideas: universe.update(cfg.watch_symbols)
+    from .discovery import requested
+    discovery=set(requested(db,c,cfg,now)) if cfg.discovery else set()
+    universe.update(discovery)
     for symbol in sorted(universe):
         if cfg.swing_ideas and symbol in cfg.watch_symbols: projects.setdefault(symbol,set()).add("swing")
+        if symbol in discovery: projects.setdefault(symbol,set()).add("discovery")
         daily = daily_context(db, c, symbol, now) if "smoothers" in projects.get(symbol, ()) else {}
         swing=db.get(c,"swing_daily:"+symbol,{})
-        if "swing" in projects.get(symbol,()):
+        if {"swing","discovery"}&set(projects.get(symbol,())):
             from .swing_signals import daily_context as swing_daily
             if swing.get("day")!=day(now):
                 swing=swing_daily(db.recent(c,"daily",symbol,limit=180),now)
@@ -70,7 +74,7 @@ def plan(collector, now):
         jobs = {}
         for kind, wait in (("daily", 300), ("minute", 60)):
             needed = [r["symbol"] for r in state.get("rows", []) if r["collection_enabled"]
-                and not r[kind + "_ready"] and (kind != "daily" or bool({"smoothers","swing"}&set(r["projects"])))
+                and not r[kind + "_ready"] and (kind != "daily" or bool({"smoothers","swing","discovery"}&set(r["projects"])))
                 and (kind != "minute" or is_open(now))]
             if kind == "minute":
                 needed += [s for s in priority if not technical_ready(technical_context(db, c, s, now), now)]
