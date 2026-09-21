@@ -96,9 +96,9 @@ def assess(context, reports, now, phase):
     elif now < boundary:
         decision = 'WAIT — first 15-minute candle closes at ' + clock(opening + 900)
         if blocks:
-            decision = 'WAIT — ' + '; '.join(blocks)
+            decision = 'WAIT — DATA BLOCKED: ' + '; '.join(blocks)
     elif blocks:
-        decision = 'WAIT — ' + '; '.join(blocks)
+        decision = 'WAIT — DATA BLOCKED: ' + '; '.join(blocks)
     else:
         pm, close = context['premarket'], candle['close']
         side = 'CALL' if close > pm['high'] else 'PUT' if close < pm['low'] else None
@@ -106,7 +106,7 @@ def assess(context, reports, now, phase):
         decision = side + ' SETUP CONFIRMED' if side else 'WAIT — completed candle stayed inside premarket range'
     if minute == 60 and now >= boundary and state == 'waiting':
         state = 'no_entry'
-        decision = 'NO ENTRY — ' + ('; '.join(blocks) if blocks else 'no confirmed breakout by ' + clock(boundary))
+        decision = 'NO ENTRY — ' + ('DATA BLOCKED: ' + '; '.join(blocks) if blocks else 'no confirmed breakout by ' + clock(boundary))
 
     next_check = next((opening + m*60 for m, _ in CHECKS if opening + m*60 > now), None)
     if state in ('confirmed', 'no_entry') or prior_confirmation or final_no_entry:
@@ -126,3 +126,4 @@ def assess(context, reports, now, phase):
                                      or now >= opening + 60*60 + 125),
             'previous_confirmation_id': prior_confirmation.get('id') if prior_confirmation else None,
             'expires_at': opening if now < opening else boundary + 125}
+
