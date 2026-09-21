@@ -2,6 +2,7 @@
 import asyncio
 import re
 import time
+import uuid
 from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,12 @@ POLICY = (
     'If option quotes are missing or stale, still analyze available underlying evidence, but do not invent '
     'a contract price, executable entry, Greeks, or expected option profit. '
     'Use quote_status and source quote timestamps; fetched_at is not the quote time. '
+    'Only discuss paper eligibility when the user asks about automation, simulated entries or that scheduled plan. '
+    'Never ask the user to enable simulated entries to receive research. '
+    'End with the analysis and specific missing evidence, not an offer to watch, scan or simulate later. '
+    'Use technical_context.asof for technical observations, not context capture time; label old observations. '
+    'Do not turn a requested bearish direction into evidence that the market is bearish. '
+    'Do not invent trigger levels or list downside targets above the triggering level. '
     'These candidates are a bounded near-spot sample, not ranked recommendations or complete chain coverage. '
     'No tools or follow-up scans can be invoked by the answer; never promise to run one. '
     'A closed scheduled SPY plan remains closed; independent research is allowed and is not a signal under that plan. '
@@ -91,10 +98,12 @@ def sample(rows, req, spot, now, source):
     return dict(matching_contracts=len(eligible), candidates=selected, sample_only=True)
 
 
-async def research(cfg, scope, req, quotes, now):
+async def research(cfg, scope, req, quotes, now, db=None):
     result = dict(request=req, symbols={}, execution='Read-only research; no simulated or broker orders.')
     if req['status'] != 'requested': return result
     source = 'massive' if cfg.massive else 'alpaca' if cfg.alpaca_key and cfg.alpaca_secret else None
+    if not source and db is not None:
+        return await queued_research(db, scope, req, quotes, now)
     if not source:
         result['status'] = 'provider_not_configured'; return result
     collector = Collectors(None, cfg)
@@ -118,3 +127,56 @@ async def research(cfg, scope, req, quotes, now):
     finally:
         await collector.close()
     return result
+
+
+async def queued_research(db, scope, req, quotes, now, timeout=25):
+    """Web service has no market credentials; the collector owns the lookup."""
+    from .store import state
+    key = 'ask-options:' + uuid.uuid4().hex
+    def enqueue():
+        with db.tx() as c:
+            db.put(c, key, dict(status='pending', at=time.time(), expires=time.time()+timeout,
+                scope=scope[:3], omitted_symbols=scope[3:], request=req,
+                quotes={s:quotes.get(s) for s in scope[:3]}, context_at=now))
+    def read():
+        with db.tx() as c: return db.get(c,key,{})
+    def remove():
+        with db.tx() as c: c.execute(state.delete().where(state.c.key==key))
+    await asyncio.to_thread(enqueue)
+    try:
+        async with asyncio.timeout(timeout):
+            while True:
+                job=await asyncio.to_thread(read)
+                if job.get('status')=='complete': return job['result']
+                await asyncio.sleep(.4)
+    except TimeoutError:
+        return dict(request=req,status='collector_lookup_timeout',symbols={},
+                    note='Collector did not return option evidence before the request deadline; underlying research remains available.')
+    finally:
+        await asyncio.to_thread(remove)
+
+
+async def collect_requests(collector):
+    """Bounded read-only research queue shared by web and collector services."""
+    from .store import state, leases
+    db, now = collector.db, time.time()
+    owner=uuid.uuid4().hex
+    def claim():
+        with db.tx() as c:
+            c.execute(state.delete().where(state.c.key.like('ask-options:%'),state.c.updated<now-120))
+            c.execute(leases.delete().where(leases.c.key.like('ask-options:%'),leases.c.until<now-120))
+            pending=sorted(db.prefix(c,'ask-options:').items(),key=lambda pair:pair[1].get('at',0))
+            for key,job in pending:
+                if job.get('status')=='pending' and job.get('expires',0)>now:
+                    if db.lease(c,key,owner,30): return key,job
+    claimed=await asyncio.to_thread(claim)
+    if not claimed: return
+    key,job=claimed
+    result=await research(collector.cfg,job['scope'],job['request'],job['quotes'],job['context_at'])
+    result['omitted_symbols']=job['omitted_symbols']
+    def finish():
+        with db.tx() as c:
+            current=db.get(c,key)
+            if current and current.get('expires',0)>time.time():
+                db.put(c,key,dict(status='complete',result=result))
+    await asyncio.to_thread(finish)

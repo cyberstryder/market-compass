@@ -92,9 +92,11 @@ class Collectors:
         from .obsidian import poll as poll_obsidian
         from .extra_futures import tasks as extra_tasks
         from .secondary_data import refresh as refresh_secondary_data
+        from .assistant_options import collect_requests
         from .spy_daily import collect as collect_spy_daily
         from .index_reference import collect as collect_index_reference
         return [
+            self.supervise("assistant_options",True,lambda:collect_requests(self),1),
             self.supervise("spy_daily_readiness",bool(c.spy_morning_brief and c.alpaca_key and c.alpaca_secret),lambda:collect_spy_daily(self),60),
             self.supervise("index_reference",bool(c.spy_morning_brief),lambda:collect_index_reference(self),60),
             self.supervise("obsidian_history",bool(c.obsidian_history and c.obsidian_url and c.massive),lambda:history_obsidian(self),3),
