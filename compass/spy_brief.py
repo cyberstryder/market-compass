@@ -6,13 +6,13 @@ import time
 import uuid
 
 from .exposure import calculate
-from .index_reference import prior_session, reference_pair
+from .index_reference import reference_pair
 from .market import CT, NY, day, dedup, fresh, number, session
 from .spy_confirmation import (CONFIRMED, SCHEDULE_CT, assess, check_minute, report_key,
                                reports_for_day, scheduled_phase)
 from .vendor_freshness import confirmation, context_check
 
-VERSION = 'spy-morning-brief-v3'
+VERSION = 'spy-morning-brief-v4'
 
 
 def stamp(value):
@@ -57,26 +57,10 @@ def bar_context(db, c, now, phase='preview'):
     candle = {'minute': minute, 'start': boundary-900, 'end': boundary,
               'bars': len(confirming), 'complete': candle_complete,
               'close': confirming[-1]['payload']['c'] if candle_complete else None}
-    daily = {}
-    for row in db.recent(c, 'daily', 'SPY', limit=90):
-        d = day(row['ts'])
-        if d < day(now) and d not in daily and session(d):
-            daily[d] = row['payload']
-    prior = daily.get(prior_session(now), {})
-    ordered_days = sorted(daily)[-15:]
-    expected_days = []
-    previous = now
-    for _ in range(15):
-        expected = prior_session(previous)
-        if expected is None:
-            break
-        expected_days.append(expected)
-        previous = session(expected)[0]
-    ordered = [daily[d] for d in ordered_days]
-    atr = None
-    if ordered_days == sorted(expected_days) and len(ordered) == 15 and all(all(number(r.get(k)) is not None for k in ('h', 'l', 'c')) for r in ordered):
-        atr = sum(max(b['h'] - b['l'], abs(b['h'] - a['c']), abs(b['l'] - a['c']))
-                  for a, b in zip(ordered, ordered[1:])) / 14
+    from .spy_daily import evidence as daily_evidence
+    daily = daily_evidence(db, c, now)
+    prior = daily['prior']
+    atr = daily['atr14_daily']
     quote = db.get(c, 'quote:SPY')
     valid_quote = fresh(quote, now, 15) and quote['ts'] <= now
     latest = (rth or pm)[-1] if (rth or pm) else None
@@ -104,6 +88,7 @@ def bar_context(db, c, now, phase='preview'):
     return {'status': 'available' if spot_ts is not None and 0 <= now - spot_ts <= 90 else 'stale_or_missing',
         'session_open': opening, 'session_close': closing, 'spot': spot, 'spot_ts': spot_ts,
         'spot_basis': 'quote midpoint' if valid_quote else 'completed minute close',
+        'daily_readiness': daily,
         'prior': {k: number(prior.get(k)) for k in ('h', 'l', 'c')}, 'atr14_daily': atr,
         'premarket_complete': bool(pm_complete), 'premarket_expected_bars': expected_pm,
         'premarket_coverage_evidence': {
@@ -330,6 +315,8 @@ def delivery_payload(row, now):
     p = row['payload']; ctx = p['context']
     expired = now >= p.get('expires_at', 0)
     heading = 'DATED PLAN — refresh before use' if expired else p['decision']
+    if not expired and p.get('data_blocks'):
+        heading = 'DATA BLOCKED — ' + '; '.join(p['data_blocks'])
     content = '**SPY 0DTE MORNING PLAN · ' + p.get('phase_label', p['phase'].upper()) + ' · message 1 of 2**\n' + heading
     if ctx['status'] == 'closed':
         return {'content': content, 'allowed_mentions': {'parse': []}}
@@ -344,6 +331,12 @@ def delivery_payload(row, now):
         f"Premarket coverage {ctx['premarket']['bars']}/{ctx['premarket_expected_bars']} minutes; " + ('usable' if ctx['premarket_complete'] else 'incomplete') +
         ' · ' + ctx.get('premarket_coverage_basis', 'minute_clock_coverage'),
         'First 15m close: ' + money(ctx['first15_close']) + ' · ' + stamp(ctx['first15_asof'])]
+    readiness = ctx.get('daily_readiness', {})
+    if readiness:
+        lines.append('Daily ATR: ' + money(ctx.get('atr14_daily')) +
+            '; usable sessions ' + str(len(readiness['usable_days'])) + '/15')
+        if readiness['missing_or_invalid_days']:
+            lines.append('Missing/invalid daily sessions: ' + ', '.join(readiness['missing_or_invalid_days']))
     candle = ctx.get('confirmation_candle')
     if candle:
         lines.append('This 15m check: ' + stamp(candle['start']) + ' → ' + stamp(candle['end']) +
@@ -461,3 +454,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

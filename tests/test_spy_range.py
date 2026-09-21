@@ -40,7 +40,7 @@ def test_sparse_minutes_verified_without_changing_frozen_timeframe_gate(db):
         assert context['premarket_complete'] is True
         assert context['premarket_clock_complete'] is False
         assert context['premarket_coverage_basis']=='verified_provider_five_minute_range'
-        assert report['version']=='spy-morning-brief-v3'
+        assert report['version']=='spy-morning-brief-v4'
 
 
 @pytest.mark.parametrize('change', ['stale','future','wrong_day','partial','wrong_feed','changed_range','missing_minute'])
@@ -114,3 +114,4 @@ def test_verified_range_does_not_replace_missing_rth_confirmation(db):
         assert report['context']['premarket_complete']
         assert not report['context']['confirmation_candle']['complete']
         assert 'CONFIRMED' not in report['decision']
+
