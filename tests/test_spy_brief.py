@@ -326,8 +326,8 @@ def test_later_confirmation_uses_current_candle_and_stops_after_first_setup(db, 
     assert r['frozen_premarket']['low'] == 759.5
     with db.tx() as c:
         rows = db.recent(c, 'alert')
-        assert len(rows) == minute//15*2
-        assert sum(x['payload'].get('decision') in ('CALL SETUP CONFIRMED','PUT SETUP CONFIRMED') for x in rows) == 2
+        assert len(rows) == minute//15+1
+        assert sum(x['payload'].get('decision') in ('CALL SETUP CONFIRMED','PUT SETUP CONFIRMED') for x in rows) == 1
         assert not db.prefix(c, 'position:')
         c.execute(leases.update().values(until=0))
     restarted = BriefWorker(db, Config(local=True))
@@ -335,7 +335,7 @@ def test_later_confirmation_uses_current_candle_and_stops_after_first_setup(db, 
     for m in range(minute+15, 61, 15):
         seed_checks(db, OPEN+m*60+7, {m: 758})
         assert restarted.tick(OPEN+m*60+7) is None
-    with db.tx() as c: assert len(db.recent(c,'alert')) == minute//15*2
+    with db.tx() as c: assert len(db.recent(c,'alert')) == minute//15+1
 
 
 def test_opening_confirmation_prevents_every_followup(db):
@@ -348,7 +348,7 @@ def test_opening_confirmation_prevents_every_followup(db):
     with db.tx() as c: assert len(db.recent(c,'alert')) == 2
 
 
-def test_all_waits_end_with_no_entry_and_each_check_has_two_unique_messages(db):
+def test_all_waits_end_with_no_entry_and_share_one_drawing(db):
     worker = BriefWorker(db, Config(local=True))
     for minute in (15,30,45,60):
         now = OPEN+minute*60+7
@@ -360,9 +360,8 @@ def test_all_waits_end_with_no_entry_and_each_check_has_two_unique_messages(db):
     assert worker.tick(OPEN+75*60+7) is None
     with db.tx() as c:
         rows = sorted(db.recent(c,'alert'), key=lambda x:x['id'])
-        assert len(rows) == 8 and len({x['key'] for x in rows}) == 8
-        for i in range(0,8,2):
-            assert rows[i+1]['payload']['parent_plan'] == rows[i]['key']
+        assert len(rows) == 5 and len({x['key'] for x in rows}) == 5
+        assert rows[1]['payload']['parent_plan'] == rows[0]['key']
         assert db.get(c,'spy-brief:latest')['decision'].startswith('NO ENTRY')
     seed_checks(db,OPEN+3617,{60:761})
     with db.tx() as c:
@@ -538,3 +537,4 @@ def test_opening_preview_cannot_bypass_a_changed_saved_premarket_range(db):
     assert r['decision'].startswith('WAIT')
     assert r['context']['premarket']['high']==760.5
     assert 'recovered premarket range differs from frozen levels' in r['data_blocks']
+

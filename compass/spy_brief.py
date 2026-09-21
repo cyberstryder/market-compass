@@ -282,9 +282,11 @@ class BriefWorker:
                 if not candle['complete'] and now < candle['end'] + 110:
                     return
             report['id'] = key
+            from .spy_chart import companion, prepare_drawing
+            send_drawing = prepare_drawing(self.db, c, report)
             self.db.append(c, 'alert', 'spy_brief', 'SPY', now, report, key)
-            from .spy_chart import companion
-            self.db.append(c, 'alert', 'spy_brief', 'SPY', now, companion(report), key + ':chart')
+            if send_drawing:
+                self.db.append(c, 'alert', 'spy_brief', 'SPY', now, companion(report), key + ':chart')
             self.db.put(c, key, report)
             self.db.put(c, 'spy-brief:latest', report)
             from .spy_study import register
@@ -317,7 +319,9 @@ def delivery_payload(row, now):
     heading = 'DATED PLAN — refresh before use' if expired else p['decision']
     if not expired and p.get('data_blocks'):
         heading = 'DATA BLOCKED — ' + '; '.join(p['data_blocks'])
-    content = '**SPY 0DTE MORNING PLAN · ' + p.get('phase_label', p['phase'].upper()) + ' · message 1 of 2**\n' + heading
+    drawing = p.get('drawing_update', {'send': True})
+    suffix = ' · message 1 of 2' if drawing['send'] else ''
+    content = '**SPY 0DTE MORNING PLAN · ' + p.get('phase_label', p['phase'].upper()) + suffix + '**\n' + heading
     if ctx['status'] == 'closed':
         return {'content': content, 'allowed_mentions': {'parse': []}}
     session_name = 'PREMARKET' if p['generated_at'] < ctx['session_open'] else 'REGULAR SESSION'
@@ -402,7 +406,8 @@ def delivery_payload(row, now):
     else:
         lines = ['SPX/XSP estimates unavailable: no matched previous-session reference.',
                  'SPY levels above remain separately available.']
-    embeds.append({'title': 'Levels to copy to your charts', 'description': '\n'.join(lines)})
+    if drawing['send']:
+        embeds.append({'title': 'Levels to copy to your charts', 'description': '\n'.join(lines)})
     lines = []
     for side, o in p['options'].items():
         label = side.upper() + ' ' + money(o.get('strike')) + ' · expiry ' + o['expiry']

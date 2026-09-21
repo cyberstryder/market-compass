@@ -1,5 +1,8 @@
 """Copy-ready drawing instructions derived only from the frozen morning report."""
 from .spy_brief import stamp
+from .market import number
+from .store import events
+from sqlalchemy import select
 
 
 def prompt(report, now):
@@ -62,8 +65,74 @@ def delivery_payload(row, now):
     text = prompt(p, now)
     # Rich description supports a complete, copyable code block in one second message.
     # The report bounds Apex/GEX rows and uses fixed labels; no truncation of prices.
-    return {'content': '**TRADINGVIEW AI · message 2 of 2 · ' + p['day'] + ' ' + p.get('phase_label', p['phase'].upper()) + '**\nCopy the full block into your chart AI.',
+    update = ' · MATERIAL UPDATE' if p.get('drawing_update', {}).get('reason') == 'material_level_change' else ''
+    return {'content': '**TRADINGVIEW AI' + update + ' · message 2 of 2 · ' + p['day'] + ' ' + p.get('phase_label', p['phase'].upper()) + '**\nCopy the full block into your chart AI.',
             'embeds': [{'title': 'Draw on the 1-minute and 15-minute charts',
                         'description': '```text\n' + text + '\n```',
                         'footer': {'text': p.get('parent_plan', p.get('id', 'preview')) + ' · Event ' + str(row['id'])}}],
             'username': 'Market Compass · SPY Charts', 'allowed_mentions': {'parse': []}}
+
+
+
+def drawing_changes(previous, report):
+    """Compare against the last queued drawing, not the last routine plan."""
+    atr = number(previous.get('context', {}).get('atr14_daily')) or 0
+    threshold = max(1.0, .15 * atr)
+    def levels(p):
+        return {('VWAP' if r['label'] in ('PM VWAP', 'RTH VWAP') else r['label']): r for r in p.get('chart_levels', [])
+                if number(r.get('spy')) is not None}
+    before, after = levels(previous), levels(report)
+    changes = []
+    ignored = ('First 15m close', 'Confirmation close')
+    for name in before.keys() & after.keys():
+        if name in ignored or name.startswith(('Apex #', 'GEX #')):
+            continue
+        old, new = before[name], after[name]
+        # Compare all rendered columns in SPY-equivalent units.
+        for column in ('spy', 'spx_estimate', 'xsp_estimate'):
+            a, b = number(old.get(column)), number(new.get(column))
+            scale = a / old['spy'] if a is not None and old['spy'] else None
+            if a is not None and b is not None and scale and abs(b-a)/abs(scale) >= threshold-1e-8:
+                changes.append(name + ' moved materially')
+                break
+    # Exposure rank changes alone must not cause a repeat of identical levels.
+    for prefix in ('Apex #', 'GEX #'):
+        a = [r['spy'] for k,r in before.items() if k.startswith(prefix)]
+        b = [r['spy'] for k,r in after.items() if k.startswith(prefix)]
+        if a and b and any(min(abs(x-y) for y in a) >= threshold-1e-8 for x in b):
+            changes.append(prefix[:-2] + ' levels moved materially')
+    if report.get('decision_state') == 'confirmed':
+        side = 'Call' if report['decision'].startswith('CALL') else 'Put'
+        for name in (side+' stop', side+' target'):
+            if name in after and name not in before:
+                changes.append(name+' became available for entry')
+    if (previous.get('mapping', {}).get('status') != 'available'
+            and report.get('mapping', {}).get('status') == 'available'):
+        changes.append('SPX/XSP drawing estimates became available')
+    return threshold, sorted(set(changes))
+
+
+def prepare_drawing(db, c, report):
+    """Daily durable outbox baseline; called in the same transaction as the plan."""
+    key = 'spy-chart:last:'+report['day']
+    previous = db.get(c, key)
+    if previous is None:
+        # Honor drawing messages queued by releases predating this policy.
+        previous = c.execute(select(events.c.payload).where(
+            events.c.kind=='alert', events.c.source=='spy_brief', events.c.symbol=='SPY',
+            events.c.payload['status'].as_string()=='spy_chart_prompt',
+            events.c.payload['day'].as_string()==report['day'])
+            .order_by(events.c.id.desc()).limit(1)).scalar_one_or_none()
+    usable = any(number(r.get('spy')) is not None for r in report.get('chart_levels', []))
+    threshold, changes = drawing_changes(previous, report) if previous else (None, [])
+    send = usable and (previous is None or bool(changes))
+    report['drawing_update'] = dict(send=send,
+        reason='initial_daily_drawing' if send and previous is None else
+               'material_level_change' if send else 'no_material_change' if usable else 'no_usable_levels',
+        threshold_spy=threshold, changes=changes,
+        baseline_id=previous.get('id') if previous else None)
+    if send:
+        db.put(c, key, report)
+    elif previous is not None and db.get(c, key) is None:
+        db.put(c, key, previous)
+    return send
