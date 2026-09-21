@@ -11,10 +11,11 @@ SECTION_BYTES = 3_000
 # These facts must travel intact or be explicitly unavailable. In particular,
 # never retain a price while silently trimming its timestamp or a risk veto.
 INTACT = {'asof', 'asof_ct', 'mode', 'markets', 'question_scope', 'limits',
-          'risk', 'positions', 'quotes', 'levels', 'spy_brief'}
+          'risk', 'positions', 'quotes', 'levels', 'spy_brief', 'option_research'}
 ORDER = ('asof', 'asof_ct', 'mode', 'markets', 'question_scope', 'limits',
+         'option_research', 'technical_context', 'swing_technical_context',
          'risk', 'positions', 'quotes', 'levels', 'spy_brief', 'health', 'matrix',
-         'technical_context', 'swing_technical_context', 'scanner', 'option_ideas',
+         'scanner', 'option_ideas',
          'swing_ideas', 'research', 'projects', 'secondary', 'alerts', 'trades',
          'flow', 'spy_study', 'tm_study', 'swing_study', 'setup_study',
          'forward_acceptance', 'obsidian', 'quote_checks', 'delivery', 'futures',
@@ -59,7 +60,7 @@ def build_input(question, context):
         if key not in context:
             continue
         original = context[key]
-        cap = min(budget, 10_000 if key == 'spy_brief' else 6000 if key in ('quotes', 'matrix') else SECTION_BYTES)
+        cap = min(budget, 14_000 if key == 'option_research' else 10_000 if key == 'spy_brief' else 6000 if key in ('quotes', 'matrix') else SECTION_BYTES)
         candidate = original
         trimmed = False
         if size(candidate) > cap and key not in INTACT:
@@ -85,3 +86,4 @@ def build_input(question, context):
     return result, {'input_bytes': len(result.encode('utf-8')),
                     'trimmed_sections': coverage['trimmed_sections'],
                     'omitted_sections': coverage['omitted_sections']}
+

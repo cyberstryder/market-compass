@@ -476,13 +476,13 @@ class Collectors:
                 waiting_ideas=len(set(requested)-set(selected)),poll_ts=now)
         await asyncio.to_thread(reconcile)
 
-    async def massive_chain(self,symbol):
+    async def massive_chain(self,symbol,expiry_start=None,expiry_end=None,page_limit=40):
         url="https://api.massive.com/v3/snapshot/options/"+symbol
-        params={"apiKey":self.cfg.massive,"limit":250,"expiration_date.gte":day(time.time()),"expiration_date.lte":day(time.time()+self.cfg.chain_dte*86400)}
+        params={"apiKey":self.cfg.massive,"limit":250,"expiration_date.gte":expiry_start or day(time.time()),"expiration_date.lte":expiry_end or day(time.time()+self.cfg.chain_dte*86400)}
         out={}
         pages_seen=set()
         raw_count=overlaps=conflicts=0
-        for _ in range(40):
+        for _ in range(page_limit):
             if url in pages_seen: raise FeedError("Options pagination repeated a page")
             pages_seen.add(url)
             data=await self.get(url,params=params)
@@ -515,21 +515,21 @@ class Collectors:
             params=[(k,v) for k,v in parse_qsl(urlparse(url).query,keep_blank_values=True) if k!="apiKey"]+[("apiKey",self.cfg.massive)]
         return list(out.values()),False
 
-    async def alpaca_chain(self,symbol):
+    async def alpaca_chain(self,symbol,expiry_start=None,expiry_end=None,page_limit=30):
         metadata={}
-        params={"underlying_symbols":symbol,"status":"active","expiration_date_gte":day(time.time()),
-            "expiration_date_lte":day(time.time()+self.cfg.chain_dte*86400),"limit":1000}
+        params={"underlying_symbols":symbol,"status":"active","expiration_date_gte":expiry_start or day(time.time()),
+            "expiration_date_lte":expiry_end or day(time.time()+self.cfg.chain_dte*86400),"limit":1000}
         complete=False
-        for _ in range(30):
+        for _ in range(page_limit):
             data=await self.get("https://paper-api.alpaca.markets/v2/options/contracts",self.alpaca_headers,params)
             for x in data.get("option_contracts",[]): metadata[x["symbol"]]=x
             if not data.get("next_page_token"):
                 complete=True
                 break
             params["page_token"]=data["next_page_token"]
-        params={"feed":"opra","limit":1000,"expiration_date_gte":day(time.time()),"expiration_date_lte":day(time.time()+self.cfg.chain_dte*86400)}
+        params={"feed":"opra","limit":1000,"expiration_date_gte":expiry_start or day(time.time()),"expiration_date_lte":expiry_end or day(time.time()+self.cfg.chain_dte*86400)}
         out=[]
-        for _ in range(30):
+        for _ in range(page_limit):
             data=await self.get("https://data.alpaca.markets/v1beta1/options/snapshots/"+symbol,self.alpaca_headers,params)
             for ticker,x in data.get("snapshots",{}).items():
                 d,g,q=metadata.get(ticker,{}),x.get("greeks",{}),x.get("latestQuote",{})
