@@ -22,6 +22,7 @@ POLICY = (
     'Use quote_status and source quote timestamps; fetched_at is not the quote time. '
     'Only discuss paper eligibility when the user asks about automation, simulated entries or that scheduled plan. '
     'Never ask the user to enable simulated entries to receive research. '
+    'A configured max_entries of 0 means no entry-count limit, not zero allowed entries. '
     'End with the analysis and specific missing evidence, not an offer to watch, scan or simulate later. '
     'Use technical_context.asof for technical observations, not context capture time; label old observations. '
     'Do not turn a requested bearish direction into evidence that the market is bearish. '
@@ -180,3 +181,20 @@ async def collect_requests(collector):
             if current and current.get('expires',0)>time.time():
                 db.put(c,key,dict(status='complete',result=result))
     await asyncio.to_thread(finish)
+
+
+def record_evidence(db, result, now):
+    """Keep small daily verification records, never user prompts or credentials."""
+    from .market import day
+    req=result.get('request',{})
+    bucket='0dte' if req.get('min_dte')==req.get('max_dte')==0 else 'leaps' if req.get('min_dte',0)>=365 else 'other'
+    symbols=result.get('symbols') or {'request':{'status':result.get('status','unavailable')}}
+    with db.tx() as c:
+        for symbol,item in symbols.items():
+            candidates=item.get('candidates',[])
+            db.put(c,'ask-evidence:'+day(now)+':'+symbol+':'+bucket,dict(at=now,symbol=symbol,horizon=bucket,
+                status=item.get('status',result.get('status','unknown')),source=item.get('source'),
+                expiry_start=req.get('expiry_start'),expiry_end=req.get('expiry_end'),
+                returned_expirations=sorted({r['expiry'] for r in candidates if r.get('expiry')}),
+                candidate_count=len(candidates),fresh_quotes=sum(r.get('quote_status')=='fresh' for r in candidates),
+                basis='Latest read-only provider lookup for this symbol and horizon today; not model-answer validation or an entry.'))

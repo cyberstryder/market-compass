@@ -1,0 +1,34 @@
+(()=>{
+ const day=$('#daily-day'),load=$('#daily-load'),status=$('#daily-status'),root=$('#daily-report');
+ let request=0;
+ const dollars=v=>v===null||v===undefined?'—':'$'+num(v);
+ const counts=g=>[num(g.total),num(g.wins),num(g.losses),num(g.breakeven),num(g.open+g.pending),num(g.unresolved),num(g.excluded),num(g.missing_pnl),dollars(g.net_pnl)];
+ const headers=['Records','Wins','Losses','Flat','Open / pending','Unresolved','Excluded','Closed missing P&L','Net modeled $'];
+ function study(name,s){return '<h3>'+esc(name)+'</h3><p class="fine">'+esc(s.basis)+' '+when(s.since)+' – '+when(s.through)+'</p>'+table(headers,[counts(s.totals)])+'<details><summary>By symbol and setup; unresolved and entry-block reasons</summary>'+table(['Symbol','Setup','Version',...headers],s.groups.map(g=>[esc(g.symbol),esc(g.strategy),esc(g.version),...counts(g)]))+table(['State','Reason','Count'],s.reasons.map(r=>[esc(r.status),esc(r.reason),num(r.count)]))+'</details>';}
+ function render(d){
+  const p=d.paper,m=d.morning,v=d.verification;
+  let h='<p>'+esc(d.note)+'</p><h3>Paper accounts</h3><p>'+esc(p.basis)+'</p>';
+  const totals={};
+  for(const r of p.realized){const t=totals[r.asset]??={closed:0,wins:0,losses:0,breakeven:0,missing_pnl:0,net_pnl:0,measured:0,entries:0,open:0};for(const k of ['closed','wins','losses','breakeven','missing_pnl'])t[k]+=r[k];if(r.net_pnl!==null){t.net_pnl+=r.net_pnl;t.measured++;}}
+  for(const r of p.entries){const t=totals[r.asset]??={closed:0,wins:0,losses:0,breakeven:0,missing_pnl:0,net_pnl:0,measured:0,entries:0,open:0};t.entries+=r.total;t.open+=r.open;}
+  h+=table(['Account','Entries','Closed exits','Wins','Losses','Flat','Missing P&L','Realized paper $'],Object.entries(totals).map(([k,t])=>[esc(k==='option'?'0DTE options':k),num(t.entries),num(t.closed),num(t.wins),num(t.losses),num(t.breakeven),num(t.missing_pnl),dollars(t.measured?t.net_pnl:null)]));
+  h+='<details><summary>Paper results by setup and symbol</summary>'+table(['Asset','Setup',...headers],p.realized.map(r=>[esc(r.asset),esc(r.strategy),...counts(r)]))+table(['Asset','Symbol',...headers],p.by_symbol.map(r=>[esc(r.asset),esc(r.symbol),...counts(r)]))+'</details>';
+  h+='<details><summary>Skipped paper entries</summary>'+table(['Symbol','Status','Reason','Count','First','Last'],d.skips.map(r=>[esc(r.symbol),esc(r.status),esc(r.reason),num(r.count),when(r.first_at),when(r.last_at)]))+'</details>';
+  h+=study('Independent futures — full session',d.futures);
+  h+='<h3>Futures after the loss-limit block</h3><p>'+esc(d.post_lock.status.replaceAll('_',' '))+' · '+when(d.post_lock.first_recorded_block_at)+'. '+esc(d.post_lock.basis)+'</p>';
+  if(d.post_lock.cohort)h+=study('Post-block research observations',d.post_lock.cohort);
+  h+=study('Independent 1–21 DTE options',d.options)+study('Swing option ideas',d.swing_options)+study('Independent stock setups',d.stock_setups);
+  h+='<h3>Morning Algo — native daily observations</h3><p>'+num(m.signals)+' native signals · '+num(m.original_signals)+' original mirror signals · '+num(m.native_without_original)+' native signals without original mirror records. '+esc(m.source_status.replaceAll('_',' '))+'.</p><p>'+esc(m.basis)+'</p>';
+  h+='<p>Underlying path coverage: '+esc(JSON.stringify(m.stock_coverage))+'</p>';
+  h+=table(['Contract group','Exit minutes','Measured','Positive','Negative','Flat','Unmeasured','Sum of quote measurements $'],m.options.map(r=>[esc(r.variant),num(r.minutes),num(r.measured),num(r.wins),num(r.losses),num(r.breakeven),num(r.unmeasured),dollars(r.measured?r.net_pnl:null)]));
+  h+='<h3>Smoothers — week of '+esc(d.smoothers.week)+'</h3><p>'+esc(d.smoothers.basis)+'</p>'+table(['Status','Count'],Object.entries(d.smoothers.states).map(([k,n])=>[esc(k),num(n)]));
+  h+='<h3>Scheduled SPY option observations</h3><p>'+esc(d.spy_options.basis)+'</p>'+table(headers,[counts(d.spy_options.totals)]);
+  for(const r of d.research)h+='<h3>'+esc(r.program)+'</h3><p>'+esc(r.basis)+' Total '+num(r.total)+' · '+esc(JSON.stringify(r.states))+'</p>'+table(['Horizon','Checkpoint state','Count'],r.checkpoints.map(x=>[esc(x.horizon),esc(x.status),num(x.count)]));
+  h+='<h3>SPY and Ask Compass verification</h3><p>'+esc(v.basis)+'</p><p>SPY daily readiness: '+esc(v.spy_daily.status)+' · '+num((v.spy_daily.usable_days||[]).length)+'/15 daily sessions · checked '+when(v.spy_daily.checked_at)+'.</p><p>Recorded SPY checks: '+num(v.spy_checks)+' · '+esc(JSON.stringify(v.spy_decisions))+'</p><p>Drawing messages queued: '+num(v.drawing_messages)+' · unchanged drawings suppressed: '+num(v.drawing_suppressions)+' · '+esc(JSON.stringify(v.drawing_reasons))+'</p>';
+  h+=table(['SPY phase','Decision','Data blocks','Observation eligibility','Checked'],v.spy_details.map(r=>[esc(r.phase),esc(r.decision),esc(r.data_blocks.join('; ')),esc(r.eligibility_reason),when(r.at)]));
+  h+=v.ask_options.length?table(['Symbol','Horizon','Status','Candidates','Fresh quotes','Returned expirations','Checked'],v.ask_options.map(r=>[esc(r.symbol),esc(r.horizon),esc(r.status),num(r.candidate_count),num(r.fresh_quotes),esc(r.returned_expirations.join(', ')),when(r.at)])):'<p>No recorded Ask Compass lookup verification for this date yet. Ask a question for the requested horizon to collect evidence.</p>';
+  root.innerHTML=h;
+ }
+ day.onchange=()=>{request++;load.disabled=false;root.textContent='';status.textContent='Load the selected date.';$('#daily-download').href='/api/daily-results?download=true&session_day='+encodeURIComponent(day.value);};
+ load.onclick=async()=>{const token=++request;load.disabled=true;status.textContent='Loading complete daily results…';try{const params=new URLSearchParams();if(day.value)params.set('session_day',day.value);const r=await fetch('/api/daily-results?'+params,{cache:'no-store'});if(!r.ok)throw Error('Request failed ('+r.status+')');const d=await r.json();if(token!==request)return;day.value=d.day;render(d);status.textContent='Trading day '+d.day+' · as of '+when(d.asof)+' · complete aggregate counts';$('#daily-download').href='/api/daily-results?download=true&session_day='+encodeURIComponent(d.day);}catch(e){if(token===request){root.textContent='';status.textContent=e.message;}}finally{if(token===request)load.disabled=false;}};
+})();

@@ -437,6 +437,15 @@ def create_app(cfg=None):
         headers={'Content-Disposition':'attachment; filename="morning-stock-research.json"'} if download else None
         return JSONResponse(report,headers=headers)
 
+    @app.get('/api/daily-results')
+    def get_daily_results(session_day:str=Query('',max_length=10),download:bool=False):
+        from .daily_results import build as daily_results
+        try:
+            with db.tx() as c: report=daily_results(db,c,cfg,time.time(),session_day or None)
+        except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+        headers={'Content-Disposition':'attachment; filename="daily-results.json"'} if download else None
+        return JSONResponse(report,headers=headers)
+
     @app.get("/api/secondary")
     def get_secondary():
         with db.tx() as c: return secondary_snapshot(db,c,time.time(),clock=time.time)
@@ -616,6 +625,8 @@ def create_app(cfg=None):
         requested_options=option_request(body.question,now)
         if requested_options:
             context['option_research']=await option_research(cfg,scope,requested_options,context['quotes'],now,db=db)
+            from .assistant_options import record_evidence
+            await asyncio.to_thread(record_evidence,db,context['option_research'],time.time())
         instructions=(OPTION_RESEARCH_POLICY + "You are Market Compass, a personal market research assistant. Answer only from the supplied timestamped context. "
             "Every numerical market claim must name its symbol, source and as-of time. Label stale or missing information. "
             "Display human-readable America/Chicago times, using supplied ISO clock fields when available. "
