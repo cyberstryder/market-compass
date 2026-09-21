@@ -30,6 +30,17 @@ def evidence_summary(assistant_input):
                               source=str(source or 'Source not recorded')[:160], at=number(at),
                               time_label=time_label, note=str(note)[:300] if note else None))
 
+        option_data = context.get('option_research', {})
+        if option_data:
+            option = option_data.get('symbols', {}).get(symbol, {})
+            req = option_data.get('request', {})
+            add('Requested options', 'option_research',
+                [('From DTE', req.get('min_dte')), ('Through DTE', req.get('max_dte')),
+                 ('Sampled contracts', len(option.get('candidates', [])) if option.get('status')=='available' else None)],
+                option.get('source'), option.get('fetched_at'), 'Fetched',
+                str(option.get('status', option_data.get('status', req.get('status')))) +
+                '; bounded chain sample; each quote has its own source time.')
+
         bid, ask = number(quote.get('bid')), number(quote.get('ask'))
         usable = bid is not None and ask is not None and 0 < bid <= ask
         add('Two-sided quote', 'quotes', [('Bid', bid if usable else None), ('Ask', ask if usable else None)],
@@ -83,3 +94,4 @@ async def event_stream(operation, *, timeout=90, heartbeat=10):
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
