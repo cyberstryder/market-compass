@@ -79,7 +79,7 @@ def test_qqq_request_reaches_model_with_independent_research(tmp_path,monkeypatc
     from fastapi.testclient import TestClient
     from compass.app import create_app
     calls=[]
-    async def lookup(cfg,scope,req,quotes,now):
+    async def lookup(cfg,scope,req,quotes,now,db=None):
         assert scope==['QQQ'] and req['min_dte']==req['max_dte']==0
         return dict(request=req,symbols={'QQQ':dict(status='available',candidates=[row()])})
     class Client:
@@ -123,3 +123,36 @@ def test_provider_queries_honor_explicit_range_and_page_bound(provider):
                 assert '2027-09-21' in params.values() and '2029-09-20' in params.values()
         finally: await collector.close()
     asyncio.run(run())
+
+
+def test_web_without_credentials_receives_collector_option_evidence(tmp_path,monkeypatch):
+    from compass.assistant_options import collect_requests
+    from compass.store import Store
+    db=Store('sqlite:///'+str(tmp_path/'queue.db')); db.initialize()
+    web=Config(local=True,role='web',alpaca_key='',alpaca_secret='',massive='')
+    worker=Collectors(db,Config(local=True,alpaca_key='fake',alpaca_secret='fake'))
+    async def fetch(self,symbol,lo,hi,page_limit): return [row(expiry=lo)],True
+    monkeypatch.setattr(Collectors,'alpaca_chain',fetch)
+    async def run():
+        task=asyncio.create_task(research(web,['QQQ'],request('QQQ LEAPS puts',NOW),{},NOW,db=db))
+        for _ in range(30):
+            await asyncio.sleep(.05)
+            await collect_requests(worker)
+            if task.done(): break
+        try:
+            result=await asyncio.wait_for(task,2)
+            assert result['symbols']['QQQ']['candidates'][0]['expiry']=='2027-09-21'
+            assert result['symbols']['QQQ']['source']=='alpaca'
+            with db.tx() as c: assert not db.prefix(c,'ask-options:')
+        finally: await worker.close()
+    asyncio.run(run())
+
+
+def test_queue_timeout_cleans_request_and_preserves_research_scope(tmp_path):
+    from compass.assistant_options import queued_research
+    from compass.store import Store
+    db=Store('sqlite:///'+str(tmp_path/'queue.db')); db.initialize()
+    req=request('QQQ 0DTE puts',NOW)
+    result=asyncio.run(queued_research(db,['QQQ'],req,{},NOW,timeout=.02))
+    assert result['status']=='collector_lookup_timeout' and result['request']==req
+    with db.tx() as c: assert not db.prefix(c,'ask-options:')

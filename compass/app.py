@@ -615,7 +615,7 @@ def create_app(cfg=None):
         context["flow"]=context["flow"][:15]
         requested_options=option_request(body.question,now)
         if requested_options:
-            context['option_research']=await option_research(cfg,scope,requested_options,context['quotes'],now)
+            context['option_research']=await option_research(cfg,scope,requested_options,context['quotes'],now,db=db)
         instructions=(OPTION_RESEARCH_POLICY + "You are Market Compass, a personal market research assistant. Answer only from the supplied timestamped context. "
             "Every numerical market claim must name its symbol, source and as-of time. Label stale or missing information. "
             "Display human-readable America/Chicago times, using supplied ISO clock fields when available. "
