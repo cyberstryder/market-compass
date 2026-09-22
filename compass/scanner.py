@@ -87,6 +87,13 @@ def session_open(symbol,now):
     return bool(hours and hours[0]<=now<hours[1]-1800)
 
 
+def evaluation_session_open(symbol,now):
+    if '@' in symbol:
+        return research_session(now,symbol)['entry_open']
+    hours=session(day(now))
+    return bool(hours and hours[0]<=now<hours[1]-60)
+
+
 def make_candidate(symbol,rule,side,price,stop,clock,reason,evidence=None):
     if not all(number(v) is not None and v>0 for v in (price,stop)):
         return None
@@ -103,7 +110,7 @@ def technical_candidates(f,arms,now,tick, research=False):
     """Only completed-bar patterns; arms are durable and session-specific."""
     result=[]
     arms=dict(arms)
-    if f.get('status')!='ready' or not 0<=now-f.get('asof',0)<=90 or not f.get('atr14') or not (research_session(now,f['symbol'])['entry_open'] if research else session_open(f['symbol'],now)):
+    if f.get('status')!='ready' or not 0<=now-f.get('asof',0)<=90 or not f.get('atr14') or not (evaluation_session_open(f['symbol'],now) if research else session_open(f['symbol'],now)):
         return result,arms
     b,p=f['bar'],f['previous_bar']
     price,clock=b['c'],f['asof']
@@ -281,7 +288,7 @@ class Scanner:
         wanted=set(cfg.watch_symbols)|{symbol for symbol in quotes if '@' in symbol and symbol.split('@')[0] in selected}
         changed=[]
         for symbol in sorted(wanted):
-            if not session_open(symbol,now):
+            if not evaluation_session_open(symbol,now):
                 continue
             last=latest.get('latestbar:'+symbol)
             if last is None or last==db.get(c,'scanner_cursor:'+symbol):
@@ -301,15 +308,15 @@ class Scanner:
         for symbol in changed:
             f=facts[symbol]
             tick=engine.specification(symbol)['tick']
-            items,arms=technical_candidates(f,db.get(c,'scanner_arms:'+symbol,{}),now,tick)
+            items,arms=technical_candidates(f,db.get(c,'scanner_arms:'+symbol,{}),now,tick,research=True)
             db.put(c,'scanner_arms:'+symbol,arms)
             candidates.extend(items)
-            if f.get('status')=='ready' and session_open(symbol,now):
+            if f.get('status')=='ready' and evaluation_session_open(symbol,now):
                 candidates.extend(exposure_candidates(f,apexes.get(symbol),now,tick))
                 candidates.extend(exposure_candidates(f,concentrations.get(symbol),now,tick))
         for row in flow:
             symbol=row.get('symbol')
-            if symbol not in wanted or not session_open(symbol,now) or symbol not in facts:
+            if symbol not in wanted or not evaluation_session_open(symbol,now) or symbol not in facts:
                 continue
             item=flow_candidate(facts[symbol],row,quotes.get(symbol),now,engine.specification(symbol)['tick'])
             if item:
@@ -359,13 +366,14 @@ class Scanner:
                 item.update(status='blocked',blocked_reason='Price moved too far from the observed trigger')
             elif now-cool<600:
                 item.update(status='watch',blocked_reason='Same-direction alert cooldown; evidence recorded')
-            if item['status'] in ('triggered','watch'):
-                for candidate_id in item['candidate_ids']:
-                    trial_signal={**candidate_map[candidate_id],'context':f}
-                    trial_id=engine.study.start(c,trial_signal,now,engine.specification(symbol),
-                        alerted=item['status']=='triggered',primary=candidate_id==item['id'])
-                    if candidate_id==item['id']:
-                        item['setup_trial_id']=trial_id
+            # Evaluate every distinct rule before alert cooldown or paper gates.
+            # Invalid/missing quote evidence remains an explicit excluded trial.
+            for candidate_id in item['candidate_ids']:
+                trial_signal={**candidate_map[candidate_id],'context':f}
+                trial_id=engine.observe_setup(c,trial_signal,now,
+                    alerted=item['status']=='triggered',primary=candidate_id==item['id'])
+                if candidate_id==item['id']:
+                    item['setup_trial_id']=trial_id
             if item['status']=='triggered':
                 db.put(c,'scanner_cooldown:'+symbol+':'+item['side'],now)
                 # Preserve price invalidation even if the executable quote moved.
@@ -401,10 +409,12 @@ class Scanner:
 
     def retry_options(self,c,quotes,now,engine):
         scan_started_at=now
-        for key,pending in self.db.prefix(c,'pending_options:').items():
+        pending_rows={**self.db.prefix(c,'pending_options:'),**self.db.prefix(c,'pending_research_options:')}
+        for key,pending in pending_rows.items():
             if pending.get('status')!='waiting':
                 continue
             signal=pending['signal']
+            research_only=pending.get('research_only',False)
             symbol=signal['symbol']
             # Live retries may run seconds after the scan began. Read the current
             # underlying, then sample the same live clock used by entry_check.
@@ -412,8 +422,8 @@ class Scanner:
             quote=self.db.get(c,'quote:'+symbol) if engine.clock else quotes.get(symbol)
             now=engine.clock() if engine.clock else scan_started_at
             reason=None
-            if now>=pending['expires_at'] or not session_open(symbol,now):
-                reason='Option selection window ended without an eligible same-day contract, fresh quote and available risk'
+            if now>=pending['expires_at'] or not (evaluation_session_open(symbol,now) if research_only else session_open(symbol,now)):
+                reason='Option selection window ended without an eligible same-day contract and fresh quote' if research_only else 'Option selection window ended without an eligible same-day contract, fresh quote and available risk'
             elif fresh(quote,now):
                 crossed=quote['bid']<=signal['invalidation'] if signal['side']=='long' else quote['ask']>=signal['invalidation']
                 if crossed:
@@ -421,12 +431,16 @@ class Scanner:
             if reason:
                 pending.update(status='expired',reason=reason,updated_at=now)
                 self.db.put(c,key,pending)
-                engine.alert(c,symbol,{**alert_context(signal),'status':'options_skipped','reason':reason,'parent_signal':signal['id']},'pending-option-expired:'+signal['id'])
-            elif fresh(quote,now) and abs((quote['bid']+quote['ask'])/2-signal['signal_price'])<=signal['context']['atr14']*.5:
+                if not research_only: engine.alert(c,symbol,{**alert_context(signal),'status':'options_skipped','reason':reason,'parent_signal':signal['id']},'pending-option-expired:'+signal['id'])
+            elif fresh(quote,now) and abs((quote['bid']+quote['ask'])/2-signal['signal_price'])<=signal.get('context',{}).get('atr14',float('inf'))*.5:
                 audit={'scan_started_at':scan_started_at,'underlying_checked_at':now}
-                if engine.options(c,signal,now,quiet=True,diagnostics=audit):
-                    pending.update(status='entered',updated_at=now)
-                self.save_option_diagnostic(c,key,pending,audit,now,quote)
+                if engine.options(c,signal,now,quiet=True,diagnostics=audit,**({'research_only':True} if research_only else {})):
+                    pending.update(status='observed' if research_only else 'entered',updated_at=now)
+                if research_only:
+                    pending.update(last_selection=audit,updated_at=now)
+                    self.db.put(c,key,pending)
+                else:
+                    self.save_option_diagnostic(c,key,pending,audit,now,quote)
             else:
                 reason='Fresh underlying quote required' if not fresh(quote,now) else 'Underlying moved beyond entry tolerance'
                 self.save_option_diagnostic(c,key,pending,dict(version='0dte-selection-v2',at=now,

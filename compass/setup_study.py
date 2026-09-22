@@ -18,7 +18,7 @@ from .quote_path import recorded_path
 from . import futures_variants, futures_assessment, futures_feed_study, futures_feed_reporting
 from .setup_reporting import summaries, WINDOW_DAYS
 
-VERSION = 'setup-outcomes-v3'
+VERSION = 'setup-outcomes-v4'
 MAX_GAP = 15
 trials = Table('setup_trials_v1', meta,
     Column('id', String(64), primary_key=True), Column('source_id', String(100), nullable=False),
@@ -37,7 +37,9 @@ class SetupStudy:
         self.report_owner = uuid.uuid4().hex
 
     def start(self, c, signal, now, spec, alerted=True, primary=True):
-        if not self.cfg.setup_study or spec['asset'] not in ('future', 'stock') or signal.get('track') == 'swing':
+        if not self.cfg.setup_study or spec['asset'] not in ('future', 'stock', 'option') or signal.get('track') == 'swing':
+            return None
+        if spec['asset']=='option' and not signal.get('strategy','').startswith('0dte-'):
             return None
         key = identity(VERSION, signal['id'])
         previous = c.execute(select(trials.c.id).where(trials.c.source_id == signal['id'])).first()
@@ -55,8 +57,8 @@ class SetupStudy:
         future = spec['asset'] == 'future'
         hours = research_session(now, signal['symbol']) if future else None
         cash = session(day(now)) if not future else None
-        deadline = hours['flatten_at'] if future else (cash[1]-900 if cash else now)
-        opened = hours['entry_open'] if future else bool(cash and cash[0] <= now < cash[1]-1800)
+        deadline = hours['flatten_at'] if future else (cash[1] if cash else now)
+        opened = hours['entry_open'] if future else bool(cash and cash[0] <= now < cash[1]-60)
         cause = None
         stamp = number(signal.get('signal_time'))
         if stamp is None or not 0 <= now-stamp <= 90:
@@ -65,8 +67,6 @@ class SetupStudy:
             cause = 'Outside the configured research entry session'
         elif not fresh(q, now) or not stamp <= q['ts'] <= now:
             cause = 'Fresh two-sided quote after the signal is required'
-        elif q['ask']-q['bid'] > max(spec['tick']*8, (q['ask']+q['bid'])/2*.002):
-            cause = 'Spread exceeds the research liquidity limit'
         long = signal['side'] == 'long'
         entry = stop = target = risk = None
         if cause is None:
@@ -76,11 +76,11 @@ class SetupStudy:
                 risk = prices['distance']*spec['multiplier']+2*spec['fee']
             except ValueError as error:
                 cause = str(error)
-        p = {**{k:signal[k] for k in ('id','symbol','side','strategy','rule','signal_time','signal_price','track') if k in signal},
+        p = {**{k:signal[k] for k in ('id','symbol','side','strategy','rule','signal_time','signal_price','track','underlying','underlying_side') if k in signal},
             **spec, 'id':key, 'source_id':signal['id'], 'version':VERSION, 'qty':1,
             'status':'excluded' if cause else 'open', 'reason':cause,
             'started':now, 'finished':now if cause else None, 'entry':entry, 'stop':stop, 'target':target,
-            'initial_risk':risk, 'flatten_at':deadline, 'alerted':alerted, 'primary':primary,
+            'evaluation_policy':'independent-all-setups-v1', 'entry_spread':q['ask']-q['bid'] if fresh(q,now) else None, 'initial_risk':risk, 'flatten_at':deadline, 'alerted':alerted, 'primary':primary,
             'fill_version':FILL_VERSION, 'fill_model':FILL_DESCRIPTION, 'observation_model':'recorded-quotes-v2',
             'replayed_samples':0,
             'last_quote_ts':q['ts'] if fresh(q, now) else None, 'samples':0, 'max_gap_seconds':0,
@@ -264,3 +264,21 @@ def snapshot(db, c, cfg, now):
         'entry_variants_activation':db.get(c, futures_variants.PREFIX+'activation'),
         'feed_comparison_activation':db.get(c, futures_feed_study.KEY),
         'worker':db.get(c, 'setup_study:worker'), 'max_entries':cfg.max_entries}
+
+
+def option_requests(db,c,now):
+    """Request fresh quotes for every waiting 0DTE hypothesis; no account checks."""
+    wanted=[]
+    for pending in db.prefix(c,'pending_research_options:').values():
+        if pending.get('status')!='waiting' or now>=pending['expires_at']:
+            continue
+        signal=pending['signal']
+        chain=db.get(c,'chain:'+signal['symbol'],{})
+        if not 0<=now-chain.get('asof',0)<=120:
+            continue
+        kind='call' if signal['side']=='long' else 'put'
+        contracts=[o for o in chain.get('contracts',[]) if o.get('expiry')==day(now)
+                   and o.get('type')==kind and o.get('multiplier')==100]
+        contracts.sort(key=lambda o:abs(o['strike']-signal['signal_price']))
+        wanted.extend(o['symbol'] for o in contracts[:8])
+    return list(dict.fromkeys(wanted))
