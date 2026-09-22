@@ -384,7 +384,10 @@ class Collectors:
             stale_carried=sorted((s for s in carried if retry(s)
                 and now-self.db.get(c,'chain:'+s,{}).get('asof',0)>=900),
                 key=lambda s:self.db.get(c,'chain:'+s,{}).get('asof',0))
-            due=list(dict.fromkeys(stale_carried+due))
+            # Oldest successful refresh first: list priority must not repeatedly
+            # refresh the first name while other eligible research goes stale.
+            due=sorted(dict.fromkeys(stale_carried+due),
+                key=lambda s:self.db.get(c,'chain:'+s,{}).get('asof',0))
             background=next((s for s in rotation if s not in due and retry(s) and now-self.db.get(c,"chain:"+s,{}).get("asof",0)>=900),None)
             # One focused symbol and one background symbol per turn. A new price
             # setup can reach the front of the next turn instead of waiting for
@@ -678,4 +681,3 @@ def select_contracts(contracts,reference,limit):
             if i<len(side): chosen.append(side[i])
             if len(chosen)>=limit: return chosen
     return chosen
-

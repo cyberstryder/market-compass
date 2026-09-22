@@ -633,7 +633,7 @@ def create_app(cfg=None):
             context['option_research']=await option_research(cfg,scope,requested_options,context['quotes'],now,db=db)
             from .assistant_options import record_evidence
             await asyncio.to_thread(record_evidence,db,context['option_research'],time.time())
-        instructions=(OPTION_RESEARCH_POLICY + "You are Market Compass, a personal market research assistant. Answer only from the supplied timestamped context. "
+        instructions=((OPTION_RESEARCH_POLICY if requested_options else '') + "You are Market Compass, a personal market research assistant. Answer only from the supplied timestamped context. "
             "Every numerical market claim must name its symbol, source and as-of time. Label stale or missing information. "
             "Display human-readable America/Chicago times, using supplied ISO clock fields when available. "
             "Distinguish a closed exchange from a failed connection; HTTP fetch time is not a market observation timestamp. "
@@ -727,4 +727,3 @@ def create_app(cfg=None):
     return app
 
 app=create_app()
-
