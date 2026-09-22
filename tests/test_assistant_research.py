@@ -17,6 +17,7 @@ def test_direction_keeps_market_evidence_without_unrelated_plan_gates():
     source = dict(asof=123, technical_context={'SPY':{'asof':120,'status':'ready','ema9':774,'ema21':773}},
         exposure={'SPY':{'source':'massive','asof':119,'coverage':.4,'gex':12}},
         risk={'many_accounts':'x'*20000}, limits={'daily_loss':300}, positions=[{'symbol':'MNQ'}],
+        quote_checks=[{'symbol':'SPY','status':'blocked'}],
         spy_brief={'symbol':'SPY','generated_at':100,'decision':'WAIT','options':{'call':{'status':'unavailable'}},
             'plans':{'call':{'rule':'15-minute breakout'}},
             'chart_levels':[{'label':'PM high','spy':774.67},{'label':'Call stop','spy':773.2}]})
@@ -29,7 +30,7 @@ def test_direction_keeps_market_evidence_without_unrelated_plan_gates():
     assert ctx['spy_brief']['generated_at']==100
     assert ctx['spy_brief']['chart_levels']==[{'label':'PM high','spy':774.67}]
     assert not {'options','decision','plans'} & ctx['spy_brief'].keys()
-    assert not {'risk','limits','positions'} & ctx.keys()
+    assert not {'risk','limits','positions','quote_checks'} & ctx.keys()
     assert not ctx['assistant_coverage']['entry_evidence_incomplete']
     assert 'risk' in ctx['assistant_coverage']['not_requested_sections']
     assert 'risk' not in diagnostic['omitted_sections']
@@ -110,6 +111,8 @@ def test_direction_endpoint_supplies_scoped_technicals_and_exposure(tmp_path,mon
     assert not ctx['assistant_coverage']['entry_evidence_incomplete']
     assert len(calls[0]['input'].encode())<=MAX_INPUT_BYTES
     assert 'A future candle that has not closed is not missing' in calls[0]['instructions']
+    assert 'Separate market thesis, contract quote availability' not in calls[0]['instructions']
+    assert 'quote_checks' not in ctx
 
 
 def test_named_futures_resolve_to_dated_quotes_without_unrelated_contracts():
