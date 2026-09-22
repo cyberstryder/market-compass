@@ -53,3 +53,30 @@ def test_slow_chain_refresh_rotates_oldest_due_focus(tmp_path,monkeypatch):
         asyncio.run(run())
     finally:
         db.engine.dispose()
+
+
+def test_slow_carried_background_does_not_hold_index_lane(tmp_path,monkeypatch):
+    db=Store('sqlite:///'+str(tmp_path/'lanes.db'));db.initialize()
+    monkeypatch.setattr('compass.providers.focus_symbols',lambda *a:['SPY','AAA'])
+    monkeypatch.setattr('compass.swing_ideas.active_underlyings',lambda c:['OLD'])
+    async def run():
+        collector=Collectors(db,Config(local=True,stocks=('SPY','AAA','OLD'),massive='fixture'))
+        entered,release=asyncio.Event(),asyncio.Event()
+        calls=[]
+        async def chain(symbol):
+            calls.append(symbol)
+            if symbol=='OLD':
+                entered.set();await release.wait()
+            return [],True
+        collector.massive_chain=chain
+        background=asyncio.create_task(collector.chains('background'))
+        try:
+            await asyncio.wait_for(entered.wait(),2)
+            await asyncio.wait_for(collector.chains('indices'),2)
+            assert calls==['OLD','SPY']
+            assert not background.done()
+            with db.tx() as c:assert db.get(c,'chain:SPY')['asof']>0
+        finally:
+            release.set();await background;await collector.close()
+    try:asyncio.run(run())
+    finally:db.engine.dispose()
