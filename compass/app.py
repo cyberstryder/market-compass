@@ -26,6 +26,7 @@ from .alert_format import alert_identity
 from .market import is_open
 from .diagnostics import assistant_error
 from .assistant_context import build_input
+from .assistant_research import POLICY as RESEARCH_POLICY, mentioned_futures
 from .assistant_options import request as option_request, research as option_research, POLICY as OPTION_RESEARCH_POLICY
 from .assistant_progress import evidence_summary,event_stream
 from .readiness import decorate_health,quote_checks,clock
@@ -576,15 +577,16 @@ def create_app(cfg=None):
         known=set(cfg.watch_symbols)
         mentioned=list(dict.fromkeys(word.upper() for word in re.findall(r'\b[A-Za-z][A-Za-z0-9.]{0,14}\b',body.question)
             if word.upper() in known and (word.isupper() or word.upper() not in {'NOW','OPEN','APP','ARM','CL','ON','ALL'})))[:8]
+        mentioned=list(dict.fromkeys(mentioned+mentioned_futures(body.question,context['quotes'])))[:8]
         focus=[item['symbol'] for item in context['scanner']['opportunities'] if item['status']=='triggered']
         scope=mentioned or list(dict.fromkeys(focus+list(cfg.stocks)))[:8]
         context['question_scope']={'symbols':scope,'watchlist_count':len(cfg.watch_symbols),
             'note':'Detailed research is bounded to these symbols; scanner opportunities summarize the wider universe.'}
         context['exposure']={key:value for key,value in context['exposure'].items() if key in scope}
         context['matrix']={key:value for key,value in context['matrix'].items() if key=='matrix:unusual_activity' or key[7:] in scope}
-        context['quotes']={key:value for key,value in context['quotes'].items() if key in scope or '@' in key}
-        context['levels']={key:value for key,value in context['levels'].items() if key in scope or '@' in key}
-        context['scanner']['opportunities']=context['scanner']['opportunities'][:20]
+        context['quotes']={key:value for key,value in context['quotes'].items() if key in scope or (not mentioned and '@' in key)}
+        context['levels']={key:value for key,value in context['levels'].items() if key in scope or (not mentioned and '@' in key)}
+        context['scanner']['opportunities']=[p for p in context['scanner']['opportunities'] if not mentioned or p.get('symbol') in scope][:20]
         context['projects']['records']=[r for r in context['projects']['records'] if not mentioned or r['symbol'] in scope][:15]
         context['secondary']['reviews']=[r for r in context['secondary']['reviews'] if not mentioned or r['symbol'] in scope][:10]
         context['research']={}
@@ -593,7 +595,7 @@ def create_app(cfg=None):
                 context['spy_brief']=db.get(c,'spy-brief:latest')
             context['technical_context']={symbol:db.get(c,'scanner_features:'+symbol) for symbol in scope}
             context['swing_technical_context']={symbol:db.get(c,'swing_daily:'+symbol) for symbol in scope}
-            for symbol in mentioned:
+            for symbol in (s for s in mentioned if '@' not in s):
                 db.put(c,'focus:'+symbol,{'symbol':symbol,'priority':90,'at':now,'reason':'Requested research'})
             for feed in FEEDS:
                 item=db.get(c,'research:'+feed.key)
@@ -608,7 +610,11 @@ def create_app(cfg=None):
                     raw=json.dumps(item.get('data'))
                     context['research'][feed.key]['global_context']=raw[:5000]
                     context['research'][feed.key]['context_truncated']=len(raw)>5000
-        for e in context["exposure"].values(): e["strikes"]=e.get("strikes",[])[:100]
+        for e in context["exposure"].values():
+            ranked=sorted(e.get("strikes",[]),key=lambda row:abs(row.get("gex") or 0),reverse=True)
+            e["strikes"]=ranked[:12]
+            e["assistant_sample"]={"total_strikes":len(ranked),"supplied_strikes":len(e["strikes"]),
+                "basis":"Largest absolute GEX totals; partial sample, not verified walls."}
         for item in context["matrix"].values():
             if "strikes" in item:
                 ranked=sorted(item["strikes"],key=lambda row:abs(row.get("gex") or 0),reverse=True)[:12]
@@ -662,7 +668,7 @@ def create_app(cfg=None):
             "A SPY NO ENTRY decision is terminal for that session's scheduled strategy. "
             "Do not suggest waiting for a later breakout or candle to enter under that closed plan. "
             "Any different or discretionary strategy would need its own explicit rules and fresh eligibility evidence. "
-            "If data cannot answer the question, say exactly what is missing.")
+            "If data cannot answer the question, say exactly what is missing." + RESEARCH_POLICY)
         try:
             assistant_input,context_size=build_input(body.question,context)
         except ValueError:
