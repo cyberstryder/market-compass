@@ -5,6 +5,7 @@ flow and vendor screeners remain attributed evidence, never probability claims.
 """
 import time
 from collections import defaultdict
+from sqlalchemy import select
 from .market import levels, fresh, day, number, session, dedup
 from .futures import research_session, future_levels, futures_session, risk_day, prior_rth, active_selection
 from .store import identity
@@ -374,6 +375,8 @@ class Scanner:
                     alerted=item['status']=='triggered',primary=candidate_id==item['id'])
                 if candidate_id==item['id']:
                     item['setup_trial_id']=trial_id
+                    from .setup_study import trials
+                    item['research_status']=c.execute(select(trials.c.status).where(trials.c.id==trial_id)).scalar_one_or_none() if trial_id else 'unavailable'
             if item['status']=='triggered':
                 db.put(c,'scanner_cooldown:'+symbol+':'+item['side'],now)
                 # Preserve price invalidation even if the executable quote moved.

@@ -215,11 +215,14 @@ def message_for(row, now=None):
             lines.append('Entry window ends: ' + clock(p['expires_at']))
         if p.get('paper_status'):
             lines.append('Historical paper benchmark: ' + clean(p['paper_status']).replace('_', ' ') + '.')
-        if p.get('setup_trial_id'): lines.append('Independent setup outcome tracking active; portfolio limits do not stop measurement.')
+        if p.get('setup_trial_id'):
+            state=p.get('research_status')
+            lines.append('Independent research: '+clean(state or 'record saved; current outcome in Setup results')+'. Ref: '+clean(p['setup_trial_id'],100))
         if identity['category']!='futures': lines.append('Option selection is reported separately.')
     if p.get('status')=='research_observation':
         lines.append('Research state: '+clean(p.get('study_status'))+'. Overlapping observations are separate experiments.')
         if p.get('setup_trial_id'): lines.append('Tracking ref: '+clean(p['setup_trial_id'],100))
+        if p.get('research_basis'): lines.append(clean(p['research_basis'],250))
     # An exit reason must take precedence over the original entry thesis.
     reason = p.get('exit_reason') or p.get('reason')
     if reason:

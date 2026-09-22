@@ -24,7 +24,7 @@ def research_notice(db, c, signal, trial, now):
         data = dict(signal, **{k: trial.get(k) for k in
             ('entry', 'stop', 'target', 'qty', 'asset', 'version', 'entry_quote_ts')})
         data.update(setup_trial_id=trial['id'], study_status=trial['status'],
-            reason=trial.get('reason') or signal.get('reason'))
+            reason=trial.get('reason') or signal.get('reason'),research_basis=trial.get('basis'))
     data.update(status='research_observation', mode='RESEARCH')
     db.append(c, 'alert', 'research', signal['symbol'], now, data, 'research-setup:'+signal['id'])
 

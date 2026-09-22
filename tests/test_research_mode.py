@@ -60,6 +60,14 @@ def test_missing_quote_notice_is_unavailable_not_tracking_or_loss(db,cfg):
         assert p['pnl'] is None and p['entry'] is None
 
 
+def test_scanner_notice_does_not_call_an_excluded_row_active():
+    row=dict(id=1,source='scanner',symbol='SPY',ts=NOW,payload=dict(
+        status='setup_triggered',expires_at=NOW+120,setup_trial_id='trial',research_status='excluded'))
+    text=message_for(row,NOW)
+    assert 'Independent research: excluded' in text
+    assert 'tracking active' not in text and 'Portfolio simulation' not in text
+
+
 def test_option_path_forces_research_and_pauses_old_paper_retries(db,cfg,monkeypatch):
     cfg.paper_trading=False; cfg.scanner_paper=True
     e=Engine(db,cfg)
