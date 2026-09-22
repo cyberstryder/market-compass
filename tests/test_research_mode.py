@@ -146,3 +146,14 @@ def test_daily_breakout_has_independent_swing_checkpoints(db,cfg,monkeypatch,ava
         assert all(r['status']==('pending' if available else 'unavailable') for r in checks)
         assert not db.prefix(c,'trade:')
         assert len(db.recent(c,'alert'))==1
+
+
+def test_daily_breakout_uses_post_write_observation_clock(db,cfg,monkeypatch):
+    cfg.paper_trading=False
+    monkeypatch.setattr('compass.store.time.time',lambda:NOW+1)
+    with db.tx() as c:
+        db.put(c,'quote:SPY',quote(NOW+1,bid=100,ask=100.01))
+        s={**signal(symbol='SPY'),'track':'swing','daily':{'through':'2026-09-11','close':100}}
+        Engine(db,cfg,clock=lambda:NOW+2).enter(c,s,NOW)
+        p=c.execute(select(swing_trials)).mappings().one()
+        assert p['status']=='pending' and p['assessed_at']==NOW+2

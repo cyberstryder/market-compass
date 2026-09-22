@@ -29,7 +29,7 @@ def research_notice(db, c, signal, trial, now):
     db.append(c, 'alert', 'research', signal['symbol'], now, data, 'research-setup:'+signal['id'])
 
 
-def observe_daily_breakout(db, c, signal, now):
+def observe_daily_breakout(db, c, signal, now, clock=None):
     """Retain legacy daily-breakout signals in the independent swing endpoint study."""
     from sqlalchemy import select
     from .store import events, identity, swing_trials
@@ -41,7 +41,10 @@ def observe_daily_breakout(db, c, signal, now):
     db.append(c,'swing_candidate','engine_daily_research',signal['symbol'],now,
         dict(signal=observed,flow_confirmed=False),key)
     event=c.execute(select(events).where(events.c.key==key)).mappings().one()
-    register(db,c,event,now,snapshot=dict(at=now,rows={},matrix={},coverage={}))
+    # Registration follows the append/read. The scan-start clock must not
+    # precede the event's receipt or freeze quote freshness before a slow write.
+    checked=clock() if clock else max(now,event['received'])
+    register(db,c,event,checked,snapshot=dict(at=checked,rows={},matrix={},coverage={}))
     trial_id=identity(VERSION,event['id'])
     row=c.execute(select(swing_trials).where(swing_trials.c.id==trial_id)).mappings().one()
     p=row['payload']

@@ -125,7 +125,7 @@ class Engine:
     def enter(self,c,signal,now,quiet=False):
         if not self.cfg.paper_trading and signal.get('track')=='swing':
             from .operating_mode import observe_daily_breakout
-            trial=observe_daily_breakout(self.db,c,signal,now)
+            trial=observe_daily_breakout(self.db,c,signal,now,self.clock)
             if not quiet: research_notice(self.db,c,signal,trial,now)
             return False
         trial_id=self.observe_setup(c,signal,now,alerted=True,primary=True)
