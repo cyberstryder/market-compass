@@ -2,6 +2,16 @@
 import re
 
 
+def database_error(error):
+    """Classify failures without leaking SQL, parameters or connection strings."""
+    original=getattr(error,'orig',None)
+    code=getattr(original,'sqlstate',None) or getattr(original,'pgcode',None)
+    names={'55P03':'lock timeout','40P01':'deadlock','40001':'serialization retry',
+           '57014':'statement cancelled'}
+    return type(error).__name__+(f' SQLSTATE {code} ({names.get(code,"database failure")})'
+        if isinstance(code,str) and re.fullmatch(r'[0-9A-Z]{5}',code) else '')
+
+
 def redacted_detail(value, secrets=(), limit=500):
     message = str(value)
     for secret in sorted((s for s in secrets if s), key=len, reverse=True):
