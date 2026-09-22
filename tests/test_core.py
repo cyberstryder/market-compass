@@ -128,7 +128,7 @@ def test_engine_transaction_rolls_back_signal_position_and_cursor(db,cfg,monkeyp
         assert db.get(c,"position:SPY") is None
         assert db.get(c,"cursor:SPY") is None
         assert not db.recent(c,"signal")
-    monkeypatch.setattr(e,"options",lambda *args:None)
+    monkeypatch.setattr(e,"options",lambda *args,**kwargs:None)
     e.tick(NOW)
     e.tick(NOW)
     with db.tx() as c:
