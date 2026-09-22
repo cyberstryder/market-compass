@@ -34,6 +34,13 @@
   h+='<h3>Morning Algo — native daily observations</h3><p>'+num(m.signals)+' native signals · '+num(m.original_signals)+' original mirror signals · '+num(m.native_without_original)+' native signals without original mirror records. '+esc(m.source_status.replaceAll('_',' '))+'.</p><p>'+esc(m.basis)+'</p>';
   h+='<p>Underlying path coverage: '+esc(JSON.stringify(m.stock_coverage))+'</p>';
   h+=table(['Contract group','Exit minutes','Measured','Positive','Negative','Flat','Unmeasured','Sum of quote measurements $'],m.options.map(r=>[esc(r.variant),num(r.minutes),num(r.measured),num(r.wins),num(r.losses),num(r.breakeven),num(r.unmeasured),dollars(r.measured?r.net_pnl:null)]));
+  if(d.smoothers_daily){const s=d.smoothers_daily;
+   h+='<h3>Daily Smoothers comparison — quiet research</h3><p>'+esc(s.state)+' · '+esc(s.note||'Awaiting study activation')+'</p>';
+   if(s.activation)h+='<p>'+num(s.activation.configs.length)+' tickers · first full session '+esc(s.activation.sessions[0].day)+' · final entry session '+esc(s.activation.sessions.at(-1).day)+' · no additional alerts</p>';
+   h+=table(['Comparator','Matched ticker/direction/days','Smoothers earlier','Scanner earlier','Mean Smoothers lead (seconds)'],(s.overlap||[]).map(x=>[esc(x.family),num(x.matched),num(x.smoothers_earlier),num(x.scanner_earlier),num(x.mean_lead_seconds)]));
+   h+='<details><summary>Daily study outcomes and capture coverage</summary>'+table(['Family','Overlap group','Confirmation timing','Weekday','Horizon','Candidates','Measured','Pending','Unavailable','Mean directional stock %'],(s.groups||[]).map(x=>[esc(x.family),esc(x.group),esc(x.confirmation),esc(x.weekday),esc(x.horizon),num(x.records),num(x.measured),num(x.pending),num(x.unavailable),num(x.mean_directional_pct)]));
+   h+=table(['Session','Daily formula census','Processed','Data errors / missed'],(s.days||[]).filter(x=>x.day).map(x=>[esc(x.day),esc(x.state),num(x.index),(x.rows||[]).filter(r=>r.status==='unavailable').length+(x.unprocessed||[]).length]))+'</details>';
+  }
   h+='<h3>Smoothers — week of '+esc(d.smoothers.week)+'</h3><p>'+esc(d.smoothers.basis)+'</p>'+table(['Status','Count'],Object.entries(d.smoothers.states).map(([k,n])=>[esc(k),num(n)]));
   h+='<h3>Scheduled SPY option observations</h3><p>'+esc(d.spy_options.basis)+'</p>'+table(headers,[counts(d.spy_options.totals)]);
   for(const r of d.research)h+='<h3>'+esc(r.program)+'</h3><p>'+esc(r.basis)+' Total '+num(r.total)+' · '+esc(JSON.stringify(r.states))+'</p>'+table(['Horizon','Checkpoint state','Count'],r.checkpoints.map(x=>[esc(x.horizon),esc(x.status),num(x.count)]));

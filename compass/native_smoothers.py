@@ -61,11 +61,14 @@ def refresh_config(db,cfg,client,now):
     bootstrap(db,now)
 
 
-def make_signal(config,bars,daily,first_session,now,week):
+def make_signal(config,bars,daily,first_session,now,week,*,daily_entry=False):
     if bars.empty or len(bars)<4*max(int(config[k]) for k in ('s1','s2','s3'))+10:
         raise ValueError('insufficient_hourly_history')
-    starts=get_week_start_indices(bars)
-    if not len(starts):raise ValueError('missing_week_start')
+    if daily_entry:
+        starts=[i for i,t in enumerate(bars.index) if t.timestamp()==first_session['open']]
+    else:
+        starts=get_week_start_indices(bars)
+    if not len(starts):raise ValueError('missing_opening_hour' if daily_entry else 'missing_week_start')
     idx=int(starts[-1]);stamp=bars.index[idx]
     if stamp.tz_convert(ET).date().isoformat()!=first_session['date']:raise ValueError('wrong_entry_session')
     if stamp.timestamp()!=first_session['open']:raise ValueError('missing_opening_hour')

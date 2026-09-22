@@ -34,6 +34,13 @@ gap_followups=Table('gap_followups_v1',meta,
     Column('created',Float,nullable=False),Column('deadline',Float,nullable=False),
     Column('payload',JSON,nullable=False))
 Index('gap_followups_active',gap_followups.c.status,gap_followups.c.deadline)
+smoothers_daily=Table('smoothers_daily_comparison_v1',meta,
+    Column('id',String(64),primary_key=True),Column('day',String(10),nullable=False),
+    Column('family',String(32),nullable=False),Column('symbol',String(16),nullable=False),
+    Column('side',String(10),nullable=False),Column('created',Float,nullable=False),
+    Column('status',String(24),nullable=False),Column('next_due',Float),Column('payload',JSON,nullable=False))
+Index('smoothers_daily_session',smoothers_daily.c.day,smoothers_daily.c.family)
+Index('smoothers_daily_pending',smoothers_daily.c.status,smoothers_daily.c.next_due)
 flow_records=Table("flow_records",meta,
     Column("day",String(10),primary_key=True),Column("vendor_id",String(200),primary_key=True),
     Column("source_ts",Float,nullable=False),Column("payload",JSON,nullable=False),

@@ -57,6 +57,9 @@ def data_symbols(db, c, cfg, now):
         except ValueError:continue
     from .active_observations import inventory
     protected=inventory(db,c,now)['stocks']
+    study=db.get(c,'smoothers-daily-comparison-v1:activation',{})
+    if study and now<study['sessions'][-1]['close']+14*86400:
+        base.extend(r['ticker'] for r in study['configs'])
     return tuple(s for s in dict.fromkeys(protected+base) if s not in EXCLUDED_STOCKS)[:500]
 
 

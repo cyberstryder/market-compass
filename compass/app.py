@@ -45,6 +45,7 @@ from .morning_history import run as run_morning_history
 from .morning_report import build_report as morning_report, run as run_morning_report
 from .native_morning_worker import run as run_native_morning, install as install_native_morning, initialize as initialize_native_morning
 from .native_smoothers import run as run_native_smoothers
+from .smoothers_daily import run as run_smoothers_daily
 from .native_api import install as install_native_api
 from .secondary import Secondary, snapshot as secondary_snapshot, reviews as secondary_reviews
 
@@ -99,6 +100,7 @@ def create_app(cfg=None):
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"intake")))
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"samples")))
             if cfg.alpaca_key and cfg.alpaca_secret:
+                tasks.append(asyncio.create_task(run_smoothers_daily(db,cfg)))
                 for role in ("schedule","target","premium"):
                     tasks.append(asyncio.create_task(run_native_smoothers(db,cfg,role)))
             from .program_parity import run as run_program_parity
