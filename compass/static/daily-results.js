@@ -7,17 +7,22 @@
  function study(name,s){return '<h3>'+esc(name)+'</h3><p class="fine">'+esc(s.basis)+' '+when(s.since)+' – '+when(s.through)+'</p>'+table(headers,[counts(s.totals)])+'<details><summary>By symbol and setup; unresolved and entry-block reasons</summary>'+table(['Symbol','Setup','Version',...headers],s.groups.map(g=>[esc(g.symbol),esc(g.strategy),esc(g.version),...counts(g)]))+table(['State','Reason','Count'],s.reasons.map(r=>[esc(r.status),esc(r.reason),num(r.count)]))+'</details>';}
  function render(d){
   const p=d.paper,m=d.morning,v=d.verification;
-  let h='<p>'+esc(d.note)+'</p><h3>Paper accounts</h3><p>'+esc(p.basis)+'</p>';
+  let h='<p>'+esc(d.note)+'</p>';
+  h+=study('All futures setups — full session',d.futures);
+  if(d.zero_dte_setups)h+=study('All scanner 0DTE setups',d.zero_dte_setups);
+  if(d.zero_dte_selection)h+='<p>0DTE selection coverage: '+num(d.zero_dte_selection.total)+' setups · '+esc(JSON.stringify(d.zero_dte_selection.states))+'</p>'+table(['Unmeasured selection reason','Count'],Object.entries(d.zero_dte_selection.reasons).map(([reason,n])=>[esc(reason),num(n)]));
+  h+=study('Independent options ideas',d.options)+study('Swing option ideas',d.swing_options)+study('All stock setups',d.stock_setups);
+  h+='<details><summary>Constrained paper-account benchmark (not setup evaluation)</summary><h3>Paper accounts</h3><p>'+esc(p.basis)+'</p>';
   const totals={};
   for(const r of p.realized){const t=totals[r.asset]??={closed:0,wins:0,losses:0,breakeven:0,missing_pnl:0,net_pnl:0,measured:0,entries:0,open:0};for(const k of ['closed','wins','losses','breakeven','missing_pnl'])t[k]+=r[k];if(r.net_pnl!==null){t.net_pnl+=r.net_pnl;t.measured++;}}
   for(const r of p.entries){const t=totals[r.asset]??={closed:0,wins:0,losses:0,breakeven:0,missing_pnl:0,net_pnl:0,measured:0,entries:0,open:0};t.entries+=r.total;t.open+=r.open;}
   h+=table(['Account','Entries','Closed exits','Wins','Losses','Flat','Missing P&L','Realized paper $'],Object.entries(totals).map(([k,t])=>[esc(k==='option'?'0DTE options':k),num(t.entries),num(t.closed),num(t.wins),num(t.losses),num(t.breakeven),num(t.missing_pnl),dollars(t.measured?t.net_pnl:null)]));
   h+='<details><summary>Paper results by setup and symbol</summary>'+table(['Asset','Setup',...headers],p.realized.map(r=>[esc(r.asset),esc(r.strategy),...counts(r)]))+table(['Asset','Symbol',...headers],p.by_symbol.map(r=>[esc(r.asset),esc(r.symbol),...counts(r)]))+'</details>';
   h+='<details><summary>Skipped paper entries</summary>'+table(['Symbol','Status','Reason','Count','First','Last'],d.skips.map(r=>[esc(r.symbol),esc(r.status),esc(r.reason),num(r.count),when(r.first_at),when(r.last_at)]))+'</details>';
-  h+=study('Independent futures — full session',d.futures);
+  h+='</details>';
   h+='<h3>Futures after the loss-limit block</h3><p>'+esc(d.post_lock.status.replaceAll('_',' '))+' · '+when(d.post_lock.first_recorded_block_at)+'. '+esc(d.post_lock.basis)+'</p>';
   if(d.post_lock.cohort)h+=study('Post-block research observations',d.post_lock.cohort);
-  h+=study('Independent 1–21 DTE options',d.options)+study('Swing option ideas',d.swing_options)+study('Independent stock setups',d.stock_setups);
+
   h+='<h3>Morning Algo — native daily observations</h3><p>'+num(m.signals)+' native signals · '+num(m.original_signals)+' original mirror signals · '+num(m.native_without_original)+' native signals without original mirror records. '+esc(m.source_status.replaceAll('_',' '))+'.</p><p>'+esc(m.basis)+'</p>';
   h+='<p>Underlying path coverage: '+esc(JSON.stringify(m.stock_coverage))+'</p>';
   h+=table(['Contract group','Exit minutes','Measured','Positive','Negative','Flat','Unmeasured','Sum of quote measurements $'],m.options.map(r=>[esc(r.variant),num(r.minutes),num(r.measured),num(r.wins),num(r.losses),num(r.breakeven),num(r.unmeasured),dollars(r.measured?r.net_pnl:null)]));
