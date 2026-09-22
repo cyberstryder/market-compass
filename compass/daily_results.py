@@ -7,6 +7,7 @@ from sqlalchemy import select, func, case
 from .market import CT, session
 from .store import state, events, spy_checks, spy_options, tm_studies, tm_checkpoints, swing_trials, swing_checkpoints, discovery_trials, discovery_checks
 from .setup_study import trials
+from .operating_mode import policy
 from .option_ideas import ideas
 from .swing_ideas import swings
 from .session_gaps import window
@@ -184,7 +185,11 @@ def build(db,c,cfg,now,session_day=None):
     spy_scope=[spy_options.c.day==day]
     option_selections=[p for p in db.prefix(c,'pending_research_options:').values()
         if lower_cash<=p.get('created_at',0)<upper_cash]
-    return dict(day=day,asof=now,counts_complete=True,paper=paper(c,risk_start,upper),skips=skips_,
+    return dict(day=day,asof=now,operating_policy=policy(cfg),counts_complete=True,paper=paper(c,risk_start,upper),skips=skips_,
+        setup_context=aggregate(c,trials,[trials.c.started>=w['since'],trials.c.started<w['through']],
+            dict(symbol=trials.c.symbol,strategy=trials.c.strategy,version=trials.c.version,
+                session=func.coalesce(trials.c.payload['research_context']['session'].as_string(),'not_recorded'),
+                market_state=func.coalesce(trials.c.payload['research_context']['market_state'].as_string(),'not_recorded'))),
         futures=futures,post_lock=dict(first_recorded_block_at=first,cohort=post,
             status='observed_after_loss_block' if post and post['totals']['total'] else 'no_trials_after_recorded_block' if first else 'no_loss_block_recorded',
             basis='Trials created after the first recorded loss-limit rejection; does not establish the exact time the account locked or continuous quote coverage.'),
@@ -200,4 +205,4 @@ def build(db,c,cfg,now,session_day=None):
         spy_options=dict(totals=aggregate(c,spy_options,spy_scope,{})[0],basis='Scheduled SPY option observations; separate from the 0DTE paper scanner.'),
         research=other_research(c,lower_cash,upper_cash),
         verification=verification(db,c,day,now),
-        note='Saved outcomes as of report generation, not a historical status snapshot. Independent studies overlap and must not be added to paper account P&L. Independent evaluations are unrestricted by paper-account limits. Paper accounts are separate constrained benchmarks.')
+        note='Saved outcomes as of report generation, not a historical status snapshot. Independent studies overlap and must not be added to paper account P&L. Independent evaluations are unrestricted by paper-account limits. Paper records are separate historical benchmarks when paper trading is paused.')

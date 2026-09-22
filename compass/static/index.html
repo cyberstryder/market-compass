@@ -16,12 +16,12 @@
 <button class="nav" data-tab="swing-study">◇ Swing comparison</button>
 <button class="nav" data-tab="spy-study">◈ SPY 0DTE outcomes</button>
 <button class="nav" data-tab="secondary">◇ Secondary review</button>
-<button class="nav" data-tab="flow">≋ Options flow</button><button class="nav" data-tab="trades">↗ Simulated trades</button>
+<button class="nav" data-tab="flow">≋ Options flow</button><button class="nav" data-tab="trades">↗ Paper history</button>
 <button class="nav" data-tab="assistant">✧ Ask Compass</button><button class="nav" data-tab="health">◷ Feed health</button></nav>
-<div class="sidebar-foot"><span class="pill">SIMULATION ONLY</span><p>No broker execution</p><button id="logout" class="quiet">Sign out</button></div></aside>
+<div class="sidebar-foot"><span class="pill">RESEARCH MODE</span><p>No broker execution</p><button id="logout" class="quiet">Sign out</button></div></aside>
 <main class="workspace"><header><div><p class="eyebrow">MARKET INTELLIGENCE</p><h1 id="title">Session overview</h1></div>
 <div class="header-right"><span id="market" class="pill">Checking session</span><p id="clock" class="mono"></p></div></header>
-<div id="connection" class="banner">Connecting to the shared market state…</div>
+<p id="operating-mode" class="banner">Research mode · Paper trading paused</p><div id="connection" class="banner">Connecting to the shared market state…</div>
 <section id="research-admin" class="tab">
 <div class="research-intro"><div><p class="eyebrow">THE WHOLE RESEARCH PROGRAM</p><h2>What we have, what we know, what comes next.</h2><p>Collection, assessment, outcomes and alert delivery have separate evidence. Saving a record does not mean it has a Compass rating or a measured result.</p></div><a class="research-download" href="/api/research-admin?download=true">Download status</a></div>
 <div id="research-admin-summary" class="stats" aria-live="polite"></div>
@@ -204,7 +204,7 @@
 <article class="panel"><div class="panel-head"><h2>Decision journal</h2><span class="dot"></span></div><div id="journal"></div></article></div>
 <article class="panel"><div class="panel-head"><h2>Research rules</h2><span class="pill">v0.1 · forward test</span></div><div class="rule-grid">
 <div><h3>Futures / intraday</h3><p>Closed-minute break of the active 15-minute range. Futures scan overnight and reset the range at the cash open. ATR stop, 2R target, fresh bid/ask required.</p></div>
-<div><h3>0DTE</h3><p>Underlying breakout selects an eligible same-day call or put. Up to eight nearby contracts are checked for fresh quotes, spread and risk capacity.</p></div>
+<div><h3>0DTE</h3><p>Underlying breakout selects an eligible same-day call or put. Up to eight nearby contracts are checked for fresh quotes and valid contract metadata; account limits do not gate research.</p></div>
 <div><h3>Swings</h3><p>Completed daily close above the preceding 20 daily highs. Entry waits for the next session and an executable quote.</p></div></div></article></section>
 <section id="exposure" class="tab"><div class="banner">Compare vendor exposure with the local research proxy. A recent fetch does not make an old market snapshot current.</div>
 <h2>TraderMatrix GEX / VEX</h2><p class="muted">Concentrations across the expirations returned by the vendor. Methodology and units remain vendor defined.</p><div id="matrix"></div>
@@ -230,7 +230,7 @@
 <p class="fine">R per opportunity compares both policies on the same resolved trials with known feed decisions. Skipped trades contribute zero exposure; unknown feeds and unresolved paths contribute no return. These overlapping experiments are not account returns. Time and context cuts are exploratory. <a href="https://github.com/cyberstryder/market-compass/blob/main/docs/futures-feed-comparison.md" target="_blank" rel="noopener">Frozen feed-comparison protocol</a></p></article>
 <article class="panel"><div class="panel-head"><h2>Individual setup outcomes</h2><div class="map-controls"><button id="study-previous" type="button" disabled>Previous records</button><button id="study-next" type="button" disabled>Next records</button><button id="study-newest" type="button">Newest records</button></div></div><p id="study-record-status" class="fine" aria-live="polite"></p><div id="study-records"></div></article></section>
 <section id="daily-results" class="tab"><article class="panel"><h2>Daily results and verification</h2><p>Complete daily totals. Paper account returns, overlapping research observations and weekly targets are reported separately.</p><label>Trading day <input id="daily-day" type="date"></label> <button id="daily-load" type="button">Load daily results</button> <a id="daily-download" href="/api/daily-results?download=true">Download JSON</a><p id="daily-status" role="status">Load the latest opened futures session or choose a date.</p><div id="daily-report"></div></article></section>
-<section id="trades" class="tab"><div class="banner">Every entry and exit is simulated. Fills cross the observed spread and include adverse slippage. Missing exits remain unresolved.</div>
+<section id="trades" class="tab"><div class="banner">Historical paper benchmark. In research mode, new paper entries and account notifications are paused. Existing positions finish silently under their original rules. Use Daily results for independent research.</div>
 <article class="panel"><h2>Trade ledger</h2><div id="ledger"></div></article></section>
 <section id="assistant" class="tab"><article class="panel ask-panel"><p class="eyebrow">SHARED MARKET CONTEXT</p><h2>What would you like to understand?</h2>
 <p class="muted">Ask about market setups, options from 0DTE through LEAPS, recorded levels, or why a simulated trade was skipped.</p>

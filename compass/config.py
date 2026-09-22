@@ -31,6 +31,7 @@ class Config:
                     'unusual_options', 'exposure', 'intraday', 'research', 'system')})
     discord_fallback: bool = field(default_factory=lambda: env('DISCORD_SHARED_FALLBACK', 'true') == 'true')
     spy_morning_brief: bool = field(default_factory=lambda: env("SPY_MORNING_BRIEF_ENABLED", "true") == "true")
+    paper_trading: bool = field(default_factory=lambda: env("PAPER_TRADING_ENABLED", "false") == "true")
     risk: float = field(default_factory=lambda: float(env("SHADOW_RISK_DOLLARS","100")))
     daily_loss: float = field(default_factory=lambda: float(env("SHADOW_MAX_DAILY_LOSS","300")))
     max_entries: int = field(default_factory=lambda: int(env("SHADOW_MAX_ENTRIES","0")))

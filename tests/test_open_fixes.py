@@ -78,7 +78,7 @@ def test_globex_range_switches_at_cash_open_and_missing_minutes_block():
 
 
 def test_overnight_entry_and_overdue_flatten_keep_original_day_deadline(db):
-    engine=Engine(db,Config(local=True))
+    engine=Engine(db,Config(local=True,paper_trading=True))
     sig={"id":"overnight","symbol":"MESZ6@1","side":"long","signal_time":SUNDAY,
         "stop_distance":1,"strategy":"fixture","track":"intraday"}
     with db.tx() as c:
@@ -100,7 +100,7 @@ def test_old_contract_quote_cannot_pass_active_contract_readiness():
 
 
 def test_option_selection_continues_after_first_fresh_contract_fails_risk(db):
-    e=Engine(db,Config(local=True,risk=100))
+    e=Engine(db,Config(local=True,risk=100,paper_trading=True))
     sig={"id":"underlying","symbol":"SPY","side":"long","signal_time":MONDAY,
         "signal_price":100,"stop_distance":1,"track":"intraday"}
     contracts=[{"symbol":"O:EXPENSIVE","expiry":"2026-09-14","type":"call","strike":100,"multiplier":100},

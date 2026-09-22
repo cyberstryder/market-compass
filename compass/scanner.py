@@ -387,7 +387,7 @@ class Scanner:
                     item.update(status='blocked',blocked_reason='Trigger already invalidated')
                 else:
                     engine.ideas.queue(c,item,now)
-                    if cfg.scanner_paper:
+                    if cfg.scanner_paper and cfg.paper_trading:
                         signal={k:v for k,v in item.items() if k not in ('entry','stop','target')}
                         filled=engine.enter(c,signal,now,quiet=True)
                         item['paper_status']='entered' if filled else 'risk_or_position_blocked'
@@ -401,7 +401,7 @@ class Scanner:
         self.manage_opportunities(c,quotes,now)
         self.retry_options(c,quotes,now,engine)
         db.put(c,'scanner:status',{'at':now,'mode':'SIMULATED','watch_symbols':len(cfg.watch_symbols),
-            'paper_enabled':cfg.scanner_paper,
+            'paper_enabled':cfg.scanner_paper and cfg.paper_trading,
             'features_ready':sum(f.get('status')=='ready' and 0<=now-f.get('asof',0)<=90 for f in facts.values()),
             'last_updated_symbols':len(changed),'rules_version':VERSION,
             'rules':['orb_retest','session_sweep_reclaim','trend_pullback','volume_breakout','exposure_level_break','flow_price_breakout'],
@@ -412,6 +412,10 @@ class Scanner:
         pending_rows={**self.db.prefix(c,'pending_options:'),**self.db.prefix(c,'pending_research_options:')}
         for key,pending in pending_rows.items():
             if pending.get('status')!='waiting':
+                continue
+            if not self.cfg.paper_trading and not pending.get('research_only',False):
+                pending.update(status='paused',reason='Paper benchmark paused; independent research selection is separate',updated_at=now)
+                self.db.put(c,key,pending)
                 continue
             signal=pending['signal']
             research_only=pending.get('research_only',False)
@@ -457,11 +461,12 @@ class Scanner:
             'age_seconds':now-quote['ts'] if quote and quote.get('ts') is not None else None,
             'fresh':fresh(quote,now),
             'basis':'Exact scanner retry quote at saved attempt time; not a later source lookup'}
-        from .paper_risk import account
-        risk=account(self.db,c,now,'option')
-        audit['risk_context']={**risk,'day':risk_day(now),'daily_loss_limit':self.cfg.daily_loss,
-            'daily_loss_locked':risk['realized']<=-self.cfg.daily_loss,
-            'basis':'Contemporaneous 0DTE paper account; selection may stop at an earlier gate'}
+        if not pending.get('research_only') and self.cfg.paper_trading:
+            from .paper_risk import account
+            risk=account(self.db,c,now,'option')
+            audit['risk_context']={**risk,'day':risk_day(now),'daily_loss_limit':self.cfg.daily_loss,
+                'daily_loss_locked':risk['realized']<=-self.cfg.daily_loss,
+                'basis':'Contemporaneous 0DTE paper account; selection may stop at an earlier gate'}
         previous=pending.get('last_selection',{})
         def signature(row):
             return (row.get('status'),row.get('reason'),[(r['symbol'],r['reason']) for r in row.get('rejections',[])])
@@ -486,7 +491,7 @@ class Scanner:
                 if status=='invalidated' and item.get('entry'):
                     self.db.append(c,'alert','scanner',item['symbol'],now,
                         {**alert_context(item),'status':'setup_invalidated',
-                         'reason':'Underlying invalidation reached; see the separate paper-position ledger for fill/exit status',
+                         'reason':'Underlying invalidation reached; see the independent setup record for its measured outcome',
                          'setup_id':item['id']},identity('invalidated',item['id']))
 
 

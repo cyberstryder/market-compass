@@ -13,6 +13,9 @@ from .setup_study import SetupStudy
 from .option_ideas import OptionIdeas
 from .simulation import bracket, exit_price, FILL_VERSION, FILL_DESCRIPTION
 from . import paper_risk
+from .operating_mode import policy, research_notice
+from sqlalchemy import select
+from .setup_study import trials
 
 VERSION="orb15-breakout-v1"
 
@@ -47,6 +50,7 @@ class Engine:
         self.db,self.cfg=db,cfg
         self.clock=clock
         self.owner=uuid.uuid4().hex
+        self.policy_logged=False
         from .scanner import Scanner
         self.scanner=Scanner(db,cfg)
         self.study=SetupStudy(db,cfg,clock)
@@ -55,7 +59,8 @@ class Engine:
     specification=staticmethod(spec)
 
     def alert(self,c,symbol,data,key):
-        self.db.append(c,"alert","engine",symbol,time.time(),{"mode":"SIMULATED",**data},key)
+        kind = 'alert' if self.cfg.paper_trading else 'paper_decision'
+        self.db.append(c,kind,"engine",symbol,time.time(),{"mode":"SIMULATED",**data},key)
 
     def entry_check(self,c,signal,now):
         symbol,side=signal["symbol"],signal["side"]
@@ -118,7 +123,17 @@ class Engine:
         return trial
 
     def enter(self,c,signal,now,quiet=False):
-        self.observe_setup(c,signal,now,alerted=True,primary=True)
+        if not self.cfg.paper_trading and signal.get('track')=='swing':
+            from .operating_mode import observe_daily_breakout
+            trial=observe_daily_breakout(self.db,c,signal,now)
+            if not quiet: research_notice(self.db,c,signal,trial,now)
+            return False
+        trial_id=self.observe_setup(c,signal,now,alerted=True,primary=True)
+        if not self.cfg.paper_trading:
+            if not quiet:
+                trial=c.execute(select(trials.c.payload).where(trials.c.id==trial_id)).scalar_one_or_none() if trial_id else None
+                research_notice(self.db,c,signal,trial,now)
+            return False
         reason,plan=self.entry_check(c,signal,now)
         symbol,side=signal["symbol"],signal["side"]
         if reason:
@@ -197,6 +212,7 @@ class Engine:
             self.db.put(c,"trade:"+p["id"],p)
 
     def options(self,c,signal,now,quiet=False,diagnostics=None,research_only=False):
+        research_only = research_only or not self.cfg.paper_trading
         chain=self.db.get(c,"chain:"+signal["symbol"],{})
         now=self.clock() if self.clock else now
         audit=diagnostics if diagnostics is not None else {}
@@ -241,6 +257,10 @@ class Engine:
                         continue
                     trial=self.study.start(c,option_signal,checked_at,spec(o['symbol']),alerted=False,primary=False)
                     if trial:
+                        saved=c.execute(select(trials.c.payload).where(trials.c.id==trial)).scalar_one()
+                        if saved['status']=='excluded':
+                            rejected.append({**evidence,'reason':saved.get('reason') or 'Unmeasurable research observation'})
+                            continue
                         audit.update(status='observed',reason='Independent 0DTE observation recorded',
                             selected_contract=o['symbol'],selected_quote_evidence=evidence,setup_trial_id=trial)
                         return True
@@ -275,11 +295,12 @@ class Engine:
             sid=identity("swing20-v1",symbol,last["ts"])
             if self.db.get(c,"seen:"+sid) or now-last["ts"]>5*86400: continue
             if last["payload"]["c"]<=max(b["payload"]["h"] for b in prior): continue
-            if not fresh(self.db.get(c,"quote:"+symbol),now): continue
+            if self.cfg.paper_trading and not fresh(self.db.get(c,"quote:"+symbol),now): continue
             signal={"id":sid,"strategy":"swing20-v1","symbol":symbol,"side":"long","signal_time":last["ts"]+86400,
                 "decided_at":now,"signal_price":last["payload"]["c"],"track":"swing","status":"candidate",
                 "stop_distance":max((max(b["payload"]["h"] for b in prior)-min(b["payload"]["l"] for b in prior))*.2,.1),
-                "reason":"Completed daily close above preceding 20 daily highs","bar_event":last["id"]}
+                "reason":"Completed daily close above preceding 20 daily highs","bar_event":last["id"],
+                "daily":{"through":day(last['ts']),"close":last['payload']['c']}}
             self.enter(c,signal,now)
             self.db.put(c,"seen:"+sid,{"at":now})
 
@@ -287,7 +308,15 @@ class Engine:
         now=now or time.time()
         with self.db.tx() as c:
             if not self.db.lease(c,"engine",self.owner,30): return
-            paper_risk.ledgers(self.db,c,now,persist=True)
+            if self.cfg.paper_trading:
+                paper_risk.ledgers(self.db,c,now,persist=True)
+            active_policy=policy(self.cfg)
+            previous=self.db.get(c,'operating_policy',{})
+            activated=previous.get('activated_at',now) if previous.get('mode')==active_policy['mode'] and previous.get('version')==active_policy['version'] else now
+            self.db.put(c,'operating_policy',dict(active_policy,at=now,activated_at=activated))
+            if not self.policy_logged:
+                logging.getLogger('uvicorn.error').info('Compass operating policy: %s',active_policy)
+                self.policy_logged=True
             self.study.tick(c,now)
             self.exits(c,now)
             active={p["raw_symbol"] for p in active_selection(self.db,c,self.cfg,now)}
@@ -316,19 +345,21 @@ class Engine:
                 if s:
                     self.db.append(c,"signal","engine",symbol,s["signal_time"],s,s["id"])
                     self.enter(c,s,now)
-                    if symbol in self.cfg.stocks: self.options(c,s,now)
+                    if symbol in self.cfg.stocks and self.cfg.paper_trading: self.options(c,s,now)
                 self.db.put(c,"cursor:"+symbol,bar["ts"])
             self.swings(c,now)
             if self.cfg.scanner:
                 self.scanner.scan(c,now,self)
+            else:
+                self.scanner.retry_options(c,{k[6:]:q for k,q in self.db.prefix(c,'quote:').items()},now,self)
             self.ideas.tick(c,now)
-            self.db.put(c,"worker:engine",{"at":now,"mode":"SIMULATED","strategy_version":VERSION})
+            self.db.put(c,"worker:engine",{"at":now,"mode":policy(self.cfg)['mode'],"strategy_version":VERSION})
 
     async def run(self):
         while True:
             try:
                 await asyncio.to_thread(self.tick)
-                self.db.health("engine","running","Closed-bar scans and simulated position management",time.time())
+                self.db.health("engine","running","Independent setup research; paper entries " + ('enabled' if self.cfg.paper_trading else 'paused'),time.time())
             except asyncio.CancelledError: raise
             except Exception as e:
                 logging.getLogger('uvicorn.error').exception('Engine scan failed')

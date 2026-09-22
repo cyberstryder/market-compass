@@ -7,6 +7,7 @@ from sqlalchemy import select, func, update
 from .store import events, discord_jobs
 from .alert_format import message_for, alert_identity
 from .alert_routes import ROUTES, ORIGINAL_SENDERS, route_for, destination, manifest
+from .operating_mode import paper_message
 
 
 class DeliveryError(Exception):
@@ -121,6 +122,21 @@ class DeliveryWorker:
             self.db.health('discord:' + route, status, detail, **extra)
             self.route_health[route] = status
 
+    def suppress_paper(self, c, now):
+        if self.cfg.paper_trading:
+            return
+        rows=c.execute(select(events).join(discord_jobs,events.c.id==discord_jobs.c.event_id)
+            .where(discord_jobs.c.status=='pending',events.c.source=='engine')
+            .order_by(events.c.id).limit(500)).mappings().all()
+        for row in rows:
+            if paper_message(row):
+                c.execute(update(discord_jobs).where(discord_jobs.c.event_id==row['id'])
+                    .values(status='suppressed',confirmation=dict(at=now,reason='Paper notifications disabled in research mode')))
+        first=c.execute(select(func.min(discord_jobs.c.event_id)).where(discord_jobs.c.status=='pending')).scalar_one()
+        boundary=first-1 if first is not None else self.db.get(c,'outbox:discord:ingested',0)
+        if rows:
+            self.db.put_max(c,'outbox:discord',boundary)
+
     async def tick(self, client, now=None):
         now = time.time() if now is None else now
         with self.db.tx() as c:
@@ -128,6 +144,7 @@ class DeliveryWorker:
             if not self.db.lease(c, 'discord', self.owner, 90):
                 return
             enqueue_routes(self.db, c, now)
+            self.suppress_paper(c, now)
             if not self.published:
                 self.db.put(c, 'outbox:discord:routes', manifest(self.cfg))
         if not self.published:
@@ -185,6 +202,12 @@ class DeliveryWorker:
             'Category routing active; see individual routes for delivery health' if connected else 'No verified alert destination')
 
     async def send(self, client, url, row, route, now):
+        # Final guard also covers backlog beyond this turn's suppression batch.
+        if not self.cfg.paper_trading and paper_message(row):
+            with self.db.tx() as c:
+                c.execute(update(discord_jobs).where(discord_jobs.c.event_id==row['id'])
+                    .values(status='suppressed',confirmation=dict(at=now,reason='Paper notifications disabled in research mode')))
+            return
         try:
             await dispatch(client, self.db, url, row, route)
             self.route_health[route] = 'delivered'

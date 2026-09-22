@@ -43,7 +43,7 @@ def test_paper_exit_day_is_not_entry_cohort_and_missing_is_not_loss(report_db):
 
 def test_loss_lock_keeps_overnight_and_cash_research_open_and_reported(report_db,monkeypatch):
     initialize(report_db)
-    cfg=Config(local=True);engine=Engine(report_db,cfg)
+    cfg=Config(local=True,paper_trading=True);engine=Engine(report_db,cfg)
     overnight=datetime(2026,9,20,18,tzinfo=CT).timestamp()
     with report_db.tx() as c:
         risk=paper_risk.ledgers(report_db,c,overnight,persist=True)['future']

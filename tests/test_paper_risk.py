@@ -15,7 +15,7 @@ def legacy(db, c, asset='future', pnl=-426, entered=NOW-600, exited=NOW-60, id='
 
 def test_migration_conserves_loss_and_enables_only_independent_options(report_db):
     db=report_db
-    cfg=Config(local=True,setup_study=False)
+    cfg=Config(paper_trading=True,local=True,setup_study=False)
     with db.tx() as c:
         legacy(db,c)
         original=dict(realized=-426,entries=1)
@@ -44,13 +44,13 @@ def test_incomplete_migration_fails_closed(report_db,missing):
         if missing=='partial':db.put(c,paper_risk.key(NOW,'option'),dict(realized=0,entries=0,ready=True))
         assert not any(a['ready'] for a in paper_risk.ledgers(db,c,NOW,persist=True).values())
         seed(db,c)
-        reason,_=Engine(db,Config(local=True)).entry_check(c,{**signal(),'symbol':CONTRACT},NOW)
+        reason,_=Engine(db,Config(paper_trading=True,local=True)).entry_check(c,{**signal(),'symbol':CONTRACT},NOW)
         assert reason=='Paper risk migration requires reconciliation'
 
 
 def test_each_account_has_its_own_capacity_and_loss_limit(report_db):
     db=report_db
-    cfg=Config(local=True,setup_study=False)
+    cfg=Config(paper_trading=True,local=True,setup_study=False)
     with db.tx() as c:
         paper_risk.ledgers(db,c,NOW,persist=True)
         for i in range(3):db.put(c,'position:future'+str(i),dict(status='open',asset='future'))
@@ -68,7 +68,7 @@ def test_each_account_has_its_own_capacity_and_loss_limit(report_db):
 
 def test_exit_updates_only_own_account_once_and_keeps_legacy_frozen(report_db):
     db=report_db
-    cfg=Config(local=True,setup_study=False)
+    cfg=Config(paper_trading=True,local=True,setup_study=False)
     with db.tx() as c:
         seed(db,c)
         engine=Engine(db,cfg)
@@ -85,7 +85,7 @@ def test_exit_updates_only_own_account_once_and_keeps_legacy_frozen(report_db):
 
 def test_old_open_position_exit_carries_loss_to_new_day_without_new_entry(report_db):
     db=report_db
-    cfg=Config(local=True,setup_study=False)
+    cfg=Config(paper_trading=True,local=True,setup_study=False)
     with db.tx() as c:
         seed(db,c);engine=Engine(db,cfg)
         assert engine.options(c,signal(),NOW)
@@ -106,7 +106,7 @@ def test_read_only_preview_has_no_side_effects_and_includes_carryover(report_db)
     with db.tx() as c:
         legacy(db,c);db.put(c,'risk:'+paper_risk.risk_day(NOW),dict(realized=-426,entries=1))
         before=db.prefix(c,'')
-        view=paper_risk.snapshot(db,c,Config(local=True),NOW)
+        view=paper_risk.snapshot(db,c,Config(paper_trading=True,local=True),NOW)
         assert view['accounts'][0]['daily_loss_locked']
         assert not view['accounts'][1]['daily_loss_locked']
         assert db.prefix(c,'')==before
@@ -118,7 +118,7 @@ def test_missing_all_account_states_never_resets_recorded_v2_activity(report_db)
     db=report_db
     with db.tx() as c:
         seed(db,c)
-        assert Engine(db,Config(local=True,setup_study=False)).options(c,signal(),NOW)
+        assert Engine(db,Config(paper_trading=True,local=True,setup_study=False)).options(c,signal(),NOW)
         c.execute(delete(state).where(state.c.key.startswith('paper_risk:v2:')))
         accounts=paper_risk.ledgers(db,c,NOW,persist=True)
         assert not any(a['ready'] for a in accounts.values())
