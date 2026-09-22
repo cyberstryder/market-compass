@@ -41,7 +41,7 @@ def scope_context(question, context):
     result['research_request'] = profile
     not_requested = []
     if profile['mode'] == 'market_research':
-        for key in ('risk', 'positions', 'limits', 'trades'):
+        for key in ('risk', 'positions', 'limits', 'trades', 'quote_checks'):
             if key in result:
                 result.pop(key)
                 not_requested.append(key)
