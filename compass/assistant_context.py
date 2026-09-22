@@ -12,10 +12,10 @@ MAX_INPUT_BYTES = 52_000
 SECTION_BYTES = 3_000
 # These facts must travel intact or be explicitly unavailable. In particular,
 # never retain a price while silently trimming its timestamp or a risk veto.
-INTACT = {'asof', 'asof_ct', 'mode', 'markets', 'question_scope', 'limits',
+INTACT = {'operating_policy', 'asof', 'asof_ct', 'mode', 'markets', 'question_scope', 'limits',
           'risk', 'positions', 'quotes', 'levels', 'spy_brief', 'option_research',
           'technical_context', 'swing_technical_context', 'exposure', 'research_request'}
-ORDER = ('asof', 'asof_ct', 'mode', 'markets', 'question_scope', 'research_request',
+ORDER = ('operating_policy', 'asof', 'asof_ct', 'mode', 'markets', 'question_scope', 'research_request',
          'option_research', 'technical_context', 'swing_technical_context',
          'quotes', 'levels', 'exposure', 'matrix', 'spy_brief', 'research', 'flow',
          'limits', 'risk', 'positions', 'health',

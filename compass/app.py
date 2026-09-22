@@ -268,9 +268,10 @@ def create_app(cfg=None):
                     from .flow_recovery import freshness as flow_freshness
                     item['flow_freshness']=flow_freshness(item,now)
             from .paper_risk import snapshot as paper_risk_snapshot
+            from .operating_mode import policy, paper_message
             positions=list(db.prefix(c,"position:").values())
             trades=sorted(db.prefix(c,"trade:").values(),key=lambda p:p.get("entered_at",0),reverse=True)[:100]
-            data={"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","markets":markets,
+            data={"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","operating_policy":policy(cfg),"markets":markets,
                 "storage":storage_snapshot(db,c,now),"health":health,"workers":workers,"quotes":watch,
                 "scanner":scanner_snapshot(db,c,cfg,now),
                 "projects":projects_snapshot(db,c,cfg,now),
@@ -291,7 +292,7 @@ def create_app(cfg=None):
                 "greek_diagnostics":{k[7:]:v for k,v in db.prefix(c,"greeks:").items()},
                 "levels":{k[7:]:v for k,v in db.prefix(c,"levels:").items()},
                 "exposure":{k[9:]:v for k,v in db.prefix(c,"exposure:").items()},
-                "positions":positions,"trades":trades,"alerts":[{**row,"presentation":alert_identity(row,now)} for row in db.recent(c,"alert",limit=60)],
+                "positions":positions,"trades":trades,"alerts":[{**row,"presentation":alert_identity(row,now)} for row in db.recent(c,"alert",limit=60) if cfg.paper_trading or not paper_message(row)],
                 "flow":db.recent(c,"flow",limit=60),"matrix":matrix,
                 "risk":{"paper_portfolios":paper_risk_snapshot(db,c,cfg,now),
                     "legacy_combined":db.prefix(c,"risk:")},"ai_configured":bool(cfg.openai),
@@ -647,7 +648,7 @@ def create_app(cfg=None):
             "Secondary supported is a versioned underlying-context filter, not a predicted win rate, option entry or broker order. "
             "Its midpoint checkpoint comparisons are before costs, anchored at secondary decision time, and cannot establish option profitability. "
             "Setup research is the primary evaluation: every candidate is independent of paper-account loss, sizing, position and entry caps. "
-            "Non-alerted research candidates are measured setups, not unavailable strategies. Constrained paper accounts are only benchmarks. "
+            "Non-alerted research candidates are measured setups, not unavailable strategies. Use operating_policy: when paper_entries_enabled is false, paper trading is paused across categories and retained paper records are historical benchmarks only. Never describe paper loss limits as research vetoes. "
             "Scanner 0DTE independent observations are distinct from the 1-21 DTE options-ideas worker and scheduled SPY plans. "
             "Explain triggered, watch, blocked, invalidated and expired setups distinctly. A scanner match is not a guaranteed trade. "
             "Options ideas use actual sampled option bid/ask quotes for independent intraday simulations with 1-21 DTE by default. "

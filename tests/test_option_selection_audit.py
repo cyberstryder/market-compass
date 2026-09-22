@@ -33,7 +33,7 @@ def seed(db,c):
     ('premium','One unit exceeds risk or stop invalid'),
 ])
 def test_quiet_selection_exposes_real_gate_without_changing_it(db,case,reason):
-    cfg=Config(local=True,stocks=('SPY',),futures=(),setup_study=False)
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
     with db.tx() as c:
         seed(db,c)
         if case=='chain':db.put(c,'chain:SPY',{})
@@ -54,7 +54,7 @@ def test_quiet_selection_exposes_real_gate_without_changing_it(db,case,reason):
 
 
 def test_pending_expiration_keeps_last_contract_reason_without_retry_alert_spam(db):
-    cfg=Config(local=True,stocks=('SPY',),futures=(),setup_study=False)
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
     scanner,engine=Scanner(db,cfg),Engine(db,cfg)
     with db.tx() as c:
         seed(db,c)
@@ -71,7 +71,7 @@ def test_pending_expiration_keeps_last_contract_reason_without_retry_alert_spam(
 
 
 def test_successful_selection_still_enters_one_position_and_records_contract(db):
-    cfg=Config(local=True,stocks=('SPY',),futures=(),setup_study=False)
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
     with db.tx() as c:
         seed(db,c)
         db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
@@ -84,7 +84,7 @@ def test_successful_selection_still_enters_one_position_and_records_contract(db)
 def test_audit_keeps_unknown_history_and_separate_cash_and_overnight_risk(db,monkeypatch):
     at=datetime(2026,9,14,23,tzinfo=timezone.utc).timestamp()
     monkeypatch.setattr('compass.store.time.time',lambda:at)
-    cfg=Config(local=True)
+    cfg=Config(paper_trading=True,local=True)
     with db.tx() as c:
         db.put(c,'pending_options:old',dict(signal=signal(),status='expired',reason='Generic expiration'))
         db.put(c,'pending_options:new',dict(signal=signal(),status='waiting',last_selection={
@@ -110,7 +110,7 @@ def test_archive_evidence_does_not_claim_a_usable_stream_was_missing():
 
 @pytest.mark.parametrize('offset', [-6, 2])
 def test_retry_freezes_exact_underlying_clock_and_contemporaneous_loss_lock(db,offset):
-    cfg=Config(local=True,stocks=('SPY',),futures=(),setup_study=False)
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
     scanner,engine=Scanner(db,cfg),Engine(db,cfg)
     with db.tx() as c:
         seed(db,c)
@@ -132,7 +132,7 @@ def test_retry_freezes_exact_underlying_clock_and_contemporaneous_loss_lock(db,o
 
 
 def test_live_retry_uses_current_underlying_and_clock_after_slow_scan(db):
-    cfg=Config(local=True,stocks=('SPY',),futures=(),setup_study=False)
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
     at=NOW+4
     with db.tx() as c:
         seed(db,c)
@@ -151,7 +151,7 @@ def test_live_retry_uses_current_underlying_and_clock_after_slow_scan(db):
 
 @pytest.mark.parametrize('offset',[-6,2])
 def test_live_retry_still_rejects_truly_stale_or_future_underlying(db,offset):
-    cfg=Config(local=True,stocks=('SPY',),futures=(),setup_study=False)
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
     at=NOW+4
     with db.tx() as c:
         seed(db,c);db.put(c,'quote:SPY',quote(at+offset))
@@ -164,7 +164,7 @@ def test_live_retry_still_rejects_truly_stale_or_future_underlying(db,offset):
 
 
 def test_live_retry_expiration_uses_actual_time_not_scan_start(db):
-    cfg=Config(local=True,stocks=('SPY',),futures=(),setup_study=False)
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
     with db.tx() as c:
         seed(db,c);db.put(c,'quote:SPY',quote(NOW+121))
         db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))

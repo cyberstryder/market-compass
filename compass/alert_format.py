@@ -110,6 +110,9 @@ def alert_identity(row, now=None):
     elif status == 'setup_triggered':
         event = 'EXPIRED SETUP' if now >= p.get('expires_at', 0) else 'SETUP'
         mode = '[SIMULATED SETUP] — no broker order'
+    elif status == 'research_observation':
+        event = 'RESEARCH TRACKING' if p.get('study_status') in ('open','pending') else 'RESEARCH DATA UNAVAILABLE'
+        mode, origin = '[INDEPENDENT RESEARCH] — no account entry', 'Compass research'
     elif status == 'setup_result':
         event = 'SETUP RESULT · ' + clean(p.get('outcome','unresolved')).upper()
         mode = '[INDEPENDENT SETUP TEST] — one unit; no broker order'
@@ -210,9 +213,16 @@ def message_for(row, now=None):
             lines.append('EXPIRED SETUP — DELAYED DELIVERY. The entry window has ended. This is a historical notification.')
         else:
             lines.append('Entry window ends: ' + clock(p['expires_at']))
-        lines.append('Portfolio simulation: ' + clean(p.get('paper_status', 'not entered')).replace('_', ' ') + '.')
-        if p.get('setup_trial_id'): lines.append('Independent setup outcome tracking active; portfolio limits do not stop measurement.')
+        if p.get('paper_status'):
+            lines.append('Historical paper benchmark: ' + clean(p['paper_status']).replace('_', ' ') + '.')
+        if p.get('setup_trial_id'):
+            state=p.get('research_status')
+            lines.append('Independent research: '+clean(state or 'record saved; current outcome in Setup results')+'. Ref: '+clean(p['setup_trial_id'],100))
         if identity['category']!='futures': lines.append('Option selection is reported separately.')
+    if p.get('status')=='research_observation':
+        lines.append('Research state: '+clean(p.get('study_status'))+'. Overlapping observations are separate experiments.')
+        if p.get('setup_trial_id'): lines.append('Tracking ref: '+clean(p['setup_trial_id'],100))
+        if p.get('research_basis'): lines.append(clean(p['research_basis'],250))
     # An exit reason must take precedence over the original entry thesis.
     reason = p.get('exit_reason') or p.get('reason')
     if reason:

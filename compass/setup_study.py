@@ -10,7 +10,8 @@ import time
 import uuid
 from sqlalchemy import Table, Column, String, Float, JSON, Index, select, update
 from .store import meta, identity
-from .market import fresh, number, session, day
+from .market import fresh, number, session, day, CT
+from datetime import datetime
 from .futures import futures_session, research_session
 from .instruments import tick_price
 from .simulation import bracket, exit_price, FILL_VERSION, FILL_DESCRIPTION
@@ -86,8 +87,17 @@ class SetupStudy:
             'last_quote_ts':q['ts'] if fresh(q, now) else None, 'samples':0, 'max_gap_seconds':0,
             'mfe_r':0, 'mae_r':0, 'pnl':None, 'r_multiple':None,
             'basis':'Independent one-unit trial; sampled executable quotes, one adverse entry/stop tick, illustrative fees; not account P&L'}
+        cash_hours=session(day(now))
+        context=signal.get('context',{})
+        p['research_context']={
+            'version':'entry-context-v1', 'frozen_at':now,
+            'session':'cash' if cash_hours and cash_hours[0]<=now<cash_hours[1] else 'overnight',
+            'hour_ct':datetime.fromtimestamp(now,CT).hour,
+            'market_state':futures_assessment.assess(context,now).get('state','unknown'),
+            'inputs':{k:context[k] for k in ('asof','vwap','ema9','ema21','htf15_bias','atr14','rvol20') if k in context}}
         if future:
             p['market_assessment'] = futures_assessment.freeze(self.db, c, signal, now, q, spec)
+            p['research_context']['market_state']=p['market_assessment'].get('state','unknown')
             p['entry_variants'] = futures_variants.classify(self.db, c, signal, now, cause is None)
             comparison = futures_feed_study.freeze(self.db, c, signal, now, cause is None, p['market_assessment'])
             if comparison is not None:

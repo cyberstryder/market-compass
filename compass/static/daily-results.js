@@ -7,12 +7,13 @@
  function study(name,s){return '<h3>'+esc(name)+'</h3><p class="fine">'+esc(s.basis)+' '+when(s.since)+' – '+when(s.through)+'</p>'+table(headers,[counts(s.totals)])+'<details><summary>By symbol and setup; unresolved and entry-block reasons</summary>'+table(['Symbol','Setup','Version',...headers],s.groups.map(g=>[esc(g.symbol),esc(g.strategy),esc(g.version),...counts(g)]))+table(['State','Reason','Count'],s.reasons.map(r=>[esc(r.status),esc(r.reason),num(r.count)]))+'</details>';}
  function render(d){
   const p=d.paper,m=d.morning,v=d.verification;
-  let h='<p>'+esc(d.note)+'</p>';
+  let h='<p><strong>'+esc(d.operating_policy?.paper_entries_enabled?'Paper benchmark enabled':'Research mode — paper entries and notifications paused')+'</strong></p><p>'+esc(d.note)+'</p>';
   h+=study('All futures setups — full session',d.futures);
   if(d.zero_dte_setups)h+=study('All scanner 0DTE setups',d.zero_dte_setups);
   if(d.zero_dte_selection)h+='<p>0DTE selection coverage: '+num(d.zero_dte_selection.total)+' setups · '+esc(JSON.stringify(d.zero_dte_selection.states))+'</p>'+table(['Unmeasured selection reason','Count'],Object.entries(d.zero_dte_selection.reasons).map(([reason,n])=>[esc(reason),num(n)]));
   h+=study('Independent options ideas',d.options)+study('Swing option ideas',d.swing_options)+study('All stock setups',d.stock_setups);
-  h+='<details><summary>Constrained paper-account benchmark (not setup evaluation)</summary><h3>Paper accounts</h3><p>'+esc(p.basis)+'</p>';
+  if(d.setup_context)h+='<details><summary>Setup outcomes by session and market condition</summary>'+table(['Symbol','Setup','Version','Session','Condition',...headers],d.setup_context.map(g=>[esc(g.symbol),esc(g.strategy),esc(g.version),esc(g.session),esc(g.market_state),...counts(g)]))+'</details>';
+  h+='<details><summary>Historical paper-account benchmark (not setup evaluation)</summary><h3>Paper accounts</h3><p>'+esc(p.basis)+'</p>';
   const totals={};
   for(const r of p.realized){const t=totals[r.asset]??={closed:0,wins:0,losses:0,breakeven:0,missing_pnl:0,net_pnl:0,measured:0,entries:0,open:0};for(const k of ['closed','wins','losses','breakeven','missing_pnl'])t[k]+=r[k];if(r.net_pnl!==null){t.net_pnl+=r.net_pnl;t.measured++;}}
   for(const r of p.entries){const t=totals[r.asset]??={closed:0,wins:0,losses:0,breakeven:0,missing_pnl:0,net_pnl:0,measured:0,entries:0,open:0};t.entries+=r.total;t.open+=r.open;}

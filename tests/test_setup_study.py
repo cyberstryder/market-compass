@@ -39,6 +39,7 @@ def rows(c):
     return c.execute(select(trials.c.payload).order_by(trials.c.source_id)).scalars().all()
 
 def test_entry_cap_zero_allows_more_than_ten_without_erasing_history(db,cfg):
+    cfg.paper_trading=True
     engine=Engine(db,cfg)
     with db.tx() as c:
         risk=ledgers(db,c,NOW,persist=True)['future'];risk.update(entries=100,realized=-1)

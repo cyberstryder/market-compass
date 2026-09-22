@@ -131,7 +131,7 @@ def test_flow_future_and_empty_clocks_are_not_current():
 
 @pytest.mark.parametrize('side',['long','short'])
 def test_paper_and_study_share_tick_aligned_brackets_and_target_fills(db,side):
-    cfg=Config(local=True)
+    cfg=Config(local=True,paper_trading=True)
     engine=Engine(db,cfg)
     sig=signal(side)
     sig['invalidation']=97.87 if side=='long' else 102.13
@@ -187,7 +187,7 @@ def test_actual_or_late_backfill_gap_remains_unresolved(db,late):
 
 
 def test_legacy_trial_and_paper_exit_semantics_are_preserved(db):
-    engine=Engine(db,Config(local=True))
+    engine=Engine(db,Config(local=True,paper_trading=True))
     with db.tx() as c:
         db.put(c,'quote:MESZ6@1',q())
         engine.enter(c,signal(),NOW)

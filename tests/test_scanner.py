@@ -208,7 +208,7 @@ def test_setup_dedup_survives_restart_and_has_no_order_route(db):
 
 
 def test_pending_options_expire_without_fabricated_fill(db):
-    cfg=Config(local=True,stocks=('SPY',),futures=())
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=())
     signal={'id':'one','symbol':'SPY','side':'long','invalidation':100,'signal_price':101,'context':{'atr14':1}}
     with db.tx() as c:
         db.put(c,'pending_options:one',{'signal':signal,'expires_at':NOW-1,'status':'waiting'})

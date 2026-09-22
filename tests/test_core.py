@@ -23,7 +23,7 @@ def db(tmp_path):
 
 @pytest.fixture
 def cfg(tmp_path):
-    return Config(db="sqlite:///"+str(tmp_path/"web.db"),local=True,role="web",
+    return Config(paper_trading=True,db="sqlite:///"+str(tmp_path/"web.db"),local=True,role="web",
         password="test-password-for-tests-only",secret="test-signing-secret-for-tests-only",
         stocks=("SPY",),futures=(),alpaca_key="",alpaca_secret="",massive="",databento="",matrix="",discord="",openai="")
 
