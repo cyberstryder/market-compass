@@ -182,10 +182,16 @@ def build(db,c,cfg,now,session_day=None):
     monday=(date-timedelta(days=date.weekday())).isoformat()
     smoother_states=dict(c.execute(select(weekly.c.status,func.count()).where(weekly.c.week==monday).group_by(weekly.c.status)).all())
     spy_scope=[spy_options.c.day==day]
+    option_selections=[p for p in db.prefix(c,'pending_research_options:').values()
+        if lower_cash<=p.get('created_at',0)<upper_cash]
     return dict(day=day,asof=now,counts_complete=True,paper=paper(c,risk_start,upper),skips=skips_,
         futures=futures,post_lock=dict(first_recorded_block_at=first,cohort=post,
             status='observed_after_loss_block' if post and post['totals']['total'] else 'no_trials_after_recorded_block' if first else 'no_loss_block_recorded',
             basis='Trials created after the first recorded loss-limit rejection; does not establish the exact time the account locked or continuous quote coverage.'),
+        zero_dte_selection=dict(total=len(option_selections),states=dict(Counter(p['status'] for p in option_selections)),
+            reasons=dict(Counter(p.get('reason') or p.get('last_selection',{}).get('reason') or 'Awaiting selection'
+                for p in option_selections if p['status']!='observed'))),
+        zero_dte_setups=cohort(c,trials,trials.c.started,lower_cash,upper_cash,[trials.c.payload['asset'].as_string()=='option']),
         options=cohort(c,ideas,ideas.c.created,lower_cash,upper_cash),
         swing_options=cohort(c,swings,swings.c.created,lower_cash,upper_cash),
         stock_setups=cohort(c,trials,trials.c.started,lower_cash,upper_cash,[trials.c.payload['asset'].as_string()=='stock']),
@@ -194,4 +200,4 @@ def build(db,c,cfg,now,session_day=None):
         spy_options=dict(totals=aggregate(c,spy_options,spy_scope,{})[0],basis='Scheduled SPY option observations; separate from the 0DTE paper scanner.'),
         research=other_research(c,lower_cash,upper_cash),
         verification=verification(db,c,day,now),
-        note='Saved outcomes as of report generation, not a historical status snapshot. Independent studies overlap and must not be added to paper account P&L. No trading or risk rules changed.')
+        note='Saved outcomes as of report generation, not a historical status snapshot. Independent studies overlap and must not be added to paper account P&L. Independent evaluations are unrestricted by paper-account limits. Paper accounts are separate constrained benchmarks.')

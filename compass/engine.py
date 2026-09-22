@@ -95,8 +95,30 @@ class Engine:
         return None,{"spec":s,"quote":q,"price":price,"distance":distance,"per_unit":per_unit,"qty":qty,"risk":risk,"flatten_at":flatten,
                      'observed_at':now,'stop':prices['stop'],'target':prices['target']}
 
+    def observe_setup(self,c,signal,now,alerted=False,primary=False):
+        """Record each hypothesis independently of account and notification gates."""
+        trial=self.study.start(c,signal,now,spec(signal['symbol']),alerted=alerted,primary=primary)
+        if (spec(signal['symbol'])['asset']=='stock' and signal['symbol'] in self.cfg.watch_symbols
+                and signal.get('track')!='swing'):
+            stop=signal.get('invalidation')
+            if stop is None and signal.get('stop_distance'):
+                stop=signal['signal_price']-(1 if signal['side']=='long' else -1)*signal['stop_distance']
+            signal={**signal,'invalidation':stop}
+            if stop is not None:
+                direction=1 if signal['side']=='long' else -1
+                distance=(signal['signal_price']-stop)*direction
+                if distance>0:
+                    self.ideas.queue(c,{**signal,'stop':stop,
+                        'target':signal['signal_price']+direction*2*distance,
+                        'research_only':True,'notify_eligible':alerted and primary},now)
+            key='pending_research_options:'+signal['id']
+            if stop is not None and not self.db.get(c,key):
+                self.db.put(c,key,dict(signal=signal,created_at=now,expires_at=now+120,
+                    status='waiting',research_only=True))
+        return trial
+
     def enter(self,c,signal,now,quiet=False):
-        self.study.start(c,signal,now,spec(signal["symbol"]))
+        self.observe_setup(c,signal,now,alerted=True,primary=True)
         reason,plan=self.entry_check(c,signal,now)
         symbol,side=signal["symbol"],signal["side"]
         if reason:
@@ -174,7 +196,7 @@ class Engine:
             self.db.put(c,key,p)
             self.db.put(c,"trade:"+p["id"],p)
 
-    def options(self,c,signal,now,quiet=False,diagnostics=None):
+    def options(self,c,signal,now,quiet=False,diagnostics=None,research_only=False):
         chain=self.db.get(c,"chain:"+signal["symbol"],{})
         now=self.clock() if self.clock else now
         audit=diagnostics if diagnostics is not None else {}
@@ -206,6 +228,24 @@ class Engine:
                     "underlying_invalidation":signal.get('invalidation'),
                     "strategy":"0dte-"+signal['strategy'] if signal.get('strategy','').startswith('compass-scanner') else "0dte-underlying-orb-v2","side":"long",
                     "stop_distance":max(.05,q["ask"]*.3)}
+                if research_only:
+                    # A paper balance, position, contract size or entry cap is never
+                    # consulted when selecting an independent observation.
+                    if q['ts']<signal['signal_time'] or q['ts']>checked_at:
+                        rejected.append({**evidence,'reason':'Fresh quote after signal required'})
+                        continue
+                    try:
+                        bracket(option_signal,q,spec(o['symbol']))
+                    except ValueError as error:
+                        rejected.append({**evidence,'reason':str(error)})
+                        continue
+                    trial=self.study.start(c,option_signal,checked_at,spec(o['symbol']),alerted=False,primary=False)
+                    if trial:
+                        audit.update(status='observed',reason='Independent 0DTE observation recorded',
+                            selected_contract=o['symbol'],selected_quote_evidence=evidence,setup_trial_id=trial)
+                        return True
+                    rejected.append({**evidence,'reason':'Independent study disabled'})
+                    continue
                 reason,_=self.entry_check(c,option_signal,checked_at)
                 if reason:
                     rejected.append({**evidence,"reason":reason})

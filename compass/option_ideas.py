@@ -99,19 +99,21 @@ class OptionIdeas:
         if not 0 <= now-signal.get('signal_time',0) <= 90:
             return
         hours = session(day(now))
-        if not hours or not hours[0] <= now < hours[1]-1800:
+        buffer=60 if signal.get('research_only') else 1800
+        if not hours or not hours[0] <= now < hours[1]-buffer:
             return
         key = identity(VERSION, signal['id'])
         from .option_continuity import VERSION as continuity_version
-        p = dict(id=key, source_id=signal['id'], version=VERSION,continuity_policy=continuity_version,
-            underlying=signal['symbol'], underlying_side=signal['side'], strategy=signal['strategy'],
+        p = dict(id=key, source_id=signal['id'], version=VERSION+'-all-setups-v1' if signal.get('research_only') else VERSION,continuity_policy=continuity_version,
+            evaluation_policy='independent-all-setups-v1' if signal.get('research_only') else 'legacy-alerted',
+            research_only=signal.get('research_only',False), notify_eligible=signal.get('notify_eligible',not signal.get('research_only',False)), underlying=signal['symbol'], underlying_side=signal['side'], strategy=signal['strategy'],
             matched_rules=signal.get('matched_rules',[signal.get('rule')]),
             reason=signal.get('reason'), evidence=signal.get('evidence',[])[:20],
             signal_time=signal['signal_time'], signal_price=signal['signal_price'],
             underlying_stop=signal['stop'], underlying_target=signal['target'],
             atr=signal.get('context',{}).get('atr14'),
-            status='pending', created_at=now, updated_at=now, expires_at=min(now+120,hours[1]-1800),
-            flatten_at=hours[1]-900, candidates=[], contract=None,
+            status='pending', created_at=now, updated_at=now, expires_at=min(now+120,hours[1]-buffer),
+            flatten_at=hours[1] if signal.get('research_only') else hours[1]-900, candidates=[], contract=None,
             waiting_reason='Refreshing chain and requesting live option quotes',
             entry=None, exit=None, pnl=None, return_pct=None, samples=0, max_gap_seconds=0,
             milestones=[], best_pct=None, worst_pct=None, peak_at=None,
@@ -125,7 +127,7 @@ class OptionIdeas:
                 at=now,reason='Options idea: select contract and verify live quote'))
 
     def notify(self, c, p, now, event):
-        if not self.cfg.ideas_alerts:
+        if not self.cfg.ideas_alerts or not p.get('notify_eligible',True):
             return
         self.db.append(c,'alert','option_ideas',p['contract']['symbol'],now,
             {**p, 'status':'option_idea_'+event, 'idea_status':p['status'],

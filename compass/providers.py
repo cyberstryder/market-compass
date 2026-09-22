@@ -1,3 +1,4 @@
+from sqlalchemy import select
 """Independent data collectors; no broker order endpoints."""
 import asyncio
 import json
@@ -458,13 +459,16 @@ class Collectors:
         from .spy_study import stream_requests as spy_requests
         from .spy_timeframes import stream_requests as timeframe_requests
         from .obsidian import contracts as watchlist_contracts
+        from .setup_study import trials as setup_trials, option_requests
         def reconcile():
             now=time.time()
             with self.db.tx() as c:
                 held=[p["symbol"] for p in self.db.prefix(c,"position:").values()
                       if p.get("status")=="open" and p.get("asset")=="option"]
+                held+=list(c.execute(select(setup_trials.c.symbol).where(
+                    setup_trials.c.status=='open',setup_trials.c.payload['asset'].as_string()=='option')).scalars())
                 # Preserve existing requests' priority; timing research uses remaining capacity.
-                requested=(stream_requests(c,now,'open')+swing_requests(c,now,'open')+spy_requests(c,now,'open')
+                requested=(option_requests(self.db,c,now)+stream_requests(c,now,'open')+swing_requests(c,now,'open')+spy_requests(c,now,'open')
                     +stream_requests(c,now,'pending')+swing_requests(c,now,'pending')+spy_requests(c,now,'pending')
                     +watchlist_contracts(c,now)+timeframe_requests(c,now,'open')+timeframe_requests(c,now,'pending'))
                 selected=choose_streams(held,requested,self.background_option_symbols,self.cfg.stream_limit)
