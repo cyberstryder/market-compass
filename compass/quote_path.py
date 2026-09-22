@@ -13,7 +13,7 @@ def recorded_path(db, c, symbol, after, until):
         .order_by(events.c.ts, events.c.id).limit(LIMIT+1)).all()
     observations = []
     check = dict(read_rows=min(len(rows),LIMIT), usable_rows=0, timestamp_mismatches=0,
-                 future_when_recorded=0, stale_or_invalid_when_recorded=0, checked_at=until)
+                 future_when_recorded=0, stale_or_invalid_when_recorded=0, late_storage=0, invalid_quote=0, checked_at=until)
     for row in rows[:LIMIT]:
         q = row.payload
         # Historical backfills and future-stamped observations cannot repair a
@@ -26,6 +26,8 @@ def recorded_path(db, c, symbol, after, until):
             check['future_when_recorded'] += 1
         else:
             check['stale_or_invalid_when_recorded'] += 1
+            receipt=q.get('socket_read_at',q.get('recovery_fetched_at'))
+            check['late_storage' if receipt is not None and row.ts<=receipt<=row.received and fresh(q,receipt) else 'invalid_quote'] += 1
     check['usable_rows'] = len(observations)
     if not rows:
         latest = c.execute(select(events.c.ts,events.c.received).where(events.c.kind=='quote',

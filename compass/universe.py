@@ -55,7 +55,9 @@ def data_symbols(db, c, cfg, now):
         if symbol_for({'symbol':row.symbol})[1]:continue
         try:base.extend(symbols((row.symbol,)))
         except ValueError:continue
-    return tuple(s for s in dict.fromkeys(base) if s not in EXCLUDED_STOCKS)[:500]
+    from .active_observations import inventory
+    protected=inventory(db,c,now)['stocks']
+    return tuple(s for s in dict.fromkeys(protected+base) if s not in EXCLUDED_STOCKS)[:500]
 
 
 def focus_symbols(db, c, cfg, now, limit=12):

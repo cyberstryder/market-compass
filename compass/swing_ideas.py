@@ -1,3 +1,4 @@
+from . import observation_recovery as recovery
 """Independent multi-session option observations. No broker or portfolio mutations."""
 import asyncio
 import logging
@@ -134,11 +135,14 @@ class SwingIdeas:
                 chain_asof=chain['asof'],chain_source=chain.get('source'),metadata_day=day(now),
                 sessions_observed=[day(now)],waiting_reason=None,observation_state='market_open',
                 holding_rule=f'Maximum {self.cfg.swing_hold_sessions} trading sessions, including entry; exit before expiry')
+            p['collection_version']=oq.get('collection_version','unversioned')
+            if p['collection_version']=='option-reliability-v5':recovery.enable(p)
             self.notify(c,p,now,'new')
             break
         self.save(c,p,now)
 
     def finish(self, c, p, now, reason, price=None):
+        if price is None:recovery.register(self.db,c,p,now,reason)
         p.update(status='closed' if price is not None else 'unresolved',exit=price,finished_at=now,exit_reason=reason)
         if price is not None:
             p['pnl'] = round((price-p['entry'])*100-2*FEE,4)

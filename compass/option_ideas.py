@@ -1,3 +1,4 @@
+from . import observation_recovery as recovery
 """Intraday option ideas from fresh scanner triggers; independent paper observations."""
 import logging
 import re
@@ -135,6 +136,11 @@ class OptionIdeas:
              'mode':'SIMULATED'}, 'option-idea:'+p['id']+':'+event)
 
     def finish(self, c, p, now, reason, price=None):
+        if price is None and recovery.defer(self.db,c,p,now,reason):
+            self.save(c,p,now)
+            return
+        if price is None:recovery.register(self.db,c,p,now,reason)
+        else:recovery.clear(p)
         p.update(status='closed' if price is not None else 'unresolved',
                  exit=price, finished_at=now, exit_reason=reason)
         if price is not None:
@@ -194,10 +200,12 @@ class OptionIdeas:
                 pagination_complete=chain.get('complete'),last_quote=oq,last_underlying_quote=q,
                 observation_model='paired-recorded-quotes-v2',collection_version=oq.get('collection_version','pre-option-reliability'),
                 underlying_collection_version=q.get('collection_version','unversioned'))
+            if p['collection_version']=='option-reliability-v5':recovery.enable(p)
             self.notify(c,p,now,'new')
         self.save(c,p,now)
 
     def observe(self, c, p, now):
+        p['evidence_checked_at']=now
         if p.get('observation_model') not in ('paired-recorded-quotes-v1','paired-recorded-quotes-v2'):
             return self.observe_pair(c,p,now)
         from .quote_path import recorded_path
@@ -220,11 +228,13 @@ class OptionIdeas:
             # Equal source times are evaluated together, independent of SQL row order.
             if kind==0 and stamp in stock_times:continue
             self.observe_pair(c,p,stamp,oq,uq)
-            if p['status']!='open':return
+            if p['status']!='open' or recovery.blocked(p):return
         p['replay_pending']=ot or ut
         if not p['replay_pending']:
             self.observe_pair(c,p,now)
-        if p['status']=='open':self.save(c,p,now)
+        if p['status']=='open':
+            recovery.clear(p)
+            self.save(c,p,now)
 
     def observe_pair(self, c, p, now, oq=None, uq=None):
         oq = oq if oq is not None else self.db.get(c,'quote:'+p['contract']['symbol'])

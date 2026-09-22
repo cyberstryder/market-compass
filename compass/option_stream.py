@@ -66,6 +66,7 @@ async def consume(ws, collector):
     authenticated = asyncio.Event()
     subscribed = set()
     committed = {'quotes':0,'trades':0}
+    stored = {}
     trace=SubscriptionTrace(time.time(),collector.cfg.massive)
 
     async def read():
@@ -106,6 +107,7 @@ async def consume(ws, collector):
             subscribed.update(wanted)
             buffer.prune(wanted)
             trace.prune(wanted)
+            for s in set(stored)-wanted:stored.pop(s,None)
             await asyncio.sleep(.5)
 
     async def write_trace():
@@ -150,6 +152,11 @@ async def consume(ws, collector):
                     raise
                 for _ in batch: queue.popleft()
                 committed[kind] += len(batch)
+                if kind=='quotes':
+                    at=time.time()
+                    for symbol,q,_ in batch:
+                        stored[symbol]=dict(last_stored_source_ts=q['ts'],last_commit_at=at,
+                            socket_to_commit_seconds=at-q['socket_read_at'],source_to_commit_seconds=at-q['ts'])
             else:
                 await asyncio.sleep(.05)
 
@@ -157,7 +164,7 @@ async def consume(ws, collector):
         await authenticated.wait()
         while True:
             now = time.time()
-            rows = {s:{**buffer.diagnostics.get(s,{}),'subscription':trace.snapshot(s),'silence_seconds':
+            rows = {s:{**buffer.diagnostics.get(s,{}),**stored.get(s,{}),'subscription':trace.snapshot(s),'silence_seconds':
                 now-buffer.diagnostics[s]['last_socket_read_at'] if s in buffer.diagnostics else None}
                 for s in subscribed}
             latest = max((r['last_source_ts'] for r in rows.values() if 'last_source_ts' in r),default=None)

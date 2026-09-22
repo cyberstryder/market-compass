@@ -1,3 +1,4 @@
+from . import observation_recovery as recovery
 """Independent forward trials for intraday stock/futures setups, one unit each.
 
 Trials never read or write portfolio risk/positions. Overlapping setups are
@@ -87,6 +88,8 @@ class SetupStudy:
             'last_quote_ts':q['ts'] if fresh(q, now) else None, 'samples':0, 'max_gap_seconds':0,
             'mfe_r':0, 'mae_r':0, 'pnl':None, 'r_multiple':None,
             'basis':'Independent one-unit trial; sampled executable quotes, one adverse entry/stop tick, illustrative fees; not account P&L'}
+        p['collection_version']=(q or {}).get('collection_version','unversioned')
+        if p['collection_version']=='option-reliability-v5':recovery.enable(p)
         cash_hours=session(day(now))
         context=signal.get('context',{})
         p['research_context']={
@@ -112,6 +115,11 @@ class SetupStudy:
             status=p['status'], finished=p.get('finished'), payload=p))
 
     def finish(self, c, p, now, reason, price=None, quote_ts=None):
+        if price is None and recovery.defer(self.db,c,p,now,reason):
+            self.save(c,p)
+            return
+        if price is None:recovery.register(self.db,c,p,now,reason)
+        else:recovery.clear(p)
         p.update(status='closed' if price is not None else 'unresolved', finished=now,
                  exit_reason=reason, exit=price, exit_quote_ts=quote_ts, elapsed_seconds=now-p['started'])
         if price is not None:
@@ -151,6 +159,7 @@ class SetupStudy:
                 # would treat time we never queried as missing market data.
                 observed = archive_check['checked_at']
                 p['observation_evidence_at'] = observed
+                p['evidence_checked_at'] = observed
                 if truncated and not path:
                     p['gap_detail'] = {'reason':'recorded_batch_contains_no_usable_quotes','checked_at':observed}
                     self.finish(c,p,observed,'observation_gap')
@@ -160,13 +169,17 @@ class SetupStudy:
                         continue
                     p['replayed_samples'] += 1
                     self.observe(c,p,recorded,observed,recorded=True)
-                    if p['status'] != 'open':
+                    if p['status'] != 'open' or recovery.blocked(p):
                         break
+                if recovery.blocked(p):
+                    self.save(c,p)
+                    continue
                 if p['status'] == 'open' and not truncated:
                     self.observe(c,p,q,observed)
                 elif p['status'] == 'open':
                     p['replay_pending'] = True
                 if p['status'] == 'open':
+                    recovery.clear(p)
                     self.save(c,p)
                 continue
             self.observe(c,p,q,observed)

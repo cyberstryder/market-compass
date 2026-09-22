@@ -353,6 +353,8 @@ class Engine:
             else:
                 self.scanner.retry_options(c,{k[6:]:q for k,q in self.db.prefix(c,'quote:').items()},now,self)
             self.ideas.tick(c,now)
+            from .observation_recovery import tick as recovery_tick
+            recovery_tick(self.db,c,self.clock() if self.clock else now)
             self.db.put(c,"worker:engine",{"at":now,"mode":policy(self.cfg)['mode'],"strategy_version":VERSION})
 
     async def run(self):

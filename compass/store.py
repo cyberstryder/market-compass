@@ -29,6 +29,11 @@ state=Table("state",meta,Column("key",String(240),primary_key=True),
     Column("value",JSON,nullable=False),Column("updated",Float,nullable=False))
 leases=Table("leases",meta,Column("key",String(100),primary_key=True),
     Column("owner",String(100),nullable=False),Column("until",Float,nullable=False))
+gap_followups=Table('gap_followups_v1',meta,
+    Column('id',String(64),primary_key=True),Column('status',String(24),nullable=False),
+    Column('created',Float,nullable=False),Column('deadline',Float,nullable=False),
+    Column('payload',JSON,nullable=False))
+Index('gap_followups_active',gap_followups.c.status,gap_followups.c.deadline)
 flow_records=Table("flow_records",meta,
     Column("day",String(10),primary_key=True),Column("vendor_id",String(200),primary_key=True),
     Column("source_ts",Float,nullable=False),Column("payload",JSON,nullable=False),
@@ -256,4 +261,3 @@ class Store:
             if source_ts is not None:
                 value["source_ts"]=max(source_ts,previous.get("source_ts") or source_ts) if monotonic_source else source_ts
             self.put(c,"health:"+name,value)
-
