@@ -1,4 +1,5 @@
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 """Independent data collectors; no broker order endpoints."""
 import asyncio
 import json
@@ -49,6 +50,7 @@ class Collectors:
         self.chain_selected={}
         self.history_owner=uuid.uuid4().hex
         self.chain_paging={}
+        self.chain_inflight=set()
 
     async def close(self):
         if self.live: self.live.stop()
@@ -77,7 +79,8 @@ class Collectors:
                 await asyncio.sleep(max(1,interval))
             except asyncio.CancelledError: raise
             except Exception as e:
-                detail=str(e) if isinstance(e,FeedError) else type(e).__name__
+                from .diagnostics import database_error
+                detail=str(e) if isinstance(e,FeedError) else database_error(e)
                 if isinstance(e,ConnectionClosed):
                     frame=e.rcvd or e.sent
                     detail='Connection closed '+str(frame.code if frame else 'without status')+': '+redacted_detail(
@@ -103,12 +106,13 @@ class Collectors:
             self.supervise("obsidian_history",bool(c.obsidian_history and c.obsidian_url and c.massive),lambda:history_obsidian(self),3),
             self.supervise("obsidian",bool(c.obsidian_url),lambda:poll_obsidian(self),5),
             self.supervise("alpaca_stocks",bool(c.alpaca_key and c.alpaca_secret),self.stocks),
-            self.supervise("alpaca_history",bool(c.alpaca_key and c.alpaca_secret),self.history,3600),
+            self.supervise("alpaca_history",bool(c.alpaca_key and c.alpaca_secret),lambda:self.history(incremental=True),2),
             self.supervise("provider_coverage",bool(c.alpaca_key and c.alpaca_secret),lambda:provider_coverage(self),60),
             self.supervise("secondary_data",bool(c.secondary and c.alpaca_key and c.alpaca_secret),lambda:refresh_secondary_data(self),2),
             self.supervise("databento_futures",bool(c.databento),self.futures),
             self.supervise("futures_history",bool(c.databento),self.future_history,3600),
-            self.supervise("option_chain",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.chains,2),
+            *[self.supervise("option_chain_"+lane,bool(c.massive or (c.alpaca_key and c.alpaca_secret)),
+                lambda lane=lane:self.chains(lane),2) for lane in ('indices','focus','background')],
             self.supervise("option_stream",bool(c.massive),self.options),
             self.supervise("option_recovery",bool(c.massive),self.option_recovery),
             self.supervise("option_subscriptions",bool(c.massive),self.refresh_option_subscriptions,2),
@@ -181,6 +185,20 @@ class Collectors:
             all(number(row[2].get(k)) is not None for k in ['o','h','l','c','v'])),
             key=lambda row:(row[0],row[1]))
         if not items: return
+        # Bound the transaction, not only each INSERT statement. Overlapping
+        # live/recovery writers otherwise wait behind a 10,000-row history page.
+        for start in range(0,len(items),250):
+            chunk=items[start:start+250]
+            for attempt in range(4):
+                try:
+                    Collectors._bar_chunk(self,source,chunk,kind)
+                    break
+                except DBAPIError as error:
+                    code=getattr(error.orig,'sqlstate',None) or getattr(error.orig,'pgcode',None)
+                    if code not in {'55P03','40P01','40001'} or attempt==3:raise
+                    time.sleep(.05*2**attempt)
+
+    def _bar_chunk(self,source,items,kind):
         with self.db.tx() as c:
             self.db.append_bars(c,kind,source,items)
             latest={}
@@ -241,7 +259,10 @@ class Collectors:
                     continue
                 await asyncio.sleep(2)
 
-    async def history(self):
+    async def history(self,incremental=False):
+        if incremental:
+            from .stock_history import collect
+            return await collect(self)
         newest=None
         failures=[]
         universe=await asyncio.to_thread(self.stock_symbols)
@@ -368,7 +389,7 @@ class Collectors:
         except db.BentoError as error:
             raise FeedError("Databento: "+redacted_detail(error,(self.cfg.databento,))) from None
 
-    async def chains(self):
+    async def chains(self,lane='all'):
         from .swing_ideas import active_underlyings
         source="massive" if self.cfg.massive else "alpaca"
         now=time.time()
@@ -376,24 +397,26 @@ class Collectors:
             focus=focus_symbols(self.db,c,self.cfg,now,self.cfg.option_focus)
             universe=list(self.cfg.watch_symbols)
             rotation=universe[self.chain_cursor:]+universe[:self.chain_cursor]
-            retry=lambda s: now>=self.db.get(c,'chain_retry:'+s,{}).get('retry_at',0)
-            due=[s for s in focus if retry(s) and now-self.db.get(c,"chain:"+s,{}).get("asof",0)>=45]
+            retries=self.db.prefix(c,'chain_retry:')
+            retry=lambda s: now>=retries.get('chain_retry:'+s,{}).get('retry_at',0)
+            indices=[s for s in ('SPY','QQQ','IWM') if s in universe]
+            focus=list(dict.fromkeys(indices+focus))
+            retry_base=retry
+            retry=lambda s: s not in self.chain_inflight and retry_base(s)
+            inventory=self.db.prefix(c,'chain_inventory:')
+            age=lambda s: inventory.get('chain_inventory:'+s,{}).get('at',0)
+            due=sorted((s for s in focus if retry(s) and now-age(s)>=45),key=age)
             # Refresh each carried contract's terms before observing the new session.
             # Rotate all held swing names even when there are more than the focus cap.
             carried=active_underlyings(c)
-            stale_carried=sorted((s for s in carried if retry(s)
-                and now-self.db.get(c,'chain:'+s,{}).get('asof',0)>=900),
-                key=lambda s:self.db.get(c,'chain:'+s,{}).get('asof',0))
-            # Oldest successful refresh first: list priority must not repeatedly
-            # refresh the first name while other eligible research goes stale.
-            due=sorted(dict.fromkeys(stale_carried+due),
-                key=lambda s:self.db.get(c,'chain:'+s,{}).get('asof',0))
-            background=next((s for s in rotation if s not in due and retry(s) and now-self.db.get(c,"chain:"+s,{}).get("asof",0)>=900),None)
-            # One focused symbol and one background symbol per turn. A new price
-            # setup can reach the front of the next turn instead of waiting for
-            # a monolithic full-universe chain loop.
-            targets=due[:1]+([background] if background else [])
-            if background: self.chain_cursor=(universe.index(background)+1)%len(universe)
+            background=sorted((s for s in dict.fromkeys(carried+rotation)
+                if s not in focus and retry(s) and now-age(s)>=900),key=age)
+            # Independent bounded lanes: carried/background backlogs must never
+            # occupy the index or fast research worker. Each lane is oldest-first.
+            targets=([s for s in due if s in indices][:1] if lane=='indices' else
+                [s for s in due if s not in indices][:1] if lane=='focus' else
+                background[:1] if lane=='background' else due[:1]+background[:1])
+            self.chain_inflight.update(targets)
         for symbol in targets:
             try:
                 contracts,complete=await (self.massive_chain(symbol) if source=="massive" else self.alpaca_chain(symbol))
@@ -431,11 +454,14 @@ class Collectors:
                 self.db.health('chain_'+symbol,'available','Options chain fetched',poll_ts=now,contracts=len(contracts))
             except asyncio.CancelledError: raise
             except Exception as error:
-                detail=str(error) if isinstance(error,FeedError) else type(error).__name__
+                from .diagnostics import database_error
+                detail=str(error) if isinstance(error,FeedError) else database_error(error)
                 self.db.health('chain_'+symbol,'error',detail)
                 # An unavailable/delisted name must not stop other chains.
                 with self.db.tx() as c:
                     self.db.put(c,'chain_retry:'+symbol,{'at':now,'retry_at':now+300})
+            finally:
+                self.chain_inflight.discard(symbol)
         with self.db.tx() as c:
             held=[p["symbol"] for p in self.db.prefix(c,"position:").values() if p.get("status")=="open" and p.get("asset")=="option"]
             contract_count=sum(v['contracts'] for k,v in self.db.prefix(c,'chain_inventory:').items() if k[16:] in self.cfg.watch_symbols)
@@ -451,8 +477,11 @@ class Collectors:
             selected.extend(rows[i] for rows in choices if i<len(rows))
         self.background_option_symbols=selected
         await self.refresh_option_subscriptions()
-        self.db.health("option_chain","available",source+"; focused chains target 45s, background target 15m; daily OI; actual source ages shown",
+        self.db.health("option_chain","available",source+"; independent index, focus and background lanes; refresh eligibility 45s / 15m, actual ages shown",
             stream_contracts=len(self.option_symbols),contracts=contract_count,focus_symbols=focus,watch_symbols=len(self.cfg.watch_symbols),poll_ts=time.time(),source_ts=None)
+        if lane!='all':
+            self.db.health('option_chain_'+lane,'running','Independent '+lane+' chain refresh worker',
+                poll_ts=time.time(),selected=targets)
 
 
     async def refresh_option_subscriptions(self):
