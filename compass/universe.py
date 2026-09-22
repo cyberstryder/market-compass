@@ -59,7 +59,7 @@ def data_symbols(db, c, cfg, now):
 
 
 def focus_symbols(db, c, cfg, now, limit=12):
-    """Open positions first, then fresh setups, then stable index/core coverage."""
+    """Reserve index coverage, then prioritize holdings and fresh research."""
     allowed = set(cfg.watch_symbols)
     held = [p.get('underlying', p.get('symbol')) for p in db.prefix(c, 'position:').values()
             if p.get('status') == 'open' and p.get('asset') != 'future']
@@ -68,5 +68,5 @@ def focus_symbols(db, c, cfg, now, limit=12):
     requests = sorted(db.prefix(c, 'focus:').values(),
                       key=lambda row: (row.get('priority', 0), row.get('at', 0)), reverse=True)
     active = [r['symbol'] for r in requests if 0 <= now-r.get('at', 0) <= 600]
-    core = [s for s in ('SPY', 'QQQ', 'IWM', *cfg.stocks) if s in allowed]
-    return list(dict.fromkeys(s for s in held+active+swing_held+core if s in allowed))[:limit]
+    core = [s for s in ('SPY', 'QQQ', 'IWM') if s in allowed]
+    return list(dict.fromkeys(s for s in core+held+active+swing_held+list(cfg.stocks) if s in allowed))[:limit]
