@@ -185,7 +185,8 @@ def build(db,c,cfg,now,session_day=None):
     spy_scope=[spy_options.c.day==day]
     option_selections=[p for p in db.prefix(c,'pending_research_options:').values()
         if lower_cash<=p.get('created_at',0)<upper_cash]
-    return dict(day=day,asof=now,operating_policy=policy(cfg),counts_complete=True,paper=paper(c,risk_start,upper),skips=skips_,
+    from .reliability_report import report as reliability_report
+    return dict(quote_reliability=reliability_report(db,c,risk_start,upper),day=day,asof=now,operating_policy=policy(cfg),counts_complete=True,paper=paper(c,risk_start,upper),skips=skips_,
         setup_context=aggregate(c,trials,[trials.c.started>=w['since'],trials.c.started<w['through']],
             dict(symbol=trials.c.symbol,strategy=trials.c.strategy,version=trials.c.version,
                 session=func.coalesce(trials.c.payload['research_context']['session'].as_string(),'not_recorded'),

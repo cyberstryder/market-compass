@@ -292,7 +292,7 @@ def test_failed_quote_and_daily_requests_do_not_starve_minute_recovery(db, monke
     assert len(calls) == 3
 
 
-def test_quote_batch_retains_all_accepted_samples_with_one_archive_insert(db):
+def test_quote_batch_retains_all_accepted_samples_in_bounded_transactions(db):
     from sqlalchemy import event
     from compass.store import events
     statements=[]
@@ -303,7 +303,7 @@ def test_quote_batch_retains_all_accepted_samples_with_one_archive_insert(db):
     try:
         collector.quote_batch('test', [('SPY',quote(NOW+i),True) for i in range(64)]
             + [('SPY',quote(NOW-1),True),('QQQ',quote(NOW),False)])
-        assert len(statements)==1
+        assert 1 < len(statements) <= 3
         with db.tx() as c:
             stamps=c.execute(select(events.c.ts).where(events.c.kind=='quote').order_by(events.c.ts)).scalars().all()
             assert stamps==[NOW+i for i in range(64)]

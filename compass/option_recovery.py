@@ -22,16 +22,9 @@ def parse_quotes(data, now):
 
 
 def targets(collector, now):
-    from .store import spy_options
-    from .spy_timeframes import arms
+    from .active_observations import inventory
     with collector.db.tx() as c:
-        opened=c.execute(select(ideas.c.payload).where(ideas.c.status=='open')
-            .order_by(ideas.c.created).limit(201)).scalars().all()
-        opened+=c.execute(select(spy_options.c.payload).where(spy_options.c.status=='open')
-            .order_by(spy_options.c.created).limit(201)).scalars().all()
-        opened+=c.execute(select(arms.c.payload).where(arms.c.status=='open')
-            .order_by(arms.c.created).limit(4)).scalars().all()
-        symbols=list(dict.fromkeys(p['contract']['symbol'] for p in opened[:200]))
+        symbols=inventory(collector.db,c,now)['options']
         candidates=[]
         for symbol in symbols:
             q=collector.db.get(c,'quote:'+symbol,{})
@@ -39,12 +32,13 @@ def targets(collector, now):
                 candidates.append(symbol)
         candidates.sort(key=lambda s:(collector.option_recovery_attempts.get(s,0),s))
         collector.option_recovery_attempts={s:t for s,t in collector.option_recovery_attempts.items() if s in symbols}
-        return candidates[:4],len(candidates),len(opened)>200
+        return candidates[:4],len(candidates),False
 
 
 async def recover(collector):
     now=time.time()
     if not hasattr(collector,'option_recovery_attempts'):collector.option_recovery_attempts={}
+    stock_results=await recover_stocks(collector)
     if now<getattr(collector,'option_recovery_backoff',0):return
     selected,waiting,truncated=await asyncio.to_thread(targets,collector,now)
     async def fetch(symbol):
@@ -68,11 +62,11 @@ async def recover(collector):
             code=getattr(exc,'status_code',None)
             if code in (401,403,429):collector.option_recovery_backoff=time.time()+(300 if code in (401,403) else 60)
             return dict(symbol=symbol,status='unavailable',http_status=code,error=type(exc).__name__)
-    results=await asyncio.gather(*(fetch(s) for s in selected))
+    results=await asyncio.gather(*(fetch(s) for s in selected)) if getattr(collector.cfg,'massive','') else [dict(symbol=s,fresh_rows=0) for s in selected]
     opra=await recover_alpaca(collector,[r['symbol'] for r in results if r.get('fresh_rows',0)==0])
-    report=dict(at=time.time(),collection_version=COLLECTION_VERSION,requests=len(selected),opra_requests=int(bool(opra)),waiting=waiting,truncated=truncated,results=results,opra_results=opra,
+    report=dict(at=time.time(),collection_version=COLLECTION_VERSION,stock_results=stock_results,requests=len(selected),opra_requests=int(bool(opra)),waiting=waiting,truncated=truncated,results=results,opra_results=opra,
         backoff_until=getattr(collector,'option_recovery_backoff',0),
-        note='Open intraday and SPY plan observations; max four Massive requests plus one OPRA batch per cycle, five-second per-contract cooldown, two-second timeout. Only original quotes still fresh at receipt; no historical gap rewriting.')
+        note='All active observations and post-gap follow-ups; underlying recovery in a separate bounded batch; max four Massive requests plus one OPRA batch per cycle, five-second per-contract cooldown, two-second timeout. Only original quotes still fresh at receipt; no historical gap rewriting.')
     await asyncio.to_thread(collector.db.health,'option_recovery','running','Bounded original-timestamp quote recovery',None,**report)
     if results:LOG.info('Option recovery: %s',__import__('json').dumps(report,sort_keys=True))
 
@@ -106,3 +100,44 @@ async def recover_alpaca(collector, symbols):
         collector.option_opra_backoff=time.time()+(300 if code in (401,403) else 60)
         return [dict(status='unavailable',http_status=code,error=type(exc).__name__,feed='opra',
             backoff_until=collector.option_opra_backoff)]
+
+
+async def recover_stocks(collector):
+    """One bounded stock batch per cycle with a provider-specific backoff."""
+    now=time.time()
+    if (not getattr(collector.cfg,'alpaca_key','') or not getattr(collector.cfg,'alpaca_secret','')
+            or now<getattr(collector,'stock_recovery_backoff',0)):return []
+    from .active_observations import inventory
+    attempts=getattr(collector,'stock_recovery_attempts',{})
+    def select_targets():
+        with collector.db.tx() as c:
+            symbols=inventory(collector.db,c,now)['stocks']
+            wanted=[s for s in symbols if now-collector.db.get(c,'quote:'+s,{}).get('ts',0)>2
+                    and now-attempts.get(s,0)>=5]
+            return sorted(wanted,key=lambda s:(attempts.get(s,0),s))[:32],symbols
+    wanted,active=await asyncio.to_thread(select_targets)
+    collector.stock_recovery_attempts={s:t for s,t in attempts.items() if s in active}
+    if not wanted:return []
+    collector.stock_recovery_attempts.update({s:now for s in wanted})
+    try:
+        data=await asyncio.wait_for(collector.get('https://data.alpaca.markets/v2/stocks/quotes/latest',
+            headers=collector.alpaca_headers,params={'symbols':','.join(wanted),'feed':collector.cfg.feed}),2)
+        rows=[];results=[]
+        for symbol in wanted:
+            raw=data.get('quotes',{}).get(symbol,{})
+            stamp=ts(raw.get('t'));at=time.time()
+            q=dict(ts=stamp,bid=raw.get('bp'),ask=raw.get('ap'),bid_size=raw.get('bs'),ask_size=raw.get('as'),
+                recovery='live_rest_stock',recovery_fetched_at=at,collection_version=COLLECTION_VERSION)
+            valid=stamp is not None and 0<=at-stamp<=5 and fresh(q,at)
+            if valid:rows.append((symbol,q,True))
+            results.append(dict(symbol=symbol,status='fresh_quotes' if valid else 'no_fresh_quotes',latest_source_ts=stamp))
+        if rows:await asyncio.to_thread(collector.quote_batch,'alpaca_stock_recovery',rows)
+    except asyncio.CancelledError:raise
+    except Exception as exc:
+        code=getattr(exc,'status_code',None)
+        collector.stock_recovery_backoff=time.time()+(300 if code in (401,403) else 60)
+        results=[dict(status='unavailable',http_status=code,error=type(exc).__name__)]
+    await asyncio.to_thread(collector.db.health,'stock_recovery','running' if all(r['status']=='fresh_quotes' for r in results) else 'partial',
+        'Original-timestamp underlying recovery for active research',None,results=results,at=time.time(),collection_version=COLLECTION_VERSION)
+    LOG.info('Stock recovery: %s',__import__('json').dumps(results,sort_keys=True))
+    return results

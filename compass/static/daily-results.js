@@ -8,6 +8,13 @@
  function render(d){
   const p=d.paper,m=d.morning,v=d.verification;
   let h='<p><strong>'+esc(d.operating_policy?.paper_entries_enabled?'Paper benchmark enabled':'Research mode — paper entries and notifications paused')+'</strong></p><p>'+esc(d.note)+'</p>';
+  if(d.quote_reliability){const r=d.quote_reliability;
+   h+='<h3>Quote reliability</h3><p>'+esc(r.basis)+'</p>'+table(['Study','Collection','Opened','Completed','Open','Unresolved','Gaps','Gap %','Pending gap checks','Recovered processing gaps'],r.cohorts.map(x=>[esc(x.study),esc(x.version),num(x.opened),num(x.completed),num(x.open),num(x.unresolved),num(x.gaps),num(x.gap_pct),num(x.pending_gaps),num(x.recovered_processing_gaps)]));
+   h+='<p>Active contracts without stream capacity: '+esc((r.subscriptions.active_missing||[]).join(', ')||'None reported')+' · subscription check '+when(r.subscriptions.at)+'</p>';
+   h+='<p>Active contracts awaiting acknowledgement: '+esc(r.subscriptions.acknowledgements_current?(r.subscriptions.active_unacknowledged.join(', ')||'None reported'):'Current acknowledgement evidence unavailable')+'</p>';
+   h+=table(['Post-gap collection','Records','Separate samples'],r.followups.map(x=>[esc(x.status),num(x.records),num(x.samples)]));
+   h+=table(['Feed','Checked','Measured symbols','Maximum latest receipt-to-storage seconds','Quote queue'],r.latency.map(x=>[esc(x.feed),when(x.health_at),num(x.measured_symbols),num(x.max_latest_socket_to_commit_seconds),num(x.quote_queue)]));
+  }
   h+=study('All futures setups — full session',d.futures);
   if(d.zero_dte_setups)h+=study('All scanner 0DTE setups',d.zero_dte_setups);
   if(d.zero_dte_selection)h+='<p>0DTE selection coverage: '+num(d.zero_dte_selection.total)+' setups · '+esc(JSON.stringify(d.zero_dte_selection.states))+'</p>'+table(['Unmeasured selection reason','Count'],Object.entries(d.zero_dte_selection.reasons).map(([reason,n])=>[esc(reason),num(n)]));

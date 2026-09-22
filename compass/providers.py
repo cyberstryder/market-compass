@@ -114,7 +114,7 @@ class Collectors:
             *[self.supervise("option_chain_"+lane,bool(c.massive or (c.alpaca_key and c.alpaca_secret)),
                 lambda lane=lane:self.chains(lane),2) for lane in ('indices','focus','background')],
             self.supervise("option_stream",bool(c.massive),self.options),
-            self.supervise("option_recovery",bool(c.massive),self.option_recovery),
+            self.supervise("option_recovery",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.option_recovery),
             self.supervise("option_subscriptions",bool(c.massive),self.refresh_option_subscriptions,2),
             self.supervise("tradermatrix",bool(c.matrix),self.matrix,2),
             self.supervise("tradermatrix_flow",bool(c.matrix),self.flow,20),
@@ -146,20 +146,22 @@ class Collectors:
         items=sorted(items,key=lambda row:row[0])
         if source == 'databento':
             return self.future_quote_batch(items)
-        with self.db.tx() as c:
-            retained=[]
-            for symbol,q,record in items:
-                if not q.get('ts') or number(q.get('bid')) is None or number(q.get('ask')) is None:
-                    continue
-                q={**q,'source':source,'symbol':symbol,'received':time.time()}
-                accepted=self.db.put_quote(c,'quote:'+symbol,q)
-                # Parallel stream/recovery readers may commit out of order. Preserve their
-                # sampled history without regressing the latest cache.
-                if not accepted and source not in ('alpaca','massive','massive_rest','alpaca_opra_recovery'): continue
-                if record:
-                    retained.append((symbol,q))
+        # Bound lock duration; each latest quote and its archive commit together.
+        for start in range(0,len(items),32):
+            with self.db.tx() as c:
+                retained=[]
+                for symbol,q,record in items[start:start+32]:
+                    if not q.get('ts') or number(q.get('bid')) is None or number(q.get('ask')) is None:
+                        continue
+                    q={**q,'source':source,'symbol':symbol,'received':time.time()}
+                    accepted=self.db.put_quote(c,'quote:'+symbol,q)
+                    # Parallel stream/recovery readers may commit out of order. Preserve their
+                    # sampled history without regressing the latest cache.
+                    if not accepted and source not in ('alpaca','massive','massive_rest','alpaca_opra_recovery','alpaca_stock_recovery'): continue
+                    if record:
+                        retained.append((symbol,q))
 
-            self.db.append_quotes(c,source,retained)
+                self.db.append_quotes(c,source,retained)
 
     def future_quote_batch(self, items):
         """Lock each contract once, retain samples, update its latest quote once."""
@@ -174,7 +176,8 @@ class Collectors:
                 changed=False
                 for q,record in quotes:
                     if q['ts'] < latest.get('ts',0):continue
-                    latest={**q,'source':'databento','symbol':symbol,'received':time.time()}
+                    from .quote_collection import VERSION as collection_version
+                    latest={**q,'source':'databento','symbol':symbol,'received':time.time(),'collection_version':collection_version}
                     changed=True
                     if record:retained.append((symbol,latest))
                 if changed:self.db.put(c,'quote:'+symbol,latest)
@@ -486,32 +489,31 @@ class Collectors:
 
     async def refresh_option_subscriptions(self):
         """Reconcile tracked ideas every two seconds, independently of chain HTTP work."""
-        from .option_ideas import stream_requests, choose_streams
+        from .option_ideas import stream_requests
         from .swing_ideas import stream_requests as swing_requests
         from .spy_study import stream_requests as spy_requests
         from .spy_timeframes import stream_requests as timeframe_requests
         from .obsidian import contracts as watchlist_contracts
-        from .setup_study import trials as setup_trials, option_requests
+        from .setup_study import option_requests
         def reconcile():
             now=time.time()
             with self.db.tx() as c:
-                held=[p["symbol"] for p in self.db.prefix(c,"position:").values()
-                      if p.get("status")=="open" and p.get("asset")=="option"]
-                held+=list(c.execute(select(setup_trials.c.symbol).where(
-                    setup_trials.c.status=='open',setup_trials.c.payload['asset'].as_string()=='option')).scalars())
-                # Preserve existing requests' priority; timing research uses remaining capacity.
-                requested=(option_requests(self.db,c,now)+stream_requests(c,now,'open')+swing_requests(c,now,'open')+spy_requests(c,now,'open')
-                    +stream_requests(c,now,'pending')+swing_requests(c,now,'pending')+spy_requests(c,now,'pending')
-                    +watchlist_contracts(c,now)+timeframe_requests(c,now,'open')+timeframe_requests(c,now,'pending'))
-                selected=choose_streams(held,requested,self.background_option_symbols,self.cfg.stream_limit)
+                from .active_observations import inventory, select_contracts
+                active=inventory(self.db,c,now)
+                requested=(option_requests(self.db,c,now)+stream_requests(c,now,'pending')
+                    +swing_requests(c,now,'pending')+spy_requests(c,now,'pending')
+                    +timeframe_requests(c,now,'pending')+watchlist_contracts(c,now))
+                previous=self.db.get(c,'options:subscriptions',{}).get('symbols',[])
+                selected,missing=select_contracts(active['options'],previous,requested,
+                    self.background_option_symbols,self.cfg.stream_limit)
                 self.option_symbols=set(selected)
-                # This is requested subscription state; opening still requires actual fresh quotes.
-                self.db.put(c,'options:subscriptions',dict(at=now,symbols=selected,
-                    requested_ideas=len(requested),waiting_ideas=len(set(requested)-set(selected))))
-            self.db.health('option_subscriptions','running',
-                'Pinned options ideas and existing positions; actual quotes verify access',
-                selected_contracts=len(selected),requested_ideas=len(requested),
-                waiting_ideas=len(set(requested)-set(selected)),poll_ts=now)
+                report=dict(at=now,symbols=selected,active_contracts=len(active['options']),active_symbols=active['options'],
+                    active_missing=missing,capacity=self.cfg.stream_limit,
+                    requested_ideas=len(set(requested)),waiting_ideas=len(set(requested)-set(selected)))
+                self.db.put(c,'options:subscriptions',report)
+            self.db.health('option_subscriptions','partial' if missing else 'running',
+                'Active observations pinned before pending candidates; acknowledgements and fresh quotes checked separately',**report)
+
         await asyncio.to_thread(reconcile)
 
     async def massive_chain(self,symbol,expiry_start=None,expiry_end=None,page_limit=40):

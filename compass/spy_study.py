@@ -1,3 +1,4 @@
+from . import observation_recovery as recovery
 """Prospective paper outcomes linked to the exact scheduled SPY report."""
 import asyncio
 import logging
@@ -185,6 +186,11 @@ class Paper(OptionIdeas):
     def notify(self,*args):pass
 
     def finish(self,c,p,now,reason,price=None):
+        if price is None and recovery.defer(self.db,c,p,now,reason):
+            self.save(c,p,now)
+            return
+        if price is None:recovery.register(self.db,c,p,now,reason)
+        else:recovery.clear(p)
         p.update(status='closed' if price is not None else 'unresolved',exit=price,
             finished_at=now,exit_reason=reason,pnl=None,return_pct=None,outcome='unresolved')
         if price is not None:
@@ -254,6 +260,7 @@ class Paper(OptionIdeas):
             last_option_ts=oq['ts'],last_underlying_ts=uq['ts'],last_quote=dict(oq),last_underlying_quote=dict(uq),
             observation_model='paired-recorded-quotes-v2',collection_version=oq.get('collection_version','unversioned'),
             underlying_collection_version=uq.get('collection_version','unversioned'),waiting_reason=None)
+        if p['collection_version']=='option-reliability-v5':recovery.enable(p)
         self.mark(c,p,now,oq,uq,'entry')
         self.save(c,p,now)
 

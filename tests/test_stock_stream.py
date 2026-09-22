@@ -38,7 +38,7 @@ def test_stock_source_and_socket_receipt_clocks_are_distinct():
     b.offer(q(),NOW+.25)
     sample=b.take(0)[0][0][1]
     assert sample['ts']==NOW and sample['socket_read_at']==NOW+.25
-    assert sample['collection_version']=='option-reliability-v4'
+    assert sample['collection_version']=='option-reliability-v5'
     assert b.diagnostics['SPY']['source_age_at_read']==.25
 
 

@@ -76,7 +76,7 @@ def test_live_recovery_retains_original_clock_and_source(monkeypatch):
     assert saved[0][0]=='massive_rest'
     q=saved[0][1][0][1]
     assert q['ts']==NOW-1 and q['recovery_fetched_at']==NOW
-    assert q['collection_version']=='option-reliability-v4'
+    assert q['collection_version']=='option-reliability-v5'
 
 
 def test_recovery_owns_http_client_on_its_isolated_loop(monkeypatch):
