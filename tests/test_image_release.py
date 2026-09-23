@@ -1,0 +1,76 @@
+import importlib.util
+from pathlib import Path
+import pytest
+
+path=Path(__file__).parents[1]/'ops/deploy/image_release.py'
+spec=importlib.util.spec_from_file_location('image_release',path)
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+IMAGE=m.REGISTRY+'@sha256:'+'a'*64
+OLD=m.REGISTRY+'@sha256:'+'b'*64
+SHA='c'*40
+
+class Fake:
+    def __init__(self):
+        self.calls=[];self.images={s:OLD for _,s in m.SERVICES};self.repo=None
+        self.status='SUCCESS';self.replica=1;self.health='/health';self.busy=False;self.bad_meta=False
+    def __call__(self,q,v):
+        self.calls.append((q,v))
+        if q==m.INSTANCE:return {'serviceInstance':dict(source=dict(image=self.images[v['s']],repo=self.repo),numReplicas=self.replica,healthcheckPath=self.health,latestDeployment=dict(status='BUILDING' if self.busy else 'SUCCESS'))}
+        if q==m.UPDATE:
+            self.images[v['s']]=v['i']['source']['image'];return {'serviceInstanceUpdate':True}
+        if q==m.DEPLOY:return {'serviceInstanceDeployV2':v['s']}
+        if q==m.STATUS:return {'deployment':dict(id=v['id'],status=self.status,projectId=m.PROJECT,environmentId=m.ENVIRONMENT,serviceId=v['id'],meta=dict(image=OLD if self.bad_meta else self.images[v['id']]))}
+        raise AssertionError(q)
+
+@pytest.mark.parametrize('image',[m.REGISTRY+':latest','ghcr.io/other/repo@sha256:'+'a'*64,m.REGISTRY+'@sha256:short'])
+def test_unpinned_or_foreign_images_never_touch_railway(image,tmp_path):
+    api=Fake()
+    with pytest.raises(m.ReleaseError):m.promote(image,SHA,api,head=lambda:SHA,receipt_path=tmp_path/'receipt.json')
+    assert api.calls==[]
+
+def test_superseded_commit_never_touches_railway(tmp_path):
+    api=Fake()
+    with pytest.raises(m.ReleaseError,match='Superseded'):m.promote(IMAGE,SHA,api,head=lambda:'d'*40,receipt_path=tmp_path/'receipt.json')
+    assert not api.calls
+
+@pytest.mark.parametrize('field,value',[('repo',m.REPOSITORY),('replica',2),('health',None),('busy',True)])
+def test_all_targets_preflight_before_any_mutation(field,value,tmp_path):
+    api=Fake();setattr(api,field,value)
+    with pytest.raises(m.ReleaseError):m.promote(IMAGE,SHA,api,head=lambda:SHA,receipt_path=tmp_path/'receipt.json')
+    assert not any(q in (m.UPDATE,m.DEPLOY) for q,_ in api.calls)
+
+def test_same_digest_sequential_deployments_and_receipts(tmp_path):
+    api=Fake();path=tmp_path/'receipt.json'
+    result=m.promote(IMAGE,SHA,api,head=lambda:SHA,receipt_path=path)
+    assert [i['name'] for i in result['services']]==['dashboard','collector','engine']
+    assert all(i['previous_image']==OLD and i['status']=='SUCCESS' and i['verified'] for i in result['services'])
+    changes=[v for q,v in api.calls if q==m.UPDATE]
+    assert all(v['i']==dict(source=dict(image=IMAGE),numReplicas=1) for v in changes)
+    assert path.exists()
+    assert [q for q,_ in api.calls].count(m.DEPLOY)==3
+
+@pytest.mark.parametrize('bad_meta',[False,True])
+def test_failed_or_unproven_deployment_stops_remaining_services(tmp_path,bad_meta):
+    api=Fake();api.bad_meta=bad_meta
+    if not bad_meta:api.status='FAILED'
+    with pytest.raises(m.ReleaseError):m.promote(IMAGE,SHA,api,head=lambda:SHA,receipt_path=tmp_path/'receipt.json')
+    assert len([q for q,_ in api.calls if q==m.UPDATE])==1
+    assert api.images[m.SERVICES[1][1]]==OLD
+
+def test_mid_rollout_new_main_does_not_deploy_old_code_to_next_service(tmp_path):
+    api=Fake();heads=iter([SHA,SHA,'d'*40])
+    with pytest.raises(m.ReleaseError,match='Main changed'):m.promote(IMAGE,SHA,api,head=lambda:next(heads),receipt_path=tmp_path/'receipt.json')
+    assert len([q for q,_ in api.calls if q==m.DEPLOY])==1
+
+def test_missing_deployment_token_fails_clearly():
+    with pytest.raises(m.ReleaseError,match='RAILWAY_TOKEN'):m.Railway(None)
+
+
+def test_poll_timeout_preserves_receipt_and_stops_rollout(tmp_path):
+    api=Fake();api.status='DEPLOYING';clock=iter([0,0,901])
+    receipt=tmp_path/'receipt.json'
+    with pytest.raises(m.ReleaseError,match='timed out'):
+        m.promote(IMAGE,SHA,api,head=lambda:SHA,receipt_path=receipt,
+                  clock=lambda:next(clock),sleep=lambda _:None)
+    assert receipt.exists()
+    assert len([q for q,_ in api.calls if q==m.DEPLOY])==1

@@ -1,12 +1,18 @@
 name: Quality gates
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:18
@@ -31,4 +37,117 @@ jobs:
           SMOOTHERS_TEST_DATABASE_URL: 'postgresql+psycopg://compass_test:isolated_test_only@localhost:5432/compass_test'
       - run: node --check compass/static/daily-results.js && node --check compass/static/discovery.js && node --check compass/static/app.js && node --check compass/static/login.js && node --check compass/static/native.js && node --check compass/static/research-admin.js && node --check compass/static/setup-records.js && node --check compass/static/tm-study.js && node --check compass/static/swing-study.js && node --check compass/static/spy-study.js && node --check compass/static/session-gaps.js && node tests/session-gaps.test.cjs
       - name: Build production image and run packaged tests
-        run: docker build --tag market-compass-ci .
+        run: >-
+          docker build --tag market-compass-ci
+          --label org.opencontainers.image.source=https://github.com/cyberstryder/market-compass
+          --label org.opencontainers.image.revision=${{ github.sha }} .
+      - name: Check the built image starts as its runtime user
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name compass-smoke -p 127.0.0.1:18080:8000 \
+            -e COMPASS_LOCAL=true -e COMPASS_ROLE=web \
+            -e DATABASE_URL=sqlite:////tmp/compass-smoke.db market-compass-ci
+          trap 'docker logs compass-smoke; docker rm -f compass-smoke >/dev/null' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18080/health; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Export the tested image (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: docker save market-compass-ci --output /tmp/compass-tested-image.tar
+      - name: Transfer the tested image to the publication job
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tested-image-${{ github.sha }}-${{ github.run_attempt }}
+          path: /tmp/compass-tested-image.tar
+          compression-level: 0
+          retention-days: 1
+  publish:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+      revision: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tested-image-${{ github.sha }}-${{ github.run_attempt }}
+          path: /tmp
+      - name: Load the already tested image
+        env:
+          REVISION: ${{ github.sha }}
+        run: |
+          docker load --input /tmp/compass-tested-image.tar
+          test "$(docker image inspect market-compass-ci --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVISION"
+      - name: Publish the tested image (main only)
+        id: publish
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_ACTOR: ${{ github.actor }}
+          REVISION: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry=ghcr.io/cyberstryder/market-compass
+          tag="$registry:sha-$REVISION-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          docker tag market-compass-ci "$tag"
+          docker push "$tag"
+          image=$(docker image inspect "$tag" --format '{{index .RepoDigests 0}}')
+          python ops/deploy/image_release.py manifest --image "$image" --revision "$REVISION"
+          printf 'image=%s\n' "$image" >> "$GITHUB_OUTPUT"
+          printf '### Tested image\n\n`%s`\n\nSource: `%s`\n' "$image" "$REVISION" >> "$GITHUB_STEP_SUMMARY"
+      - name: Save immutable release manifest
+        if: steps.publish.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-release-${{ github.sha }}-${{ github.run_attempt }}
+          path: image-release.json
+          if-no-files-found: error
+          retention-days: 90
+  deploy:
+    needs: publish
+    if: >-
+      github.ref == 'refs/heads/main' && github.event_name != 'pull_request' &&
+      vars.RAILWAY_IMAGE_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    environment: production
+    permissions:
+      contents: read
+    concurrency:
+      group: compass-production-image-promotion
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.publish.outputs.revision }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Promote the tested digest and verify each service
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TESTED_IMAGE: ${{ needs.publish.outputs.image }}
+          TESTED_REVISION: ${{ needs.publish.outputs.revision }}
+        run: python ops/deploy/image_release.py promote --image "$TESTED_IMAGE" --revision "$TESTED_REVISION"
+      - name: Save deployment receipt, including partial failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: railway-deployment-${{ github.sha }}-${{ github.run_attempt }}
+          path: deployment-receipt.json
+          if-no-files-found: warn
+          retention-days: 90
