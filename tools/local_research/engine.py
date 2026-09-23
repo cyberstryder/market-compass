@@ -150,7 +150,7 @@ def barrier(o,h,l,stop,target,side):
     if hit_t:return target,'target',False
     return None,'',False
 
-def simulate(raw,d,n,signal,a,ke,name,eligible,base_cost=2.5,stress_cost=5.5):
+def simulate(raw,d,n,signal,a,ke,name,eligible,base_cost=2.5,stress_cost=5.5,readiness=None):
     times=raw.index;sec=times.asi8//10**9; oo,hh,ll,cc=[raw[k].to_numpy() for k in ('open','high','low','close')]
     minutes=np.asarray(times.hour*60+times.minute);day=np.asarray((times.tz_localize(None)+pd.Timedelta(hours=7)).strftime('%Y-%m-%d'))
     ds=d.index+pd.Timedelta(minutes=n);loc=times.get_indexer(ds);endsec=ds.asi8//10**9
@@ -160,7 +160,7 @@ def simulate(raw,d,n,signal,a,ke,name,eligible,base_cost=2.5,stress_cost=5.5):
             if ke[k]<45:resetL=True
             if ke[k]>55:resetS=True
         i=loc[k]
-        if not side or i<1 or k<200 or not np.isfinite(aa[k]) or aa[k]<=0:continue
+        if not side or i<1 or k<200 or (readiness is not None and not readiness[k]) or not np.isfinite(aa[k]) or aa[k]<=0:continue
         if sec[i]-sec[i-1]!=60 or sec[i]!=endsec[k] or day[i] not in eligible or day[i]!=day[i-1]:continue
         if next_time>=sec[i] or 945<=minutes[i]<1020:continue
         if name=='Stochastic Pop' and (k-last_stoch<5 or not (resetL if side==1 else resetS)):continue
@@ -168,10 +168,11 @@ def simulate(raw,d,n,signal,a,ke,name,eligible,base_cost=2.5,stress_cost=5.5):
         if daily.get(day[i],0)>=cap:continue
         risk=np.ceil(1.5*aa[k]/TICK-1e-9)*TICK;entry=oo[i];stop=entry-side*risk;target=entry+side*2*risk
         invalid=False;exitprice=None;reason='timeout';ambiguous=False
-        deadline=sec[i]+60*60
+        deadline=sec[i]+60*60;last_observed=i
         cutoff=895 if name=='Opening Range Desk' else 945
         for j in range(i,len(raw)):
             if (j>i and sec[j]-sec[j-1]!=60) or day[j]!=day[i]:invalid=True;break
+            last_observed=j
             exitprice,why,amb=barrier(oo[j],hh[j],ll[j],stop,target,side)
             if exitprice is not None:reason=why;ambiguous=amb;break
             if sec[j]+60>=deadline or (minutes[j]+1>=cutoff and minutes[j]<1020):exitprice=cc[j];reason='cutoff' if minutes[j]+1>=cutoff and minutes[j]<1020 else 'timeout';break
@@ -180,7 +181,10 @@ def simulate(raw,d,n,signal,a,ke,name,eligible,base_cost=2.5,stress_cost=5.5):
         daily[day[i]]=daily.get(day[i],0)+1
         if name=='Stochastic Pop':last_stoch=k;resetL=resetL if side==-1 else False;resetS=resetS if side==1 else False
         if invalid:
-            censored.append(dict(day=day[i],entry_at=str(times[i]),reason='missing exit path'));continue
+            censored.append(dict(day=day[i],entry_at=str(times[i]),side=int(side),entry=float(entry),stop=float(stop),target=float(target),last_observed_at=str(times[last_observed]),reason='missing exit path; outcome unknown; rest of session blocked'))
+            remaining=np.flatnonzero(day==day[i])
+            next_time=max(next_time,int(sec[remaining[-1]]+60))
+            continue
         gross=(exitprice-entry)*side*POINT
         out.append(dict(day=day[i],entry_at=str(times[i]),signal_at=str(ds[k]),exit_at=str(times[j]+pd.Timedelta(minutes=1)),side=int(side),entry=entry,exit=float(exitprice),risk_points=float(risk),gross=float(gross),net=float(gross-base_cost),stress_net=float(gross-stress_cost),reason=reason,ambiguous=ambiguous))
     return pd.DataFrame(out,columns=['day','entry_at','signal_at','exit_at','side','entry','exit','risk_points','gross','net','stress_net','reason','ambiguous']),censored

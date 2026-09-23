@@ -80,5 +80,6 @@
       "point_value": 25000,
       "fee_round_trip": 5
     }
-  }
+  },
+  "gap_policy": "segments"
 }

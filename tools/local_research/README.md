@@ -1,8 +1,12 @@
 # Compass local research runner
 
 Run the repetitive research on your Windows computer. No OpenAI subscription/API,
-GPU, broker login, or connection to the production database is needed. The runner
-makes no network requests. Setup downloads Python dependencies once.
+GPU, broker login, or connection to the production database is needed. Futures
+calculations are offline. Setup downloads Python dependencies; the optional
+Compass downloader authenticates to the dashboard and reads existing reports.
+
+**Already installed? Start with [START_HERE.md](START_HERE.md)** for the update
+commands, two-PC workflow, report exports, and files to send back.
 
 This is an offline **futures signal-family screen**, not a live scanner, complete
 Compass replica, optimizer, or exact Pine backtest. Continuous collection stays
@@ -112,8 +116,8 @@ The process returns exit code 2 for blocked inputs; missing CSVs remain pending.
 
 **Before changing dates:** `config.json` currently reproduces our August 24–
 September 22, 2026 research split: development through Sept 3, validation through
-Sept 11, later through Sept 22. At least five complete sessions per slice are
-required. New bars after `later_end` are not included automatically. This prevents
+Sept 11, later through Sept 22. At least five eligible sessions with warmed-up decision bars per slice and
+interval are required. New bars after `later_end` are not included automatically. This prevents
 quietly moving the evaluation window each time data arrives. For another period,
 copy `config.json` into the shared workspace as `study.json`, edit the three end
 dates, then use:
@@ -171,14 +175,20 @@ code updates. Nothing automatically commits or uploads data.
 - Base/stressed costs deduct configured fees + one/four adverse ticks per side.
   They do not model variable spread, depth, partial fills or actual broker margin.
 - Conservative stop-first treatment for an ambiguous minute; worse-open gap stop.
-- Complete standard 17:00–16:00 CT sessions only. Holidays/shortened sessions are
-  excluded rather than modeled; a holiday calendar is not implemented here.
+- Default segment policy accepts bounded standard 17:00–16:00 CT sessions with
+  interior holes, resets features after unexpected gaps, and waits for 200 decision
+  bars plus 50 completed 15-minute bars. No price filling. Unknown exit paths are
+  reported, block further entries that session, and prevent a preliminary pass.
+  Set gap_policy to strict for the old full-session coverage requirement.
+  Shortened sessions are excluded; a holiday calendar is not implemented here.
 - Earlier prices warm up features. Later dates are retrospective checks, not
   untouched holdouts if already inspected. No multiple-testing correction.
 - Drift and Camarilla are pending implementations. Raw volume does not enable
   them automatically. Fractal manual POI/bias, FVG mode, and Pine-native exits
   are not reproduced. Event-by-event TradingView parity is still unverified.
-- BTC/options/equities require different sessions/models and are not supported.
+- BTC/options/equities are not supported by the futures simulation. Compass
+  report downloads cover other research evidence separately; they do not replay
+  raw option quotes or add stock/options backtests.
 
 These limitations stay in the compact report so local speed doesn't turn an
 incomplete test into a passed strategy.

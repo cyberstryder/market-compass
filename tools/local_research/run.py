@@ -7,7 +7,7 @@ import pandas as pd
 import engine
 
 ROOT=Path(__file__).resolve().parent
-VERSION='local-research-v1'
+VERSION='local-research-v2'
 FAMILIES=['Trend breakout','Trend pullback','Band reentry','Failed breakout','Stochastic Pop','Opening Range Desk','Location Desk','Signal Desk','Fractal Model']
 
 def digest(path):
@@ -44,7 +44,7 @@ def load_prices(path):
     if not ((df.high>=df[['open','close']].max(axis=1))&(df.low<=df[['open','close']].min(axis=1))&(df.high>=df.low)).all():raise ValueError('Invalid OHLC geometry')
     return df
 
-def coverage(df,excluded):
+def coverage(df,excluded,policy="strict"):
     labels=(df.index.tz_localize(None)+pd.Timedelta(hours=7)).strftime('%Y-%m-%d')
     inventory=[];eligible=[]
     for day,g in df.groupby(labels):
@@ -53,13 +53,15 @@ def coverage(df,excluded):
         end=pd.Timestamp(day+' 16:00',tz='America/Chicago')
         expect=pd.date_range(start,end,freq='min',inclusive='left')
         missing=len(expect.difference(g.index));extra=len(g.index.difference(expect))
-        ok=missing==0 and extra==0 and date.weekday()<5 and day not in excluded
+        bounded=len(g)>1 and g.index[0]==expect[0] and g.index[-1]==expect[-1]
+        ok=(missing==0 if policy=="strict" else bounded) and extra==0 and date.weekday()<5 and day not in excluded
         inventory.append(dict(day=day,rows=len(g),missing_minutes=missing,extra_minutes=extra,eligible=ok,excluded_by_config=day in excluded))
         if ok:eligible.append(day)
     return inventory,eligible
 
 def validate_config(cfg):
     if cfg.get('version')!=1:raise ValueError('Expected config version 1')
+    if cfg.get('gap_policy','strict') not in ('strict','segments'):raise ValueError('gap_policy must be strict or segments')
     for k in ('development_end','validation_end','later_end'):pd.Timestamp(cfg[k])
     if not cfg['development_end']<cfg['validation_end']<cfg['later_end']:raise ValueError('Split dates must be strictly increasing')
     if not cfg.get('intervals') or any(n not in (1,3,5) for n in cfg['intervals']):raise ValueError('Supported intervals: 1, 3, 5')
@@ -83,25 +85,39 @@ def run_instrument(path,symbol,spec,cfg,out):
     labels=(df.index.tz_localize(None)+pd.Timedelta(hours=7)).strftime('%Y-%m-%d')
     df=df[labels<=cfg['later_end']]
     if df.empty:raise ValueError('No rows on or before later_end')
-    inv,days=coverage(df,set(cfg.get('exclude_sessions',[])))
+    inv,days=coverage(df,set(cfg.get('exclude_sessions',[])),cfg.get('gap_policy','strict'))
     splits={'development':[x for x in days if x<=cfg['development_end']],
             'validation':[x for x in days if cfg['development_end']<x<=cfg['validation_end']],
             'later':[x for x in days if cfg['validation_end']<x<=cfg['later_end']]}
     save(out/'coverage.json',dict(sessions=inv,splits=splits,raw_volume_present='volume' in df,rows=len(df)))
     if any(len(v)<cfg.get('minimum_sessions_per_phase',5) for v in splits.values()):
-        raise ValueError('Insufficient complete sessions in split: '+str({k:len(v) for k,v in splits.items()}))
+        raise ValueError('Insufficient eligible sessions in split: '+str({k:len(v) for k,v in splits.items()}))
     engine.TICK=spec['tick'];engine.POINT=spec['point_value']
     base=spec['fee_round_trip']+2*spec['tick']*spec['point_value']*cfg['base_slippage_ticks_per_side']
     stress=spec['fee_round_trip']+2*spec['tick']*spec['point_value']*cfg['stress_slippage_ticks_per_side']
-    records=[];trades=[];censored=[]
+    records=[];trades=[];censored=[];interval_coverage=[]
     for n in cfg['intervals']:
-        d=engine.make_bars(df,n);a,bias,eff,sigs,ke=engine.features(d,df,n)
+        if cfg.get('gap_policy','strict')=='segments':
+            from gaps import calculate
+            result=calculate(df,n)
+            if result is None:
+                interval_coverage.append(dict(minutes=n,state='blocked',reason='No usable decision bars'));continue
+            d,a,bias,eff,sigs,ke,ready=result
+        else:
+            d=engine.make_bars(df,n);a,bias,eff,sigs,ke=engine.features(d,df,n);ready=np.arange(len(d))>=200
+        decision_days=np.asarray((d.index.tz_localize(None)+pd.Timedelta(hours=7)).strftime('%Y-%m-%d'))
+        usable=set(decision_days[ready])&set(days)
+        counts={phase:len(set(items)&usable) for phase,items in splits.items()}
+        enough=all(count>=cfg.get('minimum_sessions_per_phase',5) for count in counts.values())
+        interval_coverage.append(dict(minutes=n,state='measured' if enough else 'blocked',ready_sessions=counts,ready_bars=int(ready.sum())))
+        if not enough:
+            print(f'  {symbol}: {n}-minute interval blocked: {counts}');continue
         for family in cfg.get('families',FAMILIES):
             sig=sigs[family]
             for combo in ('standalone','trend agreement','trend + efficiency'):
                 mask=np.ones(len(d),bool) if combo=='standalone' else bias==sig
                 if combo=='trend + efficiency':mask &= eff>=.2
-                t,missing=engine.simulate(df,d,n,np.where(mask,sig,0),a,ke,family,set(days),base,stress)
+                t,missing=engine.simulate(df,d,n,np.where(mask,sig,0),a,ke,family,set(days),base,stress,readiness=ready)
                 t['phase']=t.day.map({day:phase for phase,items in splits.items() for day in items})
                 t['family']=family;t['minutes']=n;t['combination']=combo;t['symbol']=symbol
                 if len(t):trades.append(t)
@@ -116,8 +132,9 @@ def run_instrument(path,symbol,spec,cfg,out):
                 records.append(row)
         print(f'  {symbol}: {n}-minute interval complete',flush=True)
     if trades:pd.concat(trades,ignore_index=True).to_csv(out/'trades.csv',index=False)
+    save(out/'interval_coverage.json',interval_coverage)
     save(out/'results.json',records);save(out/'censored.json',censored)
-    return dict(state='complete',configurations=len(records),preliminary_passes=sum(x['preliminary_gate'] for x in records),sessions={k:len(v) for k,v in splits.items()},censored=len(censored),note='Exploratory common-exit screen; no automatic strategy promotion')
+    return dict(state='complete' if records else 'blocked',data_quality='provisional' if censored else 'conditional_on_observed_coverage',blocked_intervals=sum(x['state']=='blocked' for x in interval_coverage),configurations=len(records),preliminary_passes=sum(x['preliminary_gate'] for x in records),sessions={k:len(v) for k,v in splits.items()},censored=len(censored),note='Exploratory common-exit screen; no automatic strategy promotion')
 
 def make_review(results,cfg,root):
     lines=['# Local Compass research review','',f'Generated {datetime.now(timezone.utc).isoformat()}',
@@ -125,7 +142,7 @@ def make_review(results,cfg,root):
       'No broker actions, paid downloads or AI calls. Later results are retrospective; repeated runs do not create fresh holdouts.',
       '', '| Instrument | State | Detail |','|---|---|---|']
     for symbol,item in results.items():
-        detail=item.get('error') or f"{item.get('configurations',0)} configurations; {item.get('preliminary_passes',0)} preliminary passes"
+        detail=item.get('error') or f"{item.get('configurations',0)} configurations; {item.get('preliminary_passes',0)} preliminary passes; {item.get('censored',0)} unresolved paths; {item.get('blocked_intervals',0)} blocked intervals"
         lines.append(f"| {symbol} | {item['state']} | {str(detail).replace('|','/')} |")
     lines+=['','## Three-minute results (stressed costs, one contract)', '', '| Instrument | Rule | Combination | Development net | Validation net | Later net | Later trades |', '|---|---|---|---:|---:|---:|---:|']
     for symbol,item in results.items():
@@ -139,7 +156,8 @@ def make_review(results,cfg,root):
     lines+=['','## Fixed limitations',
       '- Drift and Camarilla are not implemented in this runner; do not infer their results from other families.',
       '- Pine-native exits, order fills, sizing, FVG-retest mode and manually assessed POI are not reproduced.',
-      '- Only complete standard 17:00–16:00 CT sessions are traded; missing/shortened sessions are excluded, never filled with invented bars.',
+      '- Segment mode resets features after unexpected gaps, requires 200 decision bars and 50 completed 15-minute bars, and retains only bounded standard sessions. No missing bars are filled.',
+      '- Unresolved exit paths remain unknown; all reported P&L excludes them and is provisional if any exist. New entries stop for that variant for the rest of that session.',
       '- Holiday-aware trading on shortened sessions is not implemented. Contract roll/adjustment settings must be checked at the source.',
       '- Results across contracts use different dollar multipliers. No correlated portfolio or prop-account pass probability is estimated.',
       '- Preliminary gates do not correct for multiple testing and need longer independent and prospective validation.',
@@ -151,7 +169,7 @@ def make_review(results,cfg,root):
         for name in ('summary.md','latest.json'):z.write(root/name,name)
         for symbol,item in results.items():
             if not item.get('run'):continue
-            for name in ('results.json','coverage.json','censored.json','manifest.json','status.json'):
+            for name in ('results.json','coverage.json','interval_coverage.json','censored.json','manifest.json','status.json'):
                 path=root/item['run']/name
                 if path.exists():z.write(path,f'{symbol}/{name}')
     tmp.replace(root/'review.zip')
@@ -170,8 +188,8 @@ def main(argv=None):
         run=None
         try:
             if args.check:
-                df=load_prices(path);inv,days=coverage(df,set(cfg.get('exclude_sessions',[])))
-                print(f'{symbol}: {len(df)} minute rows, {len(days)} complete standard sessions; check split dates before running');continue
+                df=load_prices(path);inv,days=coverage(df,set(cfg.get('exclude_sessions',[])),cfg.get('gap_policy','strict'))
+                print(f'{symbol}: {len(df)} minute rows, {len(days)} eligible standard sessions; interval warmup is checked during the run');continue
             key,manifest=fingerprint(path,cfg,symbol);run=Path('runs')/symbol/key;out=root/run
             status=out/'status.json'
             if status.exists() and json.loads(status.read_text()).get('state')=='complete':
