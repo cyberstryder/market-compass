@@ -81,5 +81,8 @@
       "fee_round_trip": 5
     }
   },
-  "gap_policy": "segments"
+  "gap_policy": "segments",
+  "default_symbols": [
+    "MES"
+  ]
 }

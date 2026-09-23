@@ -2,10 +2,19 @@ import unittest,tempfile,json
 from pathlib import Path
 import pandas as pd
 import numpy as np
-from run import load_prices,coverage,fingerprint,validate_config,ROOT,make_review
+from run import load_prices,coverage,fingerprint,validate_config,ROOT,make_review,selected_symbols
 class RunnerTests(unittest.TestCase):
  def setUp(self):self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
  def tearDown(self):self.temp.cleanup()
+ def test_symbol_selection_defaults_overrides_and_legacy(self):
+  cfg=json.loads((ROOT/'config.json').read_text())
+  self.assertEqual(selected_symbols(cfg),['MES'])
+  self.assertEqual(selected_symbols(cfg,['NQ']),['NQ'])
+  with self.assertRaises(ValueError):selected_symbols(cfg,['UNKNOWN'])
+  cfg['default_symbols']=[]
+  with self.assertRaises(ValueError):validate_config(cfg)
+  del cfg['default_symbols']
+  self.assertEqual(selected_symbols(cfg),list(cfg['instruments']))
  def test_bad_prices_and_duplicates_rejected(self):
   p=self.root/'x.csv';p.write_text('time,open,high,low,close\n1787587200,100,101,99,100\n1787587200,100,101,99,100\n')
   with self.assertRaisesRegex(ValueError,'Duplicate'):load_prices(p)

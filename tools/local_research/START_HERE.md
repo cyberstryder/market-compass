@@ -1,5 +1,11 @@
 # Your local research kit
 
+Futures runs and gap audits now default to **MES only**. Existing CSVs and run
+folders remain available. Explicit `--symbols MNQ ES` overrides the default.
+This changes local research selection, not production scanners or execution.
+The proposed opening-hour experiment is described in [MES_RESEARCH.md](MES_RESEARCH.md);
+the existing runner does not yet implement that experiment.
+
 ## Update your current computer
 
 Open PowerShell and paste:

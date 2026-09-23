@@ -3,7 +3,7 @@ import argparse,json,os
 from pathlib import Path
 from datetime import timedelta
 import pandas as pd
-from run import ROOT,load_prices,coverage,save,digest
+from run import ROOT,load_prices,coverage,save,digest,selected_symbols
 
 def inventory(df,excluded):
     sessions,_=coverage(df,excluded,'segments');out=[]
@@ -26,9 +26,9 @@ def inventory(df,excluded):
     return out
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--workspace',default=os.environ.get('COMPASS_RESEARCH_HOME',str(ROOT/'workspace')));p.add_argument('--config',default=str(ROOT/'config.json'));a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--workspace',default=os.environ.get('COMPASS_RESEARCH_HOME',str(ROOT/'workspace')));p.add_argument('--config',default=str(ROOT/'config.json'));p.add_argument('--symbols',nargs='+');a=p.parse_args()
     root=Path(a.workspace);cfg=json.loads(Path(a.config).read_text(encoding='utf-8-sig'));result={}
-    for symbol in cfg['instruments']:
+    for symbol in selected_symbols(cfg,a.symbols):
         path=root/'input'/f'{symbol}.csv'
         if not path.exists():result[symbol]={'state':'missing_input'};continue
         try:

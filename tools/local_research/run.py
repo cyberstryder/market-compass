@@ -59,7 +59,16 @@ def coverage(df,excluded,policy="strict"):
         if ok:eligible.append(day)
     return inventory,eligible
 
+def selected_symbols(cfg, requested=None):
+    names=requested if requested is not None else cfg.get('default_symbols',list(cfg['instruments']))
+    if not isinstance(names,list) or not names or any(not isinstance(n,str) for n in names):
+        raise ValueError('Symbols must be a nonempty list of names')
+    unknown=set(names)-set(cfg['instruments'])
+    if unknown:raise ValueError('Unconfigured symbols: '+','.join(sorted(unknown)))
+    return list(dict.fromkeys(names))
+
 def validate_config(cfg):
+    selected_symbols(cfg)
     if cfg.get('version')!=1:raise ValueError('Expected config version 1')
     if cfg.get('gap_policy','strict') not in ('strict','segments'):raise ValueError('gap_policy must be strict or segments')
     for k in ('development_end','validation_end','later_end'):pd.Timestamp(cfg[k])
@@ -178,8 +187,7 @@ def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--config',default=str(ROOT/'config.json'));p.add_argument('--workspace',default=os.environ.get('COMPASS_RESEARCH_HOME',str(ROOT/'workspace')));p.add_argument('--symbols',nargs='+');p.add_argument('--check',action='store_true');args=p.parse_args(argv)
     cfg=json.loads(Path(args.config).read_text(encoding='utf-8-sig'));validate_config(cfg)
     root=Path(args.workspace).expanduser().resolve();(root/'input').mkdir(parents=True,exist_ok=True)
-    names=args.symbols or list(cfg['instruments']);unknown=set(names)-set(cfg['instruments'])
-    if unknown:raise ValueError('Unconfigured symbols: '+','.join(sorted(unknown)))
+    names=selected_symbols(cfg,args.symbols)
     # Separate per-instrument content hashes permit safe result reuse between PCs.
     results={}
     for symbol in names:
