@@ -95,7 +95,7 @@ def flush_previews(db,now,connection=None):
             if isinstance(message,dict):
                 message.pop('_option_policy',None)
                 stamp=c.execute(select(source.signals.c.signal_at_ms).where(source.signals.c.signal_id==row['event_id'].removesuffix('-signal'))).scalar_one_or_none()
-                queue(db,c,'morning',row['event_id'],message,now,event_time=stamp/1000 if stamp else None)
+                queue(db,c,'morning',row['event_id'],message,now,event_time=stamp/1000 if stamp else None,publication={'research_only':True})
             c.execute(source.outbox.update().where(source.outbox.c.event_id==row['event_id']).values(status='shadow_previewed'))
 
 
@@ -146,7 +146,12 @@ def enrich(db,provider,now):
             schedule_history(c,signal,quote,completed)
             message=signal_message(signal,int(now*1000),None)
             message['content']+='\n\n'+option_text(quote)
-            queue(db,c,'morning',job['event_id']+'-option',message,completed/1000,parent_event=job['event_id'],event_time=signal['signal_at_ms']/1000)
+            queue(db,c,'morning',job['event_id']+'-option',message,completed/1000,event_time=signal['signal_at_ms']/1000,
+                publication=dict(id=signal['signal_id'],status='native_option_entry',contract=quote.get('contract'),
+                    quote=dict(bid=quote.get('bid'),ask=quote.get('ask'),ts=(quote.get('quote_at_ms') or 0)/1000),
+                    entry=quote.get('ask'),track='intraday',holding_horizon='intraday',strategy='Morning '+signal['setup'],
+                    expires_at=signal['signal_at_ms']/1000+120,exit_rule='Observation-only horizons 5/15/30/60 minutes; no selected execution exit',
+                    research_only=True))
     return True
 
 

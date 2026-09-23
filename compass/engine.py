@@ -118,7 +118,7 @@ class Engine:
                         'research_only':True,'notify_eligible':alerted and primary},now)
             key='pending_research_options:'+signal['id']
             if stop is not None and not self.db.get(c,key):
-                self.db.put(c,key,dict(signal=signal,created_at=now,expires_at=now+120,
+                self.db.put(c,key,dict(signal={**signal,'notify_eligible':alerted and primary},created_at=now,expires_at=now+120,
                     status='waiting',research_only=True))
         return trial
 
@@ -255,12 +255,18 @@ class Engine:
                     except ValueError as error:
                         rejected.append({**evidence,'reason':str(error)})
                         continue
-                    trial=self.study.start(c,option_signal,checked_at,spec(o['symbol']),alerted=False,primary=False)
+                    eligible=signal.get('notify_eligible',False)
+                    trial=self.study.start(c,option_signal,checked_at,spec(o['symbol']),alerted=eligible,primary=eligible)
                     if trial:
                         saved=c.execute(select(trials.c.payload).where(trials.c.id==trial)).scalar_one()
                         if saved['status']=='excluded':
                             rejected.append({**evidence,'reason':saved.get('reason') or 'Unmeasurable research observation'})
                             continue
+                        if eligible:
+                            self.db.append(c,'alert','setup_study',o['symbol'],checked_at,
+                                {**saved,'status':'option_setup_new','last_quote':q,
+                                 'expires_at':checked_at+120,'underlying_invalidation':signal.get('invalidation')},
+                                'option-setup-entry:'+trial)
                         audit.update(status='observed',reason='Independent 0DTE observation recorded',
                             selected_contract=o['symbol'],selected_quote_evidence=evidence,setup_trial_id=trial)
                         return True

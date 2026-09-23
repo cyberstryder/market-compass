@@ -27,7 +27,7 @@ class Config:
     discord: str = field(default_factory=lambda: env("DISCORD_WEBHOOK_URL"))
     discord_routes: dict = field(default_factory=lambda: {
         key: env('DISCORD_' + key.upper() + '_WEBHOOK_URL')
-        for key in ('spy_morning', 'futures', 'options_0dte', 'options_ideas', 'swing',
+        for key in ('spy_morning', 'futures', 'options_0dte', 'options_ideas', 'options_leaps', 'smoothers', 'swing',
                     'unusual_options', 'exposure', 'intraday', 'research', 'system')})
     discord_fallback: bool = field(default_factory=lambda: env('DISCORD_SHARED_FALLBACK', 'true') == 'true')
     spy_morning_brief: bool = field(default_factory=lambda: env("SPY_MORNING_BRIEF_ENABLED", "true") == "true")

@@ -24,7 +24,7 @@ def db(tmp_path):
 def add(db, category='intraday', status='setup_triggered', **extra):
     with db.tx() as c:
         db.append(c, 'alert', 'fixture', 'SPY', time.time(),
-                  {'alert_category': category, 'status': status, 'expires_at': time.time()+900, **extra})
+                  {'alert_category': category, 'status': 'notification_test', 'delivery_route': category, 'expires_at': time.time()+900, **extra})
         return c.execute(select(events).order_by(events.c.id.desc()).limit(1)).mappings().one()['id']
 
 
@@ -119,7 +119,7 @@ def test_restart_rotation_retains_receipts_and_route_order(db):
 def test_route_test_keeps_test_identity_and_no_native_ownership_change(db):
     row = {'symbol': 'SYSTEM', 'payload': {'status': 'notification_test', 'delivery_route': 'spy_morning'}}
     assert route_for(row) == 'spy_morning'
-    assert len(manifest(Config(local=True))) == 10
+    assert len(manifest(Config(local=True))) == 12
     with db.tx() as c: assert not db.prefix(c, 'native:ownership:')
 
 

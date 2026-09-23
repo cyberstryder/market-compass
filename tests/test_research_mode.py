@@ -101,7 +101,7 @@ def test_legacy_positions_finish_silently_without_erasing_history(db,cfg):
         assert db.recent(c,'paper_decision')[0]['payload']['status']=='closed'
 
 
-def test_queued_paper_messages_suppressed_without_touching_other_categories(db,cfg):
+def test_paper_and_underlying_only_messages_suppressed_but_research_retained(db,cfg):
     cfg.paper_trading=False;cfg.discord='https://discord.com/api/webhooks/123/test'
     cfg.discord_routes={}
     with db.tx() as c:
@@ -121,11 +121,12 @@ def test_queued_paper_messages_suppressed_without_touching_other_categories(db,c
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             for _ in range(3):await worker.tick(client,NOW)
     asyncio.run(run())
-    assert len(sent)==8 and all('RESEARCH TRACKING' in s for s in sent)
+    assert sent==[]
     with db.tx() as c:
         jobs=c.execute(select(discord_jobs)).mappings().all()
-        assert sum(j['status']=='suppressed' for j in jobs)==5
-        assert sum(j['status']=='sent' for j in jobs)==8
+        assert sum(j['status']=='suppressed' for j in jobs)==13
+        assert sum(j['status']=='sent' for j in jobs)==0
+        assert len(db.recent(c,'alert',limit=100))==13
         assert all('message_id' not in j['confirmation'] for j in jobs if j['status']=='suppressed')
 
 

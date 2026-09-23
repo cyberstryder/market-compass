@@ -8,6 +8,7 @@ from .store import events, discord_jobs
 from .alert_format import message_for, alert_identity
 from .alert_routes import ROUTES, ORIGINAL_SENDERS, route_for, destination, manifest
 from .operating_mode import paper_message
+from . import alert_ownership
 
 
 class DeliveryError(Exception):
@@ -28,8 +29,10 @@ def enqueue_routes(db, c, now):
     rows = list(c.execute(select(events).where(events.c.kind == 'alert', events.c.id > cursor)
                           .order_by(events.c.id).limit(200)).mappings())
     for row in rows:
-        c.execute(db.insert(discord_jobs).values(event_id=row['id'], route=route_for(row),
-            status='pending', queued_at=row['ts'], confirmation={})
+        decision=alert_ownership.assess(db,c,row,now)
+        route=decision.get('category') or route_for(row)
+        c.execute(db.insert(discord_jobs).values(event_id=row['id'], route=route,
+            status='pending' if decision['action'] in ('publish','passthrough') else 'suppressed', queued_at=row['ts'], confirmation=decision)
             .on_conflict_do_nothing(index_elements=['event_id']))
     db.put(c, 'outbox:discord:ingested', rows[-1]['id'] if rows else cursor)
 
@@ -52,7 +55,8 @@ def outbox_status(db, c, now):
         routes.append({**item, 'pending': q.pending if q else 0,
             'oldest_age': round(now-q.oldest, 1) if q else None,
             'health': health, 'last_confirmation': db.get(c, 'outbox:discord:confirmation:' + route)})
-    return {'pending': pending, 'unassigned': count,
+    ambiguous=c.execute(select(func.count()).select_from(discord_jobs).where(discord_jobs.c.status=='ambiguous')).scalar_one()
+    return {'pending': pending, 'ambiguous':ambiguous, 'unassigned': count,
         'oldest_age': round(now-min(stamps), 1) if stamps else None,
         'last_acknowledged_event': cursor or None,
         'last_confirmation': db.get(c, 'outbox:discord:confirmation'),
@@ -64,7 +68,9 @@ def outbox_status(db, c, now):
 
 async def dispatch(client, db, webhook, row, route=None):
     p = row['payload']
-    if p.get('status') == 'spy_morning_brief':
+    if p.get('publication'):
+        body={'content':alert_ownership.format_message(row),'username':'Market Compass','allowed_mentions':{'parse':[]}}
+    elif p.get('status') == 'spy_morning_brief':
         from .spy_brief import delivery_payload
         body = delivery_payload(row, time.time())
     elif p.get('status') == 'spy_chart_prompt':
@@ -143,6 +149,10 @@ class DeliveryWorker:
             # Same lease as the legacy worker: rolling deployment cannot double-send.
             if not self.db.lease(c, 'discord', self.owner, 90):
                 return
+            # With the delivery lease held, a leftover sending row has an unknown
+            # receipt. Never replay a potentially successful option alert.
+            c.execute(update(discord_jobs).where(discord_jobs.c.status=='sending')
+                .values(status='ambiguous'))
             enqueue_routes(self.db, c, now)
             self.suppress_paper(c, now)
             if not self.published:
@@ -208,14 +218,51 @@ class DeliveryWorker:
                 c.execute(update(discord_jobs).where(discord_jobs.c.event_id==row['id'])
                     .values(status='suppressed',confirmation=dict(at=now,reason='Paper notifications disabled in research mode')))
             return
+        with self.db.tx() as c:
+            decision=alert_ownership.assess(self.db,c,row,now)
+            if decision['action'] not in ('publish','passthrough'):
+                c.execute(update(discord_jobs).where(discord_jobs.c.event_id==row['id'])
+                    .values(status='suppressed',confirmation=decision))
+                return
+            if decision['action']=='publish':
+                row={**row,'payload':decision['payload']}
+                if decision['event']=='ENTRY':
+                    reason=alert_ownership.quote_error(row['payload'].get('last_quote') or row['payload'].get('quote'),now)
+                    if now-row['ts']>120:reason='Entry expired in delivery queue'
+                    _,active=alert_ownership.read_trade(self.db,c,decision['trade_id'])
+                    if active and active['state']!='open':reason='Trade ended before entry delivery'
+                    if reason:
+                        c.execute(update(discord_jobs).where(discord_jobs.c.event_id==row['id'])
+                            .values(status='suppressed',confirmation=dict(decision,reason=reason)))
+                        alert_ownership.block_entry(self.db,c,decision['trade_id'],reason,now)
+                        return
+                else:
+                    _,trade=alert_ownership.read_trade(self.db,c,decision['trade_id'])
+                    if not trade or not alert_ownership.entry_delivered(c,trade):
+                        c.execute(update(discord_jobs).where(discord_jobs.c.event_id==row['id'])
+                            .values(status='suppressed',confirmation=dict(decision,reason='Entry was not confirmed delivered')))
+                        return
+        canonical=bool(row['payload'].get('publication'))
+        if canonical:
+            with self.db.tx() as c:
+                c.execute(update(discord_jobs).where(discord_jobs.c.event_id==row['id'])
+                    .values(status='sending'))
         try:
             await dispatch(client, self.db, url, row, route)
             self.route_health[route] = 'delivered'
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            if canonical:
+                limited=isinstance(error,DeliveryError) and str(error).startswith('Discord rate limit')
+                with self.db.tx() as c:
+                    c.execute(update(discord_jobs).where(discord_jobs.c.event_id==row['id'])
+                        .values(status='pending' if limited else 'ambiguous',confirmation=dict(
+                            at=now,reason='rate_limited' if limited else 'Delivery outcome requires reconciliation',
+                            trade_id=row['payload']['publication']['trade_id'])))
             retry = error.retry if isinstance(error, DeliveryError) else 15
             detail = str(error) if isinstance(error, DeliveryError) else type(error).__name__ + '; alert remains queued'
+            if canonical and not limited:detail='Delivery outcome unknown; held for receipt reconciliation'
             self.retry_at[route] = now + retry
             self.db.health('discord:' + route, 'error', detail)
 

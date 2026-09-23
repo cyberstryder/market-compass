@@ -113,8 +113,17 @@ def rolling_record(db,c,ticker,week,owned_since):
 
 
 def queue_signal(db,c,p,event,payload,now,event_time):
+    q=p.get('quote' if event=='entry' else 'exit_quote') or {}
+    publication=dict(id=p['id'],project='smoothers',contract=p.get('contract'),track='swing',
+        status='native_option_entry' if event=='entry' else 'native_option_exit',
+        entry=p.get('entry_premium'),underlying_target=p.get('target_price'),
+        quote=dict(bid=q.get('bid'),ask=q.get('ask'),ts=(q.get('quote_at_ms') or 0)/1000),
+        reason='Weekly Smoothers underlying target / unresolved Friday close',
+        exit_reason=event if event!='entry' else None,expires_at=now+120,
+        exit_rule='Underlying target, otherwise Friday close; no premium stop configured',
+        outcome='unresolved' if event!='entry' else None)
     return queue(db,c,'smoothers',p['id']+':'+event,payload,now,
-                 event_time=event_time,cohort_time=p.get('model_entry_time'))
+                 event_time=event_time,cohort_time=p.get('model_entry_time'),publication=publication)
 
 
 def schedule(db,data,now):

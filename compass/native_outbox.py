@@ -33,7 +33,7 @@ def delivery_guard(db,shared=False):
         yield c
 
 
-def queue(db,c,program,event_key,payload,now,parent_event=None,event_time=None,cohort_time=None):
+def queue(db,c,program,event_key,payload,now,parent_event=None,event_time=None,cohort_time=None,publication=None):
     delivery_lock(c,shared=True)
     key=identity('native-outbox-v1',program,event_key)
     ownership=owner(db,c,program,now)
@@ -43,7 +43,7 @@ def queue(db,c,program,event_key,payload,now,parent_event=None,event_time=None,c
     c.execute(db.insert(outbox).values(id=key,program=program,event_key=event_key,created=now,
         status='pending' if ownership else 'shadow',payload=payload,
         delivery={'attempts':0,'owner_epoch':ownership['epoch'] if ownership else None,'parent_event':parent_event,
-                  'event_time':event_time,'cohort_time':cohort_time})
+                  'event_time':event_time,'cohort_time':cohort_time,'publication_input':publication})
         .on_conflict_do_nothing(index_elements=['id']))
     return key
 
@@ -65,6 +65,31 @@ def deliver_one(db,client,webhooks,enabled=False,now=None):
             if not ownership or ownership['epoch']!=d.get('owner_epoch') or d.get('next_attempt',0)>now:continue
             url=webhooks.get(row['program'],'')
             if not re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',url):continue
+            from . import alert_ownership as publication
+            meta=d.get('publication_input')
+            if meta is not None:
+                record=dict(id='native:'+row['id'],source=row['program'],symbol=(meta.get('contract') or {}).get('symbol') or '',ts=row['created'],payload=meta)
+                decision=publication.assess(db,c,record,now)
+                d['publication']=decision
+                if decision['action']!='publish':
+                    c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',delivery=d))
+                    continue
+                if decision['event']=='ENTRY':
+                    reason=publication.quote_error(meta.get('quote'),now)
+                    if reason:
+                        publication.block_entry(db,c,decision['trade_id'],reason,now)
+                        c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',delivery=dict(d,error=reason)))
+                        continue
+                else:
+                    _,trade=publication.read_trade(db,c,decision['trade_id'])
+                    if not trade or not publication.entry_delivered(c,trade):
+                        c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',delivery=dict(d,error='Entry was not confirmed delivered')))
+                        continue
+                if decision['category']!=row['program']:
+                    url=webhooks.get(decision['category'],'')
+                    if not re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',url):continue
+                row=dict(row,payload={'content':publication.format_message(dict(record,payload=decision['payload'])),
+                    'username':'Market Compass','allowed_mentions':{'parse':[]}})
             message_id=None
             if d.get('parent_event'):
                 parent=c.execute(select(outbox).where(outbox.c.id==identity('native-outbox-v1',row['program'],d['parent_event']))).mappings().first()
@@ -102,6 +127,11 @@ def deliver_one(db,client,webhooks,enabled=False,now=None):
         if current.get('lease')==job['delivery']['lease']:
             if current.get('error')=='handoff_rollback_requires_delivery_reconciliation':
                 status='ambiguous';error='handoff_rollback_requires_delivery_reconciliation'
+            if status=='delivered' and job['delivery'].get('publication',{}).get('event')=='ENTRY':
+                from .alert_ownership import read_trade
+                path,trade=read_trade(db,c,job['delivery']['publication']['trade_id'])
+                if trade:
+                    trade['native_delivered']=True;db.put(c,path,trade)
             current.update(job['delivery'],error=error,message_id=message_id,finished_at=now,lease_until=0)
             c.execute(outbox.update().where(outbox.c.id==job['id']).values(status=status,delivery=current))
     return True
@@ -117,7 +147,8 @@ def snapshot(c):
 async def run(db,cfg):
     import os
     enabled=os.getenv('NATIVE_PROGRAM_SEND_ENABLED','false').lower()=='true'
-    hooks={p:os.getenv('NATIVE_'+p.upper()+'_DISCORD_WEBHOOK','') for p in ('morning','smoothers')}
+    hooks=dict(cfg.discord_routes)
+    hooks.update({p:os.getenv('NATIVE_'+p.upper()+'_DISCORD_WEBHOOK','') for p in ('morning','smoothers')})
     with httpx.Client(timeout=10,follow_redirects=False) as client:
         while True:
             try:await asyncio.to_thread(deliver_one,db,client,hooks,enabled)
