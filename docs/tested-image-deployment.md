@@ -16,9 +16,9 @@ Once activated, the deployment job sets that exact digest on dashboard, collecto
 and engine in that order. Each service must pass Railway's existing `/health`
 check and return the same image in its deployment metadata before the next moves.
 A receipt records previous image digests, deployment IDs and partial results.
-Credentials, unrelated services, commands, variables and networking are not changed.
+Credentials, unrelated services, commands, variables, networking and replica topology are not changed.
 Concurrent promotions serialize; superseded commits, active deployments, mutable
-images, missing health checks, changed replica topology and unconfigured source
+images, missing health checks and unconfigured source
 cutovers fail before promotion. A failed or uncertain deployment stops the rollout;
 it is not blindly retried or automatically rolled back.
 

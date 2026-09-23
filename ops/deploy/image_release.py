@@ -93,8 +93,6 @@ def promote(image, revision, api, head=current_main, sleep=time.sleep,
             raise ReleaseError(name+': another deployment is active')
         if instance.get('healthcheckPath')!='/health':
             raise ReleaseError(name+': expected /health deployment gate is missing')
-        if instance.get('numReplicas')!=1:
-            raise ReleaseError(name+': topology changed; review before promotion')
         instances[service] = instance
     receipt = dict(image=image,revision=revision,project=PROJECT,environment=ENVIRONMENT,services=[])
     save_receipt(receipt_path, receipt)
@@ -103,10 +101,10 @@ def promote(image, revision, api, head=current_main, sleep=time.sleep,
         before = instances[service]
         item = dict(name=name,service_id=service,previous_image=before['source']['image'],status='updating',verified=False)
         receipt['services'].append(item);save_receipt(receipt_path, receipt)
-        # Keep the single-replica topology explicit; do not alter commands,
-        # health checks, environment variables, networking or volumes.
+        # Update only the image. Railway may store replicas in regional config
+        # while the legacy numReplicas field is null; never rewrite topology.
         ok = api(UPDATE, {'s':service,'e':ENVIRONMENT,
-            'i':{'source':{'image':image},'numReplicas':before['numReplicas']}})['serviceInstanceUpdate']
+            'i':{'source':{'image':image}}})['serviceInstanceUpdate']
         if not ok:raise ReleaseError(name+': image update was not accepted')
         configured = api(INSTANCE, {'s':service,'e':ENVIRONMENT})['serviceInstance']['source']
         if configured.get('repo') or configured.get('image')!=image:

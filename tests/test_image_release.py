@@ -33,7 +33,7 @@ def test_superseded_commit_never_touches_railway(tmp_path):
     with pytest.raises(m.ReleaseError,match='Superseded'):m.promote(IMAGE,SHA,api,head=lambda:'d'*40,receipt_path=tmp_path/'receipt.json')
     assert not api.calls
 
-@pytest.mark.parametrize('field,value',[('repo',m.REPOSITORY),('replica',2),('health',None),('busy',True)])
+@pytest.mark.parametrize('field,value',[('repo',m.REPOSITORY),('health',None),('busy',True)])
 def test_all_targets_preflight_before_any_mutation(field,value,tmp_path):
     api=Fake();setattr(api,field,value)
     with pytest.raises(m.ReleaseError):m.promote(IMAGE,SHA,api,head=lambda:SHA,receipt_path=tmp_path/'receipt.json')
@@ -45,9 +45,16 @@ def test_same_digest_sequential_deployments_and_receipts(tmp_path):
     assert [i['name'] for i in result['services']]==['dashboard','collector','engine']
     assert all(i['previous_image']==OLD and i['status']=='SUCCESS' and i['verified'] for i in result['services'])
     changes=[v for q,v in api.calls if q==m.UPDATE]
-    assert all(v['i']==dict(source=dict(image=IMAGE),numReplicas=1) for v in changes)
+    assert all(v['i']==dict(source=dict(image=IMAGE)) for v in changes)
     assert path.exists()
     assert [q for q,_ in api.calls].count(m.DEPLOY)==3
+
+@pytest.mark.parametrize('replicas',[None,1,2])
+def test_image_promotion_never_rewrites_regional_or_legacy_topology(tmp_path,replicas):
+    api=Fake();api.replica=replicas
+    result=m.promote(IMAGE,SHA,api,head=lambda:SHA,receipt_path=tmp_path/'receipt.json')
+    assert all(item['verified'] for item in result['services'])
+    assert all(set(v['i'])=={'source'} for q,v in api.calls if q==m.UPDATE)
 
 @pytest.mark.parametrize('bad_meta',[False,True])
 def test_failed_or_unproven_deployment_stops_remaining_services(tmp_path,bad_meta):
