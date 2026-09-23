@@ -23,7 +23,9 @@ def request(opener,path,payload=None):
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--days',type=int,default=1);p.add_argument('--end',default=(datetime.now(ZoneInfo('America/Chicago')).date()-timedelta(days=1)).isoformat());p.add_argument('--workspace',default=os.environ.get('COMPASS_RESEARCH_HOME',str(ROOT/'workspace')));a=p.parse_args()
     if not 1<=a.days<=7:p.error('--days must be 1 through 7 per download')
-    end=date.fromisoformat(a.end);days=[(end-timedelta(days=i)).isoformat() for i in reversed(range(a.days))]
+    end=date.fromisoformat(a.end);requested=[end-timedelta(days=i) for i in reversed(range(a.days))]
+    days=[d.isoformat() for d in requested if d.weekday()<5]
+    if not days:raise SystemExit('No weekday session dates in this range; choose a trading date with --end YYYY-MM-DD.')
     root=Path(a.workspace).expanduser()/'compass';stamp=datetime.now().strftime('%Y%m%dT%H%M%S%f');dest=root/'downloads'/stamp;dest.mkdir(parents=True,exist_ok=False)
     opener=urllib.request.build_opener(NoRedirect(),urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     password=getpass.getpass('Compass dashboard password (not saved): ')
@@ -32,7 +34,7 @@ def main():
         reason=f'HTTP {e.code}' if isinstance(e,urllib.error.HTTPError) else type(e).__name__
         raise SystemExit(f'Login failed: {reason}. No password or cookie was saved.')
     finally:password=None
-    manifest={'version':1,'downloaded_at':datetime.now().astimezone().isoformat(),'start':days[0],'end':days[-1],'reports':[]}
+    manifest={'version':1,'downloaded_at':datetime.now().astimezone().isoformat(),'start':days[0],'end':days[-1],'skipped_non_session_dates':[d.isoformat() for d in requested if d.weekday()>=5],'reports':[]}
     endpoints=[(f'daily-{day}.json','/api/daily-results?'+urllib.parse.urlencode({'session_day':day})) for day in days]
     params=urllib.parse.urlencode({'start':days[0],'end':days[-1],'limit':200})
     endpoints += [('morning.json','/api/projects/morning/report?'+params),('native.json','/api/native/report?'+params)]

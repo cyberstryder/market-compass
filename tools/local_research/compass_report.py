@@ -51,7 +51,7 @@ def analyze(root):
     smooth=max(daily_saved.values(),key=lambda d:d.get('asof',0) or 0).get('smoothers_daily') if daily_saved else None
     reports={k:json.loads(v.read_text(encoding='utf-8')) for k,v in native.items()}
     for k,v in reports.items():warnings+=scan_warnings(v,k)
-    save(output/'evidence.json',{'cohort_groups':rows,'other_program_coverage':programs,'daily_supplemental':supplemental,'latest_daily_smoothers':smooth,'latest_native_reports':reports,'download_failures':failures,'warnings':warnings})
+    save(output/'evidence.json',{'daily_reports':daily_saved,'cohort_groups':rows,'other_program_coverage':programs,'daily_supplemental':supplemental,'latest_daily_smoothers':smooth,'latest_native_reports':reports,'download_failures':failures,'warnings':warnings})
     if rows:
         with (output/'cohort_groups.csv').open('w',newline='',encoding='utf-8') as f:
             writer=csv.DictWriter(f,fieldnames=list(rows[0]));writer.writeheader();writer.writerows(rows)
@@ -69,6 +69,11 @@ def analyze(root):
             measured=sum(t.get(k,0) or 0 for k in ('wins','losses','breakeven'))
             unknown=sum(t.get(k,0) or 0 for k in ('open','pending','unresolved'))
             lines.append(f"| {day} | {label} | {t.get('total','unknown')} | {measured} | {t.get('missing_pnl','unknown')} | {unknown} |")
+    lines+=['','## Exclusions and unresolved reasons']
+    for day,d in sorted(daily_saved.items()):
+        for key,label in COHORTS.items():
+            for r in (d.get(key) or {}).get('reasons',[]):
+                lines.append(f"- {day} / {label} / {r.get('status','unknown')}: {r.get('reason','unknown')} — {r.get('count','unknown')}")
     lines+=['','## Other research',
       '- Morning: stock coverage and option measurements retained separately by contract variant and horizon.',
       '- Weekly Smoothers: weekly states retained per snapshot; not added across days or treated as option returns.',
@@ -79,12 +84,17 @@ def analyze(root):
       '- No combined account equity, options replay or strategy optimization is calculated from these aggregate reports.',
       '', '## Coverage warnings']
     lines += ['- '+x for x in warnings] or ['- No explicit truncation flag reported; that is not proof of complete raw data.']
+    if smooth:
+        first=(smooth.get('activation') or {}).get('sessions',[{}])[0]
+        state='awaiting_first_session' if first.get('open',0)>(smooth.get('asof') or 0) else smooth.get('state','unknown')
+        lines+=['',f"Daily Smoothers: {state}; first full session {first.get('day','unknown')}; records {smooth.get('records','unknown')}."]
     lines+=['','## Download failures']+['- '+x['download']+' / '+x['file']+': '+x.get('reason','unknown') for x in failures]
     lines+=['','## Snapshot times']+[f"- {day}: source asof {d.get('asof','unknown')}" for day,d in sorted(daily_saved.items())]
     (output/'summary.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
     with zipfile.ZipFile(output/'compass-review.zip','w',zipfile.ZIP_DEFLATED) as z:
         for name in ('summary.md','cohort_groups.csv','evidence.json'):
             if (output/name).exists():z.write(output/name,name)
+        if (root.parent/'gap-audit.json').exists():z.write(root.parent/'gap-audit.json','gap-audit.json')
     print(f'Compass report: {output/"summary.md"}\nShare: {output/"compass-review.zip"}')
 
 def main():

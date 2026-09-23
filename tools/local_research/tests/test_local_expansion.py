@@ -87,3 +87,29 @@ class CompassTests(unittest.TestCase):
             self.assertEqual(result['download_failures'][0]['reason'],'HTTP 503')
 
 if __name__=='__main__':unittest.main()
+
+class GapExportTests(unittest.TestCase):
+    def test_exact_gap_ranges_and_prices_unchanged(self):
+        from gap_audit import inventory
+        raw=prices(1380);raw=raw.drop(raw.index[[100,101,200]])
+        before=raw.copy(deep=True);r=inventory(raw,set())
+        self.assertEqual(r[0]['missing_minutes'],3)
+        self.assertEqual([x['minutes'] for x in r[0]['ranges']],[2,1])
+        pd.testing.assert_frame_equal(raw,before)
+    def test_full_daily_reasons_preserved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);folder=root/'downloads'/'1';name='daily-2026-09-22.json'
+            daily={'day':'2026-09-22','options':{'groups':[],'reasons':[{'status':'excluded','reason':'No eligible contract','count':10}]}}
+            save(folder/name,daily);save(folder/'manifest.json',{'reports':[{'file':name,'state':'downloaded'}]})
+            compass_report.analyze(root)
+            e=json.loads((root/'analysis'/'evidence.json').read_text())
+            self.assertEqual(e['daily_reports']['2026-09-22'],daily)
+            self.assertIn('No eligible contract',(root/'analysis'/'summary.md').read_text())
+    def test_weekend_does_not_issue_invalid_report_request(self):
+        calls=[]
+        def fake(opener,path,payload=None):
+            calls.append(path)
+            return {'day':'2026-09-22','asof':1} if '2026-09-22' in path and '/daily-' in path else {'day':'2026-09-21','asof':1}
+        with tempfile.TemporaryDirectory() as temp,patch.object(compass_sync,'request',side_effect=fake),patch.object(compass_sync.getpass,'getpass',return_value='test'),patch('sys.argv',['compass_sync.py','--workspace',temp,'--days','3','--end','2026-09-22']):
+            compass_sync.main()
+            self.assertFalse(any('2026-09-20' in path for path in calls))

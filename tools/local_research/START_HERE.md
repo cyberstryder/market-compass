@@ -21,8 +21,8 @@ password. Typing is invisible. The password and login cookie stay in memory and
 are not saved. It downloads existing reports over HTTPS. It does not place trades,
 send Discord messages, or change live strategy rules.
 
-The explicit date above collects September 20–22, including any empty weekend
-cohorts. For routine use, `.\compass.cmd` downloads yesterday in Chicago time.
+The explicit date above covers September 20–22; weekend session labels are
+skipped, so the downloader requests September 21 and 22. For routine use, `.\compass.cmd` downloads yesterday in Chicago time.
 To refresh today's developing report, use `--end YYYY-MM-DD` with today's date.
 `--days 7 --end YYYY-MM-DD` collects a maximum of seven session dates per run;
 repeat with earlier dates to extend the local report archive. Re-download dates
@@ -106,3 +106,21 @@ Run on **one computer at a time**, and wait for OneDrive sync before switching.
 
 The automated suite tests calculations and downloader behavior with fixtures.
 The new live download and Windows wrappers need their first run on your PCs.
+
+## Data-gap update
+
+After `git pull --ff-only`, run `.\audit.cmd` to inventory exact missing
+futures minutes. Then run `.\compass.cmd --days 2 --end 2026-09-22`. The refreshed
+`compass-review.zip` includes full daily report evidence (including exclusion
+reasons) and `gap-audit.json`. Your CSVs and previous simulation results are not
+changed; no full futures rerun is needed just to inspect these diagnostics.
+
+The audit cannot tell a no-trade minute from absent provider history. Obtain
+matching history for the listed intervals with the same contract, session and
+roll/adjustment settings, then use `import.cmd SYMBOL` to merge it. Never combine
+a dated contract with a differently adjusted continuous series. Historical missing
+quotes and original Morning deliveries cannot be reconstructed from current data.
+
+Detail endpoints still impose their documented limits; complete daily aggregates
+and their reasons are preserved separately. Dashboard diagnostic additions require
+the separate production fix to be deployed; local exporter improvements work now.
