@@ -10,6 +10,29 @@ concurrency:
   group: quality-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
+  deployment-preflight:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.RAILWAY_IMAGE_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check deployment API access without changing services
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python - <<'PY'
+          from ops.deploy.image_release import Railway, current_main, INSTANCE, ENVIRONMENT, SERVICES
+          import os
+          print('GitHub main:', current_main(), flush=True)
+          api = Railway(os.environ.get('RAILWAY_TOKEN'))
+          for name, service in SERVICES:
+              instance = api(INSTANCE, {'s': service, 'e': ENVIRONMENT})['serviceInstance']
+              print(name, 'readable; healthcheck:', instance['healthcheckPath'], flush=True)
+          PY
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -117,7 +140,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
   deploy:
-    needs: publish
+    needs: [publish, deployment-preflight]
     if: >-
       github.ref == 'refs/heads/main' && github.event_name != 'pull_request' &&
       vars.RAILWAY_IMAGE_DEPLOY_ENABLED == 'true'

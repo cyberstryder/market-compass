@@ -7,6 +7,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 from pathlib import Path
 
 REPOSITORY = 'cyberstryder/market-compass'
@@ -44,14 +45,17 @@ def validate(image, revision):
 
 def request_json(url, body=None, headers=None):
     req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None,
-        headers={'Accept':'application/json','Content-Type':'application/json', **(headers or {})})
+        headers={'Accept':'application/json','Content-Type':'application/json',
+                 'User-Agent':'market-compass-image-promotion/1.0', **(headers or {})})
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
             return json.load(response)
+    except urllib.error.HTTPError as error:
+        raise ReleaseError(f'API HTTP {error.code} from {urllib.parse.urlsplit(url).hostname}; inspect deployment state before retrying') from None
     except (urllib.error.URLError, ValueError) as error:
         # Never print request headers, credentials or response bodies. A failed
         # mutation is not automatically retried: deployment outcome may be unknown.
-        raise ReleaseError('API request failed; inspect deployment state before retrying') from None
+        raise ReleaseError(f'API {type(error).__name__} from {urllib.parse.urlsplit(url).hostname}; inspect deployment state before retrying') from None
 
 
 class Railway:
