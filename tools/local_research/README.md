@@ -12,7 +12,7 @@ TradingView/data-provider CSV exports. No paid data request happens implicitly.
 ## 1. Set up EACH computer once
 
 Install **Git for Windows** from https://git-scm.com/downloads/win and **64-bit
-Python 3.12** from https://www.python.org/downloads/windows/ (include the Python
+Python 3.11, 3.12 or 3.13** from https://www.python.org/downloads/windows/ (include the Python
 launcher). Open PowerShell in the folder where you want your projects and run:
 
 ```powershell
@@ -23,12 +23,14 @@ cd compass-research\tools\local_research
 
 Git may ask you to sign in to your existing GitHub account. No credential should
 be pasted into a script. Setup creates an isolated `.venv`, installs pinned
-packages and runs the test suite. If `py -3.12` is unavailable, install Python
-3.12 and reopen PowerShell. No PowerShell execution-policy change is needed.
+packages and runs the test suite. Setup first tries your installed `python`, then
+the launcher for 3.13/3.12/3.11; no downgrade is required if you have 3.13.
+If none is found, install a supported version and reopen PowerShell.
+No PowerShell execution-policy change is needed.
 
 Do not copy `.venv` to the second computer: run setup there too. The code was
 verified in Linux with Python 3.11; Windows batch setup must still be exercised
-on your machines. Dependency pins support the intended Python 3.12 environment.
+on your machines. Dependency pins support Python 3.11 through 3.13.
 
 ## 2. Choose where data/results live
 
