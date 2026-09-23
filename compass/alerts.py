@@ -186,7 +186,16 @@ class DeliveryWorker:
                 self.health(route, 'error', 'Invalid dedicated or fallback webhook; route held')
                 continue
             if not url:
-                self.health(route, 'not_configured', 'Awaiting this channel webhook; messages stay queued')
+                with self.db.tx() as c:
+                    pending=c.execute(select(func.count()).select_from(discord_jobs).where(
+                        discord_jobs.c.route==route,discord_jobs.c.status=='pending')).scalar_one()
+                    owner=self.db.get(c,'native:ownership:smoothers',{}).get('owner','original')
+                if not pending and route=='options_leaps':
+                    self.health(route,'inactive','Research only; no qualified live alert producer or queued messages')
+                elif not pending and route=='smoothers' and owner=='original':
+                    self.health(route,'externally_managed','Original Smoothers owns notifications; Compass handoff is not active')
+                else:
+                    self.health(route, 'not_configured', 'Awaiting this channel webhook; messages stay queued')
                 continue
             if url not in self.verified:
                 self.health(route, 'error', 'Destination verification failed; route remains queued')

@@ -140,3 +140,21 @@ def test_verification_recovers_without_sending_a_synthetic_alert(db):
         assert db.get(c, 'health:discord:spy_morning')['destination']['channel_id'] == '789'
         assert outbox_status(db, c, 131)['pending'] == 0
     assert calls == ['GET', 'GET']
+
+
+def test_inactive_routes_do_not_hide_real_queued_or_owned_delivery_blocks(db):
+    cfg=Config(local=True,discord='',discord_fallback=False)
+    worker=DeliveryWorker(db,cfg)
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda req:pytest.fail('No network expected'))) as client:
+            await worker.tick(client)
+            with db.tx() as c:
+                assert db.get(c,'health:discord:options_leaps')['status']=='inactive'
+                assert db.get(c,'health:discord:smoothers')['status']=='externally_managed'
+                db.put(c,'native:ownership:smoothers',{'owner':'compass'})
+            add(db,'options_leaps')
+            await worker.tick(client)
+            with db.tx() as c:
+                assert db.get(c,'health:discord:options_leaps')['status']=='not_configured'
+                assert db.get(c,'health:discord:smoothers')['status']=='not_configured'
+    asyncio.run(run())

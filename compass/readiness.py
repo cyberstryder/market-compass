@@ -25,7 +25,7 @@ def decorate_health(items, workers, markets, now):
         worker = workers.get("worker:" + role) or workers.get("worker:all")
         h["heartbeat_age"] = round(now - worker["at"], 1) if worker else None
         h["recorded_status"] = h["status"]
-        if h["status"] in {"not_configured", "disabled"}:
+        if h["status"] in {"not_configured", "disabled", "inactive", "externally_managed"}:
             result.append(h)
             continue
         if not worker or h["heartbeat_age"] > 20:

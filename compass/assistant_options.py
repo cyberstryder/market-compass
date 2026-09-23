@@ -28,30 +28,38 @@ POLICY = (
     'Do not turn a requested bearish direction into evidence that the market is bearish. '
     'Do not invent trigger levels or list downside targets above the triggering level. '
     'These candidates are a bounded near-spot sample, not ranked recommendations or complete chain coverage. '
+    'Copy the requested expiration dates and DTE bounds from option_research.request exactly; never recalculate or expand them. '
+    'For multiple horizons, handle each option_research.requests item separately; never silently choose one. '
     'No tools or follow-up scans can be invoked by the answer; never promise to run one. '
     'A closed scheduled SPY plan remains closed; independent research is allowed and is not a signal under that plan. '
 )
 
 
 def request(question, now):
-    q = question.lower()
+    q = question.lower().replace('‑', '-').replace('—', '-').replace('–', '-')
     if not re.search(r'\b(options?|puts?|calls?|leaps?|\d+\s*dte)\b', q):
         return None
+    if re.search(r'\b(?:0\s*dte|same[- ]day)\b', q) and re.search(r'\bleaps?\b', q):
+        clauses = re.split(r'\s+(?:and|versus|vs\.?)\s+|[;\n]', question, flags=re.I)
+        requests = [request(part, now) for part in clauses if len(clauses)>1 if re.search(r'0\s*dte|same[- ]day|leaps?', part, re.I)]
+        if len(requests) >= 2 and all(r and r.get('status') == 'requested' for r in requests):
+            return dict(status='multiple', requests=requests[:3])
+        return dict(status='ambiguous_horizon', note='Multiple expiration horizons were requested but cannot be assigned safely; separate the horizons.')
     today = datetime.fromtimestamp(now, ZoneInfo('America/New_York')).date()
     lo, hi, basis = 0, 1095, 'No expiry specified; sample listed expirations from today through three years.'
     dates = re.findall(r'\b\d{4}-\d{2}-\d{2}\b', q)
-    dte = re.search(r'\b(\d+)\s*(?:-|to|–)\s*(\d+)\s*dte\b', q)
+    dte = re.search(r'\b(\d+)\s*(?:-|to)\s*(\d+)\s*(?:dte|(?:calendar\s+)?days?(?:\s+to\s+expir(?:ation|y))?)\b', q)
     exact = re.search(r'\b(\d+)\s*dte\b', q)
     duration = re.search(r'\b(\d+)\s*[- ]?\s*(days?|weeks?|months?|years?)\b', q)
-    if dates:
+    if dte:
+        lo, hi = map(int, dte.groups()); basis = 'Explicit calendar DTE range.'
+    elif dates:
         try:
             days = [(date.fromisoformat(d)-today).days for d in dates[:2]]
             lo, hi = min(days), max(days)
         except ValueError:
             return dict(status='invalid_expiry', note='Invalid calendar expiration date; clarify the requested date.')
         basis = 'Explicit expiration date(s).'
-    elif dte:
-        lo, hi = map(int, dte.groups()); basis = 'Explicit calendar DTE range.'
     elif exact:
         lo = hi = int(exact[1]); basis = 'Explicit calendar DTE.'
     elif 'today' in q or 'same day' in q or 'same-day' in q:
@@ -100,6 +108,11 @@ def sample(rows, req, spot, now, source):
 
 
 async def research(cfg, scope, req, quotes, now, db=None):
+    if req['status'] == 'multiple':
+        results = []
+        for item in req['requests']:
+            results.append(await research(cfg, scope, item, quotes, now, db=db))
+        return dict(request=req, requests=results, execution='Read-only research; no orders.')
     result = dict(request=req, symbols={}, execution='Read-only research; no simulated or broker orders.')
     if req['status'] != 'requested': return result
     source = 'massive' if cfg.massive else 'alpaca' if cfg.alpaca_key and cfg.alpaca_secret else None
@@ -186,6 +199,9 @@ async def collect_requests(collector):
 def record_evidence(db, result, now):
     """Keep small daily verification records, never user prompts or credentials."""
     from .market import day
+    if result.get('requests'):
+        for item in result['requests']: record_evidence(db, item, now)
+        return
     req=result.get('request',{})
     bucket='0dte' if req.get('min_dte')==req.get('max_dte')==0 else 'leaps' if req.get('min_dte',0)>=365 else 'other'
     symbols=result.get('symbols') or {'request':{'status':result.get('status','unavailable')}}

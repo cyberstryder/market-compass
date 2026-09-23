@@ -76,7 +76,7 @@ def test_live_recovery_retains_original_clock_and_source(monkeypatch):
     assert saved[0][0]=='massive_rest'
     q=saved[0][1][0][1]
     assert q['ts']==NOW-1 and q['recovery_fetched_at']==NOW
-    assert q['collection_version']=='option-reliability-v5'
+    assert q['collection_version']=='option-reliability-v6'
 
 
 def test_recovery_owns_http_client_on_its_isolated_loop(monkeypatch):
@@ -147,3 +147,45 @@ def test_opra_access_failure_backs_off_without_indicative_fallback(monkeypatch):
         assert first[0]['http_status']==403 and second==[]
     asyncio.run(run())
     assert len(calls)==1 and c.option_opra_backoff==NOW+300
+
+
+def test_live_demand_precedes_followups_and_respects_different_cooldowns(monkeypatch):
+    from contextlib import nullcontext
+    from compass.option_recovery import targets
+    live=['O:Z','O:Y'];followups=['O:A','O:B']
+    monkeypatch.setattr('compass.active_observations.inventory',lambda *a,include_followups=True:dict(options=live+followups if include_followups else live))
+    db=SimpleNamespace(tx=lambda:nullcontext(None),get=lambda *a:{})
+    c=SimpleNamespace(db=db,option_recovery_attempts={'O:Z':NOW-3,'O:A':NOW-3})
+    selected,waiting,truncated=targets(c,NOW)
+    assert selected==['O:Y','O:Z','O:B'] and waiting==3 and not truncated
+
+
+def test_opra_batch_is_not_blocked_by_massive_backoff(monkeypatch):
+    monkeypatch.setattr('compass.option_recovery.time.time',lambda:NOW)
+    symbols=['O:C'+str(i) for i in range(100)]
+    monkeypatch.setattr('compass.option_recovery.targets',lambda *a:(symbols,100,False))
+    calls=[]
+    async def get(url,headers,params):
+        calls.append(url)
+        assert params['feed']=='opra' and len(params['symbols'].split(','))==100
+        return {'quotes':{}}
+    c=SimpleNamespace(cfg=SimpleNamespace(massive='test',alpaca_key='test',alpaca_secret='test'),
+        alpaca_headers={},get=get,option_recovery_backoff=NOW+300,stock_recovery_backoff=NOW+300,
+        db=SimpleNamespace(health=lambda *a,**kw:None))
+    asyncio.run(recover(c))
+    assert len(calls)==1 and 'alpaca' in calls[0]
+
+
+def test_massive_only_fallback_rotates_instead_of_starving(monkeypatch):
+    clock=[NOW]
+    monkeypatch.setattr('compass.option_recovery.time.time',lambda:clock[0])
+    symbols=['O:C'+str(i) for i in range(8)]
+    monkeypatch.setattr('compass.option_recovery.targets',lambda *a:(symbols,8,False))
+    calls=[]
+    async def get(url,params):
+        calls.append(url.rsplit('/',1)[1]);return {'results':[]}
+    c=SimpleNamespace(cfg=SimpleNamespace(massive='test'),get=get,db=SimpleNamespace(health=lambda *a,**kw:None))
+    async def run():
+        await recover(c);clock[0]+=3;await recover(c)
+    asyncio.run(run())
+    assert calls==symbols

@@ -41,12 +41,20 @@ async def collect(collector, now=None):
     # Repair actual source bars only; no interpolation or synthetic clock minutes.
     await asyncio.to_thread(collector.bars,'alpaca', [('SPY',t,b) for t,b in minutes.items()])
     stamps=list(minutes)
-    proof=None
-    if end==hours[0]:
-        five_data=await collector.get('https://data.alpaca.markets/v2/stocks/SPY/bars',
-            collector.alpaca_headers,{**params,'timeframe':'5Min'})
-        five=valid_bars(five_data,start,end,300)
-        proof=verify(start,end,minutes,five,time.time(),collector.cfg.feed)
+    five_end=start+int((end-start)//300)*300
+    five_data=await collector.get('https://data.alpaca.markets/v2/stocks/SPY/bars',
+        collector.alpaca_headers,{**params,'timeframe':'5Min',
+            'end':datetime.fromtimestamp(five_end-.001,timezone.utc).isoformat()}) if five_end>start else {'bars':[]}
+    five=valid_bars(five_data,start,five_end,300)
+    fifteen={}
+    if set(five)!=set(range(int(start),int(five_end),300)):
+        fifteen_end=start+int((end-start)//900)*900
+        if fifteen_end>start:
+            data15=await collector.get('https://data.alpaca.markets/v2/stocks/SPY/bars',
+                collector.alpaca_headers,{**params,'timeframe':'15Min',
+                    'end':datetime.fromtimestamp(fifteen_end-.001,timezone.utc).isoformat()})
+            fifteen=valid_bars(data15,start,fifteen_end,900)
+    proof=verify(start,end,minutes,five,time.time(),collector.cfg.feed,fifteen)
     # Provider I/O completes before opening the short database transaction.
     with collector.db.tx() as c:
         stored=[r[0] for r in collector.db.get(c,'bar_window:SPY',[]) if len(r)>=6]
@@ -55,6 +63,9 @@ async def collect(collector, now=None):
         collector.db.put(c,'provider_coverage:SPY:'+day(now),result)
         if proof is not None:
             collector.db.put(c,'spy-provider-range:'+day(now),proof)
-    collector.db.health("provider_coverage","available" if result["provider_inventory_complete"] else "partial",
-        "SPY source inventory and verified-range check; timeframe research unchanged",result["fetched_at"])
+    collector.db.health("provider_coverage","available" if proof["verified"] else "partial",
+        "SPY range verified" if proof["verified"] else proof["reason"],result["fetched_at"],
+        inventory_status=result["status"],range_verified=proof["verified"],
+        provider_bars=len(minutes),collector_missing=len(result["collector_missing_minutes"]),
+        failed_segments=proof["failed_segments"])
     return result
