@@ -115,3 +115,37 @@ def test_verified_range_does_not_replace_missing_rth_confirmation(db):
         assert not report['context']['confirmation_candle']['complete']
         assert 'CONFIRMED' not in report['decision']
 
+
+
+def test_fifteen_minute_attestation_requires_matching_all_available_evidence():
+    minutes,five=inventories()
+    fifteen={START:deepcopy(five[START])}
+    five.pop(START)
+    assert verify(START,OPEN,minutes,five,NOW,'sip',fifteen)['verified']
+    # A broader bar must never conceal contradictory available five-minute data.
+    five[START+300]['h']+=1
+    assert not verify(START,OPEN,minutes,five,NOW,'sip',fifteen)['verified']
+    five[START+300]['h']-=1
+    fifteen[START]['h']+=1
+    assert not verify(START,OPEN,minutes,five,NOW,'sip',fifteen)['verified']
+
+
+def test_preopen_proof_and_completed_tail_require_real_minutes(db):
+    seed(db)
+    now=OPEN-10*60+10
+    minutes,five=inventories()
+    end=OPEN-10*60
+    minutes={t:b for t,b in minutes.items() if t<end}
+    five={t:b for t,b in five.items() if t+300<=end}
+    proof=verify(START,end,minutes,five,now,'sip')
+    assert proof['verified']
+    with db.tx() as c:
+        rows=db.get(c,'bar_window:SPY')
+        db.put(c,'bar_window:SPY',[r for r in rows if r[0] in minutes])
+        db.put(c,'spy-provider-range:2026-09-16',proof)
+        context=bar_context(db,c,now)
+        apply_verified_range(db,c,context,now,'2026-09-16')
+        assert context['premarket_complete'] and not context['premarket_clock_complete']
+        later=bar_context(db,c,now+60)
+        apply_verified_range(db,c,later,now+60,'2026-09-16')
+        assert not later['premarket_complete']  # Missing newer completed minute.

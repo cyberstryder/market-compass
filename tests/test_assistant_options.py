@@ -156,3 +156,24 @@ def test_queue_timeout_cleans_request_and_preserves_research_scope(tmp_path):
     result=asyncio.run(queued_research(db,['QQQ'],req,{},NOW,timeout=.02))
     assert result['status']=='collector_lookup_timeout' and result['request']==req
     with db.tx() as c: assert not db.prefix(c,'ask-options:')
+
+
+def test_calendar_day_range_and_combined_horizons(monkeypatch):
+    now=datetime(2026,9,23,19,tzinfo=timezone.utc).timestamp()
+    req=request('Read-only QQQ LEAPS calls, 365–900 calendar days to expiration as of 2026-09-23',now)
+    assert (req['min_dte'],req['max_dte'],req['expiry_end'])==(365,900,'2029-03-11')
+    combined=request('QQQ 0DTE puts and QQQ LEAPS calls, 365–900 calendar days',now)
+    assert combined['status']=='multiple'
+    calls=[]
+    async def fetch(self,symbol,lo,hi,page_limit):
+        calls.append((lo,hi))
+        return [row(expiry=lo,side='put' if lo=='2026-09-23' else 'call',ts=now)],True
+    monkeypatch.setattr(Collectors,'alpaca_chain',fetch)
+    result=asyncio.run(research(Config(local=True,alpaca_key='fake',alpaca_secret='fake'),['QQQ'],combined,{},now))
+    assert calls==[('2026-09-23','2026-09-23'),('2027-09-23','2029-03-11')]
+    from compass.assistant_progress import evidence_summary
+    cards=evidence_summary(json.dumps({'market_context':{'question_scope':{'symbols':['QQQ']},'option_research':result}}))['cards']
+    options=[c for c in cards if c['label']=='Requested options']
+    assert len(options)==2
+    assert [next(v['value'] for v in c['values'] if v['label']=='Side') for c in options]==['put','call']
+    assert request('QQQ 0DTE puts LEAPS calls',now)['status']=='ambiguous_horizon'

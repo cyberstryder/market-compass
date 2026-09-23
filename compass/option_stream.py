@@ -161,6 +161,7 @@ async def consume(ws, collector):
                 await asyncio.sleep(.05)
 
     async def health():
+        last_log=0
         await authenticated.wait()
         while True:
             now = time.time()
@@ -177,8 +178,10 @@ async def consume(ws, collector):
                 subscription_evidence_error=trace.persistence_error)
             await asyncio.to_thread(collector.db.health,'option_stream','receiving' if latest else 'waiting',
                 'Independent option receipt; sampled quotes and trades persisted in separate batches',latest,**report)
-            logging.getLogger('uvicorn.error').info('Option stream timing: %s',json.dumps(report,sort_keys=True))
-            await asyncio.sleep(30)
+            if now-last_log>=30:
+                logging.getLogger('uvicorn.error').info('Option stream timing: %s',json.dumps(report,sort_keys=True))
+                last_log=now
+            await asyncio.sleep(5)
 
     workers = [asyncio.create_task(fn()) for fn in (read,subscriptions,health,write_trace)]
     workers += [asyncio.create_task(write(kind)) for kind in ('quotes','trades')]

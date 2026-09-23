@@ -89,7 +89,7 @@ class SetupStudy:
             'mfe_r':0, 'mae_r':0, 'pnl':None, 'r_multiple':None,
             'basis':'Independent one-unit trial; sampled executable quotes, one adverse entry/stop tick, illustrative fees; not account P&L'}
         p['collection_version']=(q or {}).get('collection_version','unversioned')
-        if p['collection_version']=='option-reliability-v5':recovery.enable(p)
+        if p['collection_version'] in ('option-reliability-v5','option-reliability-v6'):recovery.enable(p)
         cash_hours=session(day(now))
         context=signal.get('context',{})
         p['research_context']={

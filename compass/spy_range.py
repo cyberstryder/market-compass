@@ -2,7 +2,7 @@
 import math
 from datetime import datetime
 
-VERSION = 'spy-provider-range-v1'
+VERSION = 'spy-provider-range-v2'
 
 
 def valid_bars(data, start, end, step):
@@ -21,19 +21,46 @@ def valid_bars(data, start, end, step):
     return result
 
 
-def verify(start, end, minutes, five, fetched_at, feed):
-    expected = set(range(int(start), int(end), 300))
-    complete = end > start and (end-start) % 300 == 0 and set(five) == expected
-    matches = complete and all(
-        (bucket := [b for t,b in minutes.items() if ts <= t < ts+300])
-        and math.isclose(max(b['h'] for b in bucket), five[ts]['h'], abs_tol=1e-8, rel_tol=0)
-        and math.isclose(min(b['l'] for b in bucket), five[ts]['l'], abs_tol=1e-8, rel_tol=0)
-        for ts in expected)
-    return dict(version=VERSION, start=start, end=end, fetched_at=fetched_at, feed=feed,
-        verified=bool(matches), five_minute_bars=len(five), expected_five_minute_bars=len(expected),
+def verify(start, end, minutes, five, fetched_at, feed, fifteen=None):
+    """Verify observed extrema against complete provider aggregates, not clocks.
+
+    A missing 5m bucket is never assumed empty. A complete covering 15m bar
+    can attest its range only if the observed minute extrema match exactly.
+    The unfinished 5m tail requires every completed one-minute bar.
+    """
+    fifteen=fifteen or {}
+    cursor=start; segments=[]; failures=[]
+    equal=lambda a,b: math.isclose(a,b,abs_tol=1e-8,rel_tol=0)
+    while cursor<end:
+        remaining=end-cursor
+        step=300 if remaining>=300 else 60
+        source=five if step==300 else minutes
+        # Prefer existing 5m proof. Use 15m only on aligned complete intervals
+        # containing an absent 5m bucket, never to override a price mismatch.
+        if (remaining>=900 and (cursor-start)%900==0
+                and any(cursor+i*300 not in five for i in range(3))):
+            step=900;source=fifteen
+        bar=source.get(cursor)
+        bucket=[b for t,b in minutes.items() if cursor<=t<cursor+step]
+        ok=bool(bar and bucket and equal(max(b['h'] for b in bucket),bar['h'])
+                and equal(min(b['l'] for b in bucket),bar['l']))
+        if step==900:
+            for t in range(int(cursor),int(cursor+900),300):
+                existing=five.get(t)
+                observed=[b for stamp,b in minutes.items() if t<=stamp<t+300]
+                if existing and (not observed or not equal(max(b['h'] for b in observed),existing['h'])
+                        or not equal(min(b['l'] for b in observed),existing['l'])):
+                    ok=False
+        if not ok: failures.append(dict(start=cursor,seconds=step,reason='missing_aggregate_or_range_mismatch'))
+        segments.append(dict(start=cursor,seconds=step,matched=ok))
+        cursor+=step
+    verified=bool(end>start and (end-start)%60==0 and not failures)
+    return dict(version=VERSION,start=start,end=end,fetched_at=fetched_at,feed=feed,
+        verified=verified,five_minute_bars=len(five),expected_five_minute_bars=int((end-start)//300),
+        fifteen_minute_bars=len(fifteen),verification_segments=segments,failed_segments=failures,
         minutes=[[t,b['h'],b['l']] for t,b in sorted(minutes.items())],
-        reason='Complete provider five-minute range matches each observed minute bucket' if matches
-        else 'Missing five-minute bars or minute/five-minute range mismatch')
+        reason='Provider aggregate ranges match observed minutes; no bars synthesized' if verified
+        else 'Missing provider aggregate or minute/aggregate range mismatch')
 
 
 def apply_verified_range(db, c, context, now, day):
@@ -45,17 +72,27 @@ def apply_verified_range(db, c, context, now, day):
     proof = db.get(c, 'spy-provider-range:'+day, {})
     summary = {k:v for k,v in proof.items() if k != 'minutes'}
     context['premarket_range_verification'] = summary
-    # Full-session verification only. Preopen retains its original minute gate.
+    # A completed provider range can cover preopen too. Any newer completed
+    # minutes must be present individually; no carry-forward over a gap.
     opening = context['session_open']
     start = opening - 330*60
+    end=min(int(now//60)*60,opening)
+    proof_end=proof.get('end',0)
     if not (proof.get('version') == VERSION and proof.get('verified') is True
             and proof.get('feed') == 'sip' and proof.get('start') == start
-            and proof.get('end') == opening and now >= opening
+            and start+3600 <= proof_end <= end and end-proof_end <= 120
             and 0 <= now-proof.get('fetched_at', 0) <= 120):
         return
     stored = sorted([[r[0], r[2], r[3]] for r in db.get(c, 'bar_window:SPY', [])
-                     if len(r) >= 6 and start <= r[0] < opening])
+                     if len(r) >= 6 and start <= r[0] < proof_end])
     if stored != proof.get('minutes'):
         return
+    tail={r[0] for r in db.get(c,'bar_window:SPY',[]) if len(r)>=6 and proof_end<=r[0]<end
+          and all(isinstance(v,(int,float)) and math.isfinite(v) for v in r[1:6])
+          and 0<r[3]<=min(r[1],r[4])<=max(r[1],r[4])<=r[2] and r[5]>=0}
+    if tail != set(range(int(proof_end),int(end),60)):
+        return
     context['premarket_complete'] = True
-    context['premarket_coverage_basis'] = 'verified_provider_five_minute_range'
+    context['premarket_coverage_basis'] = ('verified_provider_multiframe_range'
+        if any(s['seconds']==900 for s in proof.get('verification_segments',[])) or now<opening
+        else 'verified_provider_five_minute_range')

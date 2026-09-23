@@ -88,7 +88,7 @@ def test_late_stored_quotes_do_not_repair_outcomes(db,cfg):
 def test_recovery_underlying_is_bounded_preserves_source_time_and_ignores_stale(db,cfg,monkeypatch):
     from compass import active_observations
     monkeypatch.setattr('compass.option_recovery.time.time',lambda:NOW)
-    monkeypatch.setattr(active_observations,'inventory',lambda *a:dict(stocks=['SPY','QQQ']+[f'S{i}' for i in range(40)],options=[]))
+    monkeypatch.setattr(active_observations,'inventory',lambda *a,**kw:dict(stocks=['SPY','QQQ']+[f'S{i}' for i in range(140)],options=[]))
     cfg.alpaca_key='fixture';cfg.alpaca_secret='fixture'
     saved=[];calls=[]
     async def get(url,headers,params):
@@ -98,17 +98,17 @@ def test_recovery_underlying_is_bounded_preserves_source_time_and_ignores_stale(
             bp=100,ap=100.01,bs=1,**{'as':1}) for s in params['symbols'].split(',')}}
     collector=SimpleNamespace(db=db,cfg=cfg,alpaca_headers={},get=get,quote_batch=lambda source,items:saved.append((source,items)))
     asyncio.run(recover_stocks(collector))
-    assert len(calls[0]['symbols'].split(','))==32
+    assert len(calls[0]['symbols'].split(','))==100
     assert saved[0][0]=='alpaca_stock_recovery' and len(saved[0][1])==1
     assert saved[0][1][0][1]['ts']==NOW-1
-    assert saved[0][1][0][1]['collection_version']=='option-reliability-v5'
+    assert saved[0][1][0][1]['collection_version']=='option-reliability-v6'
 
 
 def test_stock_backoff_does_not_disable_option_recovery(db,cfg,monkeypatch):
     from compass.providers import FeedError
     from compass import active_observations
     monkeypatch.setattr('compass.option_recovery.time.time',lambda:NOW)
-    monkeypatch.setattr(active_observations,'inventory',lambda *a:dict(stocks=['SPY'],options=[]))
+    monkeypatch.setattr(active_observations,'inventory',lambda *a,**kw:dict(stocks=['SPY'],options=[]))
     cfg.alpaca_key='fixture';cfg.alpaca_secret='fixture';calls=[]
     async def get(*a,**k):calls.append(1);raise FeedError('rate',429)
     collector=SimpleNamespace(db=db,cfg=cfg,alpaca_headers={},get=get)

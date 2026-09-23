@@ -31,14 +31,14 @@ def evidence_summary(assistant_input):
                               time_label=time_label, note=str(note)[:300] if note else None))
 
         option_data = context.get('option_research', {})
-        if option_data:
-            option = option_data.get('symbols', {}).get(symbol, {})
-            req = option_data.get('request', {})
+        for option_result in option_data.get('requests', [option_data] if option_data else []):
+            option = option_result.get('symbols', {}).get(symbol, {})
+            req = option_result.get('request', {})
             add('Requested options', 'option_research',
-                [('From DTE', req.get('min_dte')), ('Through DTE', req.get('max_dte')),
+                [('Side', req.get('side')), ('First expiry', req.get('expiry_start')), ('Last expiry', req.get('expiry_end')), ('From DTE', req.get('min_dte')), ('Through DTE', req.get('max_dte')),
                  ('Sampled contracts', len(option.get('candidates', [])) if option.get('status')=='available' else None)],
                 option.get('source'), option.get('fetched_at'), 'Fetched',
-                str(option.get('status', option_data.get('status', req.get('status')))) +
+                str(option.get('status', option_result.get('status', req.get('status')))) +
                 '; bounded chain sample; each quote has its own source time.')
 
         bid, ask = number(quote.get('bid')), number(quote.get('ask'))

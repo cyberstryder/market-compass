@@ -2,7 +2,7 @@
 from sqlalchemy import select
 
 
-def inventory(db,c,now):
+def inventory(db,c,now,include_followups=True):
     from .option_ideas import ideas
     from .swing_ideas import swings
     from .store import spy_options
@@ -19,7 +19,7 @@ def inventory(db,c,now):
         elif p.get('asset')=='stock':stocks.append(p['symbol'])
         if p.get('underlying'):stocks.append(p['underlying'])
     # Follow-ups keep collecting independently after their original result is unresolved.
-    for p in active(c,now):
+    for p in active(c,now) if include_followups else []:
         for s in p['symbols']:
             if s.startswith('O:'):options.append(s)
             elif '@' not in s:stocks.append(s)
