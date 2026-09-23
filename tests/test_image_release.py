@@ -72,6 +72,16 @@ def test_mid_rollout_new_main_does_not_deploy_old_code_to_next_service(tmp_path)
 def test_missing_deployment_token_fails_clearly():
     with pytest.raises(m.ReleaseError,match='RAILWAY_TOKEN'):m.Railway(None)
 
+def test_http_diagnostics_identify_host_and_status_without_credentials(monkeypatch):
+    def fail(request,timeout):
+        assert request.get_header('User-agent')=='market-compass-image-promotion/1.0'
+        raise m.urllib.error.HTTPError(request.full_url,403,'secret-value',{},None)
+    monkeypatch.setattr(m.urllib.request,'urlopen',fail)
+    with pytest.raises(m.ReleaseError) as caught:
+        m.request_json('https://example.com/private?token=secret-value',headers={'Authorization':'secret-value'})
+    assert 'HTTP 403 from example.com' in str(caught.value)
+    assert 'secret-value' not in str(caught.value)
+
 
 def test_poll_timeout_preserves_receipt_and_stops_rollout(tmp_path):
     api=Fake();api.status='DEPLOYING';clock=iter([0,0,901])
