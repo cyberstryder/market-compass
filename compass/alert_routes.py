@@ -4,11 +4,13 @@ from .alert_format import alert_identity
 
 # Independent delivery queues. Source mirrors and experiments have their own home.
 ROUTES = {
-    'spy_morning': ('spy-0dte-plan', 'SPY morning brief + TradingView drawing prompt'),
+    'spy_morning': ('spy-0dte-plan', 'SPY 0DTE plans, drawings and contract-qualified trade alerts'),
     'futures': ('futures', 'Futures signals, observations and simulated management'),
     'options_0dte': ('options-0dte', 'Compass same-day option simulations'),
-    'options_ideas': ('options-ideas', 'All-day options ideas; existing 1–21 DTE policy'),
-    'swing': ('swing-ideas', 'Multi-session stock and option ideas'),
+    'options_ideas': ('options-ideas', 'Intraday options with later expirations'),
+    'swing': ('swing-ideas', 'Multi-session option ideas'),
+    'options_leaps': ('options-leaps', 'Long-dated options held across sessions; research only until a producer qualifies'),
+    'smoothers': ('smoothers', 'Smoothers-owned option lifecycle'),
     'unusual_options': ('unusual-options', 'Unusual flow confirmed by a price setup'),
     'exposure': ('exposure-levels', 'Exposure-level price setups'),
     'intraday': ('intraday-stocks', 'Intraday stock / ETF setups and simulations'),
@@ -19,6 +21,7 @@ ROUTES = {
 
 def route_for(row):
     p = row['payload']
+    if p.get('publication'):return p['publication']['category']
     if p.get('status') == 'notification_test':
         return p.get('delivery_route') if p.get('delivery_route') in ROUTES else 'system'
     category = alert_identity(row)['category']

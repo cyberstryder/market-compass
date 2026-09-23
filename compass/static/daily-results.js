@@ -8,6 +8,10 @@
  function render(d){
   const p=d.paper,m=d.morning,v=d.verification;
   let h='<p><strong>'+esc(d.operating_policy?.paper_entries_enabled?'Paper benchmark enabled':'Research mode — paper entries and notifications paused')+'</strong></p><p>'+esc(d.note)+'</p>';
+  if(d.published_options){const a=d.published_options;
+   h+='<h3>Unique option alerts</h3><p>'+esc(a.basis)+'</p>'+table(['Category','Unique ideas','Confirmed entries','Open','Closed','Unresolved','Unpublished','Resolved delivered','Modeled net $'],a.groups.map(x=>[esc(x.category),num(x.ideas),num(x.delivered_entries),num(x.open),num(x.closed),num(x.unresolved),num(x.unpublished),num(x.resolved_delivered),x.net_pnl==null?'—':num(x.net_pnl)]));
+   h+=table(['Withheld reason','Count'],(a.withheld||[]).map(x=>[esc(x.reason),num(x.count)]));
+  }
   if(d.quote_reliability){const r=d.quote_reliability;
    h+='<h3>Quote reliability</h3><p>'+esc(r.basis)+'</p>'+table(['Study','Collection','Opened','Completed','Open','Unresolved','Gaps','Gap %','Pending gap checks','Recovered processing gaps'],r.cohorts.map(x=>[esc(x.study),esc(x.version),num(x.opened),num(x.completed),num(x.open),num(x.unresolved),num(x.gaps),num(x.gap_pct),num(x.pending_gaps),num(x.recovered_processing_gaps)]));
    h+='<p>Active contracts without stream capacity: '+esc((r.subscriptions.active_missing||[]).join(', ')||'None reported')+' · subscription check '+when(r.subscriptions.at)+'</p>';
