@@ -130,3 +130,15 @@ def test_native_fixed_horizons_count_quotes_not_missing_as_losses(report_db):
         fifteen=next(x for x in r['options'] if x['variant']=='current_contract' and x['minutes']==15)
         assert five['wins']==1 and five['net_pnl']==pytest.approx(98.7)
         assert fifteen['measured']==0 and fifteen['losses']==0 and fifteen['unmeasured']==1
+
+
+def test_direct_receipts_do_not_fabricate_original_parity(report_db):
+    from compass.native_routing import receipts
+    initialize(report_db)
+    with report_db.tx() as c:
+        c.execute(m.signals.insert(),dict(signal_id='direct',ticker='QQQ',signal_at_ms=int((OPEN+300)*1000),received_at_ms=int(OPEN*1000),signal_json=json.dumps(dict(signal_id='direct',price=100,signal_at_ms=int((OPEN+300)*1000),setup='FAST_OPEN',settings={'checkpoints':True})),signal_hash='direct',is_test=False))
+        c.execute(receipts.insert(),[dict(id=str(i),signal_id='direct',event_id='evt'+str(i),origin='direct',received=OPEN+300,payload={'entry':True,'status':'accepted' if i==0 else 'duplicate'}) for i in range(2)])
+        r=morning_daily(c,OPEN,NOW,NOW)
+        assert r['direct_received_signals']==1
+        assert r['native_without_original']==1
+        assert r['original_comparison_available'] is False

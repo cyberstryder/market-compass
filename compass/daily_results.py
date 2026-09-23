@@ -125,7 +125,14 @@ def morning_daily(c, lower, upper, now):
     original_stamp=history.c.payload['signal_at_ms'].as_float()
     originals=c.execute(select(func.count()).select_from(history).where(history.c.kind=='signal',original_stamp>=lower*1000,original_stamp<upper*1000)).scalar_one()
     missing=c.execute(select(func.count()).select_from(s).where(*scope,~select(history.c.source_id).where(history.c.kind=='signal',history.c.source_id==s.c.signal_id).exists())).scalar_one()
-    return dict(signals=total,stock_coverage=dict(coverage),original_signals=originals,native_without_original=missing,
+    from .native_routing import receipts
+    direct=c.execute(select(func.count()).select_from(s).where(*scope,select(receipts.c.id).where(
+        receipts.c.signal_id==s.c.signal_id,receipts.c.origin=='direct',
+        receipts.c.payload['entry'].as_boolean().is_(True),
+        receipts.c.payload['status'].as_string().in_(['accepted','duplicate'])).exists())).scalar_one()
+    return dict(direct_received_signals=direct,original_comparison_available=missing==0 and total>0,
+        intake_basis='Direct accepted entry receipts verify native intake, not original-source parity. Missing original records remain unavailable.',
+        signals=total,stock_coverage=dict(coverage),original_signals=originals,native_without_original=missing,
         source_status='original_source_gap' if missing else 'no_native_signals' if not total else 'matched_signal_ids',
         options=[dict(variant=v,minutes=h,**groups[(v,h)],unmeasured=total-groups[(v,h)]['measured'])
                  for v in ('current_contract','zero_dte') for h in HORIZONS],
@@ -194,7 +201,9 @@ def build(db,c,cfg,now,session_day=None):
         futures=futures,post_lock=dict(first_recorded_block_at=first,cohort=post,
             status='observed_after_loss_block' if post and post['totals']['total'] else 'no_trials_after_recorded_block' if first else 'no_loss_block_recorded',
             basis='Trials created after the first recorded loss-limit rejection; does not establish the exact time the account locked or continuous quote coverage.'),
-        zero_dte_selection=dict(total=len(option_selections),states=dict(Counter(p['status'] for p in option_selections)),
+        zero_dte_selection=dict(last_attempt_reasons=dict(Counter(p.get('last_selection',{}).get('reason','No saved attempt diagnostic') for p in option_selections)),
+            contract_rejections=dict(Counter(r.get('reason','Unknown') for p in option_selections for r in p.get('last_selection',{}).get('rejections',[]))),
+            total=len(option_selections),states=dict(Counter(p['status'] for p in option_selections)),
             reasons=dict(Counter(p.get('reason') or p.get('last_selection',{}).get('reason') or 'Awaiting selection'
                 for p in option_selections if p['status']!='observed'))),
         zero_dte_setups=cohort(c,trials,trials.c.started,lower_cash,upper_cash,[trials.c.payload['asset'].as_string()=='option']),

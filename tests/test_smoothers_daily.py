@@ -154,3 +154,13 @@ def test_changed_price_basis_excludes_endpoint_instead_of_creating_split_return(
         p=c.execute(select(smoothers_daily.c.payload)).scalar_one()
         assert p['checkpoints']['close']['reason']=='historical_price_basis_changed'
         assert 'directional_return_pct' not in p['checkpoints']['close']
+
+
+def test_report_waits_for_first_session_without_restarting_study(db):
+    a=activated(db)
+    with db.tx() as c:
+        r=report(db,c,OPEN-1)
+        assert r['state']=='awaiting_first_session' and r['records']==0
+        assert r['next_formula_at']==OPEN+3900
+        assert report(db,c,OPEN)['state']=='collecting'
+        assert report(db,c,OPEN)['activation']==a

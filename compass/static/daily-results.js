@@ -32,6 +32,7 @@
   if(d.post_lock.cohort)h+=study('Post-block research observations',d.post_lock.cohort);
 
   h+='<h3>Morning Algo — native daily observations</h3><p>'+num(m.signals)+' native signals · '+num(m.original_signals)+' original mirror signals · '+num(m.native_without_original)+' native signals without original mirror records. '+esc(m.source_status.replaceAll('_',' '))+'.</p><p>'+esc(m.basis)+'</p>';
+  h+='<p>Direct entry receipts: '+num(m.direct_received_signals)+' · '+esc(m.intake_basis||'Direct-intake evidence unavailable in this report')+'</p>';
   h+='<p>Underlying path coverage: '+esc(JSON.stringify(m.stock_coverage))+'</p>';
   h+=table(['Contract group','Exit minutes','Measured','Positive','Negative','Flat','Unmeasured','Sum of quote measurements $'],m.options.map(r=>[esc(r.variant),num(r.minutes),num(r.measured),num(r.wins),num(r.losses),num(r.breakeven),num(r.unmeasured),dollars(r.measured?r.net_pnl:null)]));
   if(d.smoothers_daily){const s=d.smoothers_daily;
