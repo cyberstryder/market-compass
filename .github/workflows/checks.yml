@@ -46,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name compass-smoke -p 127.0.0.1:18080:8000 \
-            -e COMPASS_LOCAL=true -e COMPASS_ROLE=dashboard \
+            -e COMPASS_LOCAL=true -e COMPASS_ROLE=web \
             -e DATABASE_URL=sqlite:////tmp/compass-smoke.db market-compass-ci
           trap 'docker logs compass-smoke; docker rm -f compass-smoke >/dev/null' EXIT
           for attempt in $(seq 1 30); do
