@@ -158,6 +158,8 @@ class OptionIdeas:
             self.save(c,p,now)
             return
         q = self.db.get(c,'quote:'+p['underlying'])
+        p['entry_diagnostics']={'at':now,'signal_age_seconds':now-p['signal_time'],
+            'underlying_quote_age_seconds':now-q['ts'] if q and number(q.get('ts')) is not None else None}
         if not current(q,now) or q['ts'] < p['signal_time']:
             p['waiting_reason'] = 'Fresh underlying quote after the trigger required'
             self.save(c,p,now)
@@ -168,22 +170,29 @@ class OptionIdeas:
         reached = q['bid']>=p['underlying_target'] if long else q['ask']<=p['underlying_target']
         moved = abs(price-p['signal_price']) > max((number(p['atr']) or 0)*.5,.04)
         if invalid or reached or moved:
+            p['entry_diagnostics'].update(blocks=[label for label,blocked in (('underlying_invalidated',invalid),('target_already_reached',reached),('entry_tolerance_exceeded',moved)) if blocked])
             p.update(status='excluded',finished_at=now,exit_reason='Underlying invalidated, target reached, or moved beyond entry tolerance')
             self.save(c,p,now)
             return
         chain = self.db.get(c,'chain:'+p['underlying'],{})
         p['candidates'] = eligible_contracts(chain,p['underlying'],p['underlying_side'],price,now,self.cfg)
         p['waiting_reason'] = 'No recent eligible listed contract' if not p['candidates'] else 'Waiting for a fresh, liquid streamed option quote'
+        p['entry_diagnostics'].update(chain_asof=chain.get('asof'),
+            chain_age_seconds=now-chain['asof'] if number(chain.get('asof')) is not None else None,
+            chain_complete=chain.get('complete'),listed_contracts=len(chain.get('contracts',[])),eligible_candidates=len(p['candidates']))
         stream = self.db.get(c,'options:subscriptions',{})
         selected = set(stream.get('symbols',[])) if 0 <= now-stream.get('at',0) <= 15 else set()
         from .option_continuity import assess, VERSION
         p['continuity_policy']=VERSION
         p['continuity_checks']={}
         p['continuity_candidates_truncated']=len(p['candidates'])>8
+        p['entry_diagnostics'].update(subscription_at=stream.get('at'),
+            subscribed_candidates=sum(o['symbol'] in selected for o in p['candidates']),fresh_liquid_candidates=0)
         choices = []
         for o in p['candidates'][:8]:
             oq = self.db.get(c,'quote:'+o['symbol'])
             if o['symbol'] in selected and liquid(oq,now) and oq['ts']>=p['signal_time']:
+                p['entry_diagnostics']['fresh_liquid_candidates']+=1
                 quality=assess(self.db,c,o['symbol'],now)
                 p['continuity_checks'][o['symbol']]=quality
                 if quality['ready']: choices.append((o,oq))

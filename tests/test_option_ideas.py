@@ -250,3 +250,19 @@ def test_dashboard_api_is_private_and_includes_options_ideas(db,cfg):
         state=client.get('/api/state').json()
         assert state['option_ideas']['enabled']
         assert 'Options ideas' in client.get('/').text
+
+
+def test_entry_diagnostics_distinguish_subscription_gap_without_relaxing_entry(db,cfg):
+    service=OptionIdeas(db,cfg)
+    with db.tx() as c:
+        seed(db,c,subscribed=False)
+        service.queue(c,signal(),NOW)
+        service.tick(c,NOW)
+        p=rows(c)[0]
+        assert p['status']=='pending'
+        d=p['entry_diagnostics']
+        assert d['eligible_candidates']==1 and d['subscribed_candidates']==0
+        assert d['fresh_liquid_candidates']==0 and d['chain_age_seconds']==0
+        service.tick(c,NOW+121)
+        p=rows(c)[0]
+        assert p['status']=='excluded' and p['entry_diagnostics']==d

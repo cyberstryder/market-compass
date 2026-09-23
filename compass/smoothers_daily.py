@@ -193,7 +193,7 @@ def report(db,c,now):
         out.append(dict(family=family,group=kind,confirmation=confirmation,weekday=weekday,horizon=horizon,records=len(checks),
             measured=len(values),pending=sum(x['status']=='pending' for x in checks),unavailable=sum(x['status']=='unavailable' for x in checks),
             mean_directional_pct=sum(values)/len(values) if values else None,positive=sum(v>0 for v in values)))
-    return dict(state='collecting' if now<a['sessions'][-1]['close'] else 'entry_collection_complete',activation=a,protocol=PROTOCOL,groups=out,
+    return dict(state='awaiting_first_session' if now<a['sessions'][0]['open'] else 'collecting' if now<a['sessions'][-1]['close'] else 'entry_collection_complete',next_formula_at=next((s['open']+3900 for s in a['sessions'] if s['open']+3900>now),None),activation=a,protocol=PROTOCOL,groups=out,
         records=len(rows),days=list(days.values()),overlap=[dict(family=f,matched=len(v),smoothers_earlier=sum(x>0 for x in v),
         scanner_earlier=sum(x<0 for x in v),same_time=sum(x==0 for x in v),mean_lead_seconds=sum(v)/len(v)) for f,v in sorted(overlap.items())],
         coverage={k:v for k,v in db.prefix(c,VERSION+':coverage:').items()},
