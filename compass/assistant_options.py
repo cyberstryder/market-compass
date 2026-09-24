@@ -15,6 +15,9 @@ POLICY = (
     'Give conditional bullish/bearish scenarios and invalidation using recorded levels where available. '
     'Strategy min/max DTE, zero_dte max_entries=0, and a missing simulated fill are not research prohibitions. '
     'entry_evidence_incomplete concerns verification of automated entry eligibility, not permission to analyze. '
+    'For an exact strike request, candidates are exact matches, not a near-spot sample. '
+    'Use supplied underlying_evidence for the requested symbol even when it is outside the watchlist. '
+    'After hours, distinguish latest recorded evidence from an executable live quote. '
     'Do not substitute another expiration or ask permission to discuss the requested horizon. '
     'Separate market thesis, contract quote availability, and automated strategy eligibility. '
     'If option quotes are missing or stale, still analyze available underlying evidence, but do not invent '
@@ -38,7 +41,8 @@ POLICY = (
 
 def request(question, now):
     q = question.lower().replace('‑', '-').replace('—', '-').replace('–', '-')
-    if not re.search(r'\b(options?|puts?|calls?|leaps?|\d+\s*dte)\b', q):
+    shorthand = re.findall(r'(?<![\w./])([0-9]+(?:\.[0-9]{1,3})?)\s*([cp])\b', q)
+    if not shorthand and not re.search(r'\b(options?|puts?|calls?|leaps?|\d+\s*dte)\b', q):
         return None
     if re.search(r'\b(?:0\s*dte|same[- ]day)\b', q) and re.search(r'\bleaps?\b', q):
         clauses = re.split(r'\s+(?:and|versus|vs\.?)\s+|[;\n]', question, flags=re.I)
@@ -49,6 +53,11 @@ def request(question, now):
     today = datetime.fromtimestamp(now, ZoneInfo('America/New_York')).date()
     lo, hi, basis = 0, 1095, 'No expiry specified; sample listed expirations from today through three years.'
     dates = re.findall(r'\b\d{4}-\d{2}-\d{2}\b', q)
+    slash_dates = re.findall(r'\b(\d{1,2})/(\d{1,2})/(\d{4}|\d{2})\b', q)
+    try:
+        dates += [date(int(y) if len(y)==4 else 2000+int(y),int(m),int(d)).isoformat() for m,d,y in slash_dates]
+    except ValueError:
+        return dict(status='invalid_expiry', note='Invalid calendar expiration date.')
     dte = re.search(r'\b(\d+)\s*(?:-|to)\s*(\d+)\s*(?:dte|(?:calendar\s+)?days?(?:\s+to\s+expir(?:ation|y))?)\b', q)
     exact = re.search(r'\b(\d+)\s*dte\b', q)
     duration = re.search(r'\b(\d+)\s*[- ]?\s*(days?|weeks?|months?|years?)\b', q)
@@ -75,7 +84,16 @@ def request(question, now):
     if lo < 0 or hi < lo or hi > 1095:
         return dict(status='invalid_expiry', note='Requested expiration must be between today and 1095 calendar days.')
     side = 'put' if re.search(r'\bputs?\b',q) else 'call' if re.search(r'\bcalls?\b',q) else None
-    return dict(status='requested', min_dte=lo, max_dte=hi, side=side, basis=basis,
+    if shorthand:
+        if len(set(shorthand)) != 1 or (side and side != {'p':'put','c':'call'}[shorthand[0][1]]):
+            return dict(status='ambiguous_contract', note='Multiple or conflicting strikes/directions; no substitute contract selected.')
+        side = {'p':'put','c':'call'}[shorthand[0][1]]
+        strike = float(shorthand[0][0])
+        if not 0 < strike < 100000:
+            return dict(status='invalid_contract', note='Invalid strike.')
+    else:
+        strike = None
+    return dict(strike=strike, status='requested', min_dte=lo, max_dte=hi, side=side, basis=basis,
                 expiry_start=(today+timedelta(days=lo)).isoformat(), expiry_end=(today+timedelta(days=hi)).isoformat())
 
 
@@ -87,6 +105,8 @@ def sample(rows, req, spot, now, source):
         if o.get('type') not in ('put','call') or req['side'] and o['type'] != req['side']:
             continue
         if not o.get('symbol') or not (number(o.get('strike')) or 0)>0:
+            continue
+        if req.get('strike') is not None and number(o.get('strike')) != req['strike']:
             continue
         eligible.append(o)
     # Round-robin expirations prevents the first expiry from crowding out LEAPS.
@@ -104,7 +124,10 @@ def sample(rows, req, spot, now, source):
             status = 'fresh' if valid and t is not None and 0 <= now-t <= 60 else 'stale' if valid and t is not None and t <= now else 'unavailable'
             selected.append(dict(symbol=o['symbol'], expiry=expiry, strike=o['strike'], type=o['type'],
                 source=source, bid=bid, ask=ask, quote_ts=t, quote_status=status,
-                multiplier=o.get('multiplier'), open_interest=o.get('oi'), oi_date=o.get('oi_date')))
+                multiplier=o.get('multiplier'), open_interest=o.get('oi'), oi_date=o.get('oi_date'),
+                greeks={k:o.get(k) for k in ('delta','gamma','theta','vega')}, implied_volatility=o.get('iv'),
+                volume=o.get('volume'), bid_size=q.get('bid_size'), ask_size=q.get('ask_size'),
+                metadata_timestamp_note='Greeks/IV observation time unavailable unless explicitly supplied; OI uses oi_date.'))
     return dict(matching_contracts=len(eligible), candidates=selected, sample_only=True,
                 evidence_role='Contract pricing and availability only; no directional inference from this sample.')
 
@@ -126,6 +149,9 @@ async def research(cfg, scope, req, quotes, now, db=None):
     try:
         async def one(symbol):
             try:
+                if req.get('strike') is not None and req['expiry_start']==req['expiry_end']:
+                    from .assistant_contract import exact_research
+                    return symbol, await exact_research(collector, symbol, req, source)
                 async with asyncio.timeout(18):
                     fn = collector.massive_chain if source=='massive' else collector.alpaca_chain
                     rows, complete = await fn(symbol, req['expiry_start'], req['expiry_end'], page_limit=4)

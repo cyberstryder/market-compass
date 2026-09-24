@@ -578,9 +578,10 @@ def create_app(cfg=None):
         # Bounded grounded context: no arbitrary SQL, web scraping or execution tools.
         notify({'type':'stage','stage':'preparing'})
         known=set(cfg.watch_symbols)
+        explicit=re.findall(r'(?<![\w$])\$([A-Za-z]{1,6}(?:\.[A-Za-z])?)(?![\w.])',body.question)
         mentioned=list(dict.fromkeys(word.upper() for word in re.findall(r'\b[A-Za-z][A-Za-z0-9.]{0,14}\b',body.question)
             if word.upper() in known and (word.isupper() or word.upper() not in {'NOW','OPEN','APP','ARM','CL','ON','ALL'})))[:8]
-        mentioned=list(dict.fromkeys(mentioned+mentioned_futures(body.question,context['quotes'])))[:8]
+        mentioned=list(dict.fromkeys([s.upper() for s in explicit]+mentioned+mentioned_futures(body.question,context['quotes'])))[:8]
         focus=[item['symbol'] for item in context['scanner']['opportunities'] if item['status']=='triggered']
         scope=mentioned or list(dict.fromkeys(focus+list(cfg.stocks)))[:8]
         context['question_scope']={'symbols':scope,'watchlist_count':len(cfg.watch_symbols),
@@ -598,7 +599,7 @@ def create_app(cfg=None):
                 context['spy_brief']=db.get(c,'spy-brief:latest')
             context['technical_context']={symbol:db.get(c,'scanner_features:'+symbol) for symbol in scope}
             context['swing_technical_context']={symbol:db.get(c,'swing_daily:'+symbol) for symbol in scope}
-            for symbol in (s for s in mentioned if '@' not in s):
+            for symbol in (s for s in mentioned if '@' not in s and s in known):
                 db.put(c,'focus:'+symbol,{'symbol':symbol,'priority':90,'at':now,'reason':'Requested research'})
             for feed in FEEDS:
                 item=db.get(c,'research:'+feed.key)
@@ -634,6 +635,14 @@ def create_app(cfg=None):
         requested_options=option_request(body.question,now)
         if requested_options:
             context['option_research']=await option_research(cfg,scope,requested_options,context['quotes'],now,db=db)
+            for symbol,item in context['option_research'].get('symbols',{}).items():
+                evidence=item.get('underlying_evidence') or {}
+                underlying_snapshot=evidence.get('snapshot') or {}
+                if underlying_snapshot.get('status')=='available':
+                    context['quotes'][symbol]={**underlying_snapshot,'ts':underlying_snapshot.get('quote_ts')}
+                history=evidence.get('daily_history') or {}
+                if history.get('status')=='ready':
+                    context['swing_technical_context'][symbol]=history
             from .assistant_options import record_evidence
             await asyncio.to_thread(record_evidence,db,context['option_research'],time.time())
         from .assistant_horizon import restrict, missing_history_answer
