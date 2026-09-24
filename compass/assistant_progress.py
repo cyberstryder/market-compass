@@ -35,11 +35,11 @@ def evidence_summary(assistant_input):
             option = option_result.get('symbols', {}).get(symbol, {})
             req = option_result.get('request', {})
             add('Requested options', 'option_research',
-                [('Side', req.get('side')), ('First expiry', req.get('expiry_start')), ('Last expiry', req.get('expiry_end')), ('From DTE', req.get('min_dte')), ('Through DTE', req.get('max_dte')),
+                [('Side', req.get('side')), ('Strike', req.get('strike')), ('First expiry', req.get('expiry_start')), ('Last expiry', req.get('expiry_end')), ('From DTE', req.get('min_dte')), ('Through DTE', req.get('max_dte')),
                  ('Sampled contracts', len(option.get('candidates', [])) if option.get('status')=='available' else None)],
                 option.get('source'), option.get('fetched_at'), 'Fetched',
                 str(option.get('status', option_result.get('status', req.get('status')))) +
-                '; bounded chain sample; each quote has its own source time.')
+                ('; exact contract lookup; each quote has its own source time.' if option.get('exact_match_required') else '; bounded chain sample; each quote has its own source time.'))
 
         bid, ask = number(quote.get('bid')), number(quote.get('ask'))
         usable = bid is not None and ask is not None and 0 < bid <= ask
