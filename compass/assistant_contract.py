@@ -85,3 +85,80 @@ async def exact_research(collector, symbol, req, source):
     contract,evidence=await asyncio.gather(bounded(option),bounded(underlying))
     return dict(contract,source=source,requested_contract=ticker,fetched_at=time.time(),
                 exact_match_required=True,underlying_evidence=evidence)
+
+
+def assessment(question, context):
+    """Source-backed exact-contract assessment; arithmetic never delegated to prose generation."""
+    import re
+    from .readiness import clock
+    if not re.search(r'\b(?:good (?:play|trade)|worth buying)\b',question,re.I):
+        return None
+    data=context.get('option_research') or {}
+    req=data.get('request') or {}
+    if (req.get('status')!='requested' or req.get('strike') is None or
+        req.get('expiry_start')!=req.get('expiry_end') or len(context.get('question_scope',{}).get('symbols',[]))!=1):
+        return None
+    symbol=context['question_scope']['symbols'][0]
+    item=data.get('symbols',{}).get(symbol) or {}
+    evidence=item.get('underlying_evidence') or {}
+    history=evidence.get('daily_history') or context.get('swing_technical_context',{}).get(symbol) or {}
+    stock=evidence.get('snapshot') or {}
+    candidates=item.get('candidates') or []
+    option=candidates[0] if candidates else {}
+    side,strike=req['side'],req['strike']
+    lines=[f"**{symbol} {req['expiry_start']} ${strike:g} {side} — {req['min_dte']} calendar days to expiry.**"]
+    lines.append('A contract listing alone cannot establish a good trade. Here is the available trend evidence and what the option requires.')
+    if history.get('status')=='ready':
+        close,sma20,sma50=(number(history.get(k)) for k in ('close','sma20','sma50'))
+        if all(v is not None for v in (close,sma20,sma50)):
+            trend='above both averages' if close>max(sma20,sma50) else 'below both averages' if close<min(sma20,sma50) else 'between the averages'
+            alignment='supports' if (side=='call' and close>max(sma20,sma50)) or (side=='put' and close<min(sma20,sma50)) else 'does not clearly support'
+            lines.append(f"**Underlying evidence:** completed close ${close:.2f}, 20-day average ${sma20:.2f}, 50-day average ${sma50:.2f}; price was {trend}. "
+                         f"This daily trend {alignment} the requested {side} direction, but does not establish an edge or predict the expiration price. "
+                         f"Source: {history.get('source','recorded daily bars')}, through {history.get('through','date unavailable')}.")
+        weekly,average=(number(history.get(k)) for k in ('weekly_close','weekly_sma10'))
+        if weekly is not None and average is not None:
+            lines.append(f"Completed weekly close ${weekly:.2f} versus 10-week average ${average:.2f}, through {history.get('weekly_through','date unavailable')}. "
+                         'These are historical trend references, not automatic entry or exit levels.')
+    else:
+        lines.append('**Underlying evidence:** completed daily/weekly history is unavailable or incomplete; no directional conclusion is established.')
+    trade,trade_at=number(stock.get('last_trade')),stock.get('trade_ts')
+    if trade is not None:
+        lines.append(f"Latest returned {symbol} trade: ${trade:.4f}, {stock.get('source','alpaca')}, {clock(trade_at) or 'source time unavailable'}. "
+                     'This is a recorded observation, not a live executable price.')
+    if not option:
+        lines.append('**Exact contract:** no verified pricing returned ('+str(item.get('status',data.get('status','unavailable')))+'). No different strike or expiration was substituted.')
+        return '\n\n'.join(lines)
+    bid,ask=number(option.get('bid')),number(option.get('ask'))
+    multiplier=number(option.get('multiplier'))
+    lines.append(f"**Exact contract:** {option['symbol']}. Bid ${bid:.2f} / ask ${ask:.2f}. "
+                 f"Source: {option.get('source',item.get('source','unavailable'))}; quote {clock(option.get('quote_ts')) or 'time unavailable'}; {option.get('quote_status','unavailable')}."
+                 if bid is not None and ask is not None else f"**Exact contract:** {option['symbol']}; usable bid/ask unavailable.")
+    if bid is not None and ask is not None and 0<bid<=ask and multiplier is not None and multiplier>0:
+        breakeven=strike+ask if side=='call' else strike-ask
+        lines.append(f"**At that recorded ask:** premium ${ask*multiplier:.2f} per contract (multiplier {multiplier:g}); expiration break-even ${breakeven:.2f}, before fees. "
+                     f"Maximum long-option premium loss: ${ask*multiplier:.2f}, plus fees. These are illustrative calculations, not a current entry quote. "
+                     'Expiration break-even is not a required price for selling the option profitably before expiry.')
+        if trade and trade>0:
+            move=(breakeven/trade-1)*100
+            lines.append(f"That expiration break-even is {move:+.2f}% from the latest returned underlying trade. "
+                         'The underlying and option observations may be from different times; this is not a synchronized trade setup.')
+    greeks=option.get('greeks') or {}
+    metrics=[]
+    for name in ('delta','gamma','theta','vega'):
+        value=number(greeks.get(name))
+        if value is not None:metrics.append(f'{name} {value:.4f}')
+    iv=number(option.get('implied_volatility'))
+    if iv is not None:metrics.append(f'IV {100*iv:.2f}%')
+    if metrics:
+        lines.append('**Returned estimates:** '+', '.join(metrics)+'. Greeks/IV observation times were not supplied; the quote timestamp does not verify their freshness.')
+    oi,volume=number(option.get('open_interest')),number(option.get('volume'))
+    if oi is not None or volume is not None:
+        lines.append(f"Returned open interest: {oi:g} (as of {option.get('oi_date') or 'date unavailable'}); " if oi is not None else 'Open interest unavailable; ')
+        if volume is not None:lines[-1]+=f'returned session volume {volume:g}. These counts do not establish trade direction or executable liquidity.'
+    lines.append('**Trade-off:** time decay works against a purchased call or put. A favorable underlying move or volatility change must offset the premium and decay; neither is guaranteed. '
+                 'A trend-aligned contract is a research candidate, not a validated profitable strategy.')
+    if option.get('quote_status')!='fresh':
+        lines.append('**Before judging an entry:** refresh the exact contract bid/ask and underlying price during the options session. '
+                     'The returned quote is not fresh enough to establish an executable price. Missing intraday timing or catalyst evidence remains unknown, not a passed check.')
+    return '\n\n'.join(lines)
