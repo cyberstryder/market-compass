@@ -1,14 +1,17 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from threading import Event
 from types import SimpleNamespace
 import pytest
 from compass.config import Config
-from compass.daily_history import completed_rows
+from compass.daily_history import RECOVERY_CACHE, completed_rows, current_context
 from compass.market import day
 from compass.providers import Collectors
 from compass.secondary import daily_context as secondary_context
 from compass.secondary_data import coverage, refresh
 from compass.swing_signals import daily_context, stored_daily_context
+from compass.swing_ideas import SwingIdeas
 from test_scanner import db
 from test_swing_ideas import NOW, history, stamp
 from tests.test_smoothers_postgres_handoff import pg
@@ -101,7 +104,9 @@ def test_recovery_commits_real_bars_refreshes_stale_cache_and_records_failures(d
         finally:await collector.close()
     asyncio.run(run())
     with db.tx() as c:
-        result=db.get(c,'swing_daily:SPY')
+        # Recovery never takes ownership of the scanner's cache row.
+        assert db.get(c,'swing_daily:SPY')['reason']=='old cache'
+        result=db.get(c,RECOVERY_CACHE+'SPY')
         proof=db.get(c,'daily_history_recovery:SPY')
         if failure:
             assert proof['status']=='error' and 'private' not in str(proof)
@@ -111,4 +116,72 @@ def test_recovery_commits_real_bars_refreshes_stale_cache_and_records_failures(d
             assert proof['status']=='complete' and proof['sessions']==80
             assert result['status']=='ready' and result['through']=='2026-09-11'
             assert coverage(db,c,cfg,NOW)['rows'][0]['daily_ready']
+        SwingIdeas(db,cfg).discover(c,NOW+1)
+        assert db.get(c,'swing_daily:SPY')==result
         assert not db.recent(c,'alert') and not db.recent(c,'swing_candidate')
+
+
+def test_new_recovery_receipt_invalidates_fresh_scanner_and_collector_caches(db):
+    cfg=Config(local=True,stocks=('SPY',),discovery=False)
+    rows=archive(db)
+    with db.tx() as c:
+        cached=stored_daily_context(db,c,'SPY',NOW)
+        db.put(c,'swing_daily:SPY',cached)
+        db.put(c,RECOVERY_CACHE+'SPY',cached)
+        last=[r for r in rows if day(r['ts'])<day(NOW)][-1]
+        db.append(c,'daily','alpaca','SPY',last['ts'],{**last['payload'],'h':0})
+        proof=dict(day=day(NOW),status='complete',at=NOW+1)
+        db.put(c,'daily_history_recovery:SPY',proof)
+        # An invalid revision cannot remain ready for the five-minute TTL.
+        SwingIdeas(db,cfg).discover(c,NOW+2)
+        result=db.get(c,'swing_daily:SPY')
+        assert result['status']=='warming_up'
+        assert result['history']['status']=='invalid_bars'
+        assert result['history']['recovery']==proof
+        assert not coverage(db,c,cfg,NOW+2)['rows'][0]['daily_ready']
+
+
+def test_recovery_committing_during_bar_query_does_not_validate_old_snapshot(db,monkeypatch):
+    archive(db)
+    with db.tx() as c:
+        old_rows=completed_rows(db,c,'SPY',NOW)
+        proof=dict(day=day(NOW),status='complete',at=NOW+1)
+        def concurrent_recovery(db,c,symbol,now):
+            # The bar query already saw its snapshot when a recovery committed.
+            db.put(c,'daily_history_recovery:SPY',proof)
+            return old_rows
+        monkeypatch.setattr('compass.daily_history.completed_rows',concurrent_recovery)
+        result=stored_daily_context(db,c,'SPY',NOW+1)
+        assert not current_context(result,NOW+2,proof)
+
+
+def test_postgres_collector_refresh_completes_while_scanner_holds_cache_lock(pg,monkeypatch):
+    cfg=Config(local=True,stocks=('ZZZ','AAA'),discovery=False)
+    for symbol in cfg.watch_symbols:archive(pg,symbol)
+    scanner_locked=Event();release_scanner=Event()
+    put=pg.put
+    def pause_scanner(c,key,value):
+        result=put(c,key,value)
+        if key=='swing_daily:ZZZ':
+            scanner_locked.set()
+            assert release_scanner.wait(10)
+        return result
+    monkeypatch.setattr(pg,'put',pause_scanner)
+    def scan():
+        with pg.tx() as c:SwingIdeas(pg,cfg).discover(c,NOW)
+    def collect():
+        with pg.tx() as c:return coverage(pg,c,cfg,NOW,refreshed=cfg.watch_symbols)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        scanner=pool.submit(scan)
+        try:
+            assert scanner_locked.wait(5)
+            collector=pool.submit(collect)
+            # Must finish before the scanner releases its uncommitted row.
+            result=collector.result(timeout=3)
+            assert all(row['daily_ready'] for row in result['rows'])
+        finally:release_scanner.set()
+        scanner.result(timeout=5)
+    with pg.tx() as c:
+        for symbol in cfg.watch_symbols:
+            assert pg.get(c,'swing_daily:'+symbol)['status']=='ready'
+            assert pg.get(c,RECOVERY_CACHE+symbol)['status']=='ready'
