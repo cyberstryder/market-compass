@@ -42,6 +42,36 @@ def comparison(native,source,fields):
     return {'status':'different' if differences else 'matched_fields','differences':differences,'fields':list(fields)}
 
 
+def smoother_comparison(native,source):
+    fields=('direction','entry_price','target_price','signal_type','status','quality_score','quality_tier','quality_rank','featured_rank','is_featured')
+    if source is None:return comparison(native,source,fields)
+    # A missing exported flag is unknown, not a contradictory false value.
+    missing=[k for k in fields if k not in source or (k!='featured_rank' and source[k] is None)]
+    pair=comparison(native,source,[k for k in fields if k not in missing])
+    pair['missing_source_fields']=missing
+    if missing and pair['status']=='matched_fields':pair['status']='incomplete_source_fields'
+    return pair
+
+
+def smoother_score_evidence(native,source):
+    if source is None:return {'status':'source_unavailable','inputs':{},'components':{}}
+    stats=native.get('stats_at_entry') or {};config=native.get('config') or {}
+    inputs={k:{'native':a,'source':source.get(b)} for k,a,b in (
+        ('target_atr_mult',native.get('target_atr_mult'),'target_atr_mult'),
+        ('alltime_wins',stats.get('wins'),'alltime_wins_at_entry'),
+        ('alltime_losses',stats.get('losses'),'alltime_losses_at_entry'),
+        ('backtest_wr',config.get('backtest_wr'),'backtest_wr_at_entry'),
+        ('entry_premium',native.get('entry_premium'),'entry_premium'),
+        ('est_return_pct',native.get('est_return_pct'),'est_return_pct_at_entry'))}
+    components={k:{'native':native.get(k),'source':source.get(k)} for k in
+        ('quality_version','quality_atr_score','quality_reliability_score','quality_option_adjustment','quality_score')}
+    return {'status':'entry_inputs','inputs':inputs,'components':components,
+        'native_quote_at_ms':(native.get('quote') or {}).get('quote_at_ms'),
+        'source_quote_time':source.get('option_quote_time'),
+        'native_contract':(native.get('contract') or {}).get('symbol'),'source_contract':source.get('occ_symbol'),
+        'basis':'Saved entry inputs and score components. Independent quotes, historical baselines and weekly cohorts can differ; ranks compare the whole cohort. Missing source fields remain unknown. No results are rewritten.'}
+
+
 def morning(db,c,now,limit=100,start='',end='',ticker=''):
     lower,upper=boundaries(start,end)
     rows=c.execute(filtered(select(m.signals).where(m.signals.c.is_test.is_(False)),m.signals.c.signal_at_ms,m.signals.c.ticker,lower,upper,ticker).order_by(m.signals.c.signal_at_ms.desc(),m.signals.c.signal_id).limit(limit+1)).mappings().all()
@@ -167,9 +197,10 @@ def smoothers(db,c,now,limit=100,week='',ticker=''):
     for p in rows:
         matches=by_symbol[p['ticker']];r=matches[0] if len(matches)==1 else None
         other=r['payload'].get('original',{}) if r else None
-        pair=comparison(p,other,('direction','entry_price','target_price','signal_type','status','quality_score','quality_tier','quality_rank','featured_rank','is_featured'))
+        pair=smoother_comparison(p,other)
         if len(matches)>1:pair={'status':'ambiguous_source_identity','differences':{}}
         results.append({'native':p,'comparison':pair,'source_checked_at':r['updated'] if r else None,
+            'score_evidence':smoother_score_evidence(p,other),
             'source_id':r['source_id'] if r else None,'source_contract':other.get('occ_symbol') if other else None,
             'configuration_comparison':comparison(p.get('config') or {},other,('s1','s2','s3','pm')),
             'option_comparison':comparison({'occ_symbol':(p.get('contract') or {}).get('symbol')},other,('occ_symbol',)),

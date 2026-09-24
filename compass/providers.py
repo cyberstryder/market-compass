@@ -242,25 +242,33 @@ class Collectors:
     async def recovery_connection(self):
         # HTTP transports belong to this loop; never share the main-loop client.
         from types import SimpleNamespace
-        from .option_recovery import recover
+        from .option_recovery import recover, recover_stocks
         async with httpx.AsyncClient(timeout=20,follow_redirects=False) as client:
             async def get(url,headers=None,params=None):
                 return await self.get_with_client(client,url,headers,params)
             worker=SimpleNamespace(db=self.db,cfg=self.cfg,get=get,
                 quote_batch=self.quote_batch,alpaca_headers=self.alpaca_headers)
-            delay=2
-            while True:
-                try:
-                    await recover(worker)
-                    delay=2
-                except asyncio.CancelledError: raise
-                except Exception as error:
-                    await asyncio.to_thread(self.db.health,'option_recovery','error',
-                        type(error).__name__+f'; retry in {delay}s')
-                    await asyncio.sleep(delay)
-                    delay=min(delay*2,120)
-                    continue
-                await asyncio.sleep(2)
+            async def lane(name, operation):
+                delay=2
+                while True:
+                    try:
+                        await operation(worker)
+                        delay=2
+                    except asyncio.CancelledError: raise
+                    except Exception as error:
+                        await asyncio.to_thread(self.db.health,name,'error',
+                            type(error).__name__+f'; retry in {delay}s')
+                        await asyncio.sleep(delay)
+                        delay=min(delay*2,120)
+                        continue
+                    await asyncio.sleep(2)
+            tasks=[asyncio.create_task(lane(name,operation)) for name,operation in
+                   (('option_recovery',recover),('stock_recovery',recover_stocks))]
+            try:
+                await asyncio.gather(*tasks)
+            finally:
+                for task in tasks:task.cancel()
+                await asyncio.gather(*tasks,return_exceptions=True)
 
     async def history(self,incremental=False):
         if incremental:

@@ -42,7 +42,7 @@ async def recover(collector):
     if not hasattr(collector,'option_recovery_attempts'):collector.option_recovery_attempts={}
     selected,waiting,truncated=await asyncio.to_thread(targets,collector,now)
     # OPRA batch coverage is independent of the Massive REST backoff and timeout.
-    stock_results,opra=await asyncio.gather(recover_stocks(collector),recover_alpaca(collector,selected))
+    opra=await recover_alpaca(collector,selected)
     if opra:
         collector.option_recovery_attempts.update({s:now for s in selected})
     massive_attempts=getattr(collector,'option_massive_attempts',{})
@@ -50,20 +50,21 @@ async def recover(collector):
     recovered={r.get('symbol') for r in opra if r.get('fresh_rows')}
     fallback=sorted((s for s in selected if s not in recovered),key=lambda s:(s not in getattr(collector,'live_recovery_symbols',set(selected)),massive_attempts.get(s,0)))[:4]
     async def fetch(symbol):
-        collector.option_recovery_attempts[symbol]=now
-        collector.option_massive_attempts[symbol]=now
+        requested_at=time.time()
+        collector.option_recovery_attempts[symbol]=requested_at
+        collector.option_massive_attempts[symbol]=requested_at
         started=time.monotonic()
         try:
             data=await asyncio.wait_for(collector.get('https://api.massive.com/v3/quotes/'+symbol,
-                params={'apiKey':collector.cfg.massive,'timestamp.gte':str(int((now-5)*1e9)),
-                    'timestamp.lte':str(int(now*1e9)),'sort':'timestamp','order':'desc','limit':32}),2)
+                params={'apiKey':collector.cfg.massive,'timestamp.gte':str(int((requested_at-5)*1e9)),
+                    'timestamp.lte':str(int(requested_at*1e9)),'sort':'timestamp','order':'desc','limit':32}),2)
             fetched_at=time.time()
             request_seconds=time.monotonic()-started
             quotes=parse_quotes(data,fetched_at)
             if quotes:await asyncio.to_thread(collector.quote_batch,'massive_rest',[(symbol,q,True) for q in quotes])
             return dict(symbol=symbol,status='fresh_quotes' if quotes else 'no_fresh_quotes',
                 fresh_rows=len(quotes),latest_source_ts=quotes[-1]['ts'] if quotes else None,
-                fetched_at=fetched_at,request_seconds=request_seconds,
+                requested_at=requested_at,fetched_at=fetched_at,request_seconds=request_seconds,
                 storage_seconds=max(0,time.monotonic()-started-request_seconds),
                 truncated=bool(data.get('next_url')))
         except asyncio.CancelledError:raise
@@ -73,9 +74,9 @@ async def recover(collector):
             return dict(symbol=symbol,status='unavailable',http_status=code,error=type(exc).__name__)
     results=await asyncio.gather(*(fetch(s) for s in fallback)) if (getattr(collector.cfg,'massive','')
         and now>=getattr(collector,'option_recovery_backoff',0)) else []
-    report=dict(at=time.time(),collection_version=COLLECTION_VERSION,stock_results=stock_results,requests=len(results),opra_contracts=len(selected),opra_requests=int(bool(opra)),waiting=waiting,truncated=truncated,results=results,opra_results=opra,
+    report=dict(at=time.time(),collection_version=COLLECTION_VERSION,requests=len(results),opra_contracts=len(selected),opra_requests=int(bool(opra)),waiting=waiting,truncated=truncated,results=results,opra_results=opra,
         backoff_until=getattr(collector,'option_recovery_backoff',0),
-        note='Open paths first: one OPRA batch up to 100 contracts, then at most four Massive fallbacks; stock batch runs concurrently. Live cooldown two seconds, post-gap follow-ups 60 seconds. Original quotes must remain fresh; no historical gap rewriting.')
+        note='Independent option recovery: one OPRA batch up to 100 contracts, then at most four Massive fallbacks using request-time windows. Stock recovery runs on its own cycle. Original clocks and gap rules remain unchanged.')
     await asyncio.to_thread(collector.db.health,'option_recovery','running','Bounded original-timestamp quote recovery',None,**report)
     if now-getattr(collector,'option_recovery_last_log',0)>=30:
         LOG.info('Option recovery: %s',__import__('json').dumps(report,sort_keys=True))

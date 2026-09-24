@@ -260,7 +260,7 @@ class Paper(OptionIdeas):
             last_option_ts=oq['ts'],last_underlying_ts=uq['ts'],last_quote=dict(oq),last_underlying_quote=dict(uq),
             observation_model='paired-recorded-quotes-v2',collection_version=oq.get('collection_version','unversioned'),
             underlying_collection_version=uq.get('collection_version','unversioned'),waiting_reason=None)
-        if p['collection_version'] in ('option-reliability-v5','option-reliability-v6'):recovery.enable(p)
+        if p['collection_version'] in ('option-reliability-v5','option-reliability-v6','option-reliability-v7'):recovery.enable(p)
         self.mark(c,p,now,oq,uq,'entry')
         self.save(c,p,now)
 

@@ -101,7 +101,7 @@ def test_recovery_underlying_is_bounded_preserves_source_time_and_ignores_stale(
     assert len(calls[0]['symbols'].split(','))==100
     assert saved[0][0]=='alpaca_stock_recovery' and len(saved[0][1])==1
     assert saved[0][1][0][1]['ts']==NOW-1
-    assert saved[0][1][0][1]['collection_version']=='option-reliability-v6'
+    assert saved[0][1][0][1]['collection_version']=='option-reliability-v7'
 
 
 def test_stock_backoff_does_not_disable_option_recovery(db,cfg,monkeypatch):

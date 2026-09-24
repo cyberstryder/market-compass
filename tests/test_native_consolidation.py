@@ -64,6 +64,37 @@ def test_native_report_without_original_app_data(db):
     assert not r['cutover_ready']
 
 
+def test_smoothers_missing_export_fields_stay_unknown():
+    from compass.native_reports import smoother_comparison
+    p=dict(direction='CALL',entry_price=100,target_price=102,signal_type='MAIN',status='OPEN',
+        quality_score=58.5,quality_tier='B',quality_rank=32,featured_rank=None,is_featured=False)
+    source={**p,'is_featured':None}
+    r=smoother_comparison(p,source)
+    assert r['status']=='incomplete_source_fields'
+    assert r['missing_source_fields']==['is_featured'] and not r['differences']
+    source['quality_score']=50.71
+    r=smoother_comparison(p,source)
+    assert r['status']=='different' and set(r['differences'])=={'quality_score'}
+    source['is_featured']=True
+    assert smoother_comparison(p,source)['differences']['is_featured']=={'native':False,'source':True}
+
+
+def test_smoothers_score_evidence_uses_frozen_entry_inputs():
+    from compass.native_reports import smoother_score_evidence
+    native=dict(stats_at_entry={'wins':3,'losses':1},config={'backtest_wr':.7},
+        entry_premium=None,est_return_pct=None,quality_option_adjustment=-7.5,
+        quote={'quote_at_ms':1000},contract={'symbol':'AAA'})
+    source=dict(alltime_wins_at_entry=4,alltime_losses_at_entry=1,backtest_wr_at_entry=.7,
+        entry_premium=1,est_return_pct_at_entry=25,est_return_pct=90,
+        quality_option_adjustment=0,option_quote_time='source-clock',occ_symbol='BBB')
+    r=smoother_score_evidence(native,source)
+    assert r['inputs']['alltime_wins']=={'native':3,'source':4}
+    assert r['inputs']['est_return_pct']=={'native':None,'source':25}
+    assert r['components']['quality_option_adjustment']=={'native':-7.5,'source':0}
+    assert r['native_contract']=='AAA' and r['source_contract']=='BBB'
+    assert r['native_quote_at_ms']==1000 and r['source_quote_time']=='source-clock'
+
+
 def test_missing_intent_and_source_mismatch_visible(db):
     initialize(db);ev=signal_event(stamp=int(NOW*1000));accept(db,ev,NOW)
     with db.tx() as c:
