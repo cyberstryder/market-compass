@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 import httpx
@@ -88,3 +89,62 @@ def test_malformed_pages_do_not_advance(db, mutation):
     p=page('events',[FIXTURE['signal']]);mutation(p)
     with pytest.raises(ValueError):accept_page(db,'events',p,'',NOW)
     with db.tx() as c: assert db.get(c,'morning_history:events') is None
+
+
+def test_import_commits_saved_cursor_while_collector_loop_is_blocked(db,monkeypatch):
+    from compass import morning_history as importer
+    cfg=SimpleNamespace(morning_url='https://source.example',morning_token='scoped-token')
+    with db.tx() as c:db.put(c,'morning_history:stock',{'next':'a-saved-position'})
+    # Use the stock stream's existing complete-inventory fixture.
+    stock=json.loads((Path(__file__).parent/'fixtures/morning_frame_reconciliation.json').read_text())['stock']
+    stock['next']=stock['records'][-1]['id']
+    applied=threading.Event();loops={};requests=[]
+    original_client=httpx.AsyncClient;original_accept=importer.accept_page
+    async def handler(request):
+        await asyncio.sleep(.05)
+        requests.append(request)
+        loops['request']=asyncio.get_running_loop()
+        assert request.url.params['after']=='a-saved-position'
+        assert request.url.params['limit']=='20' and request.url.params['since_ms']=='0'
+        assert request.headers['authorization']=='Bearer scoped-token'
+        return httpx.Response(200,json=stock)
+    class Client(original_client):
+        def __init__(self,**kwargs):
+            loops['created']=asyncio.get_running_loop()
+            assert kwargs['timeout'].connect==4 and kwargs['timeout'].read==10
+            super().__init__(transport=httpx.MockTransport(handler),**kwargs)
+        async def __aexit__(self,*args):
+            loops['closed']=asyncio.get_running_loop()
+            return await super().__aexit__(*args)
+    def accept(*args):
+        result=original_accept(*args)
+        applied.set()
+        return result
+    monkeypatch.setattr(importer.httpx,'AsyncClient',Client)
+    monkeypatch.setattr(importer,'accept_page',accept)
+    # Stop after one accepted page so the test cannot start another stream.
+    original_poll=importer.poll_page
+    async def one_page(*args):
+        result=await original_poll(*args)
+        await asyncio.Event().wait()
+        return result
+    monkeypatch.setattr(importer,'poll_page',one_page)
+    async def run():
+        loops['main']=asyncio.get_running_loop()
+        task=asyncio.create_task(importer.run(db,cfg))
+        try:
+            await asyncio.sleep(.01)
+            # Deliberately block the collector loop as synchronous SQL work does.
+            assert applied.wait(3)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):await task
+    asyncio.run(run())
+    assert len(requests)==1
+    assert loops['created'] is loops['request'] is loops['closed']
+    assert loops['created'] is not loops['main']
+    with db.tx() as c:
+        saved=db.get(c,'morning_history:stock')
+        assert saved['status']=='scanning' and saved['next']==stock['next']
+        assert saved['last_page_new']==len(stock['records'])
+        assert c.execute(select(func.count()).select_from(events)).scalar_one()==0

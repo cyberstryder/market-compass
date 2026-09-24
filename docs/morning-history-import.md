@@ -9,6 +9,18 @@ persists its cursor only with a successfully committed page, and repeats complet
 scans after a minute. A scan is not a transactionally frozen source snapshot;
 repeated scans recover late arrivals with lower IDs, including after restarts.
 
+History transport runs on a dedicated event loop with its own HTTP client so
+synchronous collector work cannot delay connection handling and produce local
+timeouts. Cursor reads, lease checks, JSON validation and page commits run off
+that loop. The existing four-second connect timeout, ten-second read timeout,
+one transport retry and bounded backoff remain in force. Shutdown cancels the
+worker and closes its client before stopping the dedicated loop.
+
+Each accepted-page log separates `request_seconds` from `apply_seconds`, covering
+the response download and the subsequent validation/commit respectively. These
+timings diagnose transport versus local storage delays without logging credentials
+or source payloads. A failure retains the saved cursor and last successful scan.
+
 `morning_history_v1` preserves immutable source envelopes (event ID, checksum,
 payload, source receipt time) and separate import times. It also stores normalized
 signals, sessions, native signal/research candles and all five research candidate
