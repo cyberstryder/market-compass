@@ -1,7 +1,7 @@
 """Question-scoped research evidence; strategy admission is a separate concern."""
 import re
 
-VERSION = 'ask-research-v2'
+VERSION = 'ask-research-v3'
 POLICY = (
     'Use research_request to answer the actual question, not a different strategy-entry question. '
     'For a market direction question, lead with a bullish, bearish, mixed or insufficient-evidence lean, '
@@ -14,6 +14,14 @@ POLICY = (
     'Being inside the premarket range does not by itself establish a neutral trend. '
     'A future candle that has not closed is not missing or stale data; use the latest completed bars. '
     'Missing option quotes prevent contract pricing, not an underlying directional thesis. '
+    'Quote availability, contract listings, liquidity, bid/ask spreads and open interest alone are not directional evidence. '
+    'Available or liquid calls do not establish bullishness; available or liquid puts do not establish bearishness. '
+    'The requested option side expresses the question, not observed buying, institutional conviction or a forecast. '
+    'Support any directional lean with independent, timestamped underlying trend, price structure or contextualized flow evidence '
+    'appropriate to the requested horizon. Intraday VWAP, EMAs and nearby GEX cannot establish a multi-month LEAPS thesis. '
+    'When horizon-appropriate directional evidence is absent, state insufficient directional evidence; do not infer a lean '
+    'from contract availability or disguise that inference with words such as plausible or conditional. '
+    'For quote-only or verification requests, report the requested facts without adding an unsolicited market thesis. '
     'Saved brief option availability is historical to that brief, not proof of a current provider outage. '
     'For market_research, do not add automated-entry eligibility, paper risk limits, or a required '
     '15-minute breakout. Only discuss those when the question requests that strategy or entry review. '

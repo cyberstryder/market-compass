@@ -74,14 +74,15 @@ def test_provider_error_is_missing_evidence_not_research_prohibition(monkeypatch
     assert 'secret' not in json.dumps(result)
 
 @pytest.mark.parametrize('endpoint',['/api/ask','/api/ask/stream'])
-def test_qqq_request_reaches_model_with_independent_research(tmp_path,monkeypatch,endpoint):
+@pytest.mark.parametrize('side',['put','call'])
+def test_qqq_request_reaches_model_with_independent_research(tmp_path,monkeypatch,endpoint,side):
     import httpx
     from fastapi.testclient import TestClient
     from compass.app import create_app
     calls=[]
     async def lookup(cfg,scope,req,quotes,now,db=None):
         assert scope==['QQQ'] and req['min_dte']==req['max_dte']==0
-        return dict(request=req,symbols={'QQQ':dict(status='available',candidates=[row()])})
+        return dict(request=req,symbols={'QQQ':dict(status='available',**sample([row(expiry=req['expiry_start'],side=side,ts=now)],req,741,now,'alpaca'))})
     class Client:
         async def __aenter__(self): return self
         async def __aexit__(self,*args): pass
@@ -96,7 +97,7 @@ def test_qqq_request_reaches_model_with_independent_research(tmp_path,monkeypatc
     app=create_app(cfg)
     with TestClient(app) as client:
         client.post('/login',json={'password':cfg.password})
-        response=client.post(endpoint,json={'question':'what do you see for QQQ puts today till close for 0DTE'})
+        response=client.post(endpoint,json={'question':f'what do you see for QQQ {side}s today till close for 0DTE'})
         assert response.status_code==200
     assert len(calls)==1
     context=json.loads(calls[0]['input'])['market_context']
@@ -104,6 +105,11 @@ def test_qqq_request_reaches_model_with_independent_research(tmp_path,monkeypatc
     assert 'Strategy min/max DTE, zero_dte max_entries=0' in calls[0]['instructions']
     assert 'not research prohibitions' in calls[0]['instructions']
     assert 'No tools or follow-up scans can be invoked' in calls[0]['instructions']
+    assert 'Contract pricing and availability only' in context['option_research']['symbols']['QQQ']['evidence_role']
+    assert 'Available or liquid calls do not establish bullishness; available or liquid puts do not establish bearishness' in calls[0]['instructions']
+    assert 'appropriate to the requested horizon' in calls[0]['instructions']
+    assert 'state insufficient directional evidence' in calls[0]['instructions']
+    assert 'without adding an unsolicited market thesis' in calls[0]['instructions']
 
 @pytest.mark.parametrize('provider',['alpaca','massive'])
 def test_provider_queries_honor_explicit_range_and_page_bound(provider):

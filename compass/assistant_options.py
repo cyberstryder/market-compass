@@ -25,7 +25,8 @@ POLICY = (
     'A configured max_entries of 0 means no entry-count limit, not zero allowed entries. '
     'End with the analysis and specific missing evidence, not an offer to watch, scan or simulate later. '
     'Use technical_context.asof for technical observations, not context capture time; label old observations. '
-    'Do not turn a requested bearish direction into evidence that the market is bearish. '
+    'Do not turn a requested call or put into evidence that the market is bullish or bearish. '
+    'Option quote availability and liquidity provide pricing evidence only, not directional support. '
     'Do not invent trigger levels or list downside targets above the triggering level. '
     'These candidates are a bounded near-spot sample, not ranked recommendations or complete chain coverage. '
     'Copy the requested expiration dates and DTE bounds from option_research.request exactly; never recalculate or expand them. '
@@ -104,7 +105,8 @@ def sample(rows, req, spot, now, source):
             selected.append(dict(symbol=o['symbol'], expiry=expiry, strike=o['strike'], type=o['type'],
                 source=source, bid=bid, ask=ask, quote_ts=t, quote_status=status,
                 multiplier=o.get('multiplier'), open_interest=o.get('oi'), oi_date=o.get('oi_date')))
-    return dict(matching_contracts=len(eligible), candidates=selected, sample_only=True)
+    return dict(matching_contracts=len(eligible), candidates=selected, sample_only=True,
+                evidence_role='Contract pricing and availability only; no directional inference from this sample.')
 
 
 async def research(cfg, scope, req, quotes, now, db=None):
