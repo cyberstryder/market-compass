@@ -95,9 +95,23 @@ def test_original_question_reaches_answer_with_u_only(tmp_path,monkeypatch,endpo
                secret='long-test-signing-secret',openai='fake')
     with TestClient(create_app(cfg)) as client:
         client.post('/login',json={'password':cfg.password})
-        assert client.post(endpoint,json={'question':QUESTION}).status_code==200
-    ctx=json.loads(calls[0]['input'])['market_context']
-    assert ctx['question_scope']['symbols']==['U']
-    assert ctx['quotes']['U']['ts']==NOW
-    assert ctx['swing_technical_context']['U']['sma20']==46
-    assert 'Only discuss paper eligibility when the user asks' in calls[0]['instructions']
+        response=client.post(endpoint,json={'question':QUESTION})
+        assert response.status_code==200
+        assert '2026-10-16' in response.text and 'U' in response.text
+    assert calls==[]  # Exact trade assessment uses verified fields and deterministic arithmetic.
+
+
+def test_assessment_units_and_no_automated_eligibility():
+    from compass.assistant_contract import assessment
+    req=request(QUESTION,NOW)
+    ctx={'question_scope':{'symbols':['U']},'option_research':{'request':req,'symbols':{'U':{
+        'candidates':[{'symbol':'O:U261016C00048000','bid':1.3,'ask':1.41,'multiplier':100,'quote_status':'stale','quote_ts':NOW,
+                       'greeks':{'theta':-.0447},'source':'massive'}],
+        'underlying_evidence':{'snapshot':{'last_trade':46.3954,'trade_ts':NOW,'source':'alpaca'},
+                               'daily_history':{'status':'ready','close':43.11,'sma20':42.658,'sma50':39.432,'through':'2026-09-22'}}}}}}
+    answer=assessment(QUESTION,ctx)
+    assert '$141.00 per contract' in answer and 'break-even $49.41' in answer
+    assert 'time decay works against' in answer and 'theta -0.0447' in answer
+    assert 'automated' not in answer and 'eligibility' not in answer
+    assert 'stale' in answer and 'not a synchronized trade setup' in answer
+    assert assessment('What is the quote?',ctx) is None

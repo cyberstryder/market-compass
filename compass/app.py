@@ -647,11 +647,12 @@ def create_app(cfg=None):
             await asyncio.to_thread(record_evidence,db,context['option_research'],time.time())
         from .assistant_horizon import restrict, missing_history_answer
         context=restrict(context)
-        guarded_answer=missing_history_answer(context)
+        from .assistant_contract import assessment
+        guarded_answer=assessment(body.question,context) or missing_history_answer(context)
         if guarded_answer is not None:
             assistant_input,context_size=build_input(body.question,context)
             notify({'type':'context',**evidence_summary(assistant_input)})
-            db.health('assistant','available','Source-backed long-horizon evidence gap reported',time.time(),context_size=context_size)
+            db.health('assistant','available','Source-backed research assessment returned',time.time(),context_size=context_size)
             return {'answer':guarded_answer,'asof':context['asof'],'configured':True}
         instructions=((OPTION_RESEARCH_POLICY if requested_options else '') + "You are Market Compass, a personal market research assistant. Answer only from the supplied timestamped context. "
             "Every numerical market claim must name its symbol, source and as-of time. Label stale or missing information. "
