@@ -189,7 +189,8 @@ class Discovery:
                         continue
                     cached=self.db.get(c,VERSION+':daily:'+symbol,{})
                     if cached.get('day')!=day(at) or at-cached.get('at',0)>=300:
-                        raw=self.db.recent(c,'daily',symbol,limit=180)
+                        from .daily_history import completed_rows
+                        raw=completed_rows(self.db,c,symbol,at)
                         cached=dict(at=at,day=day(at),daily=daily_context(raw,at),liquidity=liquidity(raw,at))
                         self.db.put(c,VERSION+':daily:'+symbol,cached)
                     daily=cached['daily'];minute=minute_context(self.db.recent(c,'bar',symbol,limit=8),at)

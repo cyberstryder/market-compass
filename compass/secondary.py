@@ -107,7 +107,8 @@ def daily_context(db, c, symbol, now):
     today = date.fromisoformat(day(now))
     expected = sessions_between((today-timedelta(days=160)).isoformat(),
                                 (today-timedelta(days=1)).isoformat())
-    raw = db.recent(c, "daily", symbol, limit=160)
+    from .daily_history import completed_rows
+    raw = completed_rows(db,c,symbol,now)
     unique = {}
     for row in reversed(raw):
         p = row["payload"]

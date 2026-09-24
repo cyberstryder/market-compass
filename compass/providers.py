@@ -95,7 +95,6 @@ class Collectors:
         from .provider_coverage import collect as provider_coverage
         from .obsidian import poll as poll_obsidian
         from .extra_futures import tasks as extra_tasks
-        from .secondary_data import refresh as refresh_secondary_data
         from .assistant_options import collect_requests
         from .spy_daily import collect as collect_spy_daily
         from .index_reference import collect as collect_index_reference
@@ -106,9 +105,8 @@ class Collectors:
             self.supervise("obsidian_history",bool(c.obsidian_history and c.obsidian_url and c.massive),lambda:history_obsidian(self),3),
             self.supervise("obsidian",bool(c.obsidian_url),lambda:poll_obsidian(self),5),
             self.supervise("alpaca_stocks",bool(c.alpaca_key and c.alpaca_secret),self.stocks),
-            self.supervise("alpaca_history",bool(c.alpaca_key and c.alpaca_secret),lambda:self.history(incremental=True),2),
+            self.supervise("alpaca_history",bool(c.alpaca_key and c.alpaca_secret),self.stock_history),
             self.supervise("provider_coverage",bool(c.alpaca_key and c.alpaca_secret),lambda:provider_coverage(self),60),
-            self.supervise("secondary_data",bool(c.secondary and c.alpaca_key and c.alpaca_secret),lambda:refresh_secondary_data(self),2),
             self.supervise("databento_futures",bool(c.databento),self.futures),
             self.supervise("futures_history",bool(c.databento),self.future_history,3600),
             *[self.supervise("option_chain_"+lane,bool(c.massive or (c.alpaca_key and c.alpaca_secret)),
@@ -266,6 +264,45 @@ class Collectors:
                    (('option_recovery',recover),('stock_recovery',recover_stocks))]
             try:
                 await asyncio.gather(*tasks)
+            finally:
+                for task in tasks:task.cancel()
+                await asyncio.gather(*tasks,return_exceptions=True)
+
+    async def stock_history(self):
+        feed=FeedLoop('stock-history')
+        task=asyncio.run_coroutine_threadsafe(self.history_connection(),feed.loop)
+        try: await asyncio.wrap_future(task)
+        finally: await asyncio.to_thread(feed.close)
+
+    async def history_connection(self):
+        from types import SimpleNamespace
+        from .stock_history import collect
+        from .secondary_data import refresh
+        import logging
+        async with httpx.AsyncClient(timeout=20,follow_redirects=False) as client:
+            async def get(url,headers=None,params=None):
+                return await self.get_with_client(client,url,headers,params)
+            worker=SimpleNamespace(db=self.db,cfg=self.cfg,get=get,stock_symbols=self.stock_symbols,
+                bars=self.bars,quote_batch=self.quote_batch,alpaca_headers=self.alpaca_headers)
+            async def lane(name,operation):
+                delay=2
+                while True:
+                    try:
+                        await operation(worker)
+                        delay=2
+                    except asyncio.CancelledError:raise
+                    except Exception as error:
+                        from .diagnostics import database_error
+                        detail=str(error) if isinstance(error,FeedError) else database_error(error)
+                        await asyncio.to_thread(self.db.health,name,'error',detail+f'; retry in {delay}s')
+                        await asyncio.sleep(delay)
+                        delay=min(120,delay*2)
+                        continue
+                    await asyncio.sleep(2)
+            logging.getLogger('uvicorn.error').info('Stock history worker: isolated_loop=true bounded_recovery=true')
+            tasks=[asyncio.create_task(lane('alpaca_history',collect))]
+            if self.cfg.secondary:tasks.append(asyncio.create_task(lane('secondary_data',refresh)))
+            try:await asyncio.gather(*tasks)
             finally:
                 for task in tasks:task.cancel()
                 await asyncio.gather(*tasks,return_exceptions=True)

@@ -10,7 +10,8 @@ from sqlalchemy import Table, Column, String, Float, JSON, Index, select, update
 from .store import meta, identity, flow_records,events
 from .market import day, session, number
 from .option_ideas import current, liquid, eligible_contracts, FEE, SLIPPAGE
-from .swing_signals import daily_context, minute_context, technical_setups, summarize_flow, confirms, trading_seconds, hold_deadline
+from .swing_signals import stored_daily_context, minute_context, technical_setups, summarize_flow, confirms, trading_seconds, hold_deadline
+from .daily_history import VERSION as DAILY_VERSION
 from .flow_recovery import freshness as flow_freshness
 
 VERSION = 'swing-ideas-v1'
@@ -267,9 +268,12 @@ class SwingIdeas:
         self.cursor = (self.cursor+len(chunk))%len(universe)
         for symbol in chunk:
             daily = self.db.get(c,'swing_daily:'+symbol,{})
-            if daily.get('day') != day(now) or now-daily.get('computed_at',0)>=300:
-                daily = daily_context(self.db.recent(c,'daily',symbol,limit=180),now)
+            if daily.get('version') != DAILY_VERSION or daily.get('day') != day(now) or now-daily.get('computed_at',0)>=300:
+                daily = stored_daily_context(self.db,c,symbol,now)
                 self.db.put(c,'swing_daily:'+symbol,daily)
+                logging.getLogger('uvicorn.error').info('Swing daily history: symbol=%s status=%s sessions=%s archived_rows=%s missing=%s reason=%s',
+                    symbol,daily['status'],daily['history']['available_sessions'],daily['history']['archived_rows'],
+                    len(daily['history']['missing_sessions']),daily.get('reason'))
             minute = self.db.get(c,'scanner_features:'+symbol,{})
             price_ready = minute.get('status')=='ready' and 0 <= now-minute.get('asof',0) <= 90
             if not price_ready:
@@ -300,7 +304,7 @@ class SwingIdeas:
             self.db.put(c,'swing_scan:'+symbol,dict(symbol=symbol,at=now,day=day(now),daily_ready=daily['status']=='ready',
                 status='qualified' if qualified else 'waiting_for_flow' if signals else 'market_closed' if not entry_open else 'warming_up' if daily['status']!='ready' else 'waiting_for_price' if not price_ready else 'scanning',
                 price_ready=price_ready,
-                reason=daily.get('reason'),technical_rules=[s['rule'] for s in signals],
+                reason=daily.get('reason'),daily_history=daily.get('history',{}),technical_rules=[s['rule'] for s in signals],
                 flow_confirmed=bool(qualified),flow_latest=flow.get('latest')))
 
     def tick(self, c, now):

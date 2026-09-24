@@ -85,6 +85,11 @@ def capture(db,cfg,now):
             option_subscription=db.get(c,'options:subscriptions',{}),
             swing_scan=dict(Counter(r.get('status','unknown') for r in scans)),
             swing_daily_ready=sum(r.get('daily_ready',False) for r in scans),swing_symbols=len(scans),
+            swing_history=dict(Counter(r.get('daily_history',{}).get('status','not_diagnosed') for r in scans)),
+            swing_history_blocked=[dict(symbol=r['symbol'],reason=r.get('reason'),
+                status=r.get('daily_history',{}).get('status'),
+                missing_sessions=len(r.get('daily_history',{}).get('missing_sessions',[])))
+                for r in scans if not r.get('daily_ready')][:144],
             swing_technical_candidates=len(technical),swing_candidates_truncated=len(technical)>5000,
             swing_without_flow=sum(not r['payload'].get('flow_confirmed') for r in technical),
             futures_persistence=list(db.prefix(c,'futures_persistence:').values()),
