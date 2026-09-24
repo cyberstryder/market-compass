@@ -9,6 +9,7 @@ from compass.quote_coverage import stock_archive_health
 from compass.secondary import advance_recorded_measurement, start_measurement
 from compass.stock_stream import StockBuffer
 from compass.store import Store, events
+from tests.test_smoothers_postgres_handoff import pg
 
 NOW = datetime(2026, 9, 14, 15, tzinfo=timezone.utc).timestamp()
 
@@ -134,3 +135,50 @@ def test_futures_burst_updates_latest_once_and_keeps_ordered_samples(tmp_path):
         assert db.get(c,'quote:SIZ6@701')['ts']==163
         assert len(db.recent(c,'quote','SIZ6@701',limit=100))==64
     db.engine.dispose()
+
+
+@pytest.mark.parametrize('database',('db','pg'))
+def test_bulk_stream_writes_keep_every_sample_without_rewinding_latest(request,database):
+    db=request.getfixturevalue(database)
+    collector=SimpleNamespace(db=db)
+    Collectors.quote_batch(collector,'alpaca_stock_recovery',[('TGT',quote(NOW+5),True)])
+    batch=[('TGT',quote(NOW+offset),True) for offset in (1,3,2,4,3)]
+    batch+=[('SPY',quote(NOW+offset),True) for offset in (3,2,1)]
+    receipts=Collectors.quote_batch(collector,'alpaca',batch)
+    assert len(receipts)==len(batch)
+    with db.tx() as c:
+        assert db.get(c,'quote:TGT')['ts']==NOW+5
+        assert db.get(c,'quote:SPY')['ts']==NOW+3
+        # Each distinct original source timestamp survives once, even if a
+        # parallel recovery already wrote a newer latest quote.
+        assert len(db.recent(c,'quote',limit=20))==8
+
+
+def test_full_watchlist_uses_bounded_bulk_statements_and_real_chunk_commit_clocks(db,monkeypatch):
+    from contextlib import contextmanager
+    from sqlalchemy import event
+    clock=[NOW];commits=[];statements=[];original=db.tx
+    monkeypatch.setattr('compass.providers.time.time',lambda:clock[0])
+    @contextmanager
+    def tx():
+        with original() as c:yield c
+        clock[0]+=.1;commits.append(clock[0])
+    monkeypatch.setattr(db,'tx',tx)
+    event.listen(db.engine,'before_cursor_execute',lambda c,cu,s,p,ctx,m:statements.append(s))
+    batch=[(f'S{i:03}',{**quote(NOW),'socket_read_at':NOW},True) for i in range(243)]
+    receipts=Collectors.quote_batch(SimpleNamespace(db=db),'alpaca',batch)
+    assert len(statements)==16  # latest + archive for each of eight bounded commits
+    assert len(commits)==8 and len(receipts)==243
+    assert receipts[0][2]==commits[0] and receipts[-1][2]==commits[-1]
+    assert receipts[0][2]<receipts[-1][2]
+
+
+@pytest.mark.parametrize('database',('db','pg'))
+def test_bulk_latest_and_archive_rollback_together(request,database,monkeypatch):
+    db=request.getfixturevalue(database)
+    def fail(*args):raise RuntimeError('archive unavailable')
+    monkeypatch.setattr(db,'append_quotes',fail)
+    with pytest.raises(RuntimeError,match='archive unavailable'):
+        Collectors.quote_batch(SimpleNamespace(db=db),'alpaca',[('TGT',quote(NOW),True)])
+    with db.tx() as c:
+        assert db.get(c,'quote:TGT') is None and not db.recent(c,'quote')

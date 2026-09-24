@@ -144,3 +144,35 @@ limit. The 30-second processing grace and unresolved historical outcomes remain
 unchanged. This filter may reduce admissions; it cannot force providers to send
 quotes or guarantee future continuity. Live acceptance must verify new-policy
 decisions and mature subsequent sessions, not infer reliability from startup alone.
+
+## September 24: bounded bulk storage and replay isolation (collector v8)
+
+Stock and option socket/recovery batches now update up to 32 latest quote keys
+with one ordered conditional upsert, plus one archive insert, per transaction.
+Duplicate symbols choose the newest source timestamp for latest state; every
+distinct sampled source timestamp remains archived even when a recovery writer
+already committed a newer quote. Failed transactions roll back both state and
+history. A 243-symbol batch uses 16 statements instead of 251. Each committed
+chunk returns its own completion timestamp, so stream telemetry no longer
+assigns the final chunk's completion time to the entire batch.
+
+Futures quotes and mapping/health metadata retain their own FIFO writer. Replay
+and current OHLCV bars use a separate bounded FIFO writer, so startup history
+cannot queue ahead of live BBO. Both lanes preserve every accepted item and
+drain on shutdown; database failures remain explicit and retries bounded. SDK
+thread cancellation now waits for that drain before application database teardown.
+Persistence telemetry reports live queue age separately from replay bar backlog.
+This removes a known startup bottleneck; it does not claim gap-free provider
+reconnections or repair observations already lost during earlier deployments.
+
+New samples use `option-reliability-v8`; `quote-continuity-v2`, five-second
+freshness, 15-second gaps and 30-second adjudication grace remain unchanged.
+All four observation entry paths preserve processing grace for v8 samples.
+No previous record, outcome, source clock, sampling rate, sender or risk rule is
+reclassified. Use the next full cash session to assess stock latency under load.
+
+Selection-policy cohorts now include one saved exclusion or waiting reason per
+candidate, including failures before the quote-history check. Missing reasons
+remain explicit and unversioned records remain separate. Contract-check counts
+are reported separately because several contracts may belong to one candidate;
+zero quote-history rejections does not mean those candidates passed that check.

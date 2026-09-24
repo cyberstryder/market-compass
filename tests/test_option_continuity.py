@@ -161,3 +161,25 @@ def test_drought_blocks_entry_until_deadline_without_changing_existing_results(d
         assert {r['policy']:r['unresolved'] for r in report['continuity_cohorts']}=={
             'quote-continuity-v1':1,SUSTAINED_VERSION:0}
         assert old['pnl'] is None and old['status']=='unresolved'
+
+
+def test_policy_reasons_count_candidates_once_and_keep_contract_checks_separate():
+    from copy import deepcopy
+    rows=[dict(status='excluded',continuity_policy=SUSTAINED_VERSION,exit_reason=reason)
+        for reason in ['Fresh underlying quote after the trigger required']*2+['No recent eligible listed contract']]
+    rows += [dict(status='excluded',continuity_policy='quote-continuity-v1',exit_reason='Waiting for option quote continuity',
+        continuity_checks={'A':{'ready':False,'reason':'recent_quote_drought'},'B':{'ready':False,'reason':'recent_quote_drought'}}),
+        dict(status='pending',continuity_policy=SUSTAINED_VERSION,waiting_reason='Waiting for a fresh, liquid streamed option quote'),
+        dict(status='excluded'),dict(status='closed',continuity_policy=SUSTAINED_VERSION,opened_at=NOW)]
+    original=deepcopy(rows)
+    report=cohorts(rows);policies={p['policy']:p for p in report['continuity_cohorts']}
+    assert policies[SUSTAINED_VERSION]['exclusion_reasons']=={
+        'Fresh underlying quote after the trigger required':2,'No recent eligible listed contract':1}
+    assert policies[SUSTAINED_VERSION]['waiting_reasons']=={'Waiting for a fresh, liquid streamed option quote':1}
+    assert policies[SUSTAINED_VERSION]['blocked_without_saved_quote_check']==4
+    assert policies['quote-continuity-v1']['quote_check_rejections']=={'recent_quote_drought':2}
+    assert policies['unversioned']['exclusion_reasons']=={'Not recorded':1}
+    for policy in policies.values():
+        assert sum(policy['exclusion_reasons'].values())==policy['excluded']
+        assert sum(policy['waiting_reasons'].values())==policy['pending']
+    assert rows==original and report['continuity_rejections']=={}

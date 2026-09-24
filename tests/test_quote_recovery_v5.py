@@ -101,7 +101,7 @@ def test_recovery_underlying_is_bounded_preserves_source_time_and_ignores_stale(
     assert len(calls[0]['symbols'].split(','))==100
     assert saved[0][0]=='alpaca_stock_recovery' and len(saved[0][1])==1
     assert saved[0][1][0][1]['ts']==NOW-1
-    assert saved[0][1][0][1]['collection_version']=='option-reliability-v7'
+    assert saved[0][1][0][1]['collection_version']=='option-reliability-v8'
 
 
 def test_stock_backoff_does_not_disable_option_recovery(db,cfg,monkeypatch):
@@ -200,3 +200,18 @@ def test_partial_writer_failure_can_retry_without_losing_or_duplicating_quotes(d
     with db.tx() as c:
         assert len(c.execute(select(events)).all())==70
         assert db.get(c,'quote:SPY')['ts']==NOW+69
+
+
+def test_v8_entry_keeps_original_processing_grace_and_gap_limit(db,cfg):
+    from compass.quote_collection import VERSION
+    with db.tx() as c:
+        seed(db,c)
+        quote=db.get(c,'quote:'+CALL);quote['collection_version']=VERSION
+        db.put(c,'quote:'+CALL,quote)
+        worker=OptionIdeas(db,cfg);worker.queue(c,signal(),NOW);worker.tick(c,NOW)
+        p=rows(c)[0]
+        assert p['status']=='open' and p['gap_policy']=='observation-recovery-v1'
+        worker.observe(c,p,NOW+16)
+        assert p['status']=='open' and p['gap_pending']['first_detected_at']==NOW+16
+        worker.observe(c,p,NOW+47)
+        assert p['status']=='unresolved' and p['pnl'] is None

@@ -38,3 +38,10 @@ journal timestamps and a secondary checkpoint labeled `retained_quote`. Offline
 tests alone do not establish production coverage. Full-watchlist history increases
 database storage at the existing sampling rates; no deletion or retention policy
 is introduced.
+
+Collector v8 uses bounded bulk latest-state upserts alongside the sampled archive
+insert. Latest quotes remain monotonic across stream/recovery races, and both
+writes commit or roll back together. Stream timing uses each chunk's actual
+completion time rather than the end of the entire watchlist write. Sampling
+rates and the five-second eligibility limit are unchanged. See
+[option reliability](option-reliability.md#september-24-bounded-bulk-storage-and-replay-isolation-collector-v8).

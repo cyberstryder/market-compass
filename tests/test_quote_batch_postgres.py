@@ -11,20 +11,21 @@ from compass.store import events
 def test_reversed_concurrent_batches_finish_and_keep_all_samples(pg,monkeypatch):
     locked,attempted,second_locked=Event(),Event(),Event()
     first_name=[]
-    original=pg.put_quote
-    def put(c,key,value):
+    original=pg.put_quotes
+    def put(c,items):
         first=current_thread().name==first_name[0]
         if not first:attempted.set()
-        result=original(c,key,value)
-        if first and key=='quote:AAA':
+        # Hold AAA before starting the reversed competing batch, then bulk-upsert
+        # both symbols while it is waiting. Unordered upserts would deadlock.
+        if first:
+            pg.put_quote(c,'quote:AAA',items[0][1])
             locked.set()
             assert attempted.wait(5)
-            # With the old reversed lock order the second writer locks BBB,
-            # then waits on AAA; this writer then deadlocks trying BBB.
             second_locked.wait(.2)
-        elif not first:second_locked.set()
+        result=original(c,items)
+        if not first:second_locked.set()
         return result
-    monkeypatch.setattr(pg,'put_quote',put)
+    monkeypatch.setattr(pg,'put_quotes',put)
     def batch(first):
         if first:first_name.append(current_thread().name)
         quotes=[(s,{'ts':10 if first else 11,'bid':1,'ask':1.1},True) for s in ('AAA','BBB')]

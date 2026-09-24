@@ -38,7 +38,7 @@ def test_stock_source_and_socket_receipt_clocks_are_distinct():
     b.offer(q(),NOW+.25)
     sample=b.take(0)[0][0][1]
     assert sample['ts']==NOW and sample['socket_read_at']==NOW+.25
-    assert sample['collection_version']=='option-reliability-v7'
+    assert sample['collection_version']=='option-reliability-v8'
     assert b.diagnostics['SPY']['source_age_at_read']==.25
 
 
@@ -145,4 +145,35 @@ def test_writer_failure_propagates_while_reader_is_idle():
         with pytest.raises(RuntimeError,match='Database unavailable'):
             await asyncio.wait_for(consume(WS(),SimpleNamespace(cfg=cfg,stock_symbols=lambda:('SPY',),quote_batch=broken)),2)
         assert cancelled
+    asyncio.run(run())
+
+
+def test_timing_uses_each_committed_chunk_not_the_end_of_the_watchlist(monkeypatch):
+    original_sleep=asyncio.sleep
+    async def fast_poll(seconds):await original_sleep(.01 if seconds==5 else seconds)
+    monkeypatch.setattr('compass.stock_stream.asyncio.sleep',fast_poll)
+    async def run():
+        reported=threading.Event();reports=[]
+        class WS:
+            async def send(self,*args):pass
+            def __aiter__(self):return self.rows()
+            async def rows(self):
+                yield json.dumps([dict(T='success',msg='authenticated'),q('SPY'),q('QQQ')])
+                await asyncio.Event().wait()
+        def write(source,batch):
+            return [(s,{**v,'socket_read_at':NOW},NOW+(.2 if s=='SPY' else .8)) for s,v,_ in batch]
+        def health(*args,**value):
+            if all('last_commit_at' in r for r in value['symbols'].values()):
+                reports.append(value);reported.set()
+        collector=SimpleNamespace(cfg=SimpleNamespace(stocks=('SPY',),feed='sip'),
+            stock_symbols=lambda:('SPY','QQQ'),quote_batch=write,bars=lambda *a:None,
+            db=SimpleNamespace(health=health))
+        task=asyncio.create_task(consume(WS(),collector))
+        try:
+            assert await asyncio.to_thread(reported.wait,2)
+            rows=reports[-1]['symbols']
+            assert rows['SPY']['socket_to_commit_seconds']==pytest.approx(.2)
+            assert rows['QQQ']['socket_to_commit_seconds']==pytest.approx(.8)
+        finally:
+            task.cancel();await asyncio.gather(task,return_exceptions=True)
     asyncio.run(run())

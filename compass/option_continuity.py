@@ -67,14 +67,21 @@ def cohorts(rows):
             completion_pct=100*closed/len(opened) if opened else None,
             unresolved_pct=100*unresolved/len(opened) if opened else None))
     policies=[]
-    for policy in sorted({r['continuity_policy'] for r in rows if r.get('continuity_policy')}):
-        selected=[r for r in rows if r.get('continuity_policy')==policy]
+    for policy in sorted({r.get('continuity_policy') or 'unversioned' for r in rows}):
+        selected=[r for r in rows if (r.get('continuity_policy') or 'unversioned')==policy]
+        blocked=[r for r in selected if r['status'] in ('pending','excluded')]
         policies.append(dict(policy=policy,candidates=len(selected),
             opened=sum(r.get('opened_at') is not None for r in selected),
             open=sum(r['status']=='open' for r in selected),
             closed=sum(r['status']=='closed' for r in selected),
             unresolved=sum(r['status']=='unresolved' for r in selected),
-            excluded=sum(r['status']=='excluded' for r in selected)))
+            excluded=sum(r['status']=='excluded' for r in selected),
+            pending=sum(r['status']=='pending' for r in selected),
+            exclusion_reasons=dict(Counter(r.get('exit_reason') or 'Not recorded' for r in selected if r['status']=='excluded')),
+            waiting_reasons=dict(Counter(r.get('waiting_reason') or 'Not recorded' for r in selected if r['status']=='pending')),
+            blocked_without_saved_quote_check=sum(not r.get('continuity_checks') for r in blocked),
+            quote_check_rejections=dict(Counter(q.get('reason','unknown') for r in blocked
+                for q in r.get('continuity_checks',{}).values() if not q.get('ready')))))
     qualified=[r for r in rows if r.get('continuity_policy')==SUSTAINED_VERSION]
     # Counts describe the last saved candidate checks, not independent failures.
     reasons=Counter(q.get('reason','unknown') for r in qualified if r['status'] in ('pending','excluded')
