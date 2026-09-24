@@ -209,7 +209,7 @@ class OptionIdeas:
                 pagination_complete=chain.get('complete'),last_quote=oq,last_underlying_quote=q,
                 observation_model='paired-recorded-quotes-v2',collection_version=oq.get('collection_version','pre-option-reliability'),
                 underlying_collection_version=q.get('collection_version','unversioned'))
-            if p['collection_version'] in ('option-reliability-v5','option-reliability-v6'):recovery.enable(p)
+            if p['collection_version'] in ('option-reliability-v5','option-reliability-v6','option-reliability-v7'):recovery.enable(p)
             self.notify(c,p,now,'new')
         self.save(c,p,now)
 

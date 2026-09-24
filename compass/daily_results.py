@@ -132,7 +132,8 @@ def morning_daily(c, lower, upper, now):
         receipts.c.payload['status'].as_string().in_(['accepted','duplicate'])).exists())).scalar_one()
     latest_original=c.execute(select(func.max(original_stamp)).where(history.c.kind=='signal')).scalar_one_or_none()
     return dict(original_latest_signal_at=latest_original/1000 if latest_original is not None else None,
-        original_gap_action='Check original signal intake and history export; native receipts cannot replace original comparison records.' if missing else None,
+        original_gap_action=('All selected native signals have accepted direct entry receipts. Original records are optional comparison evidence; restore the original intake/export only if a paired source comparison is intended.' if direct==total else
+            'Some native signals lack accepted direct entry receipts. Review receipt provenance and the intended intake route; original records are optional comparison evidence.') if missing else None,
         direct_received_signals=direct,original_comparison_available=missing==0 and total>0,
         intake_basis='Direct accepted entry receipts verify native intake, not original-source parity. Missing original records remain unavailable.',
         signals=total,stock_coverage=dict(coverage),original_signals=originals,native_without_original=missing,

@@ -6,7 +6,11 @@
   const data=await r.json();if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:'Request rejected ('+r.status+'). Check values and sign in.');return data;
  }
  const params=()=>new URLSearchParams({ticker:$('#native-ticker').value.trim(),start:$('#native-start').value,end:$('#native-end').value,week:$('#native-week').value,limit:'100'});
- function differences(pair){return tag(pair.status)+(Object.keys(pair.differences||{}).length?'<details><summary>Show field differences</summary><pre>'+esc(JSON.stringify(pair.differences,null,2))+'</pre></details>':'');}
+ function differences(pair){return tag(pair.status)+(pair.missing_source_fields?.length?'<p>Source fields unavailable: '+esc(pair.missing_source_fields.join(', '))+'.</p>':'')+(Object.keys(pair.differences||{}).length?'<details><summary>Show field differences</summary><pre>'+esc(JSON.stringify(pair.differences,null,2))+'</pre></details>':'');}
+ function scoreEvidence(x){const e=x.score_evidence;if(!e||e.status==='source_unavailable')return '';
+  return '<details><summary>Compare entry inputs and scores</summary><p>'+esc(e.basis)+'</p>'+table(['Input / component','Native','Original'],Object.entries({...e.inputs,...e.components}).map(([k,v])=>[esc(k),esc(v.native??'Unavailable'),esc(v.source??'Unavailable')]))+
+   '<p>Native contract '+esc(e.native_contract||'Unavailable')+' · quote '+when(e.native_quote_at_ms/1000)+'. Original contract '+esc(e.source_contract||'Unavailable')+' · quote '+esc(e.source_quote_time||'Unavailable')+'.</p></details>';
+ }
  function download(){ $('#native-report-download').href='/api/native/report?'+params()+'&download=true'; }
  for(const id of ['native-ticker','native-start','native-end','native-week'])$('#'+id).onchange=download;
  $('#native-report-load').onclick=async()=>{
@@ -23,7 +27,7 @@
     '<h3>Expected alerts and previews</h3><p>A preview is not a delivered message. Source delivery times remain separate.</p>'+table(['Event','Native intent','Original delivery'],m.delivery.map(x=>[esc(x.event_id),tag(x.native_status),tag(x.source_status)+(x.source_delivered_at_ms?' · '+when(x.source_delivered_at_ms/1000):'')]))+
     m.delivery.map(x=>'<details><summary>Preview '+esc(x.event_id)+'</summary><pre>'+esc(JSON.stringify(x.preview,null,2))+'</pre></details>').join('')+
     '<h3>Source signals without native counterparts</h3>'+table(['Signal','State'],m.source_only.map(x=>[esc(x.id),tag(x.status)]))+
-    '<h3>Smoothers native week '+esc(s.week)+'</h3><p>Job '+esc(s.job.state||'not started')+'. '+esc(s.basis)+'</p>'+table(['Ticker','Direction / target','Outcome','Premium model','Source comparison'],s.rows.map(x=>[esc(x.native.ticker),esc(x.native.direction)+' / '+num(x.native.target_price),tag(x.native.status),esc(JSON.stringify(x.native.premium_model||{})),differences(x.comparison)]))+
+    '<h3>Smoothers native week '+esc(s.week)+'</h3><p>Job '+esc(s.job.state||'not started')+'. '+esc(s.basis)+'</p>'+table(['Ticker','Direction / target','Outcome','Premium model','Source comparison'],s.rows.map(x=>[esc(x.native.ticker),esc(x.native.direction)+' / '+num(x.native.target_price),tag(x.native.status),esc(JSON.stringify(x.native.premium_model||{})),differences(x.comparison)+scoreEvidence(x)]))+
     '<p>Original-only weekly records: '+s.source_only.length+'. '+esc(s.delivery_basis)+'</p>'+
     table(['Weekly event','Native intent','Current format','Original delivery'],s.delivery.map(x=>[esc(x.event_id),tag(x.native_status),tag(x.current_format_matches?'matched':'needs review'),tag(x.source_status)]))+
     s.delivery.map(x=>'<details><summary>Weekly preview '+esc(x.event_id)+'</summary><pre>'+esc(JSON.stringify(x.preview,null,2))+'</pre></details>').join('')+

@@ -136,7 +136,7 @@ class SwingIdeas:
                 sessions_observed=[day(now)],waiting_reason=None,observation_state='market_open',
                 holding_rule=f'Maximum {self.cfg.swing_hold_sessions} trading sessions, including entry; exit before expiry')
             p['collection_version']=oq.get('collection_version','unversioned')
-            if p['collection_version'] in ('option-reliability-v5','option-reliability-v6'):recovery.enable(p)
+            if p['collection_version'] in ('option-reliability-v5','option-reliability-v6','option-reliability-v7'):recovery.enable(p)
             self.notify(c,p,now,'new')
             break
         self.save(c,p,now)

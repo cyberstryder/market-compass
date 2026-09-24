@@ -142,3 +142,5 @@ def test_direct_receipts_do_not_fabricate_original_parity(report_db):
         assert r['direct_received_signals']==1
         assert r['native_without_original']==1
         assert r['original_comparison_available'] is False
+        assert r['original_gap_action'].startswith('All selected native signals have accepted direct entry receipts.')
+        assert r['source_status']=='original_source_gap'

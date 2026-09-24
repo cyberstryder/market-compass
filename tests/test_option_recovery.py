@@ -6,6 +6,7 @@ from compass.option_recovery import parse_quotes,recover
 from compass.option_stream import OptionBuffer
 from compass.providers import Collectors
 from compass.store import Store,events
+from compass.quote_collection import VERSION
 
 NOW=1789490000
 SYMBOL='O:SPY260918C00600000'
@@ -76,7 +77,57 @@ def test_live_recovery_retains_original_clock_and_source(monkeypatch):
     assert saved[0][0]=='massive_rest'
     q=saved[0][1][0][1]
     assert q['ts']==NOW-1 and q['recovery_fetched_at']==NOW
-    assert q['collection_version']=='option-reliability-v6'
+    assert q['collection_version']==VERSION
+
+
+def test_massive_window_uses_request_clock_after_slow_opra(monkeypatch):
+    clock=[NOW]
+    monkeypatch.setattr('compass.option_recovery.time.time',lambda:clock[0])
+    monkeypatch.setattr('compass.option_recovery.targets',lambda *args:([SYMBOL],1,False))
+    async def slow_opra(*args):
+        clock[0]+=4
+        return []
+    monkeypatch.setattr('compass.option_recovery.recover_alpaca',slow_opra)
+    saved=[]
+    async def get(url,params):
+        assert params['timestamp.gte']==str(int((NOW-1)*1e9))
+        assert params['timestamp.lte']==str(int((NOW+4)*1e9))
+        return {'results':[dict(sip_timestamp=int((NOW+3)*1e9),bid_price=1,ask_price=1.1,bid_size=1,ask_size=1)]}
+    c=SimpleNamespace(get=get,cfg=SimpleNamespace(massive='test'),
+        quote_batch=lambda source,rows:saved.extend(rows),db=SimpleNamespace(health=lambda *a,**k:None))
+    asyncio.run(recover(c))
+    assert saved[0][1]['ts']==NOW+3
+    assert saved[0][1]['recovery_fetched_at']==NOW+4
+
+
+@pytest.mark.parametrize('stock_fails',[False,True])
+def test_stalled_or_failed_stock_cycle_does_not_block_options(monkeypatch,stock_fails):
+    seen=[]
+    class Client:
+        def __init__(self,**kwargs):pass
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):seen.append('client_closed')
+    async def run():
+        started=asyncio.Event();released=asyncio.Event()
+        async def stocks(worker):
+            started.set()
+            if stock_fails:raise ValueError('stock unavailable')
+            try:await released.wait()
+            finally:seen.append('stock_cancelled')
+        async def options(worker):
+            await started.wait()
+            seen.append('option_completed')
+            raise asyncio.CancelledError
+        monkeypatch.setattr('compass.providers.httpx.AsyncClient',Client)
+        monkeypatch.setattr('compass.option_recovery.recover',options)
+        monkeypatch.setattr('compass.option_recovery.recover_stocks',stocks)
+        c=SimpleNamespace(cfg=SimpleNamespace(),db=SimpleNamespace(health=lambda *a,**k:None),
+            alpaca_headers={},quote_batch=None)
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(Collectors.recovery_connection(c),1)
+    asyncio.run(run())
+    assert 'option_completed' in seen and seen[-1]=='client_closed'
+    if not stock_fails:assert 'stock_cancelled' in seen
 
 
 def test_recovery_owns_http_client_on_its_isolated_loop(monkeypatch):
