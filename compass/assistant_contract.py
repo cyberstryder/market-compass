@@ -53,7 +53,14 @@ async def exact_research(collector, symbol, req, source):
             row['expiry'] != req['expiry_start'] or row['strike'] != req['strike'] or row['type'] != req['side']):
             return dict(status='exact_contract_unavailable', candidates=[], matching_contracts=0)
         row.update({k:number(g.get(k)) for k in ('delta','gamma','theta','vega')})
-        return dict(status='available',**sample([row],req,None,time.time(),source))
+        from .assistant_quote import recover
+        snapshot_quote=dict(row['quote'])
+        row['quote'],recovery=await recover(collector,ticker,row['quote'],source,time.time())
+        result=sample([row],req,None,time.time(),row['quote']['source'])
+        for candidate in result['candidates']:
+            candidate.update(snapshot_source=source,snapshot_quote=snapshot_quote,quote_recovery=recovery,
+                             quote_method=row['quote']['method'])
+        return dict(status='available',**result)
 
     async def underlying():
         if not (collector.cfg.alpaca_key and collector.cfg.alpaca_secret):
@@ -134,7 +141,14 @@ def assessment(question, context):
     lines.append(f"**Exact contract:** {option['symbol']}. Bid ${bid:.2f} / ask ${ask:.2f}. "
                  f"Source: {option.get('source',item.get('source','unavailable'))}; quote {clock(option.get('quote_ts')) or 'time unavailable'}; {option.get('quote_status','unavailable')}."
                  if bid is not None and ask is not None else f"**Exact contract:** {option['symbol']}; usable bid/ask unavailable.")
-    if bid is not None and ask is not None and 0<bid<=ask and multiplier is not None and multiplier>0:
+    recovery=option.get('quote_recovery') or {}
+    if recovery.get('status')=='recovered':
+        lines.append('Recovered quote: newest valid two-sided quote among the bounded provider results. '
+                     'The snapshot was stale or unusable. The source timestamp above is retained; this is not a live premarket offer. '
+                     'Contract metadata and Greeks remain from '+str(option.get('snapshot_source','the original snapshot'))+'.')
+    elif recovery and option.get('quote_status')!='fresh':
+        lines.append('No newer valid quote was recovered from the bounded lookups. Missing pricing remains unresolved.')
+    if bid is not None and ask is not None and 0<bid<=ask and option.get('quote_status') in ('fresh','stale') and multiplier is not None and multiplier>0:
         breakeven=strike+ask if side=='call' else strike-ask
         lines.append(f"**At that recorded ask:** premium ${ask*multiplier:.2f} per contract (multiplier {multiplier:g}); expiration break-even ${breakeven:.2f}, before fees. "
                      f"Maximum long-option premium loss: ${ask*multiplier:.2f}, plus fees. These are illustrative calculations, not a current entry quote. "
