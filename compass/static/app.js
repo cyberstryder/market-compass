@@ -106,6 +106,8 @@ function render(d){
  const optionAge=os.max_source_age_at_read;
  $('#observation-reliability').innerHTML='<p>Audit: '+when(rel.at)+' · Last 24 hours'+(rel.truncated?' · TRUNCATED SAMPLE':'')+'</p>'+table(['Collector version','Opened','Open','Completed','Unresolved','Completed / opened','Unresolved / opened'],(rel.cohorts||[]).map(x=>[esc(x.version),num(x.opened,0),num(x.open,0),num(x.closed,0),num(x.unresolved,0),x.completion_pct==null?'—':num(x.completion_pct,1)+'%',x.unresolved_pct==null?'—':num(x.unresolved_pct,1)+'%']))+
  '<p>Continuity policy: '+esc(rel.policy||'Waiting')+' · Candidates '+num(rel.candidates,0)+' · Pending '+num(rel.waiting,0)+' · Excluded '+num(rel.excluded,0)+' · Excluded waiting for continuity '+num(rel.continuity_excluded,0)+'</p>'+
+ table(['Entry quote policy','Candidates','Opened','Open','Completed','Unresolved','Excluded'],(rel.continuity_cohorts||[]).map(x=>[esc(x.policy),num(x.candidates,0),num(x.opened,0),num(x.open,0),num(x.closed,0),num(x.unresolved,0),num(x.excluded,0)]))+
+ '<p>Last saved contract checks blocking entry: '+esc(Object.entries(rel.continuity_rejections||{}).map(([k,v])=>({recent_quote_drought:'Recent quote drought',insufficient_sustained_history:'Waiting for sustained history',short_window_not_ready:'Recent quotes not continuous',archive_truncated:'Incomplete archive window'}[k]||k)+': '+v).join(' · ')||'None recorded')+'. Checks may overlap across candidates.</p>'+
  table(['Feed evidence','Value','Report age (seconds)'],[['Option quote source age at receipt, latest per contract maximum',Number.isFinite(optionAge)?num(optionAge,2)+' s':'No samples',num(reportAge(os.at),1)],['Option quote subscriptions: acknowledged / requested',os.acknowledged_quote_contracts==null?'Not recorded':num(os.acknowledged_quote_contracts,0)+' / '+num(os.subscribed,0),num(reportAge(os.at),1)],['Subscription evidence: pending / dropped',os.subscription_evidence_pending==null?'Not recorded':num(os.subscription_evidence_pending,0)+' / '+num(os.subscription_evidence_dropped,0)+(os.subscription_evidence_error?' · '+esc(os.subscription_evidence_error):''),num(reportAge(os.at),1)],['Option persistence queue',num(os.quote_queue,0),num(reportAge(os.at),1)],['Recovery requests, latest cycle',num(rr.requests,0)+' Massive / '+num(rr.opra_requests,0)+' OPRA',num(reportAge(rr.at),1)],['Recovery results',esc(JSON.stringify({massive:rr.results||[],opra:rr.opra_results||[]})),num(reportAge(rr.at),1)]])+
  table(['Stock collection evidence','Value'],[['Collection version',esc(ss.collection_version||'Awaiting versioned stock report')],['Source age at socket receipt, latest per-symbol maximum',num(ss.max_source_age_at_read,2)+' s'],['Socket receipt to completed storage, latest per-symbol maximum',num(ss.max_socket_to_commit_seconds,2)+' s'],['Time since last socket quote, per-symbol maximum',num(ss.max_silence_seconds,2)+' s'],['Buffered quotes / bars',num(ss.quote_queue,0)+' / '+num(ss.bar_queue,0)],['Stock report age',num(reportAge(ss.at),1)+' s']])+
  table(['Unresolved archive evidence (categories can overlap)','Observations'],Object.entries(rel.failure_evidence||{}).map(([reason,count])=>[esc(reason),num(count,0)]))+
@@ -183,49 +185,7 @@ async function loadResearch(){
   const meta='<h2>'+esc(d.label||key)+'</h2><p>'+tag(d.status)+' <span class="fine">Source '+when(d.source_ts)+' · Retrieved '+when(d.received)+'</span></p>';
   const rows=(d.items||[]).filter(r=>!r.symbol||lastState.scanner.watchlist.includes(r.symbol));
   let content=rows.length?rows.slice(0,100).map(r=>'<details data-key="research-'+esc(key+'-'+(r.symbol||''))+'"><summary>'+esc(r.symbol||'Market observation')+' · '+when(r.source_ts)+'</summary>'+table(['Field','Reported value'],Object.entries(r.data).map(([k,v])=>[esc(k.replaceAll('_',' ')),'<span class="research-value">'+esc(readable(v))+'</span>']))+'</details>').join(''):d.data?'<pre>'+esc(JSON.stringify(d.data,null,2))+'</pre>':empty('Waiting for this source','The coverage table shows its collector status.');
-  $('#research-detail').innerHTML=meta+content+'<p class="fine">Vendor-reported information. A missing source timestamp cannot establish a current trading condition. Up to 100 matching rows shown.</p>';
- }catch(error){$('#research-detail').textContent=error.message;}
-}
-let mapData=null,mapRequested='',mapLoaded=0,mapPending=false;
-async function loadStrikeMap(symbol){
- if(!symbol||mapPending)return;
- mapPending=true;mapRequested=symbol;mapLoaded=Date.now();
- try{const response=await fetch('/api/matrix?symbol='+encodeURIComponent(symbol));if(!response.ok)throw new Error('Unable to load strike matrix');const data=await response.json();if(mapRequested===symbol){mapData=data;mapLoaded=Date.now();}}
- catch(error){$('#strike-map').textContent=error.message;}
- finally{mapPending=false;if(lastState)renderStrikeMap(lastState.matrix);}
-}
-function renderStrikeMap(matrices){
- const choices=Object.values(matrices).filter(m=>m.symbol&&m.strikes?.length);
- const select=$('#map-symbol'),chosen=select.value;
- select.innerHTML=choices.map(m=>'<option value="'+esc(m.symbol)+'">'+esc(m.symbol)+'</option>').join('');
- if(choices.some(m=>m.symbol===chosen))select.value=chosen;
- const summary=choices.find(m=>m.symbol===select.value);
- if(summary&&((mapData?.symbol!==summary.symbol&&mapRequested!==summary.symbol)||Date.now()-mapLoaded>15000)&&!mapPending){loadStrikeMap(summary.symbol);}
- const m=mapData?.symbol===select.value?mapData:null;
- if(!m){$('#strike-map').innerHTML=empty('Waiting for a matrix','The strike map uses vendor-reported GEX and VEX cells.');return;}
- const metric=$('#map-metric').value;
- const near=[...m.strikes].sort((a,b)=>Math.abs(a.strike-m.spot)-Math.abs(b.strike-m.spot)).slice(0,25).sort((a,b)=>b.strike-a.strike);
- const values=near.flatMap(r=>(r[metric+'_cells']||[]).slice(0,8)).filter(v=>v!==null);
- const maximum=Math.max(1,...values.map(Math.abs));
- const rows=near.map(r=>[num(r.strike),...(r[metric+'_cells']||[]).slice(0,8).map(v=>v===null?'—':'<span class="exposure-cell '+(v>=0?'positive':'negative')+' strength-'+Math.min(4,Math.ceil(Math.abs(v)/maximum*4))+'" title="'+esc(num(v))+'">'+compact(v)+'</span>')]);
- $('#strike-map').innerHTML='<p class="fine">'+esc(m.symbol)+' · '+metric.toUpperCase()+' · Source '+when(m.source_ts)+' · Fetched '+when(m.received)+(m.cached?' · vendor cache':'')+' · nearest 25 strikes / first 8 expirations · vendor units</p>'+table(['Strike',...m.expirations.slice(0,8).map(e=>e.expiry)],rows);
-}
-$('#scanner-filter').onchange=()=>{if(lastState)renderScanner(lastState.scanner);};
-$('#research-source').onchange=loadResearch;
-$('#map-symbol').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};
-$('#map-metric').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};
-function renderProjects(data){
- if(!data)return;
- const native=data.native_programs||{}, nm=native.morning||{}, ns=native.smoothers||{};
- $('#native-programs').innerHTML='<p>Morning notification owner: '+esc(native.morning_sender||'original')+'. Smoothers notification owner: '+esc(ns.sender||'original')+'. Native observations remain separate from executed trades.</p>'+table(['Workflow','Progress','Forward check'],[
- ['Morning',esc(String(nm.signals||0))+' native signals; '+esc(String(nm.samples||0))+' scheduled samples','Opening-session intake, contract choice, option observations and delivery comparison'],
- ['Smoothers',esc(ns.state||'not started')+' · '+esc(String(ns.enabled_tickers||0))+' enabled tickers; '+esc(String(ns.processed||0))+' processed','Complete weekly cycle, including target checks, premiums and final-session closure']])+
- '<p>Morning checked '+when(nm.at)+'. Smoothers config owner '+esc(ns.config_owner||'source')+'; received '+when(ns.config_received_at)+'.</p><p>Notification intents: '+esc(JSON.stringify(native.notifications?.counts||{}))+'</p><p class="fine">A missed weekly window is not replayed with current option prices. Stock target outcomes and option valuations remain separate. Historical shadow messages will never be sent after activation.</p>';
- const parity=data.program_parity||{}, pp=parity.projects||{};
- $('#program-parity').innerHTML='<p>Checked '+when(parity.at)+'. Read-only source comparisons. Official notification owners are shown above; Compass secondary alerts use their separate configured routes. Source comparison gaps do not establish a direct intake failure.</p>'+table(['Program','Records checked','Comparison results'],[['Morning',pp.morning?.checked||0,esc(JSON.stringify(pp.morning?.samples||{}))+'<br>Delivery '+esc(JSON.stringify(pp.morning?.delivery||{}))],['Smoothers',pp.smoothers?.checked||0,esc(JSON.stringify(pp.smoothers?.counts||{}))]])+'<p class="fine">At most 500 records checked per program; latest 100 details retained. '+((pp.morning?.truncated||pp.smoothers?.truncated)?'Input limit reached; comparison is incomplete. ':'')+'Option results reconcile source-sample arithmetic, not independent fills. Smoothers checks scoring on original inputs, not independent weekly selection.</p>';
- const migration=data.migration||{};
- const history=data.history_import||{};
- const historyHtml='<h3>Morning research import</h3><p>'+esc(history.basis||'Awaiting import')+'</p>'+table(['Stream','Status','Last complete scan'],Object.entries(history.streams||{}).map(([k,v])=>[esc(k),tag(v.status),when(v.last_complete_at)]))+'<p>'+Object.entries(history.counts||{}).map(([k,v])=>esc(k)+': '+num(v,0)).join(' · ')+'</p>';
+  $('#research-detail').innerHTML=meta+content+'<p class="fine">Vendor-reported information. A missing source timestamp cannot establish a current trading condition. Up to 100…1266 tokens truncated…search import</h3><p>'+esc(history.basis||'Awaiting import')+'</p>'+table(['Stream','Status','Last complete scan'],Object.entries(history.streams||{}).map(([k,v])=>[esc(k),tag(v.status),when(v.last_complete_at)]))+'<p>'+Object.entries(history.counts||{}).map(([k,v])=>esc(k)+': '+num(v,0)).join(' · ')+'</p>';
  $('#strategy-migration').innerHTML=historyHtml+'<p>'+esc(migration.scope||'Awaiting migration worker')+'</p><p>Mode: '+tag((migration.status||{}).mode)+' · Cutover: not ready · Checked '+when((migration.status||{}).at)+'</p>'+table(['Morning signal','Version / stream','5m','15m','30m','60m'],(migration.rows||[]).slice(0,30).map(r=>[esc(r.symbol)+' · '+when(r.source_ts),esc(r.version)+' / '+esc(r.stream),...r.checkpoints.map(p=>tag(p.status)+(p.return_difference_pp==null?'':' · '+num(p.return_difference_pp,3)+' pp'))]))+'<p class="fine">Paired results compare source candle closes with retained quote midpoints; differences are not strategy failures. Missing observations stay explicit. Originals still own alerts and orders.</p>';
  const names=Object.fromEntries(data.projects.map(p=>[p.project,p.name]));
  $('#project-status').innerHTML=data.projects.map(p=>'<div class="stat"><div class="label">'+esc(p.name)+'</div><p>'+tag(p.status)+'</p><div class="value">'+num(p.record_count,0)+'</div><div class="fine">Saved source records</div><p class="fine">'+(p.project==='futures'?(p.streams||[]).map(s=>esc(s.stream.toUpperCase())+' · '+tag(s.status)+'<br>'+when(s.last_received)).join('<br>'):('Source checked '+when(p.checked_at)+'<br>Last scan '+num(p.cycle_seconds,2)+'s · target 5s'))+'</p></div>').join('');

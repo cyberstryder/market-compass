@@ -214,3 +214,12 @@ def test_all_active_cards_have_versioned_protocols_without_resetting_existing_st
     # A response must not mutate the canonical definition or a later response.
     stream(report, 'morning')['protocol']['primary'] = 'changed'
     assert stream(build({'asof': NOW}, {}, {}), 'morning')['protocol']['primary'] != 'changed'
+
+
+def test_sustained_option_policy_has_separate_definition_and_evaluation():
+    from compass.research_protocols import protocol
+    old=protocol('option_ideas')
+    current=stream(build({'asof':NOW},{},{}),'option_ideas')['protocol']
+    assert old['frozen_on']=='2026-09-17' and old['model'].endswith('quote-continuity-v1')
+    assert current['frozen_on']=='2026-09-24' and current['model'].endswith('quote-continuity-v2')
+    assert '2026-09-25' in current['evaluation'] and 'earlier' in current['evaluation']

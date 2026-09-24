@@ -134,6 +134,18 @@ PROTOCOLS['zero-dte-v2'] = {
     'href': 'https://github.com/cyberstryder/market-compass/blob/main/docs/paper-portfolios.md',
 }
 
+# New option admission policy; retain the original frozen definition above.
+PROTOCOLS['option_ideas-v2'] = {
+    **PROTOCOLS['option_ideas'], 'registry_version': 'research-protocols-2026-09-24-options-v2',
+    'frozen_on': '2026-09-24', 'model': 'option-ideas-v2 / paired-recorded-quotes-v2 / quote-continuity-v2',
+    'population': 'Intraday option candidates evaluated with quote-continuity-v2. Keep earlier selection policies separate; shared contracts remain correlated.',
+    'entry': 'Original two-minute deadline, with >=15 usable option timestamps spanning >=90 seconds, no observed interior gap >15 seconds in the last five minutes, and the original 30-second continuity and fresh-quote checks.',
+    'evaluation': 'First ten complete cash sessions beginning on or after 2026-09-25 after deployment. September 24 is transition evidence. Compare coverage and unresolved rates by selection policy; no causal return claim or restart of earlier cohorts.',
+    'href': 'https://github.com/cyberstryder/market-compass/blob/main/docs/option-reliability.md',
+    'implementation_document': 'docs/option-reliability.md',
+}
+
+
 # Existing prospective protocols are linked without changing their original cohorts.
 for key, model, document, primary in (
     ('tm-flow', 'tm-receipt-study-v1', 'docs/tm-scoring-study.md', '60 trading-minute common-score directional underlying comparison.'),

@@ -64,7 +64,7 @@ def build(data, supplements, policy):
             issues=problems, needs_attention=bool(problems) or stage in
                 ('awaiting_evidence', 'not_built', 'disabled', 'stale'),
             next_step=next_step, version=version, measured=measured,
-            protocol=protocol('zero-dte-v2' if id=='zero-dte' else id), coverage=coverage(id, data, supplements),
+            protocol=protocol({'zero-dte':'zero-dte-v2','option_ideas':'option_ideas-v2'}.get(id,id)), coverage=coverage(id, data, supplements),
             alerts={'policy': alert_policy, 'owner': owner, 'route': route,
                 'channel': dest.get('channel'), 'destination': dest.get('destination_mode'),
                 'health': health.get('status', 'unobserved'),
