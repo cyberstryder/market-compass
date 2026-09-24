@@ -8,6 +8,7 @@ import uuid
 import httpx
 from sqlalchemy import Column, Float, Index, JSON, String, Table, select, func
 from .store import meta, identity
+from .feed_loop import FeedLoop
 from .morning_schema.models import Event, Signal, StockBar
 from .morning_schema.candidate_models import ResearchBatch
 
@@ -144,14 +145,15 @@ def accept_page(db, stream, payload, after, now):
         if next_page is None:
             status['import_counts'] = dict(c.execute(select(history.c.kind, func.count()).group_by(history.c.kind)).all())
         db.put(c, 'morning_history:' + stream, status)
-    LOG.info('Morning history: stream=%s status=%s records=%s new=%s', stream, status['status'], len(rows), changed)
-    if next_page is None: LOG.info('Morning history totals: %s', json.dumps(status['import_counts'], sort_keys=True))
     return status
 
 
 async def poll_page(db, cfg, client, stream):
-    with db.tx() as c: saved = db.get(c, 'morning_history:' + stream, {})
+    def read_cursor():
+        with db.tx() as c:return db.get(c, 'morning_history:' + stream, {})
+    saved = await asyncio.to_thread(read_cursor)
     after = saved.get('next', '')
+    requested = time.monotonic()
     async with client.stream('GET', cfg.morning_url.rstrip('/') + '/api/compass/history',
             params={'stream': stream, 'since_ms': 0, 'after': after, 'limit': 20},
             headers={'Authorization': 'Bearer ' + cfg.morning_token}) as response:
@@ -161,7 +163,15 @@ async def poll_page(db, cfg, client, stream):
             size += len(part)
             if size > 8 * 1024 * 1024: raise ValueError('History page exceeds limit')
             chunks.append(part)
-    status = await asyncio.to_thread(accept_page, db, stream, json.loads(b''.join(chunks)), after, time.time())
+    fetched = time.monotonic()
+    def apply():
+        return accept_page(db, stream, json.loads(b''.join(chunks)), after, time.time())
+    status = await asyncio.to_thread(apply)
+    LOG.info('Morning history: stream=%s status=%s records=%s new=%s request_seconds=%.3f apply_seconds=%.3f',
+        stream, status['status'], status['last_page_records'], status['last_page_new'],
+        fetched-requested, time.monotonic()-fetched)
+    if status['status'] == 'scan_complete':
+        LOG.info('Morning history totals: %s', json.dumps(status['import_counts'], sort_keys=True))
     if stream == 'stock' and status['status'] == 'scan_complete':
         def audit():
             from .morning_report import build_report
@@ -204,14 +214,30 @@ async def poll_with_retry(db,cfg,client,stream):
 
 async def run(db, cfg):
     if not cfg.morning_url or not cfg.morning_token: return
+    # HTTP connections and their deadlines must progress independently of
+    # synchronous work elsewhere in the collector's event loop.
+    feed = FeedLoop('morning-history')
+    try:
+        await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(run_import(db,cfg),feed.loop))
+    finally:
+        await asyncio.to_thread(feed.close)
+
+
+async def run_import(db, cfg):
     owner = uuid.uuid4().hex
+    def claim(stream):
+        with db.tx() as c:
+            active = db.lease(c, 'morning-history-' + stream, owner, 120)
+            saved = db.get(c, 'morning_history:' + stream, {})
+        return active,saved
+    LOG.info('Morning history worker: isolated_loop=true page_limit=20 batch_pages=5')
+    # Construct and close this client on the import loop; never borrow the
+    # collector's client. Preserve the existing timeouts and bounded retries.
     async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=4), follow_redirects=False) as client:
         while True:
             for stream in ('stock', 'events', 'research'):
                 try:
-                    with db.tx() as c:
-                        active = db.lease(c, 'morning-history-' + stream, owner, 120)
-                        saved = db.get(c, 'morning_history:' + stream, {})
+                    active,saved = await asyncio.to_thread(claim,stream)
                     if not active or time.time()<saved.get('retry_after',0) or (not saved.get('next') and time.time() - saved.get('last_complete_at', 0) < 60): continue
                     for _ in range(5):
                         status = await poll_with_retry(db, cfg, client, stream)
