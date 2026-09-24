@@ -5,6 +5,14 @@ from .market import NY, day
 from .store import events
 
 VERSION = 'completed-daily-sessions-v1'
+RECOVERY_CACHE = 'secondary:daily:'
+
+
+def current_context(value, now, recovery):
+    """A cache is usable only for this session and this committed recovery proof."""
+    return (value.get('version') == VERSION and value.get('day') == day(now)
+            and 0 <= now-value.get('computed_at',0) < 300
+            and value.get('history',{}).get('recovery',{}) == recovery)
 
 
 def completed_rows(db, c, symbol, now):

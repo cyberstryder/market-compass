@@ -106,8 +106,10 @@ def daily_context(rows, now):
 
 def stored_daily_context(db, c, symbol, now):
     from .daily_history import completed_rows
-    result = daily_context(completed_rows(db,c,symbol,now),now)
+    # Read the receipt first: a newer receipt cannot label an older query
+    # snapshot as refreshed if a recovery commits while this read is running.
     proof = db.get(c,'daily_history_recovery:'+symbol,{})
+    result = daily_context(completed_rows(db,c,symbol,now),now)
     result['history']['recovery'] = proof
     if result['status'] == 'ready' or proof.get('day') != day(now):
         return result

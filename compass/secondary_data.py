@@ -33,11 +33,16 @@ def coverage(db, c, cfg, now, refreshed=()):
         swing=db.get(c,"swing_daily:"+symbol,{})
         if {"swing","discovery"}&set(projects.get(symbol,())):
             from .swing_signals import stored_daily_context
-            from .daily_history import VERSION
-            if (swing.get('version')!=VERSION or swing.get("day")!=day(now)
-                    or now-swing.get('computed_at',0)>=300 or symbol in refreshed):
+            from .daily_history import RECOVERY_CACHE, current_context
+            proof=db.get(c,'daily_history_recovery:'+symbol,{})
+            cached=db.get(c,RECOVERY_CACHE+symbol,{})
+            swing=max((v for v in (swing,cached) if current_context(v,now,proof)),
+                key=lambda v:v['computed_at'],default={})
+            if not swing or symbol in refreshed:
                 swing=stored_daily_context(db,c,symbol,now)
-                db.put(c,'swing_daily:'+symbol,swing)
+                # Collector-owned cache: never acquire the scanner's row locks
+                # while refreshing the complete coverage universe.
+                db.put(c,RECOVERY_CACHE+symbol,swing)
             if swing.get("status")!="ready":daily={"status":"warming_up","note":swing.get("reason")}
             elif "smoothers" not in projects.get(symbol,()):daily={"status":"ready","through":swing.get("through") }
         minute = technical_context(db, c, symbol, now)

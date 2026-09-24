@@ -57,6 +57,16 @@ retain explicit per-symbol evidence. The authenticated coverage table and forwar
 audit expose remaining reasons; logs report returned session ranges without
 credentials or raw source payloads.
 
+The collector owns `secondary:daily:*`; only the leased swing scanner writes
+`swing_daily:*`. Coverage may read a current scanner cache, and the scanner may
+read a current collector cache, without updating the other worker's rows. This
+keeps broad coverage refreshes from holding locks needed by the rotating scan.
+A changed committed recovery receipt invalidates the scanner cache on its next
+turn, preserving immediate repair visibility without waiting five minutes.
+Each context reads that receipt before querying bars, so a concurrent recovery
+cannot mark an older query snapshot as already refreshed. Lock timeouts and
+history, price and flow gates are unchanged.
+
 Contract requests join the existing Massive stream budget. Existing portfolio contracts and **all open intraday/swing contracts precede all pending candidates**. Capacity-starved candidates wait and eventually become excluded rather than claim an option fill. Open swing chains receive recurring metadata refreshes, including names outside the normal focus cap. The existing default stream budget is retained; subscription state alone never proves a usable quote.
 
 ## Overnight observation and outcomes

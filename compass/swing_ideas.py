@@ -11,7 +11,7 @@ from .store import meta, identity, flow_records,events
 from .market import day, session, number
 from .option_ideas import current, liquid, eligible_contracts, FEE, SLIPPAGE
 from .swing_signals import stored_daily_context, minute_context, technical_setups, summarize_flow, confirms, trading_seconds, hold_deadline
-from .daily_history import VERSION as DAILY_VERSION
+from .daily_history import RECOVERY_CACHE, current_context
 from .flow_recovery import freshness as flow_freshness
 
 VERSION = 'swing-ideas-v1'
@@ -268,8 +268,14 @@ class SwingIdeas:
         self.cursor = (self.cursor+len(chunk))%len(universe)
         for symbol in chunk:
             daily = self.db.get(c,'swing_daily:'+symbol,{})
-            if daily.get('version') != DAILY_VERSION or daily.get('day') != day(now) or now-daily.get('computed_at',0)>=300:
-                daily = stored_daily_context(self.db,c,symbol,now)
+            proof = self.db.get(c,'daily_history_recovery:'+symbol,{})
+            if not current_context(daily,now,proof):
+                refreshed = self.db.get(c,RECOVERY_CACHE+symbol,{})
+                daily = (refreshed if current_context(refreshed,now,proof)
+                         else stored_daily_context(self.db,c,symbol,now))
+                # Only the leased scanner writes this cache. A completed
+                # recovery invalidates it on the next scan, without a writer
+                # crossing into the collector's transaction.
                 self.db.put(c,'swing_daily:'+symbol,daily)
                 logging.getLogger('uvicorn.error').info('Swing daily history: symbol=%s status=%s sessions=%s archived_rows=%s missing=%s reason=%s',
                     symbol,daily['status'],daily['history']['available_sessions'],daily['history']['archived_rows'],
