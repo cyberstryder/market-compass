@@ -1,5 +1,6 @@
 """Bounded data repair for connected reviews, independent of their decision loop."""
 import asyncio
+import logging
 import time
 from datetime import datetime, timezone
 from sqlalchemy import select
@@ -9,7 +10,7 @@ from .secondary import current, daily_context, pending, technical_context, techn
 from .universe import connected_symbols, data_symbols, symbols
 
 
-def coverage(db, c, cfg, now):
+def coverage(db, c, cfg, now, refreshed=()):
     projects = {}
     for project, symbol in c.execute(select(records.c.project, records.c.symbol).where(
             records.c.project.in_(("morning", "smoothers")), records.c.source_ts >= now-30*86400).distinct()):
@@ -31,9 +32,12 @@ def coverage(db, c, cfg, now):
         daily = daily_context(db, c, symbol, now) if "smoothers" in projects.get(symbol, ()) else {}
         swing=db.get(c,"swing_daily:"+symbol,{})
         if {"swing","discovery"}&set(projects.get(symbol,())):
-            from .swing_signals import daily_context as swing_daily
-            if swing.get("day")!=day(now):
-                swing=swing_daily(db.recent(c,"daily",symbol,limit=180),now)
+            from .swing_signals import stored_daily_context
+            from .daily_history import VERSION
+            if (swing.get('version')!=VERSION or swing.get("day")!=day(now)
+                    or now-swing.get('computed_at',0)>=300 or symbol in refreshed):
+                swing=stored_daily_context(db,c,symbol,now)
+                db.put(c,'swing_daily:'+symbol,swing)
             if swing.get("status")!="ready":daily={"status":"warming_up","note":swing.get("reason")}
             elif "smoothers" not in projects.get(symbol,()):daily={"status":"ready","through":swing.get("through") }
         minute = technical_context(db, c, symbol, now)
@@ -50,7 +54,7 @@ def coverage(db, c, cfg, now):
         rows.append(dict(symbol=symbol, projects=sorted(projects.get(symbol, ())),
             collection_enabled=symbol in subscribed, daily_ready=daily.get("status") == "ready",
             daily_through=daily.get("through"), daily_reason=daily.get("note"),
-            daily_bias=daily.get("bias"), minute_ready=technical_ready(minute, now),
+            daily_bias=daily.get("bias"),daily_history=swing.get('history',{}), minute_ready=technical_ready(minute, now),
             minute_asof=minute.get("asof"), minute_reason=minute_reason))
     result = dict(at=now, rows=rows, market_open=is_open(now),
         note="Current input readiness only. It does not rescore historical reviews or generate trade signals.")
@@ -116,13 +120,50 @@ async def refresh(collector):
         iso = lambda stamp: datetime.fromtimestamp(stamp, timezone.utc).isoformat()
         params = dict(symbols=",".join(wanted), timeframe=frame, start=iso(now-seconds), end=iso(end),
             limit=10000, feed=collector.cfg.feed, adjustment="split", sort="asc")
-        data = await asyncio.wait_for(collector.get("https://data.alpaca.markets/v2/stocks/bars",
-            collector.alpaca_headers, params), timeout=6)
-        if data.get("next_page_token"):
-            raise ValueError("Bounded secondary history response incomplete; coverage remains unready")
-        items = [(s, ts(b["t"]), {k: b[k] for k in ("o", "h", "l", "c", "v", "vw") if k in b})
-                 for s, bars in data.get("bars", {}).items() if s in wanted for b in bars]
-        await asyncio.to_thread(collector.bars, "alpaca", items, "daily" if kind == "daily" else "bar")
+        try:
+            data = await asyncio.wait_for(collector.get("https://data.alpaca.markets/v2/stocks/bars",
+                collector.alpaca_headers, params), timeout=6)
+            if data.get("next_page_token") or not isinstance(data.get('bars'),dict):
+                raise ValueError("Bounded secondary history response incomplete; coverage remains unready")
+            items = [(s, ts(b["t"]), {k: b[k] for k in ("o", "h", "l", "c", "v", "vw") if k in b})
+                     for s, bars in data['bars'].items() if s in wanted for b in bars]
+            if kind == 'daily':
+                from .spy_daily import valid_daily
+                from .swing_signals import sessions_between
+                expected=set(sessions_between(day(now-seconds),day(now)))
+                seen=set()
+                for symbol,stamp,payload in items:
+                    label=day(stamp) if stamp is not None else None
+                    if (label not in expected or label>=day(now) or not valid_daily(payload)
+                            or (symbol,label) in seen):
+                        raise ValueError('Invalid completed daily history response')
+                    seen.add((symbol,label))
+            await asyncio.to_thread(collector.bars, "alpaca", items, "daily" if kind == "daily" else "bar")
+        except Exception as error:
+            if kind == 'daily':
+                def failed():
+                    with collector.db.tx() as c:
+                        for symbol in wanted:
+                            old=collector.db.get(c,'daily_history_recovery:'+symbol,{})
+                            collector.db.put(c,'daily_history_recovery:'+symbol,{**old,
+                                'day':day(now),'at':time.time(),'status':'error','error':type(error).__name__})
+                await asyncio.to_thread(failed)
+                logging.getLogger('uvicorn.error').warning('Daily history recovery failed: symbols=%s type=%s',
+                    ','.join(wanted),type(error).__name__)
+            raise
+        if kind == 'daily':
+            def complete():
+                with collector.db.tx() as c:
+                    for symbol in wanted:
+                        dates=sorted(label for s,label in seen if s==symbol)
+                        proof=dict(day=day(now),at=time.time(),status='complete',error=None,
+                            requested_start_day=day(now-seconds),requested_end_day=day(end),
+                            sessions=len(dates),first_session=dates[0] if dates else None,
+                            last_session=dates[-1] if dates else None)
+                        collector.db.put(c,'daily_history_recovery:'+symbol,proof)
+                        logging.getLogger('uvicorn.error').info('Daily history recovery: symbol=%s sessions=%s first=%s last=%s',
+                            symbol,len(dates),proof['first_session'],proof['last_session'])
+            await asyncio.to_thread(complete)
         recovered.append(kind + ': ' + ', '.join(s + '=' + str(sum(row[0] == s for row in items)) for s in wanted))
 
     # Each input has its own timeout and failure boundary. Slow daily history
@@ -134,7 +175,7 @@ async def refresh(collector):
     if jobs["daily"] or jobs["minute"]:
         def update_coverage():
             with collector.db.tx() as c:
-                return coverage(collector.db, c, collector.cfg, time.time())
+                return coverage(collector.db, c, collector.cfg, time.time(),refreshed=jobs['daily'])
         await asyncio.to_thread(update_coverage)
     await asyncio.to_thread(collector.db.health, "secondary_data", "partial" if failures else "running",
         "Independent bounded quote/minute/daily recovery; original review records unchanged"

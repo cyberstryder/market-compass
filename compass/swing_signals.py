@@ -32,22 +32,38 @@ def hold_deadline(now, expiry, max_sessions):
 
 
 def daily_context(rows, now):
+    from .daily_history import VERSION
     today = date.fromisoformat(day(now))
     expected = sessions_between((today-timedelta(days=160)).isoformat(),
                                 (today-timedelta(days=1)).isoformat())
-    latest = {}
+    revisions = {}
     for row in sorted(rows, key=lambda r:r.get('id', 0)):
         d = day(row['ts'])
         if d < today.isoformat() and d in expected:
-            p = row['payload']
-            vals = [number(p.get(k)) for k in ('o','h','l','c','v')]
-            if (all(v is not None for v in vals) and min(vals[:4]) > 0 and vals[4] >= 0
-                    and vals[1] >= max(vals[0], vals[2], vals[3])
-                    and vals[2] <= min(vals[0], vals[3])):
-                latest[d] = dict(zip(('o','h','l','c','v'), vals))
-    result = dict(day=today.isoformat(), computed_at=now, status='warming_up',
-                  reason='Sixty consecutive completed daily sessions and ten completed weeks required')
-    if len(expected) < 60 or any(d not in latest for d in expected[-60:]):
+            revisions[d] = row
+    latest = {}
+    for d,row in revisions.items():
+        vals = [number(row['payload'].get(k)) for k in ('o','h','l','c','v')]
+        if (all(v is not None for v in vals) and min(vals[:4]) > 0 and vals[4] >= 0
+                and vals[1] >= max(vals[0], vals[2], vals[3])
+                and vals[2] <= min(vals[0], vals[3])):
+            latest[d] = dict(zip(('o','h','l','c','v'), vals))
+    required = expected[-60:]
+    missing = [d for d in required if d not in latest]
+    invalid = [d for d in missing if d in revisions]
+    first = min(latest,default=None)
+    category = ('invalid_bars' if invalid else 'no_history' if not latest else
+                'insufficient_history' if missing and all(d < first for d in missing) else
+                'missing_sessions' if missing else 'ready')
+    evidence = dict(status=category,required_sessions=60,available_sessions=len(latest),
+        required_days=list(required),missing_sessions=missing,invalid_sessions=invalid,
+        first_available=first,last_available=max(latest,default=None),
+        archived_rows=sum(r.get('revisions',1) for r in revisions.values()))
+    result = dict(version=VERSION,day=today.isoformat(),computed_at=now,status='warming_up',history=evidence,
+        reason=f'Missing {len(missing)} of 60 required completed sessions'
+               + (': '+', '.join(missing[:4])+(' …' if len(missing)>4 else '') if missing else
+                  '; ten completed weeks required'))
+    if len(expected) < 60 or missing:
         return result
     # Discard any old bars before a gap. Indicators share a continuous price basis.
     dates = []
@@ -86,6 +102,27 @@ def daily_context(rows, now):
         weekly_close=weekly[-1], weekly_sma10=weekly10, weekly_through=weeks[complete_weeks[-1]][-1],
         weekly_bias='bullish' if weekly[-1]>weekly10 else 'bearish' if weekly[-1]<weekly10 else 'neutral',
         basis='Alpaca split-adjusted daily bars; completed sessions and completed weeks only')
+
+
+def stored_daily_context(db, c, symbol, now):
+    from .daily_history import completed_rows
+    result = daily_context(completed_rows(db,c,symbol,now),now)
+    proof = db.get(c,'daily_history_recovery:'+symbol,{})
+    result['history']['recovery'] = proof
+    if result['status'] == 'ready' or proof.get('day') != day(now):
+        return result
+    if proof.get('status') == 'error':
+        result['history']['status'] = 'collection_failed'
+        result['reason'] += '; latest recovery failed: '+proof['error']
+    elif (proof.get('status') == 'complete' and result['history']['status'] in
+          ('no_history','insufficient_history') and result['history']['required_days']
+          and proof.get('requested_start_day','9999') <= result['history']['required_days'][0]
+          and proof.get('requested_end_day','') >= result['history']['required_days'][-1]):
+        result['history']['status'] = 'source_history_short'
+        result['reason'] += f"; completed source request returned {proof['sessions']} sessions"
+        if proof.get('first_session'):
+            result['reason'] += ' starting '+proof['first_session']
+    return result
 
 
 def minute_context(rows, now):

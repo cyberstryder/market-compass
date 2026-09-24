@@ -35,6 +35,28 @@ Flow is read from the durable deduplicated `flow_records` table, not just the la
 
 Alpaca history is split-adjusted. Daily and weekly context uses exchange sessions, including holiday weeks. Missing required daily bars blocks discovery. The scanner checks 12 symbols per two-second turn (roughly 24 seconds plus processing for 144), refreshes flow from storage every 15 seconds, and refreshes daily calculations every five minutes. Fresh quotes are required at actual entry, regardless of scan cadence. Coverage timestamps show achieved cadence; vendor polling and publication delay remain upstream limits.
 
+Daily reads select the latest archived revision for each completed exchange
+session within 160 calendar days. They do not limit raw revisions to 180 rows:
+frequent corrections and today's forming bar can otherwise hide existing older
+sessions. Swing, discovery and connected-review readiness share this session
+selection. An invalid latest revision blocks its session; it does not fall back
+to an older valid price. The 60-session and ten-completed-week swing gates remain.
+
+Coverage includes available sessions, missing and invalid dates, and the latest
+bounded recovery result. A failed request is reported as a collection failure.
+Short source history is reported only after a completed source request covering
+the required start date; this describes available provider history, not a proven
+listing date. Interior gaps remain missing sessions. Recovery never synthesizes
+bars or changes previously frozen candidates, entries or outcomes.
+
+The existing stock backfill and connected-input repair run on a dedicated event
+loop with an owned HTTP client. Requests, database work and shutdown retain their
+existing bounds; the recovery client is never shared with the collector loop.
+Successful daily repairs immediately recompute affected readiness, and failures
+retain explicit per-symbol evidence. The authenticated coverage table and forward
+audit expose remaining reasons; logs report returned session ranges without
+credentials or raw source payloads.
+
 Contract requests join the existing Massive stream budget. Existing portfolio contracts and **all open intraday/swing contracts precede all pending candidates**. Capacity-starved candidates wait and eventually become excluded rather than claim an option fill. Open swing chains receive recurring metadata refreshes, including names outside the normal focus cap. The existing default stream budget is retained; subscription state alone never proves a usable quote.
 
 ## Overnight observation and outcomes

@@ -20,7 +20,8 @@ def test_one_blocked_exchange_does_not_block_another_and_loops_close():
     assert not a.thread.is_alive() and not b.thread.is_alive()
 
 
-@pytest.mark.parametrize('method,connection',[('options','option_connection'),('stocks','stock_connection'),('option_recovery','recovery_connection')])
+@pytest.mark.parametrize('method,connection',[('options','option_connection'),('stocks','stock_connection'),
+    ('option_recovery','recovery_connection'),('stock_history','history_connection')])
 def test_connection_receives_while_collector_loop_is_blocked(method,connection):
     from compass.providers import Collectors
     received=threading.Event()
