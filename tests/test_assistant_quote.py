@@ -52,3 +52,9 @@ def test_provider_failure_preserves_existing_stale_quote_and_hides_secrets():
     (quote,report),_=run({'bid':1,'ask':1.1,'ts':NOW-3600},error=True)
     assert quote['ts']==NOW-3600 and report['status']=='no_newer_valid_quote'
     assert 'secret' not in str(report)
+
+
+def test_snapshot_older_than_recovery_window_is_not_a_reference_price():
+    (quote,report),_=run({'bid':1,'ask':1.1,'ts':NOW-8*86400})
+    assert quote['bid'] is None and quote['ask'] is None
+    assert report['status']=='no_newer_valid_quote'

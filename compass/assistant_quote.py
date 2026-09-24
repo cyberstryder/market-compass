@@ -43,6 +43,8 @@ async def recover(collector, ticker, original, source, now):
     candidates=[original]+[q for rows,_ in outcomes for q in rows]
     candidates=[q for q in candidates if valid(q,now)]
     chosen=max(candidates,key=lambda q:q['ts']) if candidates else original
+    if not candidates and number(chosen.get('ts')) is not None and now-number(chosen['ts'])>7*86400:
+        chosen=dict(chosen,bid=None,ask=None)  # Raw snapshot remains separately preserved.
     recovered=chosen['method']!='snapshot'
     return chosen, dict(status='recovered' if recovered else 'no_newer_valid_quote',
         attempts=[result for _,result in outcomes],lookback_days=7,max_history_records=5000,
