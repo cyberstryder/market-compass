@@ -87,3 +87,43 @@ def test_telemetry_database_failure_does_not_stop_quote_persistence():
     writer.quote('databento','ESZ6@1',{'ts':101},1)
     release.set();writer.close()
     assert writer.committed_quotes==2 and writer.error is None
+
+
+def test_startup_replay_cannot_block_live_quotes_or_mapping_and_both_lanes_drain():
+    replay_started,release,quote_saved,mapped=[threading.Event() for _ in range(4)]
+    saved_quotes=[];saved_bars=[]
+    def bars(source,items):
+        replay_started.set();assert release.wait(3);saved_bars.extend(items)
+    def quotes(source,items):
+        saved_quotes.extend(items);quote_saved.set()
+    writer=FuturesWriter(SimpleNamespace(bars=bars,quote_batch=quotes),'startup')
+    try:
+        writer.bars('databento',list(range(500)))
+        assert replay_started.wait(1)
+        writer.bars('databento',list(range(500,1000)))
+        writer.metadata(mapped.set)
+        writer.quote('databento','ESZ6@1',{'ts':100,'callback_at':99.9},1)
+        assert mapped.wait(1) and quote_saved.wait(1)
+        assert saved_bars==[] and saved_quotes[0][1]['ts']==100
+        assert saved_quotes[0][1]['callback_at']==99.9
+    finally:
+        release.set();writer.close()
+    assert saved_bars==list(range(1000)) and writer.committed_bars==1000
+    assert not writer.thread.is_alive() and not writer.bar_thread.is_alive()
+
+
+def test_shutdown_waits_for_both_accepted_lanes():
+    from concurrent.futures import ThreadPoolExecutor
+    bar_started,release,closing=[threading.Event() for _ in range(3)]
+    saved=[]
+    def bars(source,items):bar_started.set();assert release.wait(3);saved.extend(items)
+    writer=FuturesWriter(SimpleNamespace(bars=bars),'drain')
+    writer.bars('databento',[1,2]);assert bar_started.wait(1)
+    def close():closing.set();writer.close()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        done=pool.submit(close)
+        try:
+            assert closing.wait(1) and not done.done()
+        finally:release.set()
+        done.result(timeout=2)
+    assert saved==[1,2]

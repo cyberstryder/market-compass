@@ -170,7 +170,13 @@ async def collect_group(collector, exchange, aliases):
                     try: replay.flush()
                     finally: writer.close()
 
-            await asyncio.to_thread(run)
+            task=asyncio.create_task(asyncio.to_thread(run))
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                client.terminate()
+                await asyncio.shield(task)
+                raise
             if errors:
                 raise RuntimeError('; '.join(errors))
             db.health(name, 'waiting', 'Optional live stream closed; reconnect scheduled')

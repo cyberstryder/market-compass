@@ -144,22 +144,28 @@ class Collectors:
         items=sorted(items,key=lambda row:row[0])
         if source == 'databento':
             return self.future_quote_batch(items)
+        parallel_source=source in ('alpaca','massive','massive_rest','alpaca_opra_recovery','alpaca_stock_recovery')
+        receipts=[]
         # Bound lock duration; each latest quote and its archive commit together.
         for start in range(0,len(items),32):
             with self.db.tx() as c:
-                retained=[]
+                retained=[];updates=[]
                 for symbol,q,record in items[start:start+32]:
                     if not q.get('ts') or number(q.get('bid')) is None or number(q.get('ask')) is None:
                         continue
                     q={**q,'source':source,'symbol':symbol,'received':time.time()}
-                    accepted=self.db.put_quote(c,'quote:'+symbol,q)
                     # Parallel stream/recovery readers may commit out of order. Preserve their
                     # sampled history without regressing the latest cache.
-                    if not accepted and source not in ('alpaca','massive','massive_rest','alpaca_opra_recovery','alpaca_stock_recovery'): continue
+                    if not parallel_source and not self.db.put_quote(c,'quote:'+symbol,q):continue
+                    updates.append((symbol,q))
                     if record:
                         retained.append((symbol,q))
-
+                if parallel_source:self.db.put_quotes(c,updates)
                 self.db.append_quotes(c,source,retained)
+            # This chunk has committed. Later chunks must not inflate its clock.
+            committed_at=time.time()
+            receipts.extend((symbol,q,committed_at) for symbol,q in updates)
+        return receipts
 
     def future_quote_batch(self, items):
         """Lock each contract once, retain samples, update its latest quote once."""
@@ -433,7 +439,13 @@ class Collectors:
                 if self.future_targets()[1]!=symbols and self.live:
                     self.live.stop()
                     break
-            await task
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # to_thread cancellation cannot stop the SDK/persistence threads.
+            # Wait for their accepted writes before the app closes its database.
+            if self.live:self.live.terminate()
+            await asyncio.shield(task)
+            raise
         except db.BentoError as error:
             raise FeedError("Databento: "+redacted_detail(error,(self.cfg.databento,))) from None
 

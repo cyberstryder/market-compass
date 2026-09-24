@@ -237,6 +237,20 @@ class Store:
             where=state.c.value['ts'].as_float()<=value['ts']).returning(state.c.key))
         return result.first() is not None
 
+    def put_quotes(self,c,items):
+        """One ordered upsert for a bounded batch; never rewind source time."""
+        latest={}
+        for symbol,value in items:
+            if symbol not in latest or value['ts']>=latest[symbol]['ts']:
+                latest[symbol]=value
+        if not latest:return
+        now=time.time()
+        q=self.insert(state).values([dict(key='quote:'+symbol,value=latest[symbol],updated=now)
+            for symbol in sorted(latest)])
+        c.execute(q.on_conflict_do_update(index_elements=['key'],
+            set_={'value':q.excluded.value,'updated':q.excluded.updated},
+            where=state.c.value['ts'].as_float()<=q.excluded.value['ts'].as_float()))
+
     def put_max(self,c,key,value):
         q=self.insert(state).values(key=key,value=value,updated=time.time())
         c.execute(q.on_conflict_do_update(index_elements=['key'],

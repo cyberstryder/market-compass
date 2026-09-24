@@ -92,16 +92,17 @@ async def consume(ws, collector):
                 work=asyncio.create_task(asyncio.to_thread(fn,'alpaca',batch))
                 cancelled=False
                 try:
-                    await asyncio.shield(work)
+                    receipts=await asyncio.shield(work)
                 except asyncio.CancelledError:
                     # Do not let a reconnect overlap an unfinished transaction.
-                    await work
+                    receipts=await work
                     cancelled=True
                 committed[kind]+=len(batch)
                 in_flight[kind]=0
                 if kind=='quotes':
-                    at=time.time()
-                    for symbol,q,_ in batch:
+                    committed_at=time.time()
+                    for symbol,q,at in (receipts if receipts is not None else
+                            [(symbol,q,committed_at) for symbol,q,_ in batch]):
                         stored[symbol]=dict(last_stored_source_ts=q['ts'],last_commit_at=at,
                             socket_to_commit_seconds=at-q['socket_read_at'],source_to_commit_seconds=at-q['ts'])
                 if cancelled: raise asyncio.CancelledError

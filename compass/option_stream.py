@@ -143,7 +143,7 @@ async def consume(ws, collector):
                 else:
                     work = asyncio.create_task(asyncio.to_thread(collector.option_trade_batch,batch))
                 try:
-                    await asyncio.shield(work)
+                    receipts=await asyncio.shield(work)
                 except asyncio.CancelledError:
                     # A cancelled to_thread await does not stop the transaction.
                     await work
@@ -153,8 +153,9 @@ async def consume(ws, collector):
                 for _ in batch: queue.popleft()
                 committed[kind] += len(batch)
                 if kind=='quotes':
-                    at=time.time()
-                    for symbol,q,_ in batch:
+                    committed_at=time.time()
+                    for symbol,q,at in (receipts if receipts is not None else
+                            [(symbol,q,committed_at) for symbol,q,_ in batch]):
                         stored[symbol]=dict(last_stored_source_ts=q['ts'],last_commit_at=at,
                             socket_to_commit_seconds=at-q['socket_read_at'],source_to_commit_seconds=at-q['ts'])
             else:
