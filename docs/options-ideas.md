@@ -23,6 +23,14 @@ It does not copy or claim knowledge of Cipher's proprietary selection rules.
 - The option must be selected for streaming, have positive quote sizes, bid of at
   least $0.10, and a spread no wider than both $0.30 and 10% of its midpoint.
   Requested subscription state alone never establishes a usable live quote.
+- New intraday entries use `quote-continuity-v2`: review the last five minutes
+  of original fresh-at-storage quotes, require at least 15 distinct timestamps
+  spanning 90 seconds, and reject any observed interior gap over 15 seconds.
+  The existing 30-second check still requires five samples across 20 seconds,
+  a latest age of at most five seconds, and no interior gap over ten seconds.
+  Rank passing contracts by smaller five-minute maximum gap, longer observed
+  span, then more samples; use recent cadence and prior metadata order for ties.
+  A new contract must build sustained evidence within the existing deadline.
 - The stock must remain inside its original invalidation/target and within half
   an ATR (minimum $0.04) of its trigger reference. Candidates expire after two
   minutes if no qualified option entry is available.

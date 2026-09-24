@@ -229,6 +229,16 @@ Implementation and existing evidence: [docs/swing-flow-study.md](swing-flow-stud
 
 Implementation and existing evidence: [docs/spy-plan-outcomes.md](spy-plan-outcomes.md).
 
+## September 24 intraday option admission amendment
+
+The September 24 intraday option admission amendment has its own
+`research-protocols-2026-09-24-options-v2` definition and `quote-continuity-v2`
+cohort. It adds sustained five-minute quote review with 90 seconds of minimum
+observed history; the original option definition above stays frozen. The next
+ten complete cash sessions beginning on or after September 25 after deployment
+form the new review window. September 24 is transition evidence. See
+[option reliability](option-reliability.md#september-24-sustained-contract-qualification-quote-continuity-v2).
+
 ## Programs without an implementation
 
 Overnight trend/trail testing remains a specification in [overnight-trend-test.md](overnight-trend-test.md). Its dedicated three-minute trend, trail and daily profit-goal implementation is not active. Existing futures setup trials are a separate program. End-of-day is a reserved program without an active producer or approved entry/exit model. Neither is counted among the fourteen operational cards or marked as built by this registry.

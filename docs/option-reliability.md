@@ -107,3 +107,40 @@ unresolved and excluded cohorts; inspect every new failure cluster using both
 stream clocks and archive evidence. A successful deployment is only startup
 verification. Roll back application code if needed; no schema migration or
 rewriting of historical outcomes is required.
+
+## September 24: sustained contract qualification (quote-continuity-v2)
+
+TTD's October 9 $12.50 put produced three correlated unresolved observations
+at 17:37:50 UTC, all at the same 17.835-second option quote gap. Archived samples
+were valid and fresh at storage. The acknowledged Massive subscription remained
+quiet between updates; OPRA recovered some original-time quotes but did not
+bridge the gap. Later stream diagnostics again showed long silent stretches.
+
+New intraday option candidates now review up to five minutes of retained quotes
+in one bounded archive query. They require at least 15 distinct usable timestamps
+spanning 90 seconds and no observed interior gap over 15 seconds. The original
+30-second qualification remains required (five samples across 20 seconds, latest
+age at most five seconds, interior gaps at most ten seconds). Truncated evidence
+fails closed. Valid original-time REST recovery counts alongside stream quotes;
+late storage, future receipts and duplicate timestamps cannot manufacture coverage.
+
+Among qualifying candidates, smaller five-minute maximum gaps rank first, then
+longer observed spans and more samples, followed by recent cadence and original
+metadata order. Short new histories wait inside the existing two-minute deadline;
+otherwise the candidate is excluded. Older observed droughts remain disqualifying
+while their bounding quotes remain in the five-minute review. Absence of older
+history is not treated as proof of a full five-minute path.
+
+Each decision retains short-window and sustained diagnostics plus an explicit
+reason. The forward audit and reliability panel separate selection-policy cohorts
+and report the last saved rejected contract checks; these counts can overlap
+across candidates. Collector version remains v7 because this changes admission,
+not collection. The prior review definition remains frozen; the new definition
+starts its ten-session review on or after September 25 following deployment.
+
+SPY scheduled/timing studies retain their existing 30-second qualification. Open
+observations keep their entry evidence, brackets, source clocks and 15-second gap
+limit. The 30-second processing grace and unresolved historical outcomes remain
+unchanged. This filter may reduce admissions; it cannot force providers to send
+quotes or guarantee future continuity. Live acceptance must verify new-policy
+decisions and mature subsequent sessions, not infer reliability from startup alone.

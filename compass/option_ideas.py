@@ -104,7 +104,7 @@ class OptionIdeas:
         if not hours or not hours[0] <= now < hours[1]-buffer:
             return
         key = identity(VERSION, signal['id'])
-        from .option_continuity import VERSION as continuity_version
+        from .option_continuity import SUSTAINED_VERSION as continuity_version
         p = dict(id=key, source_id=signal['id'], version=VERSION+'-all-setups-v1' if signal.get('research_only') else VERSION,continuity_policy=continuity_version,
             evaluation_policy='independent-all-setups-v1' if signal.get('research_only') else 'legacy-alerted',
             research_only=signal.get('research_only',False), notify_eligible=signal.get('notify_eligible',not signal.get('research_only',False)), underlying=signal['symbol'], underlying_side=signal['side'], strategy=signal['strategy'],
@@ -182,8 +182,8 @@ class OptionIdeas:
             chain_complete=chain.get('complete'),listed_contracts=len(chain.get('contracts',[])),eligible_candidates=len(p['candidates']))
         stream = self.db.get(c,'options:subscriptions',{})
         selected = set(stream.get('symbols',[])) if 0 <= now-stream.get('at',0) <= 15 else set()
-        from .option_continuity import assess, VERSION
-        p['continuity_policy']=VERSION
+        from .option_continuity import assess_sustained, rank, SUSTAINED_VERSION
+        p['continuity_policy']=SUSTAINED_VERSION
         p['continuity_checks']={}
         p['continuity_candidates_truncated']=len(p['candidates'])>8
         p['entry_diagnostics'].update(subscription_at=stream.get('at'),
@@ -193,12 +193,12 @@ class OptionIdeas:
             oq = self.db.get(c,'quote:'+o['symbol'])
             if o['symbol'] in selected and liquid(oq,now) and oq['ts']>=p['signal_time']:
                 p['entry_diagnostics']['fresh_liquid_candidates']+=1
-                quality=assess(self.db,c,o['symbol'],now)
+                quality=assess_sustained(self.db,c,o['symbol'],now)
                 p['continuity_checks'][o['symbol']]=quality
                 if quality['ready']: choices.append((o,oq))
                 else: p['waiting_reason']='Waiting for option quote continuity'
         if choices:
-            choices.sort(key=lambda pair:(p['continuity_checks'][pair[0]['symbol']]['max_gap_seconds'],-p['continuity_checks'][pair[0]['symbol']]['samples']))
+            choices.sort(key=lambda pair:rank(p['continuity_checks'][pair[0]['symbol']]))
             o,oq = choices[0]
             entry = round(oq['ask']+SLIPPAGE,2)
             p.update(status='open',contract=o,opened_at=now,entry=entry,
