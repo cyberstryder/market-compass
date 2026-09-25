@@ -3,6 +3,11 @@
 The attention banner counts actionable component statuses. It is separate from
 process/deployment health and from whether a quote is eligible for an entry.
 
+- The container replaces its startup shell with the application process, so
+  deployment shutdown signals reach the application's cleanup handlers. The
+  image smoke test checks both startup and graceful shutdown, including a clean
+  exit and the completed application-shutdown log. This allows import and report
+  ownership to be released promptly on normal deployment handoffs.
 - Research reports claim ownership in a short transaction, calculate from a
   read-only snapshot without holding the lease row lock, and publish only if
   their per-calculation token still owns an unexpired lease. Contenders wait at
