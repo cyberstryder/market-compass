@@ -36,6 +36,8 @@ def decorate_health(items, workers, markets, now):
         elif h['name'] in {'project_morning','project_smoothers'}:
             from .projects import source_health
             h=source_health(h,now)
+        elif h['name'] == 'setup_reports' and h.get('report_asof') is not None and now-h['report_asof'] > 90:
+            h.update(status='stale',detail='Last completed research report is older than 90s. '+h['detail'])
         elif h["name"] in STREAMS or h["name"].startswith("databento_"):
             if not markets[STREAMS.get(h["name"], "futures")]:
                 h.update(status="market_closed", detail="Session closed; live quote validation resumes when it opens. " + h["detail"])

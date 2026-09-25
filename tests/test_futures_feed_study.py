@@ -87,8 +87,8 @@ def test_frozen_trial_is_unchanged_by_feed_updates_duplicate_signals_and_exits(d
         assert p['feed_comparison']==original['feed_comparison']
         assert p['exit_reason']=='target' and p['pnl']==17
         assert db.get(c,'setup_study:report') is None
-        study.refresh_report(c,NOW+2)
-        assert db.get(c,'setup_study:report')['feed_comparison']['groups']
+        assert study.build_report(c,NOW+2)['feed_comparison']['groups']
+        assert db.get(c,'setup_study:report') is None  # Building never publishes.
 
 
 def test_existing_trial_does_not_get_reconstructed_evidence(db,cfg):
