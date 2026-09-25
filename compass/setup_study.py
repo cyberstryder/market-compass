@@ -5,10 +5,7 @@ Trials never read or write portfolio risk/positions. Overlapping setups are
 separate experiments, not a realizable account equity curve. Only observations
 received after activation may open a trial; missing paths are not reconstructed.
 """
-import logging
-import asyncio
 import time
-import uuid
 from sqlalchemy import Table, Column, String, Float, JSON, Index, select, update
 from .store import meta, identity
 from .market import fresh, number, session, day, CT
@@ -36,7 +33,6 @@ class SetupStudy:
     def __init__(self, db, cfg, clock=None):
         self.db, self.cfg = db, cfg
         self.clock = clock
-        self.report_owner = uuid.uuid4().hex
 
     def start(self, c, signal, now, spec, alerted=True, primary=True):
         if not self.cfg.setup_study or spec['asset'] not in ('future', 'stock', 'option') or signal.get('track') == 'swing':
@@ -185,44 +181,19 @@ class SetupStudy:
             self.observe(c,p,q,observed)
         self.db.put(c, 'setup_study:worker', {'at':now, 'version':VERSION})
 
-    def refresh_report(self, c, now):
-        if not self.cfg.setup_study:
-            return
+    def build_report(self, c, now):
         feed_activation = self.db.get(c, futures_feed_study.KEY)
-        report = self.db.get(c, 'setup_study:report', {})
-        if now-report.get('at', 0) >= 30:
-            report = report_for(c, now)
-            report['feed_comparison'] = futures_feed_reporting.report(c, trials, now, feed_activation)
-            self.db.put(c, 'setup_study:report', report)
-            logging.getLogger('uvicorn.error').info('Futures market research: model=%s cohorts=%s census_contracts=%s', VERSION, len(report['market_assessment']['groups']), sum('snapshot' in v for v in self.db.prefix(c,'futures_research:').values()))
-            groups = report['entry_variants']['groups']
-            logging.getLogger('uvicorn.error').info(
-                'Futures entry variants: version=%s cohorts=%s selected=%s unknown=%s unresolved=%s',
-                futures_variants.VERSION, len(groups),
-                {name:sum(g['selected'] for g in groups if g['variant']==name) for name in futures_variants.NAMES},
-                sum(g['unknown'] for g in groups if g['variant']=='first_per_trend'),
-                sum(g['unresolved'] for g in groups if g['variant']=='repeated'))
+        report = report_for(c, now)
+        report['feed_comparison'] = futures_feed_reporting.report(c, trials, now, feed_activation)
+        return report
 
     def report_tick(self, now=None):
-        now = time.time() if now is None else now
-        with self.db.tx() as c:
-            if self.db.lease(c, 'setup_study:report', self.report_owner, 60):
-                self.refresh_report(c, now)
+        from .setup_report_worker import ReportWorker
+        return ReportWorker(self).refresh(now)
 
     async def run_reports(self):
-        while True:
-            try:
-                await asyncio.to_thread(self.report_tick)
-                self.db.health('setup_reports', 'running', 'Research reports refreshed independently of engine scans')
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logging.getLogger('uvicorn.error').exception('Research report refresh failed')
-                try:
-                    self.db.health('setup_reports', 'error', 'Report refresh failed; see runtime logs')
-                except Exception:
-                    logging.getLogger('uvicorn.error').exception('Cannot record research report health')
-            await asyncio.sleep(30)
+        from .setup_report_worker import run
+        await run(self)
 
     def observe(self, c, p, q, observed, recorded=False):
         # Legacy trials keep their original latest-quote method. V2 may

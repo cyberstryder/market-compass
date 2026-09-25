@@ -73,7 +73,8 @@ def test_report_lease_does_not_hold_engine_lease(pg):
     study=SetupStudy(pg,Config(local=True))
     def report(c,now):
         entered.set();assert release.wait(3)
-    study.refresh_report=report
+        return {'at':now}
+    study.build_report=report
     with ThreadPoolExecutor(max_workers=1) as pool:
         report_job=pool.submit(study.report_tick)
         assert entered.wait(2)

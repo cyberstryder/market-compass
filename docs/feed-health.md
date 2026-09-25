@@ -3,6 +3,14 @@
 The attention banner counts actionable component statuses. It is separate from
 process/deployment health and from whether a quote is eligible for an entry.
 
+- Research reports claim ownership in a short transaction, calculate from a
+  read-only snapshot without holding the lease row lock, and publish only if
+  their per-calculation token still owns an unexpired lease. Contenders wait at
+  most 100 milliseconds for row locks and retry without replacing the active
+  worker's health. `running` is written atomically with a completed report;
+  `refreshing` never makes an old completed report current. A report snapshot
+  older than 90 seconds remains `stale` even if retries continue. Cancellation
+  releases only the current calculation's lease and prevents late publication.
 - Stock history keeps its prior completed scan while the hourly refresh runs.
   `refreshing` is routine maintenance, not a new coverage gap. New batches without
   a completed scan remain `partial`; provider failures remain errors. A refresh
