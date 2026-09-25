@@ -33,6 +33,9 @@ def decorate_health(items, workers, markets, now):
             h.update(status="stale", detail=role + " worker heartbeat missing or older than 20s; " + h["detail"])
         elif h["status"] == "error":
             pass  # Exchange closure must never hide an actual provider rejection.
+        elif h['name'] in {'project_morning','project_smoothers'}:
+            from .projects import source_health
+            h=source_health(h,now)
         elif h["name"] in STREAMS or h["name"].startswith("databento_"):
             if not markets[STREAMS.get(h["name"], "futures")]:
                 h.update(status="market_closed", detail="Session closed; live quote validation resumes when it opens. " + h["detail"])
@@ -40,9 +43,9 @@ def decorate_health(items, workers, markets, now):
                 h.update(status="waiting", detail="Session open; no source event observed yet. " + h["detail"])
             elif h["age"] > 20 or h["age"] < -1:
                 h.update(status="stale", detail="Session open; source events are not current. " + h["detail"])
-        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine", "setup_reports", "secondary", "secondary_data", "project_morning", "project_smoothers", "storage", "stock_recovery", "option_recovery", "obsidian", "obsidian_history"}:
-            limit = {"alpaca_history": 3900,"futures_history":3900, "option_chain": 300, "tradermatrix": 180,"tradermatrix_flow":180, "engine": 20, "setup_reports": 90,
-                "secondary": 20, "secondary_data": 45, "project_morning": 25, "project_smoothers": 25, "storage": 900,
+        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine", "setup_reports", "secondary", "secondary_data", "storage", "stock_recovery", "option_recovery", "obsidian", "obsidian_history"}:
+            limit = {"alpaca_history": 90,"futures_history":3900, "option_chain": 300, "tradermatrix": 180,"tradermatrix_flow":180, "engine": 20, "setup_reports": 90,
+                "secondary": 20, "secondary_data": 45, "storage": 900,
                 "stock_recovery": 30, "option_recovery": 60, "obsidian": 30, "obsidian_history": 90}[h["name"]]
             if h["check_age"] > limit:
                 h.update(status="stale", detail="Worker is alive but this task has stopped reporting. " + h["detail"])
