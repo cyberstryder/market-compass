@@ -10,4 +10,4 @@ COPY ops ./ops
 RUN COMPASS_LOCAL=true python -m pytest -q
 RUN useradd --create-home --uid 10001 compass && chown -R compass:compass /app
 USER compass
-CMD ["sh", "-c", "uvicorn compass.app:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --no-access-log"]
+CMD ["sh", "-c", "exec uvicorn compass.app:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --no-access-log"]

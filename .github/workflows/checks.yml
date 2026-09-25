@@ -64,7 +64,7 @@ jobs:
           docker build --tag market-compass-ci
           --label org.opencontainers.image.source=https://github.com/cyberstryder/market-compass
           --label org.opencontainers.image.revision=${{ github.sha }} .
-      - name: Check the built image starts as its runtime user
+      - name: Check the built image starts and shuts down cleanly as its runtime user
         shell: bash
         run: |
           set -euo pipefail
@@ -72,11 +72,17 @@ jobs:
             -e COMPASS_LOCAL=true -e COMPASS_ROLE=web \
             -e DATABASE_URL=sqlite:////tmp/compass-smoke.db market-compass-ci
           trap 'docker logs compass-smoke; docker rm -f compass-smoke >/dev/null' EXIT
+          smoke_ready=false
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:18080/health; then exit 0; fi
+            if curl --fail --silent http://127.0.0.1:18080/health; then smoke_ready=true; break; fi
             sleep 1
           done
-          exit 1
+          test "$smoke_ready" = true
+          docker stop --time 15 compass-smoke >/dev/null
+          smoke_exit=$(docker inspect --format '{{.State.ExitCode}}' compass-smoke)
+          # Uvicorn can re-raise SIGTERM after completing lifespan cleanup.
+          case "$smoke_exit" in 0|143) ;; *) exit 1 ;; esac
+          docker logs compass-smoke 2>&1 | grep -F 'Application shutdown complete'
       - name: Export the tested image (main only)
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: docker save market-compass-ci --output /tmp/compass-tested-image.tar
