@@ -78,6 +78,38 @@ def test_flow_health_cannot_overwrite_vendor_stale_with_current_clock():
     assert result['status']=='vendor_stale'
 
 
+@pytest.mark.parametrize('source',[NOW-3600,None,NOW])
+def test_closed_session_explains_event_age_without_enabling_confirmation(source):
+    h=dict(name='tradermatrix_flow',status='event_stale',checked_at=NOW,source_ts=source,
+        poll_ts=NOW,detail='fixture')
+    workers={'worker:collector':{'at':NOW}}
+    closed=decorate_health([h],workers,{'equities':False},NOW)[0]
+    assert closed['status']=='market_closed' and not closed['eligible_for_live_confirmation']
+    assert closed['source_ts']==source and h['status']=='event_stale'
+    opened=decorate_health([h],workers,{'equities':True},NOW)[0]
+    if source!=NOW:
+        assert opened['status']==('no_events' if source is None else 'event_stale')
+        assert not opened['eligible_for_live_confirmation']
+    assert freshness({'source_ts':NOW-3600,'received':NOW},NOW)['status']=='event_stale'
+
+
+@pytest.mark.parametrize('changes,status',[
+    ({'status':'error'},'error'),
+    ({'status':'partial'},'partial'),
+    ({'status':'blocked'},'blocked'),
+    ({'checked_at':NOW-181},'stale'),
+    ({'poll_ts':NOW-61},'poll_stale'),
+    ({'poll_ts':NOW+1},'clock_error'),
+    ({'source_ts':NOW+1},'clock_error'),
+    ({'freshness':{'vendor_stale':True}},'vendor_stale'),
+])
+def test_closed_session_never_hides_flow_failures(changes,status):
+    h=dict(name='tradermatrix_flow',status='event_stale',checked_at=NOW,source_ts=NOW-3600,
+        poll_ts=NOW,detail='fixture')|changes
+    assert decorate_health([h],{'worker:collector':{'at':NOW}},{'equities':False},NOW)[0]['status']==status
+    assert decorate_health([h],{'worker:web':{'at':NOW}},{'equities':False},NOW)[0]['status']=='stale'
+
+
 def test_recovery_page_cannot_refresh_page_one_clock(db):
     calls=[]
     async def request(path,label):

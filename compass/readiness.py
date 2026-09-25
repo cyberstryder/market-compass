@@ -5,7 +5,8 @@ from .market import fresh, CT
 
 STREAMS = {"alpaca_stocks": "equities", "databento_futures": "futures", "option_stream": "equities"}
 COLLECTORS = set(STREAMS) | {"alpaca_history", "futures_history", "option_chain", "tradermatrix", "tradermatrix_flow",
-    "project_morning", "project_smoothers", "research", "secondary_data", "provider_coverage"}
+    "project_morning", "project_smoothers", "research", "secondary_data", "provider_coverage",
+    "stock_recovery", "option_recovery", "obsidian", "obsidian_history"}
 
 
 def clock(value):
@@ -39,15 +40,24 @@ def decorate_health(items, workers, markets, now):
                 h.update(status="waiting", detail="Session open; no source event observed yet. " + h["detail"])
             elif h["age"] > 20 or h["age"] < -1:
                 h.update(status="stale", detail="Session open; source events are not current. " + h["detail"])
-        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine", "setup_reports", "secondary", "secondary_data", "project_morning", "project_smoothers", "storage"}:
+        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine", "setup_reports", "secondary", "secondary_data", "project_morning", "project_smoothers", "storage", "stock_recovery", "option_recovery", "obsidian", "obsidian_history"}:
             limit = {"alpaca_history": 3900,"futures_history":3900, "option_chain": 300, "tradermatrix": 180,"tradermatrix_flow":180, "engine": 20, "setup_reports": 90,
-                "secondary": 20, "secondary_data": 45, "project_morning": 25, "project_smoothers": 25, "storage": 900}[h["name"]]
+                "secondary": 20, "secondary_data": 45, "project_morning": 25, "project_smoothers": 25, "storage": 900,
+                "stock_recovery": 30, "option_recovery": 60, "obsidian": 30, "obsidian_history": 90}[h["name"]]
             if h["check_age"] > limit:
                 h.update(status="stale", detail="Worker is alive but this task has stopped reporting. " + h["detail"])
             elif h['name'] == 'tradermatrix_flow':
                 from .flow_recovery import freshness
                 flow = freshness({**h.get('freshness',{}),'source_ts':h.get('source_ts'),'received':h.get('poll_ts')},now)
-                if flow['status'] != 'current':
+                h['event_status']=flow['status']
+                h['eligible_for_live_confirmation']=bool(markets.get('equities',True) and flow['eligible_for_live_confirmation'])
+                # Closing the session explains old/no events, never failed
+                # polling, provider rejections, stale envelopes or bad clocks.
+                if markets.get('equities') is False and flow['status'] in {'current','event_stale','no_events'}:
+                    if h['status'] not in {'partial','blocked'}:
+                        h.update(status='market_closed',detail='Equity session closed; polling active; live flow confirmation unavailable. '
+                            +'Event freshness: '+flow['status']+'. '+h['detail'])
+                elif flow['status'] != 'current':
                     h.update(status=flow['status'], detail='Live flow confirmation unavailable. '+h['detail'])
         result.append(h)
     return result
@@ -75,4 +85,3 @@ def quote_checks(stocks, futures, quotes, mappings, markets, now,selected=None):
             "quote_ready": bool(opened and valid),
             "detail": "Fresh two-sided quote required for a simulated fill; spread, setup and risk gates also apply."})
     return rows
-

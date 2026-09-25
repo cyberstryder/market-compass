@@ -27,7 +27,9 @@ def inventory(db,c,now,include_followups=True):
         if p.get('status')!='open':continue
         if p.get('asset')=='option':options.append(p['symbol'])
         if p.get('underlying'):stocks.append(p['underlying'])
-    return dict(options=list(dict.fromkeys(options)),stocks=list(dict.fromkeys(stocks)))
+    from .universe import INDEX_UNDERLYINGS
+    return dict(options=list(dict.fromkeys(options)),
+                stocks=list(dict.fromkeys(s for s in stocks if s not in INDEX_UNDERLYINGS)))
 
 
 def select_contracts(active,previous,requested,background,limit):

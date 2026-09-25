@@ -122,8 +122,8 @@ def contracts(c,now):
     return [r['contract'] for r in active(c,now)[:500] if r['symbol'] not in EXCLUDED_STOCKS]
 def symbols(c,now):
     # These index roots are option contracts, not subscribable equity tickers.
-    indices={'SPX','SPXW','XSP','NDX','NDXP','RUT','RUTW','VIX','DJX','OEX'}
-    return list(dict.fromkeys(r['symbol'] for r in active(c,now)[:500] if r['symbol'] not in indices))
+    from .universe import INDEX_UNDERLYINGS
+    return list(dict.fromkeys(r['symbol'] for r in active(c,now)[:500] if r['symbol'] not in INDEX_UNDERLYINGS))
 
 
 def tick(db,cfg,now):
