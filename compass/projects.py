@@ -169,7 +169,7 @@ async def poll_source(db, cfg, project, client, cache=None, lease_owner=None):
     cache = {} if cache is None else cache
     url, token = source_configs(cfg)[project]
     if not url or not token:
-        await asyncio.to_thread(db.health,"project_" + project,"not_configured","Set the source URL and scoped integration token")
+        await asyncio.to_thread(db.health,"project_" + project,"not_configured","Set the source URL and scoped integration token",scan_in_progress=False)
         return
     started, count, changed, after = time.time(), 0, 0, ""
     # Stable daily boundary permits ETags; overlapping full snapshots recover late
@@ -278,11 +278,11 @@ async def run_source(db, cfg, project):
                 except asyncio.CancelledError:raise
                 except SourceLeaseLost:pass
                 except (httpx.HTTPError, ValueError, KeyError, TypeError):
-                    await asyncio.to_thread(db.health,"project_" + project,"error","Source read failed; retrying. Original strategy remains independent.")
+                    await asyncio.to_thread(db.health,"project_" + project,"error","Source read failed; retrying. Original strategy remains independent.",scan_in_progress=False)
                 except TimeoutError:
-                    await asyncio.to_thread(db.health,'project_'+project,'error','Source scan exceeded its completion deadline; retry scheduled')
+                    await asyncio.to_thread(db.health,'project_'+project,'error','Source scan exceeded its completion deadline; retry scheduled',scan_in_progress=False)
                 except Exception:
-                    await asyncio.to_thread(db.health,"project_" + project,"error","Integration unavailable; saved observations retained and retry scheduled")
+                    await asyncio.to_thread(db.health,"project_" + project,"error","Integration unavailable; saved observations retained and retry scheduled",scan_in_progress=False)
                 await asyncio.sleep(max(1, 5 - (time.time() - start)))
     finally:
         await asyncio.to_thread(source_lease,db,project,owner,release=True)

@@ -140,6 +140,7 @@ def test_import_loop_keeps_receiving_when_main_collector_is_blocked_and_releases
 def test_provider_error_stays_error_and_cancellation_releases_ownership(db,monkeypatch):
     original_client=httpx.AsyncClient;original_health=db.health
     monkeypatch.setattr(projects.time,'time',lambda:NOW)
+    db.health('project_morning','syncing','Previous scan was interrupted',scan_in_progress=True)
     class Client(original_client):
         def __init__(self,**kwargs):
             super().__init__(transport=httpx.MockTransport(lambda r:httpx.Response(401)),**kwargs)
@@ -157,5 +158,7 @@ def test_provider_error_stays_error_and_cancellation_releases_ownership(db,monke
             task.cancel()
             with pytest.raises(asyncio.CancelledError):await task
     asyncio.run(run())
-    with db.tx() as c:assert db.get(c,'health:project_morning')['status']=='error'
+    with db.tx() as c:
+        health=db.get(c,'health:project_morning')
+        assert health['status']=='error' and not health['scan_in_progress']
     assert projects.source_lease(db,'morning','replacement')
