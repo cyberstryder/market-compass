@@ -13,11 +13,18 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import Column, Float, Index, JSON, String, Table, select, func
 
-from .store import meta, identity
+from .store import meta, identity, leases
 
 PROJECTS = {"morning": "Morning Algo", "smoothers": "New Smoothers", "futures": "Automated futures"}
 STREAMS = {"mnq": ("MNQ", "MNQ Level Rejection + Speed", "0.10.3"),
            "mgc": ("MGC", "MGC Range MFI", "0.7.3")}
+SOURCE_PROGRESS_SECONDS=25
+SOURCE_SCAN_SECONDS=120
+
+
+class SourceLeaseLost(RuntimeError):
+    pass
+
 records = Table("project_records_v1", meta,
     Column("project", String(24), primary_key=True), Column("key", String(64), primary_key=True),
     Column("source_id", String(1000), nullable=False), Column("symbol", String(100), nullable=False),
@@ -140,11 +147,29 @@ def ingest(db, c, project, row, now=None, notify=False):
     return True
 
 
-async def poll_source(db, cfg, project, client, cache=None):
+def source_health(health, now):
+    result=dict(health)
+    if result.get('status') in {'connected','syncing'}:
+        if now-(result.get('checked_at') or 0)>SOURCE_PROGRESS_SECONDS:
+            result.update(status='stale',detail='Source scan has stopped reporting page progress')
+        elif result.get('scan_in_progress') and now-result.get('scan_started_at',now)>SOURCE_SCAN_SECONDS:
+            result.update(status='stale',detail='Source scan exceeded its completion deadline')
+    return result
+
+
+def source_lease(db, project, owner, release=False):
+    with db.tx() as c:
+        if release:
+            return c.execute(leases.update().where(leases.c.key=='project-'+project,
+                leases.c.owner==owner).values(until=0)).rowcount
+        return db.lease(c,'project-'+project,owner,120)
+
+
+async def poll_source(db, cfg, project, client, cache=None, lease_owner=None):
     cache = {} if cache is None else cache
     url, token = source_configs(cfg)[project]
     if not url or not token:
-        db.health("project_" + project, "not_configured", "Set the source URL and scoped integration token")
+        await asyncio.to_thread(db.health,"project_" + project,"not_configured","Set the source URL and scoped integration token",scan_in_progress=False)
         return
     started, count, changed, after = time.time(), 0, 0, ""
     # Stable daily boundary permits ETags; overlapping full snapshots recover late
@@ -153,7 +178,14 @@ async def poll_source(db, cfg, project, client, cache=None):
     if cache.get("since_ms") != since_ms:
         cache.clear()
         cache["since_ms"] = since_ms
+    seen=set()
     for page in range(50):
+        if time.time()-started>SOURCE_SCAN_SECONDS:
+            raise TimeoutError('Source scan exceeded its completion deadline')
+        if after in seen:raise ValueError('Source pagination repeated a cursor')
+        seen.add(after)
+        if lease_owner and not await asyncio.to_thread(source_lease,db,project,lease_owner):
+            return  # The new owner alone may publish health or advance this scan.
         params = {"since_ms": since_ms, "limit": 100}
         if after: params["after"] = after
         saved = cache.get(after, {})
@@ -163,66 +195,113 @@ async def poll_source(db, cfg, project, client, cache=None):
                                  headers=headers) as response:
             if response.status_code == 304 and saved:
                 count += saved["count"]
-                if saved["next"] is None: break
-                after = saved["next"]
-                continue
-            if response.status_code != 200:
-                raise ValueError("Source HTTP " + str(response.status_code))
-            chunks, size = [], 0
-            async for part in response.aiter_bytes():
-                size += len(part)
-                if size > 8 * 1024 * 1024: raise ValueError("Source page exceeds limit")
-                chunks.append(part)
-            payload = json.loads(b"".join(chunks))
-            etag = response.headers.get("etag")
-        if payload.get("schema_version") != 1 or payload.get("project") != project or payload.get("mode") != "observe_only":
-            raise ValueError("Unexpected source schema")
-        rows = payload.get("records")
-        if not isinstance(rows, list) or len(rows) > 100: raise ValueError("Invalid source page")
-        now = time.time()
-        with db.tx() as c:
-            for row in rows:
-                changed += ingest(db, c, project, row, now)
-        count += len(rows)
-        next_page = payload.get("next")
-        cache[after] = {"etag": etag, "count": len(rows), "next": next_page}
+                next_page=saved['next']
+                payload=None
+            else:
+                if response.status_code != 200:
+                    raise ValueError("Source HTTP " + str(response.status_code))
+                chunks, size = [], 0
+                async for part in response.aiter_bytes():
+                    size += len(part)
+                    if size > 8 * 1024 * 1024: raise ValueError("Source page exceeds limit")
+                    chunks.append(part)
+                payload = json.loads(b"".join(chunks))
+                etag = response.headers.get("etag")
+        if payload is not None:
+            if payload.get("schema_version") != 1 or payload.get("project") != project or payload.get("mode") != "observe_only":
+                raise ValueError("Unexpected source schema")
+            rows = payload.get("records")
+            if not isinstance(rows, list) or len(rows) > 100: raise ValueError("Invalid source page")
+            next_page = payload.get("next")
+            if next_page is not None and (not isinstance(next_page,str) or not next_page or next_page in seen):
+                raise ValueError('Invalid source pagination')
+            now=time.time()
+            def save(batch):
+                with db.tx() as c:
+                    if lease_owner and not db.lease(c,'project-'+project,lease_owner,120):
+                        raise SourceLeaseLost('Source scan ownership changed')
+                    return sum(ingest(db,c,project,row,now) for row in batch)
+            for offset in range(0,len(rows),25):
+                changed+=await asyncio.to_thread(save,rows[offset:offset+25])
+            count += len(rows)
+            # Do not cache the ETag/cursor until every page chunk commits.
+            cache[after] = {"etag": etag, "count": len(rows), "next": next_page}
+        await asyncio.to_thread(db.health,'project_'+project,'syncing',
+            f'Authenticated source scan progressing: {page+1} pages checked; {count} records checked',
+            rows_checked=count,records_changed=changed,pages_checked=page+1,
+            scan_started_at=started,scan_in_progress=True,last_page_at=time.time())
         if next_page is None: break
         if not isinstance(next_page, str) or not next_page or next_page == after:
             raise ValueError("Invalid source pagination")
         after = next_page
     else:
         raise ValueError("Source exceeds 5000-record rolling-window limit")
-    db.health("project_" + project, "connected", "Authenticated source scan completed; original strategy rules retained",
+    await asyncio.to_thread(db.health,"project_" + project,"connected","Authenticated source scan completed; original strategy rules retained",
         rows_checked=count, records_changed=changed, cycle_seconds=round(time.time() - started, 2),
-        poll_target_seconds=5, lookback_days=14)
+        poll_target_seconds=5, lookback_days=14,scan_in_progress=False,last_complete_at=time.time())
 
 
 async def run_sources(db, cfg):
-    async def run(project):
-        owner = uuid.uuid4().hex
-        cache = {}
+    from .feed_loop import FeedLoop
+    feed=FeedLoop('project-imports')
+    running={}
+    async def run():
+        running['task']=asyncio.current_task()
+        await run_source_imports(db,cfg)
+    async def stop():
+        task=running.get('task')
+        if task is not None:
+            if not task.done():task.cancel()
+            await asyncio.gather(task,return_exceptions=True)
+    future=asyncio.run_coroutine_threadsafe(run(),feed.loop)
+    try:
+        await asyncio.shield(asyncio.wrap_future(future))
+    finally:
+        # Wait for lease cleanup before FeedLoop drains its remaining tasks.
+        # Cancelling the wrapper and the loop together can cancel cleanup twice.
+        try:await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(stop(),feed.loop))
+        finally:await asyncio.to_thread(feed.close)
+
+
+async def run_source(db, cfg, project):
+    owner = uuid.uuid4().hex
+    cache = {}
+    try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8, connect=4), follow_redirects=False) as client:
             while True:
                 start = time.time()
                 try:
-                    with db.tx() as c: active = db.lease(c, "project-" + project, owner, 120)
-                    if active: await poll_source(db, cfg, project, client, cache)
+                    active=await asyncio.to_thread(source_lease,db,project,owner)
+                    if active:
+                        async with asyncio.timeout(SOURCE_SCAN_SECONDS):
+                            await poll_source(db,cfg,project,client,cache,lease_owner=owner)
+                except asyncio.CancelledError:raise
+                except SourceLeaseLost:pass
                 except (httpx.HTTPError, ValueError, KeyError, TypeError):
-                    db.health("project_" + project, "error", "Source read failed; retrying. Original strategy remains independent.")
+                    await asyncio.to_thread(db.health,"project_" + project,"error","Source read failed; retrying. Original strategy remains independent.",scan_in_progress=False)
+                except TimeoutError:
+                    await asyncio.to_thread(db.health,'project_'+project,'error','Source scan exceeded its completion deadline; retry scheduled',scan_in_progress=False)
                 except Exception:
-                    db.health("project_" + project, "error", "Integration unavailable; saved observations retained and retry scheduled")
+                    await asyncio.to_thread(db.health,"project_" + project,"error","Integration unavailable; saved observations retained and retry scheduled",scan_in_progress=False)
                 await asyncio.sleep(max(1, 5 - (time.time() - start)))
-    await asyncio.gather(*(run(project) for project in source_configs(cfg)))
+    finally:
+        await asyncio.to_thread(source_lease,db,project,owner,release=True)
+
+
+async def run_source_imports(db, cfg):
+    tasks=[asyncio.create_task(run_source(db,cfg,project)) for project in source_configs(cfg)]
+    try:await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            if not task.done() and not task.cancelling():task.cancel()
+        await asyncio.gather(*tasks,return_exceptions=True)
 
 
 def snapshot(db, c, cfg, now):
     status = []
     for project, name in PROJECTS.items():
-        health = db.get(c, "health:project_" + project, {})
-        checked = health.get("checked_at")
+        health = source_health(db.get(c, "health:project_" + project, {}),now)
         state = health.get("status", "not_configured")
-        if project != "futures" and state == "connected" and now - (checked or 0) > 25:
-            state = "stale"
         if project == "futures":
             streams = []
             for stream in STREAMS:
