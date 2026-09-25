@@ -79,7 +79,9 @@ jobs:
           done
           test "$smoke_ready" = true
           docker stop --time 15 compass-smoke >/dev/null
-          test "$(docker inspect --format '{{.State.ExitCode}}' compass-smoke)" = 0
+          smoke_exit=$(docker inspect --format '{{.State.ExitCode}}' compass-smoke)
+          # Uvicorn can re-raise SIGTERM after completing lifespan cleanup.
+          case "$smoke_exit" in 0|143) ;; *) exit 1 ;; esac
           docker logs compass-smoke 2>&1 | grep -F 'Application shutdown complete'
       - name: Export the tested image (main only)
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
