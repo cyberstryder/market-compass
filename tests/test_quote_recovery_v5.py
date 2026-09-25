@@ -115,6 +115,38 @@ def test_stock_backoff_does_not_disable_option_recovery(db,cfg,monkeypatch):
     asyncio.run(recover_stocks(collector));asyncio.run(recover_stocks(collector))
     assert len(calls)==1 and collector.stock_recovery_backoff==NOW+60
     assert not hasattr(collector,'option_recovery_backoff')
+    with db.tx() as c:
+        h=db.get(c,'health:stock_recovery')
+        assert h['status']=='error' and h['results'][0]['http_status']==429
+        assert h['backoff_until']==NOW+60
+
+
+def test_idle_stock_recovery_clears_old_partial_but_waiting_retry_stays_visible(db,cfg,monkeypatch):
+    from compass import active_observations
+    monkeypatch.setattr('compass.option_recovery.time.time',lambda:NOW)
+    demanded=[]
+    monkeypatch.setattr(active_observations,'inventory',lambda *a,**kw:dict(stocks=demanded,options=[]))
+    cfg.alpaca_key='fixture';cfg.alpaca_secret='fixture'
+    collector=SimpleNamespace(db=db,cfg=cfg,stock_recovery_attempts={})
+    db.health('stock_recovery','partial','Old failed recovery')
+    asyncio.run(recover_stocks(collector))
+    with db.tx() as c:
+        h=db.get(c,'health:stock_recovery')
+        assert h['status']=='idle' and h['active_symbols']==0 and h['checked_at']==NOW
+    demanded.append('SPY');collector.stock_recovery_attempts['SPY']=NOW
+    asyncio.run(recover_stocks(collector))
+    with db.tx() as c:
+        h=db.get(c,'health:stock_recovery')
+        assert h['status']=='partial' and h['waiting']==1
+        db.put(c,'quote:SPY',q(NOW))
+    asyncio.run(recover_stocks(collector))
+    with db.tx() as c:
+        h=db.get(c,'health:stock_recovery')
+        assert h['status']=='idle' and h['active_symbols']==1 and h['waiting']==0
+        db.put(c,'quote:SPY',{**q(NOW),'bid':0})
+    asyncio.run(recover_stocks(collector))
+    with db.tx() as c:
+        assert db.get(c,'health:stock_recovery')['status']=='partial'
 
 
 def test_grace_does_not_cross_unknown_interval_to_award_target(db,cfg):

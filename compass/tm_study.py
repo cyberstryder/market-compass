@@ -13,8 +13,7 @@ LOG=logging.getLogger('uvicorn.error')
 KEY='tm-study-v1'
 # These option underlyings do not use the Alpaca stock quote stream. Retain
 # their records, but never substitute an ETF proxy for an index outcome.
-INDEX_UNDERLYINGS=frozenset(('SPX','SPXW','XSP','NDX','NDXP','XND','RUT','RUTW','MRUT',
-    'VIX','VIXW','VIX1D','XEO','OEX','DJX','NANOS'))
+from .universe import INDEX_UNDERLYINGS
 
 
 def symbol_for(row):

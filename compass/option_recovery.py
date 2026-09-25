@@ -117,20 +117,35 @@ async def recover_alpaca(collector, symbols):
 async def recover_stocks(collector):
     """One bounded stock batch per cycle with a provider-specific backoff."""
     now=time.time()
-    if (not getattr(collector.cfg,'alpaca_key','') or not getattr(collector.cfg,'alpaca_secret','')
-            or now<getattr(collector,'stock_recovery_backoff',0)):return []
+    async def health(status,detail,**extra):
+        await asyncio.to_thread(collector.db.health,'stock_recovery',status,detail,None,
+            at=time.time(),collection_version=COLLECTION_VERSION,
+            backoff_until=getattr(collector,'stock_recovery_backoff',0),**extra)
+    if not getattr(collector.cfg,'alpaca_key','') or not getattr(collector.cfg,'alpaca_secret',''):
+        await health('not_configured','Stock recovery requires Alpaca credentials')
+        return []
+    if now<getattr(collector,'stock_recovery_backoff',0):
+        await health('error','Stock recovery request failed; provider retry backoff active')
+        return []
     from .active_observations import inventory
+    from .universe import INDEX_UNDERLYINGS
     attempts=getattr(collector,'stock_recovery_attempts',{})
     def select_targets():
         with collector.db.tx() as c:
             live=set(inventory(collector.db,c,now,include_followups=False)['stocks'])
-            symbols=inventory(collector.db,c,now)['stocks']
-            wanted=[s for s in symbols if now-collector.db.get(c,'quote:'+s,{}).get('ts',0)>2
-                    and now-attempts.get(s,0)>=(2 if s in live else 60)]
-            return sorted(wanted,key=lambda s:(s not in live,attempts.get(s,0),s))[:100],symbols
-    wanted,active=await asyncio.to_thread(select_targets)
+            symbols=[s for s in inventory(collector.db,c,now)['stocks'] if s not in INDEX_UNDERLYINGS]
+            needed=[s for s in symbols if not fresh(collector.db.get(c,'quote:'+s,{}),now,age=2)]
+            wanted=[s for s in needed if now-attempts.get(s,0)>=(2 if s in live else 60)]
+            return sorted(wanted,key=lambda s:(s not in live,attempts.get(s,0),s))[:100],symbols,needed
+    wanted,active,needed=await asyncio.to_thread(select_targets)
     collector.stock_recovery_attempts={s:t for s,t in attempts.items() if s in active}
-    if not wanted:return []
+    if not wanted:
+        await health('partial' if needed else 'idle',
+            'Waiting for the next recovery attempt' if needed else
+            'Active underlying quotes are current; no recovery needed' if active else
+            'No active underlying observations need recovery',
+            active_symbols=len(active),waiting=len(needed),results=[])
+        return []
     collector.stock_recovery_attempts.update({s:now for s in wanted})
     try:
         data=await asyncio.wait_for(collector.get('https://data.alpaca.markets/v2/stocks/quotes/latest',
@@ -150,7 +165,11 @@ async def recover_stocks(collector):
         code=getattr(exc,'status_code',None)
         collector.stock_recovery_backoff=time.time()+(300 if code in (401,403) else 60)
         results=[dict(status='unavailable',http_status=code,error=type(exc).__name__)]
-    await asyncio.to_thread(collector.db.health,'stock_recovery','running' if all(r['status']=='fresh_quotes' for r in results) else 'partial',
-        'Original-timestamp underlying recovery for active research',None,results=results,at=time.time(),collection_version=COLLECTION_VERSION)
+    waiting=len(needed)-sum(r['status']=='fresh_quotes' for r in results)
+    failed=any(r['status']=='unavailable' for r in results)
+    await health('error' if failed else 'partial' if waiting else 'running',
+        'Stock recovery request failed; provider retry backoff active' if failed else
+        f'Original-timestamp underlying recovery: {waiting} still need fresh quotes',
+        active_symbols=len(active),waiting=waiting,results=results,last_attempt_at=now)
     LOG.info('Stock recovery: %s',__import__('json').dumps(results,sort_keys=True))
     return results

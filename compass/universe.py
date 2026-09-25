@@ -18,6 +18,10 @@ def symbols(value):
 
 
 EXCLUDED_STOCKS = frozenset({"DJT"})
+# Cash-index option roots are retained in research, but are not equity tickers
+# that the stock quote/history providers can subscribe to.
+INDEX_UNDERLYINGS = frozenset(('SPX','SPXW','XSP','NDX','NDXP','XND','RUT','RUTW','MRUT',
+    'VIX','VIXW','VIX1D','XEO','OEX','DJX','NANOS'))
 
 def saved_watchlist():
     return symbols((Path(__file__).parent / 'watchlist.txt').read_text())
@@ -60,7 +64,8 @@ def data_symbols(db, c, cfg, now):
     study=db.get(c,'smoothers-daily-comparison-v1:activation',{})
     if study and now<study['sessions'][-1]['close']+14*86400:
         base.extend(r['ticker'] for r in study['configs'])
-    return tuple(s for s in dict.fromkeys(protected+base) if s not in EXCLUDED_STOCKS)[:500]
+    return tuple(s for s in dict.fromkeys(protected+base)
+                 if s not in EXCLUDED_STOCKS and s not in INDEX_UNDERLYINGS)[:500]
 
 
 def focus_symbols(db, c, cfg, now, limit=12):

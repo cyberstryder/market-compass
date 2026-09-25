@@ -67,6 +67,27 @@ def test_archive_health_distinguishes_missing_behind_and_no_quote(db):
         'SPY':'retained','TGT':'missing_archive','SBUX':'archive_behind','NEW':'no_quote'}
 
 
+def test_index_roots_never_enter_equity_collection_but_research_is_retained(db,monkeypatch):
+    from compass.config import Config
+    from compass.universe import data_symbols
+    from compass.active_observations import inventory
+    monkeypatch.setattr('compass.discovery.requested',lambda *a:['VIX','XND','QQQ'])
+    contract='O:VIX261021C00020000'
+    with db.tx() as c:
+        db.put(c,'position:vix',dict(status='open',asset='option',symbol=contract,underlying='VIX'))
+        db.put(c,'research:vix',{'value':20})
+        active=inventory(db,c,NOW)
+        assert contract in active['options'] and 'VIX' not in active['stocks']
+        cfg=Config(local=True,stocks=('VIX','SPX','SPY'))
+        assert data_symbols(db,c,cfg,NOW)==('SPY','QQQ')
+        assert db.get(c,'research:vix')=={'value':20}
+        db.put(c,'quote:SPY',quote(NOW));archive(db,c,NOW-1,symbol='SPY')
+        health=stock_archive_health(c,['SPY','VIX','SPX','NEW'],{'quote:SPY':quote(NOW)},NOW,False)
+        assert health['status']=='waiting' and 'No quote yet: NEW.' in health['detail']
+        assert health['excluded_index_symbols']==['SPX','VIX']
+        assert {r['symbol'] for r in health['rows']}=={'SPY','NEW'}
+
+
 def test_late_cycle_recovers_all_horizons_from_first_timely_archived_quote(db):
     m = measurement()
     original = deepcopy(m)

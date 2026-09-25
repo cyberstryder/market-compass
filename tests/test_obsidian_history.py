@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from sqlalchemy import select,func
-from compass.obsidian_history import analyze,step,KEY,CUTOFF
+from compass.obsidian_history import analyze,step,collect,health_status,KEY,CUTOFF
 from compass.obsidian import ingest_page,ideas
 from compass.store import events
 from test_obsidian import event
@@ -66,3 +66,39 @@ def test_durable_job_no_repeat_or_live_quote_writes(db,code):
         assert result['status']==('observed' if code==200 else 'access_denied')
         assert c.execute(select(ideas.c.measurements)).scalar_one()['anchor_status']=='late_import'
         assert c.execute(select(func.count()).select_from(events).where(events.c.kind=='quote')).scalar_one()==0
+
+
+def test_completed_audit_replaces_old_configuration_warning_without_provider_request(db):
+    with db.tx() as c:
+        db.put(c,KEY,dict(complete=True,queue=[{'id':'one'}],results={'one':{'status':'observed'}}))
+    db.health('obsidian_history','not_configured','API credentials required')
+    # A finished audit is still finished if its one-time switch/credentials are removed.
+    collector=SimpleNamespace(db=db,cfg=SimpleNamespace(obsidian_history=False,obsidian_url='',massive=''))
+    asyncio.run(collect(collector))
+    with db.tx() as c:
+        h=db.get(c,'health:obsidian_history')
+        assert h['status']=='complete' and '1/1 ideas checked' in h['detail']
+        assert db.get(c,KEY)['results']=={'one':{'status':'observed'}}
+
+
+@pytest.mark.parametrize('enabled,url,key,state,cursor,status',[
+    (False,'','',{},0,'disabled'),
+    (True,'','',{},0,'not_configured'),
+    (True,'feed','key',{},115,'waiting'),
+    (True,'feed','key',{},116,'running'),
+    (True,'feed','key',{'complete':True,'blocked':'access_denied'},116,'error'),
+])
+def test_audit_health_distinguishes_disabled_waiting_and_access_failure(enabled,url,key,state,cursor,status):
+    cfg=SimpleNamespace(obsidian_history=enabled,obsidian_url=url,massive=key)
+    assert health_status(cfg,state,cursor)[0]==status
+
+
+def test_health_is_refreshed_when_a_running_audit_finishes(db,monkeypatch):
+    cfg=SimpleNamespace(obsidian_history=True,obsidian_url='feed',massive='key')
+    with db.tx() as c:
+        db.put(c,'obsidian:cursor:'+hashlib.sha256(b'feed').hexdigest(),116)
+    async def finish(collector):
+        with db.tx() as c:db.put(c,KEY,{'complete':True,'queue':[],'results':{}})
+    monkeypatch.setattr('compass.obsidian_history.step',finish)
+    asyncio.run(collect(SimpleNamespace(db=db,cfg=cfg)))
+    with db.tx() as c:assert db.get(c,'health:obsidian_history')['status']=='complete'

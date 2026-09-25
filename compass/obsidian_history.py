@@ -15,6 +15,39 @@ CUTOFF=datetime(2026,9,15,tzinfo=timezone.utc).timestamp()
 LOG=logging.getLogger('uvicorn.error')
 
 
+def health_status(cfg, state, cursor):
+    total=len(state.get('queue',[]));checked=len(state.get('results',{}))
+    if state.get('complete'):
+        if state.get('blocked'):
+            return 'error',f'Audit finished {checked}/{total}; provider access failed: {state["blocked"]}'
+        return 'complete',f'Audit finished: {checked}/{total} ideas checked; per-idea coverage remains in Obsidian Watchlist'
+    if not cfg.obsidian_history:
+        return 'disabled','Retrospective audit disabled; live Obsidian collection is separate'
+    missing=[name for name in ('obsidian_url','massive') if not getattr(cfg,name,'')]
+    if missing:
+        return 'not_configured','Retrospective audit requires configuration: '+', '.join(missing)
+    if state.get('blocked'):
+        return 'error','Retrospective provider access failed: '+state['blocked']
+    if cursor<116:
+        return 'waiting','Waiting for the retained Obsidian feed to reach the audit boundary'
+    return 'running',f'Retrospective audit: {checked}/{total} ideas checked'
+
+
+async def collect(collector):
+    """Report every lifecycle state, including an already completed audit."""
+    def read():
+        feed=hashlib.sha256(collector.cfg.obsidian_url.encode()).hexdigest()
+        with collector.db.tx() as c:
+            state=collector.db.get(c,KEY,{})
+            cursor=collector.db.get(c,'obsidian:cursor:'+feed,0)
+        return health_status(collector.cfg,state,cursor)
+    status,detail=await asyncio.to_thread(read)
+    if status=='running':
+        await step(collector)
+        status,detail=await asyncio.to_thread(read)
+    await asyncio.to_thread(collector.db.health,'obsidian_history',status,detail)
+
+
 def bounds(row):
     start=math.ceil(row['source_ts']/60)*60
     expiry=datetime.fromisoformat(row['expiry']).replace(tzinfo=ZoneInfo('America/New_York'))+timedelta(days=1)
