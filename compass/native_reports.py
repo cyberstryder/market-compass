@@ -45,10 +45,18 @@ def comparison(native,source,fields):
 def smoother_comparison(native,source):
     fields=('direction','entry_price','target_price','signal_type','status','quality_score','quality_tier','quality_rank','featured_rank','is_featured')
     if source is None:return comparison(native,source,fields)
+    aliases={}
+    # The original app persists is_featured under quality_featured and exports
+    # the database row unchanged. Compare that saved boolean, never infer it
+    # from rank, tier, or current native selection; keep the source row intact.
+    if source.get('is_featured') is None and type(source.get('quality_featured')) is bool:
+        source={**source,'is_featured':source['quality_featured']}
+        aliases['is_featured']='quality_featured'
     # A missing exported flag is unknown, not a contradictory false value.
     missing=[k for k in fields if k not in source or (k!='featured_rank' and source[k] is None)]
     pair=comparison(native,source,[k for k in fields if k not in missing])
     pair['missing_source_fields']=missing
+    pair['source_field_aliases']=aliases
     if missing and pair['status']=='matched_fields':pair['status']='incomplete_source_fields'
     return pair
 
