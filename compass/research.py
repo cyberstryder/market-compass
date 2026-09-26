@@ -243,7 +243,10 @@ async def collect(collector, now=None):
         pool = background if background and now-last >= 30 else foreground
         if not pool:
             return None
-        feed=max(pool,key=lambda value:value[:2])[2]
+        # Oldest attempt first for expansion: short-cadence jobs must not
+        # starve unseen history/detail routes when the request budget is full.
+        feed=max(pool,key=(lambda value:value[1]) if pool is background else
+                 (lambda value:value[:2]))[2]
         if feed.research_only:
             db.put(c, 'research_expanded_budget', {'attempted_at': now})
         old=db.get(c,'research_job:'+feed.key,{})

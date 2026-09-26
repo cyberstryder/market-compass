@@ -1,6 +1,7 @@
 import asyncio
 import pytest
 from compass.store import Store
+from compass import swing_ideas  # Register focused-position tables before Store.initialize.
 from compass.config import Config
 from compass.providers import Collectors
 from compass.research import Feed, collect, catalog, scheduled_feeds
@@ -51,5 +52,24 @@ def test_background_retained_without_promotion_and_budget_survives_worker(db):
             assert not db.recent(c,'alert')
             rows=[r for r in catalog(db,c,cfg,NOW+30) if r['research_only']]
             assert rows and all(not r['eligible_for_live_confirmation'] for r in rows)
+        await worker.close()
+    asyncio.run(run())
+
+
+def test_unseen_history_is_not_starved_by_overdue_short_cadence(db):
+    async def run():
+        cfg=Config(local=True,stocks=('SPY',),matrix='fixture')
+        worker=Collectors(db,cfg)
+        with db.tx() as c:
+            for f in scheduled_feeds(db,c,cfg,NOW):
+                if f.key=='extra_gex_history_SPY':continue
+                db.put(c,'research_job:'+f.key,{'attempted_at':NOW-10000 if f.key=='extra_accumulation' else NOW})
+        calls=[]
+        async def request(path,key):
+            calls.append(key)
+            return {'data':[]},NOW
+        worker.matrix_request=request
+        await collect(worker,NOW)
+        assert calls==['extra_gex_history_SPY']
         await worker.close()
     asyncio.run(run())
