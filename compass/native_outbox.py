@@ -95,10 +95,14 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
             url=webhooks.get(row['program'],'')
             if not re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',url):continue
             if d.get('mirror'):
+                from .alert_ownership import quote_error
                 decision=d.get('publication',{})
                 reason=None
                 if d.get('destination_fingerprint')!=identity(url):reason='Destination changed; historical copy not replayed'
-                elif decision.get('event')=='ENTRY' and (not d.get('mirror_expires_at') or now>d['mirror_expires_at']):reason='Entry expired before shared delivery'
+                elif decision.get('event')=='ENTRY':
+                    p=decision.get('payload',{})
+                    if not d.get('mirror_expires_at') or now>=d['mirror_expires_at']:reason='Entry expired before shared delivery'
+                    else:reason=quote_error(p.get('last_quote') or p.get('quote'),now)
                 elif decision.get('event') and decision['event']!='ENTRY' and not channel_entry_delivered(c,row['program'],decision):reason='Entry not confirmed in this destination'
                 if reason:
                     c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',delivery=dict(d,error=reason)))

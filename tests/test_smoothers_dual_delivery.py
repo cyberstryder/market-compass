@@ -113,3 +113,27 @@ def test_shared_entry_receipt_allows_shared_exit_without_orphan_primary_exit(db)
     assert rows[('smoothers','exit')]=='suppressed'
     assert rows[('smoothers_shared','exit')]=='delivered'
     assert sum('/123/' in x for x in calls)==1
+
+
+def test_shared_entry_retry_cannot_use_stale_quote(db):
+    with db.tx() as c:
+        db.put(c,'native:ownership:smoothers',dict(owner='compass',previous_sender_paused=True,
+            accepted_at=NOW-1,effective_from=NOW-10,epoch='test'))
+        queue(db,c,'smoothers','entry',{'content':'entry'},NOW,event_time=NOW,cohort_time=NOW,
+            publication=dict(id='stale-shared',status='native_option_entry',contract={'symbol':'QQQ261002C00500000'},
+                track='swing',quote=dict(bid=2,ask=2.1,ts=NOW),expires_at=NOW+120))
+    calls=[]
+    def handler(request):
+        calls.append(str(request.url))
+        if '/456/' in str(request.url):return httpx.Response(429,json={'retry_after':20})
+        return httpx.Response(200,json={'id':'4567'})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        hooks={'smoothers':PRIMARY,'smoothers_shared':SHARED}
+        assert deliver_one(db,client,hooks,True,NOW+1)
+        assert deliver_one(db,client,hooks,True,NOW+2)
+        assert not deliver_one(db,client,hooks,True,NOW+23)
+    with db.tx() as c:
+        shared=c.execute(select(outbox).where(outbox.c.program=='smoothers_shared')).mappings().one()
+        assert shared['status']=='suppressed'
+        assert shared['delivery']['error']=='Stale or future option quote'
+    assert len(calls)==2
