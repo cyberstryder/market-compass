@@ -39,6 +39,11 @@ def report(db,c,now):
             status='awaiting_forward_cohort' if not candidates else 'research_review_pending',
             reason='New board deployed after September 25 close. No backfilled entries or automatic strategy promotion.'),
         smoothers=dict(week=monday,job=weekly['job'].get('state'),signals=len(weekly['rows']),
+            coverage_missing_symbols=[r['native']['ticker'] for r in weekly['rows'] if r['native'].get('coverage_missing')],
+            unresolved_symbols=[r['native']['ticker'] for r in weekly['rows'] if r['native'].get('status')=='UNRESOLVED'],
+            statistics_differences=[dict(ticker=r['native']['ticker'],inputs={k:v for k,v in r['score_evidence']['inputs'].items()
+                if k in ('alltime_wins','alltime_losses') and v['native']!=v['source']}) for r in weekly['rows']
+                if any(v['native']!=v['source'] for k,v in r['score_evidence']['inputs'].items() if k in ('alltime_wins','alltime_losses'))],
             comparison=dict(comparison),field_differences=dict(differences),missing_source_fields=dict(source_missing),
             configuration=dict(Counter(r['configuration_comparison']['status'] for r in weekly['rows'])),
             contracts=dict(Counter(r['option_comparison']['status'] for r in weekly['rows'])),
