@@ -164,3 +164,36 @@ def test_report_waits_for_first_session_without_restarting_study(db):
         assert r['next_formula_at']==OPEN+3900
         assert report(db,c,OPEN)['state']=='collecting'
         assert report(db,c,OPEN)['activation']==a
+
+
+def test_daily_quotes_are_pinned_before_entry_and_at_pending_endpoints(db):
+    from compass.active_observations import inventory
+    a=activated(db)
+    with db.tx() as c:
+        assert 'DEMO' in inventory(db,c,NOW)['stocks']
+        daily_basis(db,c);quote(db,c,NOW)
+        add(db,c,a,'smoothers_daily','DEMO','long',NOW,NOW,{})
+        assert 'DEMO' in inventory(db,c,CLOSE-20)['stocks']
+        assert 'DEMO' not in inventory(db,c,CLOSE+20)['stocks']
+
+
+def test_fetched_daily_bars_supply_reference_without_preexisting_history(db):
+    from compass.smoothers_daily import retain_daily_basis
+    from compass.swing_study import basis_reason
+    a=activated(db)
+    frame=pd.DataFrame({'close':[100.,999.]},index=pd.to_datetime(['2026-09-14','2026-09-15']))
+    with db.tx() as c:
+        basis=retain_daily_basis(db,c,'DEMO',frame,NOW)
+        assert basis['through']=='2026-09-14' and basis['close']==100
+        q=quote(db,c,NOW)
+        add(db,c,a,'smoothers_daily','DEMO','long',NOW,NOW,{},
+            entry_quote={'price':100,'source_ts':NOW,'received_at':NOW},reference_basis=basis)
+        p=c.execute(select(smoothers_daily.c.payload)).scalar_one()
+        assert p['price_basis']==basis
+        # Receipt time is real, not rewritten to the historical bar timestamp.
+        row=c.execute(select(events).where(events.c.source=='smoothers_daily')).mappings().one()
+        assert row['received']>row['ts']
+        target=row['received']+10
+        assert basis_reason(c,'DEMO',{'signal':{'daily':basis}},target) is None
+        db.append(c,'daily','fixture','DEMO',row['ts'],dict(c=50))
+        assert basis_reason(c,'DEMO',{'signal':{'daily':basis}},target)=='historical_price_basis_changed'

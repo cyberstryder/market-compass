@@ -50,3 +50,28 @@ Tests cover Tuesday selection versus unchanged weekly selection, incomplete
 opening-hour bars, frozen parameters, partial-day exclusion, idempotence and
 no messaging, directional overlap, actual detection timing, all comparator
 families, missing endpoint quotes, and corporate-action basis changes.
+
+## Measurement coverage repair (September 25)
+
+Daily Smoothers now pins its frozen ticker census in active quote recovery during
+its opening-hour processing window. Pending research endpoints pin their symbols
+from 30 seconds before the target through five seconds after it. Existing live
+stock recovery then uses its two-second retry cadence for these symbols, even
+when no paper trade exists. This does not relax the source-time or recording
+windows and does not repair observations whose quotes were never retained.
+
+The daily bars already fetched for each new signal are retained as provider
+reference evidence, with real receipt times. Only completed prior-session bars
+are eligible; the latest completed close is frozen in the new observation.
+The existing changed-price-basis exclusion remains in force. Existing observations
+are not assigned references that became known later. Reports expose missing
+endpoint reasons alongside measurement denominators.
+
+The weekly scorecard separates stock target status from one-contract option
+quote estimates. It requires available, fresh, matching entry and exit contracts,
+ordered quote timestamps, a quote aligned with resolution, and the standard 100
+multiplier. Estimates use entry ask, exit bid and an explicit $1.32 round-trip
+fee assumption. Pending and unusable quotes have null P&L, never zero. Original
+source premium marks remain unavailable for this calculation. This is not broker
+P&L, and partial measured totals are not complete strategy returns. Weekday
+option trading and new alerts remain disabled.

@@ -18,6 +18,9 @@ def inventory(db,c,now,include_followups=True):
         if p.get('asset')=='option':options.append(p['symbol'])
         elif p.get('asset')=='stock':stocks.append(p['symbol'])
         if p.get('underlying'):stocks.append(p['underlying'])
+    # Pin daily research around entry and endpoint windows, even without a paper trade.
+    from .smoothers_daily import quote_demand
+    stocks.extend(quote_demand(db,c,now))
     # Follow-ups keep collecting independently after their original result is unresolved.
     for p in active(c,now) if include_followups else []:
         for s in p['symbols']:

@@ -193,6 +193,12 @@ def build(db,c,cfg,now,session_day=None):
     post=cohort(c,trials,trials.c.started,first,w['through'],[trials.c.payload['asset'].as_string()=='future']) if first else None
     monday=(date-timedelta(days=date.weekday())).isoformat()
     smoother_states=dict(c.execute(select(weekly.c.status,func.count()).where(weekly.c.week==monday).group_by(weekly.c.status)).all())
+    from .smoothers_scorecard import summarize
+    smoother_options=summarize(list(c.execute(select(weekly.c.payload).where(weekly.c.week==monday)).scalars()))
+    from .projects import records as source_records
+    source_rows=list(c.execute(select(source_records.c.payload).where(source_records.c.project=='smoothers')).scalars())
+    originals=[p.get('original',{}) for p in source_rows if p.get('original',{}).get('monday_date')==monday]
+    original_scorecard=summarize(originals)
     spy_scope=[spy_options.c.day==day]
     option_selections=[p for p in db.prefix(c,'pending_research_options:').values()
         if lower_cash<=p.get('created_at',0)<upper_cash]
@@ -216,7 +222,7 @@ def build(db,c,cfg,now,session_day=None):
         swing_options=cohort(c,swings,swings.c.created,lower_cash,upper_cash),
         stock_setups=cohort(c,trials,trials.c.started,lower_cash,upper_cash,[trials.c.payload['asset'].as_string()=='stock']),
         morning=morning_daily(c,lower_cash,upper_cash,now),
-        smoothers=dict(week=monday,states=smoother_states,total=sum(smoother_states.values()),basis='Current weekly underlying-target outcomes; not daily realized option returns.'),
+        smoothers=dict(week=monday,option_scorecard=smoother_options,original_scorecard=original_scorecard,states=smoother_states,total=sum(smoother_states.values()),basis='Current weekly underlying-target outcomes; not daily realized option returns.'),
         spy_options=dict(totals=aggregate(c,spy_options,spy_scope,{})[0],basis='Scheduled SPY option observations; separate from the 0DTE paper scanner.'),
         research=other_research(c,lower_cash,upper_cash),
         verification=verification(db,c,day,now),

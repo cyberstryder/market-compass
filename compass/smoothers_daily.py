@@ -7,7 +7,7 @@ from collections import Counter,defaultdict
 from datetime import date,datetime,timedelta
 import httpx
 from sqlalchemy import select,update
-from .store import smoothers_daily as trials,identity
+from .store import smoothers_daily as trials,identity,events
 from .market import day,session,fresh,NY,number
 from .native_config import KEY as CONFIG_KEY
 from .native_smoothers import make_signal
@@ -24,6 +24,35 @@ PROTOCOL=dict(version=VERSION,sessions=20,primary_horizon='close',
     endpoints='Fresh underlying midpoint at actual first detection; 60 trading minutes and common session closes at 0/1/3/5 sessions. No stops, fills, fees or option-return inference.',
     timing='Compare actual persisted detection times, never backdate Smoothers to the opening-hour close.',
     interpretation='Compare Smoothers-only, scanner-only and overlap groups by weekday and family. Correlated experiments, unequal entry times and missing data prevent causal claims. No automatic promotion or new alerts.')
+
+
+def quote_demand(db,c,now):
+    """Use existing websocket/REST recovery, preserving five-second endpoints."""
+    a=db.get(c,VERSION+':activation',{})
+    wanted=[]
+    if any(s['open']+3600<=now<=min(s['open']+5400,s['close']) for s in a.get('sessions',[])):
+        wanted.extend(r['ticker'] for r in a.get('configs',[]))
+    for p in c.execute(select(trials.c.payload).where(trials.c.status=='pending')).scalars():
+        if any(q.get('status')=='pending' and q.get('target_at') is not None and
+               q['target_at']-30<=now<=q['target_at']+5 for q in p['checkpoints'].values()):
+            wanted.append(p['symbol'])
+    return list(dict.fromkeys(wanted))
+
+
+def retain_daily_basis(db,c,symbol,bars,observed):
+    """Retain actual fetched completed bars, never backdate their receipt time."""
+    if bars.empty:return
+    today=date.fromisoformat(day(observed))
+    completed=[(stamp,row) for stamp,row in bars.iterrows() if stamp.date()<today][-10:]
+    basis=None
+    for stamp,row in completed:
+        at=datetime.combine(stamp.date(),datetime.min.time(),NY).timestamp()
+        close=number(row.get('close'))
+        if close and close>0:
+            db.append(c,'daily','smoothers_daily',symbol,at,dict(c=close,
+                basis='split_adjusted_provider_bar',fetched_at=observed))
+            basis=dict(through=stamp.date().isoformat(),close=close,observed_at=observed)
+    return basis
 
 
 def activate(db,c,now):
@@ -50,7 +79,7 @@ def endpoints(at):
     return {k:v for k,v in targets(at).items() if k in HORIZONS}
 
 
-def add(db,c,activation,family,symbol,side,at,now,evidence,entry_quote=None,reason=None):
+def add(db,c,activation,family,symbol,side,at,now,evidence,entry_quote=None,reason=None,reference_basis=None):
     today=day(at)
     if today not in {s['day'] for s in activation['sessions']} or symbol not in {r['ticker'] for r in activation['configs']}:
         return False
@@ -62,7 +91,7 @@ def add(db,c,activation,family,symbol,side,at,now,evidence,entry_quote=None,reas
     targets=endpoints(at) if entry_quote else {}
     historical=db.recent(c,'daily',symbol,limit=10)
     ref=next((r for r in historical if day(r['ts'])<today and r['received']<=now and number(r['payload'].get('c'))),None)
-    price_basis=dict(through=day(ref['ts']),close=ref['payload']['c']) if ref else None
+    price_basis=reference_basis or (dict(through=day(ref['ts']),close=ref['payload']['c']) if ref else None)
     p=dict(price_basis=price_basis,id=key,version=VERSION,day=today,family=family,symbol=symbol,side=side,
         detected_at=at,registered_at=now,config_revision=activation['revision'],evidence=evidence,
         entry=entry_quote,reason=reason,status='pending' if entry_quote else 'unavailable',
@@ -94,12 +123,13 @@ def schedule(db,data,now,clock=time.time):
             if observed>min(cutoff+1800,sess['close']):raise ValueError('daily_processing_window_missed')
             if signal:
                 with db.tx() as c:
+                    basis=retain_daily_basis(db,c,config['ticker'],daily,observed)
                     q=db.get(c,'quote:'+config['ticker'])
                     valid=fresh(q,observed) and 0<=observed-q['ts']<=5 and q.get('received',observed)<=observed
                     price=dict(price=(q['bid']+q['ask'])/2,source_ts=q['ts'],received_at=q.get('received',observed)) if valid else None
                     add(db,c,activation,'smoothers_daily',config['ticker'],'long' if signal['direction']=='CALL' else 'short',
                         observed,observed,dict(formula=signal,cutoff=cutoff,processing_delay_seconds=observed-cutoff),price,
-                        None if valid else 'no_fresh_detection_quote')
+                        None if valid else 'no_fresh_detection_quote',reference_basis=basis)
                 result.update(status='candidate',direction=signal['direction'],detected_at=observed,entry_available=valid)
             else:result['status']='no_signal'
         except Exception as error:
@@ -192,7 +222,8 @@ def report(db,c,now):
         values=[v['directional_return_pct'] for v in checks if v['status']=='completed']
         out.append(dict(family=family,group=kind,confirmation=confirmation,weekday=weekday,horizon=horizon,records=len(checks),
             measured=len(values),pending=sum(x['status']=='pending' for x in checks),unavailable=sum(x['status']=='unavailable' for x in checks),
-            mean_directional_pct=sum(values)/len(values) if values else None,positive=sum(v>0 for v in values)))
+            mean_directional_pct=sum(values)/len(values) if values else None,positive=sum(v>0 for v in values),
+            unavailable_reasons=dict(Counter(v.get('reason') or 'unspecified' for v in checks if v['status']=='unavailable'))))
     return dict(state='awaiting_first_session' if now<a['sessions'][0]['open'] else 'collecting' if now<a['sessions'][-1]['close'] else 'entry_collection_complete',next_formula_at=next((s['open']+3900 for s in a['sessions'] if s['open']+3900>now),None),activation=a,protocol=PROTOCOL,groups=out,
         records=len(rows),days=list(days.values()),overlap=[dict(family=f,matched=len(v),smoothers_earlier=sum(x>0 for x in v),
         scanner_earlier=sum(x<0 for x in v),same_time=sum(x==0 for x in v),mean_lead_seconds=sum(v)/len(v)) for f,v in sorted(overlap.items())],
