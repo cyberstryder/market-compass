@@ -22,6 +22,7 @@ class Feed:
     interval: int
     priority: int = 1
     category: str = 'context'
+    research_only: bool = False
 
 
 FEEDS = (
@@ -53,6 +54,13 @@ FEEDS = (
         ('volatility-surge', 'Volatility expansion'), ('gamma-scan', 'Gamma candidates'),
         ('csp-wheel', 'Cash-secured-put candidates'), ('leaps', 'Long-dated candidates'),
         ('leveraged', 'Leveraged ETF candidates'), ('daily-cuts', 'Combined screener shortlist')))
+
+
+def scheduled_feeds(db, c, cfg, now):
+    from .tm_expanded import expanded_feeds
+    focus = focus_symbols(db, c, cfg, now, cfg.option_focus)
+    return list(FEEDS) + [Feed('apex_'+s, s+' Apex levels', '/gex/'+s+'/apex', 300, 8, 'exposure')
+                          for s in focus] + expanded_feeds(Feed, focus)
 
 
 def observation_time(value, *, index_gamma=False):
@@ -136,7 +144,7 @@ def normalize(feed, payload, now):
     # coexist. Each item retains its own clock and unknown clocks remain unknown.
     return {'key': feed.key, 'label': feed.label, 'category': feed.category,
         'source': 'tradermatrix', 'path': feed.path, 'received': now, 'source_ts': stamp,
-        'target_interval': feed.interval, **metadata(payload),
+        'target_interval': feed.interval, 'research_only': feed.research_only, **metadata(payload),
         'cache_policy': CACHE_POLICY if rolling else None,
         'items': items, 'data': raw, 'status': 'available' if stamp is not None else 'per_item_clocks' if any(r['source_ts'] is not None for r in items) else 'source_time_unknown',
         'coverage': 'Vendor-returned results; not proof of complete market coverage',
@@ -175,7 +183,7 @@ def apex_levels(payload, symbol, now):
 def catalog(db, c, cfg, now):
     result=[]
     collector_status=db.get(c,'health:research',{}).get('status')
-    for feed in FEEDS:
+    for feed in scheduled_feeds(db, c, cfg, now):
         item=db.get(c, 'research:'+feed.key)
         job=db.get(c, 'research_job:'+feed.key, {})
         stamp=item.get('source_ts') if item else None
@@ -202,8 +210,9 @@ def catalog(db, c, cfg, now):
             'target_interval': feed.interval, 'last_error': job.get('error'),
             'poll_age':check['poll_age'],'cached':check['cached'],'vendor_stale':check['vendor_stale'],
             'source_progress':(item or {}).get('source_progress'),
-            'usage':'context_only' if feed.category in ('events','disclosures','fundamentals','positioning') else 'timestamped_market_context',
-            'eligible_for_live_confirmation':status=='current' and feed.category not in ('events','disclosures','fundamentals','positioning'),
+            'research_only':feed.research_only,
+            'usage':'context_only' if feed.research_only or feed.category in ('events','disclosures','fundamentals','positioning') else 'timestamped_market_context',
+            'eligible_for_live_confirmation':status=='current' and not feed.research_only and feed.category not in ('events','disclosures','fundamentals','positioning'),
             'rows': len(item.get('items', [])) if item else 0,
             'clock_basis': 'snapshot' if stamp is not None else 'per_item', 'item_clocks': item_clocks})
     return result
@@ -214,8 +223,7 @@ async def collect(collector, now=None):
     now=now or time.time()
     db,cfg=collector.db,collector.cfg
     with db.tx() as c:
-        focus=focus_symbols(db,c,cfg,now,cfg.option_focus)
-        feeds=list(FEEDS)+[Feed('apex_'+s, s+' Apex levels', '/gex/'+s+'/apex', 300, 8, 'exposure') for s in focus]
+        feeds=scheduled_feeds(db,c,cfg,now)
         jobs=db.prefix(c,'research_job:')
         due=[]
         for feed in feeds:
@@ -229,20 +237,28 @@ async def collect(collector, now=None):
             due.append((rank, -job.get('attempted_at',0), feed))
         if not due:
             return None
-        feed=max(due,key=lambda value:value[:2])[2]
+        background = [r for r in due if r[2].research_only]
+        foreground = [r for r in due if not r[2].research_only]
+        last = db.get(c, 'research_expanded_budget', {}).get('attempted_at', 0)
+        pool = background if background and now-last >= 30 else foreground
+        if not pool:
+            return None
+        feed=max(pool,key=lambda value:value[:2])[2]
+        if feed.research_only:
+            db.put(c, 'research_expanded_budget', {'attempted_at': now})
         old=db.get(c,'research_job:'+feed.key,{})
         db.put(c,'research_job:'+feed.key,{**old,'attempted_at':now})
     try:
         payload,received=await collector.matrix_request(feed.path,feed.key)
         result=normalize(feed,payload,received)
-        apex=apex_levels(payload,feed.key[5:],received) if feed.key.startswith('apex_') else None
+        apex=apex_levels(payload,feed.key[5:],received) if not feed.research_only and feed.key.startswith('apex_') else None
         with db.tx() as c:
             result['source_progress']=progress(db.get(c,'research:'+feed.key,{}),result)
             db.put(c,'research:'+feed.key,result)
             db.append(c,'research','tradermatrix',feed.key,received,result,
                 identity('research',feed.key,result['data']))
             db.put(c,'research_job:'+feed.key,{'attempted_at':now,'succeeded_at':received,'failures':0})
-            if feed.category in ('setups','flow','positioning','disclosures'):
+            if not feed.research_only and feed.category in ('setups','flow','positioning','disclosures'):
                 for row in result['items']:
                     symbol=row.get('symbol')
                     if symbol not in cfg.watch_symbols:
