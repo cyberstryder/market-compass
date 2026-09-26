@@ -11,7 +11,7 @@ from compass.market import NY
 from compass.engine import Engine,spec
 from compass.scanner import (features,technical_candidates,exposure_candidates,
     flow_candidate,Scanner,snapshot)
-from compass.research import Feed,normalize,apex_levels,collect,FEEDS,catalog
+from compass.research import Feed,normalize,apex_levels,collect,FEEDS,catalog,scheduled_feeds
 from compass.providers import Collectors,FeedError
 from compass.flow_recovery import collect as collect_flow
 from compass.alerts import message_for
@@ -162,7 +162,7 @@ def test_research_failure_isolated_and_last_good_snapshot_retained(db):
         cfg=Config(local=True,stocks=('SPY',),matrix='fixture')
         collector=Collectors(db,cfg)
         with db.tx() as c:
-            for feed in FEEDS:
+            for feed in scheduled_feeds(db,c,collector.cfg,NOW):
                 if feed.key!='signals': db.put(c,'research_job:'+feed.key,{'attempted_at':NOW})
             db.put(c,'research_job:apex_SPY',{'attempted_at':NOW})
             db.put(c,'research:signals',{'source_ts':NOW-60,'data':{'previous':True}})
@@ -261,7 +261,7 @@ def test_vendor_research_match_prioritizes_symbol_but_is_not_a_trade(db):
     async def run():
         collector=Collectors(db,Config(local=True,stocks=('SPY','TSLA'),matrix='fixture'))
         with db.tx() as c:
-            for feed in FEEDS:
+            for feed in scheduled_feeds(db,c,collector.cfg,NOW):
                 if feed.key!='signals': db.put(c,'research_job:'+feed.key,{'attempted_at':NOW})
             for symbol in ('SPY','TSLA'): db.put(c,'research_job:apex_'+symbol,{'attempted_at':NOW})
         async def request(*args): return {'results':[{'symbol':'TSLA','price':100}]},NOW
