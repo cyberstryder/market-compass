@@ -224,7 +224,8 @@ def smoothers(db,c,now,limit=100,week='',ticker=''):
         'source_status':'unrecorded','preview':intents[key]['payload'] if key in intents else None,
         'current_format_matches':bool(key in intents and intents[key]['payload']==payload),
         'delivery':intents[key]['delivery'] if key in intents else None} for key,payload in expected.items()]
-    return {'week':week,'job':{k:v for k,v in state.items() if k!='config'},'rows':results,
+    shared=[dict(event_id=r['event_key'],status=r['status'],delivery={k:v for k,v in r['delivery'].items() if k in ('attempts','message_id','finished_at','error')}) for r in c.execute(select(outbox).where(outbox.c.program=='smoothers_shared',selector)).mappings()]
+    return {'shared_delivery':shared,'week':week,'job':{k:v for k,v in state.items() if k!='config'},'rows':results,
         'delivery':delivery,'unexpected_intents':sorted(intents.keys()-expected.keys()),
         'delivery_basis':'Original Smoothers exports no Discord receipts; source delivery is unrecorded and requires a channel review. Native previews are not delivered messages.',
         'source_only':[{'ticker':r['symbol'],'source_id':r['source_id'],'status':'native_week_not_run' if state.get('state') in ('missed','waiting',None) else 'not_selected_or_failed'} for r in source[:500] if r['symbol'] not in native_symbols],
@@ -253,6 +254,13 @@ async def run(db,cfg=None):
                             db.put(c,'native-program-report-v1:summary',{**old,'at':time.time(),
                                 'morning_status':'retired','smoothers':sm['summary'],
                                 'smoothers_truncated':sm['truncated'],'cutover_ready':False})
+                            from .strategy_readiness import report as readiness_report,KEY as readiness_key
+                            if time.time()-db.get(c,readiness_key,{}).get('at',0)>=900:
+                                readiness=readiness_report(db,c,time.time())
+                                db.put(c,readiness_key,readiness)
+                                compact={**readiness,'futures':{**readiness['futures'],'rows':len(readiness['futures']['rows']),
+                                    'states':dict(Counter({s:sum(x['count'] for x in readiness['futures']['rows'] if x['status']==s) for s in ('open','closed','excluded','unresolved')}))}}
+                                logging.getLogger('uvicorn.error').info('Strategy readiness: %s',json.dumps(compact,sort_keys=True))
                             return
                         r=report(db,c,time.time())
                         config=db.get(c,'native-smoothers-v1:config',{})

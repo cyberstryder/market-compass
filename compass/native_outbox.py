@@ -1,5 +1,6 @@
 """Durable previews and a gated sender. Old shadow intents are never promoted."""
 import asyncio
+from copy import deepcopy
 import re
 import time
 import uuid
@@ -15,7 +16,7 @@ outbox=Table('native_program_outbox_v1',meta,
 
 
 def owner(db,c,program,now=None):
-    o=db.get(c,'native:ownership:'+program,{})
+    o=db.get(c,'native:ownership:'+('smoothers' if program=='smoothers_shared' else program),{})
     now=time.time() if now is None else now
     return o if o.get('effective_from',0)<=now and o.get('owner')=='compass' and o.get('previous_sender_paused') is True and o.get('accepted_at') and o.get('epoch') else None
 
@@ -48,6 +49,34 @@ def queue(db,c,program,event_key,payload,now,parent_event=None,event_time=None,c
     return key
 
 
+
+def channel_entry_delivered(c,program,publication):
+    trade_id=publication.get('trade_id')
+    if not trade_id:return False
+    return bool(c.execute(select(outbox.c.id).where(outbox.c.program==program,
+        outbox.c.status=='delivered',
+        outbox.c.delivery['publication']['trade_id'].as_string()==trade_id,
+        outbox.c.delivery['publication']['event'].as_string()=='ENTRY').limit(1)).first())
+
+
+def mirror_smoothers(db,c,row,delivery,webhooks,now):
+    """Freeze an independently receipted copy before the primary network send.
+
+    Only newly validated live intents are copied. Historical shadow/delivered
+    rows are never replayed when a second destination is configured.
+    """
+    url=webhooks.get('smoothers_shared','')
+    if row['program']!='smoothers' or not re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',url):return
+    primary=webhooks.get(delivery.get('publication',{}).get('category','smoothers'),'')
+    if url==primary:return
+    d=deepcopy(delivery)
+    d.update(attempts=0,parent_event=None,publication_input=None,mirror=True,
+        destination_fingerprint=identity(url),mirror_expires_at=(row['delivery'].get('publication_input') or {}).get('expires_at'))
+    for key in ('lease','lease_until','message_id','finished_at','next_attempt','error'):d.pop(key,None)
+    c.execute(db.insert(outbox).values(id=identity('native-outbox-v1','smoothers_shared',row['event_key']),
+        program='smoothers_shared',event_key=row['event_key'],created=now,status='pending',
+        payload=row['payload'],delivery=d).on_conflict_do_nothing(index_elements=['id']))
+
 def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
     if not enabled:return False
     now=time.time() if now is None else now
@@ -65,6 +94,15 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
             if not ownership or ownership['epoch']!=d.get('owner_epoch') or d.get('next_attempt',0)>now:continue
             url=webhooks.get(row['program'],'')
             if not re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',url):continue
+            if d.get('mirror'):
+                decision=d.get('publication',{})
+                reason=None
+                if d.get('destination_fingerprint')!=identity(url):reason='Destination changed; historical copy not replayed'
+                elif decision.get('event')=='ENTRY' and (not d.get('mirror_expires_at') or now>d['mirror_expires_at']):reason='Entry expired before shared delivery'
+                elif decision.get('event') and decision['event']!='ENTRY' and not channel_entry_delivered(c,row['program'],decision):reason='Entry not confirmed in this destination'
+                if reason:
+                    c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',delivery=dict(d,error=reason)))
+                    continue
             from . import alert_ownership as publication
             meta=d.get('publication_input')
             if meta is not None:
@@ -90,6 +128,10 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
                     if not re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',url):continue
                 row=dict(row,payload={'content':publication.format_message(dict(record,payload=decision['payload'])),
                     'username':'Market Compass','allowed_mentions':{'parse':[]}})
+            mirror_smoothers(db,c,row,d,webhooks,now)
+            if row['program']=='smoothers' and d.get('publication',{}).get('event') not in (None,'ENTRY') and not channel_entry_delivered(c,'smoothers',d['publication']):
+                c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',delivery=dict(d,error='Entry not confirmed in this destination')))
+                continue
             message_id=None
             if d.get('parent_event'):
                 parent=c.execute(select(outbox).where(outbox.c.id==identity('native-outbox-v1',row['program'],d['parent_event']))).mappings().first()
@@ -149,6 +191,7 @@ async def run(db,cfg):
     enabled=os.getenv('NATIVE_PROGRAM_SEND_ENABLED','false').lower()=='true'
     hooks=dict(cfg.discord_routes)
     hooks.update({p:os.getenv('NATIVE_'+p.upper()+'_DISCORD_WEBHOOK','') for p in ('morning','smoothers')})
+    hooks['smoothers_shared']=os.getenv('NATIVE_SMOOTHERS_SHARED_DISCORD_WEBHOOK','')
     if not cfg.morning_enabled: hooks["morning"]=""
     with httpx.Client(timeout=10,follow_redirects=False) as client:
         while True:
