@@ -128,3 +128,8 @@ class Data:
     def quote(self,contract):
         return self.options.snapshots([contract])[contract['symbol']]
 
+    def quotes(self,contracts):
+        result={}
+        for offset in range(0,len(contracts),100):
+            result.update(self.options.snapshots(contracts[offset:offset+100]))
+        return result

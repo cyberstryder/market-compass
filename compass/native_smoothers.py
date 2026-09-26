@@ -126,6 +126,29 @@ def queue_signal(db,c,p,event,payload,now,event_time):
                  event_time=event_time,cohort_time=p.get('model_entry_time'),publication=publication)
 
 
+def refresh_entry_quotes(signals,data,now):
+    """Freeze the final cohort against quotes fetched together at publication."""
+    contracts=[p['contract'] for p in signals if p.get('contract')]
+    if not contracts:return signals
+    try:quotes=data.quotes(contracts)
+    except Exception as exc:
+        quotes={c['symbol']:{'status':'unavailable','reason':type(exc).__name__} for c in contracts}
+    for p in signals:
+        if not p.get('contract'):continue
+        p.setdefault('selection_option_observation',dict(quote=p.get('quote'),entry_premium=p.get('entry_premium'),est_return_pct=p.get('est_return_pct')))
+        q=quotes.get(p['contract']['symbol'],{'status':'unavailable','reason':'missing_batch_quote'})
+        p.update(quote=q,entry_premium=None,est_return_pct=None,entry_quote_refreshed_at=now)
+        if q.get('status') in ('available','wide_spread') and q.get('midpoint',0)>0:
+            p['entry_premium']=q['midpoint']
+            expiry=datetime.fromisoformat(p['contract']['expiration']+'T16:00:00').replace(tzinfo=ET).timestamp()
+            model=value_at_target(q['midpoint'],q['midpoint'],p['entry_price'],p['contract']['strike'],p['target_price'],max(expiry-now,0)/(365*86400),p['direction'])
+            p['est_return_pct']=(model['value_at_target']/q['midpoint']-1)*100
+        stats=p.get('stats_at_entry') or {}
+        p.update(score_signal(target_atr_mult=p.get('target_atr_mult'),alltime_wins=stats.get('wins',0),alltime_losses=stats.get('losses',0),
+            backtest_wr=p['config'].get('backtest_wr'),entry_premium=p['entry_premium'],est_return_pct=p['est_return_pct']))
+    return signals
+
+
 def schedule(db,data,now):
     monday=monday_for(now);key=VERSION+':week:'+monday.isoformat()
     with db.tx() as c:
@@ -145,7 +168,7 @@ def schedule(db,data,now):
     if 'config' not in state:
         with db.tx() as c:
             config=db.get(c,VERSION+':config',{})
-            if config.get('owner')=='compass':config=effective(db,c,config)
+            if config.get('owner')=='compass':config=effective(db,c,config,monday.isoformat())
         if not config.get('configs') or (config.get('owner')!='compass' and now-config.get('received_at',0)>7200):return
         state['config']=config;state['started']=now;state['state']='running';state['message_version']=messages.VERSION
         with db.tx() as c:db.put(c,key,state)
@@ -183,7 +206,16 @@ def schedule(db,data,now):
         with db.tx() as c:db.put(c,key,state)
         return
     with db.tx() as c:
-        signals=list(c.execute(select(weekly.c.payload).where(weekly.c.week==monday.isoformat()).with_for_update()).scalars())
+        signals=list(c.execute(select(weekly.c.payload).where(weekly.c.week==monday.isoformat())).scalars())
+    signals=refresh_entry_quotes(signals,data,now)
+    with db.tx() as c:
+        # The monitor may resolve a signal while the batch quotes are fetched.
+        # Merge only entry fields, preserving its target/premium observations.
+        entry_fields=('quote','entry_premium','est_return_pct','entry_quote_refreshed_at','selection_option_observation',
+                      'quality_version','quality_score','quality_atr_score','quality_reliability_score','quality_option_adjustment')
+        for p in signals:
+            current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
+            current.update({k:p[k] for k in entry_fields if k in p});p.update(current)
         ranked=rank_signals(signals)
         for p in ranked:
             save(db,c,p)
@@ -206,7 +238,9 @@ def monitor(db,data,now):
     active=next((s for s in sessions if s['open']+60<=now<=s['close']+300),None)
     end=now//60*60
     rows=sorted(rows,key=lambda p:p.get('target_checked_at',0))
-    starts={p['id']:max(p['model_entry_time'],(p.get('last_seen_at') or p['model_entry_time'])-120) for p in rows}
+    starts={p['id']:max(p['model_entry_time'],
+        p.get('coverage_missing_since',p['model_entry_time']) if p.get('coverage_missing')
+        else (p.get('last_seen_at') or p['model_entry_time'])-120) for p in rows}
     batches={};errors={}
     if active:
         for offset in range(0,len(rows),20):
@@ -223,7 +257,9 @@ def monitor(db,data,now):
         if bars.empty:
             with db.tx() as c:
                 current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
-                current.update(target_checked_at=now,coverage_missing=True,target_error=errors.get(p['ticker'],'empty_completed_bars'))
+                current.update(target_checked_at=now,coverage_missing=True,
+                    coverage_missing_since=min(start,current.get('coverage_missing_since') or start),
+                    target_error=errors.get(p['ticker'],'empty_completed_bars'))
                 save(db,c,current)
             continue
         bars=bars[bars.index+pd.Timedelta(minutes=1)<=pd.Timestamp(end,unit='s',tz='UTC')]
@@ -233,7 +269,8 @@ def monitor(db,data,now):
         for session in sessions:
             expected.update(range(int(max(start,session['open'])//60)*60,int(min(end,session['close'])//60)*60,60))
         missing=expected-{int(t.timestamp()) for t in bars.index}
-        p['coverage_missing']=p.get('coverage_missing',False) or bool(missing)
+        p['coverage_missing']=bool(missing)
+        p['coverage_missing_since']=min(missing) if missing else None
         hits=bars[bars['high']>=p['target_price']] if p['direction']=='CALL' else bars[bars['low']<=p['target_price']]
         p.update(target_error=None,last_seen_at=bars.index[-1].timestamp(),last_underlying=float(bars['close'].iloc[-1]),target_checked_at=now)
         if not hits.empty:
@@ -245,7 +282,7 @@ def monitor(db,data,now):
         with db.tx() as c:
             current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
             if current['status']!='OPEN':continue
-            current.update({k:p[k] for k in ('status','resolution_time','exit_underlying','touch_bar','touch_detected_at','exit_quote','last_seen_at','last_underlying','target_checked_at','coverage_missing','target_error') if k in p})
+            current.update({k:p[k] for k in ('status','resolution_time','exit_underlying','touch_bar','touch_detected_at','exit_quote','last_seen_at','last_underlying','target_checked_at','coverage_missing','coverage_missing_since','target_error') if k in p})
             p=current
             save(db,c,p)
             db.append(c,'native_target_check','smoothers',p['ticker'],now,{'id':p['id'],'from':start,'through':end,'missing_minutes':len(missing),'last_seen_at':p['last_seen_at'],'status':p['status']})

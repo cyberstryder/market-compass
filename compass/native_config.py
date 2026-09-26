@@ -63,16 +63,40 @@ def revise(db,expected,rows,reason,now,restore=None):
         return write_revision(db,c,current,validate(rows),now,reason.strip(),restore)
 
 
-def effective(db,c,config):
+def effective(db,c,config,week=None):
     # Frozen source aggregate is a baseline, never re-imported after ownership.
     # Add only independent cohorts created after ownership, avoiding double count.
     from .native_smoothers import weekly
     stats={r['ticker']:{'ticker':r['ticker'],'wins':int(r.get('wins',0)),'losses':int(r.get('losses',0))} for r in config.get('alltime',[])}
+    anchors={}
+    if week:
+        # Configuration ownership can begin with source positions still OPEN.
+        # Anchor history to retained entry-time totals plus the subsequently
+        # resolved source week, not an aggregate frozen before those closures.
+        # Never use the entry week itself or source cohorts after sender cutover.
+        from .projects import records
+        boundary=db.get(c,'native:ownership:smoothers',{}).get('effective_week',week)
+        candidates={}
+        for payload in c.execute(select(records.c.payload).where(records.c.project=='smoothers')).scalars():
+            p=payload.get('original') or {};w=str(p.get('monday_date') or '')[:10]
+            ticker=p.get('ticker');wins=p.get('alltime_wins_at_entry');losses=p.get('alltime_losses_at_entry')
+            if (not ticker or not w or w>=min(week,boundary) or p.get('status') not in ('WIN','LOSS')
+                    or type(wins) is not int or type(losses) is not int or min(wins,losses)<0):continue
+            candidates.setdefault((ticker,w),[]).append(p)
+        for (ticker,w),rows in sorted(candidates.items()):
+            if len(rows)!=1:raise ValueError('Ambiguous source statistics cohort')
+            p=rows[0];anchors[ticker]=w
+            stats[ticker]=dict(ticker=ticker,wins=p['alltime_wins_at_entry']+int(p['status']=='WIN'),
+                               losses=p['alltime_losses_at_entry']+int(p['status']=='LOSS'))
     for p in c.execute(select(weekly.c.payload).where(weekly.c.status.in_(['WIN','LOSS']))).scalars():
-        if p['created_at']<config.get('owned_since',float('inf')):continue
+        if week and p['week']>=week:continue
+        if p['ticker'] in anchors:
+            if p['week']<=anchors[p['ticker']]:continue
+        elif p['created_at']<config.get('owned_since',float('inf')):continue
         r=stats.setdefault(p['ticker'],dict(ticker=p['ticker'],wins=0,losses=0))
         r['wins' if p['status']=='WIN' else 'losses']+=1
-    return dict(config,alltime=list(stats.values()),statistics_basis='Frozen source baseline plus native resolved cohorts created after Compass ownership')
+    return dict(config,alltime=list(stats.values()),statistics_anchors=anchors,
+        statistics_basis='Retained pre-cutover source entry totals and resolved cohort, then later native cohorts; frozen baseline fallback')
 
 
 def snapshot(db,c):
