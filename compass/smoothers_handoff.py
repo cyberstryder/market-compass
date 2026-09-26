@@ -110,7 +110,7 @@ def activate(db,plan_id,previous_sender_paused,operator_reviewed,original_alerts
         _,blockers,checksum=review(db,c,plan['review_week'],now)
         if blockers:raise RevisionConflict('Weekly evidence no longer qualifies: '+'; '.join(blockers))
         if checksum!=plan['review_checksum']:raise RevisionConflict('Weekly evidence changed; prepare and review again')
-        if c.execute(select(func.count()).select_from(outbox).where(outbox.c.program=='smoothers',outbox.c.status.in_(['pending','sending','ambiguous']))).scalar_one():raise ValueError('Reconcile pending or uncertain Smoothers deliveries first')
+        if c.execute(select(func.count()).select_from(outbox).where(outbox.c.program.in_(('smoothers','smoothers_shared')),outbox.c.status.in_(['pending','sending','ambiguous']))).scalar_one():raise ValueError('Reconcile pending or uncertain Smoothers deliveries first')
         epoch=identity(plan_id,now)
         db.put(c,OWNER,{'owner':'compass','previous_sender_paused':True,'accepted_at':now,'epoch':epoch,
                        'effective_from':plan['effective_from'],'effective_week':plan['effective_week'],'plan_id':plan_id})
@@ -121,7 +121,7 @@ def activate(db,plan_id,previous_sender_paused,operator_reviewed,original_alerts
 
 def rollback(db,now):
     with delivery_guard(db) as c:
-        rows=c.execute(select(outbox).where(outbox.c.program=='smoothers',outbox.c.status.in_(['pending','sending'])).with_for_update()).mappings().all()
+        rows=c.execute(select(outbox).where(outbox.c.program.in_(('smoothers','smoothers_shared')),outbox.c.status.in_(['pending','sending'])).with_for_update()).mappings().all()
         previous=db.get(c,OWNER,{})
         db.put(c,OWNER,{'owner':'original','revoked_at':now,'previous_epoch':previous.get('epoch')})
         for r in rows:

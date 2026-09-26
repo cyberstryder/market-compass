@@ -47,6 +47,11 @@ class SmoothersHandoffChange(BaseModel):
 
 
 def install(app,db):
+    @app.get("/api/strategy-readiness")
+    def get_strategy_readiness():
+        from .strategy_readiness import KEY
+        with db.tx() as c:return db.get(c,KEY,{"status":"awaiting_report"})
+
     @app.get('/api/native/smoothers/handoff')
     def get_smoothers_handoff():
         with db.tx() as c:return smoothers_handoff.snapshot(db,c)
