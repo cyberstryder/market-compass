@@ -120,6 +120,8 @@ class Engine:
             if stop is not None and not self.db.get(c,key):
                 self.db.put(c,key,dict(signal={**signal,'notify_eligible':alerted and primary},created_at=now,expires_at=now+120,
                     status='waiting',research_only=True))
+            from .weekday_candidates import capture
+            capture(self.db,c,signal,now,trial)
         return trial
 
     def enter(self,c,signal,now,quiet=False):
