@@ -6,7 +6,7 @@ from .store import identity
 from .market import fresh
 
 
-def observe(db,c,symbol,f,now,study,spec):
+def observe(db,c,symbol,f,now,study,spec,orb_enabled=True):
     h=research_session(now,symbol)
     if not h['is_open']:
         return
@@ -22,7 +22,7 @@ def observe(db,c,symbol,f,now,study,spec):
     # period, with separate session policy/version identities for comparisons.
     from .scanner import session_open
     from .scanner import research_candidates
-    extra,arms=research_candidates(f,db.get(c,key+':arms',{}),now,spec['tick'])
+    extra,arms=research_candidates(f,db.get(c,key+':arms',{}),now,spec['tick'],orb_enabled=orb_enabled)
     db.put(c,key+':arms',arms)
     if not session_open(symbol,now) and h['entry_open']:
         for item in extra:

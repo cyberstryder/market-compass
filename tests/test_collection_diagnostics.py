@@ -63,7 +63,7 @@ def test_subscription_journal_is_idempotent_and_overflow_explicit(db):
 def test_morning_attempt_ids_survive_duplicate_and_do_not_expose_credentials(db,caplog):
     caplog.set_level('INFO',logger='uvicorn.error')
     morning.initialize(db)
-    app=FastAPI();morning.install(app,db,SimpleNamespace(native_morning_intake_token='private-token',morning_token=''))
+    app=FastAPI();morning.install(app,db,SimpleNamespace(morning_enabled=True,native_morning_intake_token='private-token',morning_token=''))
     event=signal_event(stamp=int(time.time()*1000))
     with TestClient(app) as client:
         first=client.post('/hooks/native/morning/private-token',json=event,headers={'x-railway-request-id':'proxy-123'})
@@ -86,7 +86,7 @@ def test_morning_attempt_ids_survive_duplicate_and_do_not_expose_credentials(db,
 def test_disconnect_before_complete_body_has_no_committed_attempt(db,caplog):
     caplog.set_level('INFO',logger='uvicorn.error')
     morning.initialize(db)
-    app=FastAPI();morning.install(app,db,SimpleNamespace(native_morning_intake_token='private-token',morning_token=''))
+    app=FastAPI();morning.install(app,db,SimpleNamespace(morning_enabled=True,native_morning_intake_token='private-token',morning_token=''))
     endpoint=next(r.endpoint for r in app.routes if r.path=='/hooks/native/morning')
     async def run():
         async def receive():return {'type':'http.disconnect'}
@@ -118,7 +118,7 @@ def test_http_cancellation_still_records_actual_worker_commit(db,monkeypatch,cap
     from threading import Event
     caplog.set_level('INFO',logger='uvicorn.error')
     morning.initialize(db)
-    app=FastAPI();morning.install(app,db,SimpleNamespace(native_morning_intake_token='private-token',morning_token=''))
+    app=FastAPI();morning.install(app,db,SimpleNamespace(morning_enabled=True,native_morning_intake_token='private-token',morning_token=''))
     endpoint=next(r.endpoint for r in app.routes if r.path=='/hooks/native/morning')
     started,release,finished=Event(),Event(),Event()
     original=morning.accept

@@ -453,7 +453,8 @@ class Secondary:
         inputs['captured_at'] = now
         inputs['clock_basis'] = 'Local clock after input reads; source timestamps remain unchanged'
         decision = assess(candidate, inputs, now)
-        morning_opening.consider(self.db,c,candidate,inputs,decision,now)
+        if self.cfg.morning_enabled:
+            morning_opening.consider(self.db,c,candidate,inputs,decision,now)
         deadline = candidate.get("available_at", candidate["source_ts"]) + 60
         if (decision["timely"] and decision["missing"] and not decision["rejections"]
                 and candidate.get("side") in ("long", "short") and now < deadline):
@@ -572,8 +573,9 @@ class Secondary:
             # Producers commit concurrently: a lower sequence ID can become
             # visible after a higher one. Durable per-event acknowledgements,
             # rather than id > cursor, prevent that candidate from being lost.
-            eligible = or_(and_(events.c.kind == "project_update", events.c.source.in_(("morning", "smoothers", "futures"))),
-                           and_(events.c.kind == "morning_entry", events.c.source == "native_morning"),
+            source_projects=("morning","smoothers","futures") if self.cfg.morning_enabled else ("smoothers","futures")
+            eligible = or_(and_(events.c.kind == "project_update", events.c.source.in_(source_projects)),
+                           and_(self.cfg.morning_enabled, events.c.kind == "morning_entry", events.c.source == "native_morning"),
                            and_(events.c.kind == "alert", events.c.source.in_(("scanner", "engine"))))
             batch = c.execute(select(events).outerjoin(handled, events.c.id == handled.c.event_id)
                 .where(handled.c.event_id.is_(None), events.c.ts >= activation["at"], eligible)
@@ -615,7 +617,8 @@ class Secondary:
                     now = self.clock() if self.clock else time.time()
                 m = advance_recorded_measurement(self.db, c, row["measurements"], row["side"], quote, now)
                 c.execute(update(reviews).where(reviews.c.id == row["id"]).values(measurements=m, tracking=m["state"], updated=now))
-            morning_opening.tick(self.db,c,now)
+            if self.cfg.morning_enabled:
+                morning_opening.tick(self.db,c,now)
             self.db.put(c, "secondary:status", {"at": now, "version": VERSION, "enabled": True,
                 "alerts_enabled": self.cfg.secondary_alerts, "events_checked": len(batch),
                 "active_measured": len(active),

@@ -331,3 +331,16 @@ def test_history_uses_bounded_bulk_inserts_and_deduplicates(db):
         assert len(db.recent(c,'bar','SPY',limit=1100))==1001
     assert len(inserts)==3
     event.remove(db.engine,'before_cursor_execute',observe)
+
+
+def test_retired_orb_does_not_emit_with_existing_arms():
+    f=fact()|{'or_complete':True,'or_high':100.7,'or_low':99.5,'rvol20':1}
+    _,arms=technical_candidates(f,{},NOW,.01)
+    later=f|{'asof':NOW+60,'bar_start':NOW,'previous_bar':f['bar'],
+        'bar':{'o':101,'h':101.3,'l':100.6,'c':101.1,'v':100}}
+    enabled,_=technical_candidates(later,arms,NOW+60,.01)
+    disabled,_=technical_candidates(later,arms,NOW+60,.01,orb_enabled=False)
+    assert any(r['rule']=='orb_retest' for r in enabled)
+    assert disabled==[r for r in enabled if r['rule']!='orb_retest']
+    regular,_=technical_candidates(fact(),{},NOW,.01,orb_enabled=False)
+    assert any(r['rule']=='volume_breakout' for r in regular)

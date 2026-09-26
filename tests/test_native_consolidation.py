@@ -315,3 +315,25 @@ def test_source_gaps_are_separate_from_native_inventory_loss(db):
         r=report(db,c,NOW+7200)['morning']['signals'][0]
         assert r['source_candles']['status']=='different'
         assert r['source_candles']['missing']==[int(NOW*1000)]
+
+
+def test_retired_morning_queue_cannot_starve_smoothers(db):
+    import httpx
+    from compass.native_outbox import queue,deliver_one
+    with db.tx() as c:
+        for program in ('morning','smoothers'):
+            db.put(c,'native:ownership:'+program,dict(owner='compass',previous_sender_paused=True,
+                accepted_at=NOW-1,epoch='test',effective_from=NOW))
+        for i in range(60):
+            queue(db,c,'morning',str(i),{'content':'retired'},NOW+1,event_time=NOW+1)
+        queue(db,c,'smoothers','active',{'content':'active'},NOW+2,event_time=NOW+2,cohort_time=NOW+2)
+    sent=[]
+    def handler(request):
+        sent.append(request.content)
+        return httpx.Response(200,json={'id':'1234'})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert deliver_one(db,client,{'smoothers':'https://discord.com/api/webhooks/123/test'},
+            True,NOW+3,disabled_programs=('morning',))
+    assert len(sent)==1 and b'active' in sent[0]
+    with db.tx() as c:
+        assert set(c.execute(select(outbox.c.status).where(outbox.c.program=='morning')).scalars())=={'pending'}

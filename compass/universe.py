@@ -27,12 +27,12 @@ def saved_watchlist():
     return symbols((Path(__file__).parent / 'watchlist.txt').read_text())
 
 
-def connected_symbols(db, c, now):
+def connected_symbols(db, c, now, morning_enabled=True):
     """Observed equity projects need data even outside the scanner watchlist."""
     from sqlalchemy import select
     from .projects import records
     rows = c.execute(select(records.c.symbol).where(
-        records.c.project.in_(("morning", "smoothers")),
+        records.c.project.in_(("morning", "smoothers") if morning_enabled else ("smoothers",)),
         records.c.source_ts >= now-30*86400).distinct().order_by(records.c.symbol).limit(500)).scalars()
     result = []
     for symbol in rows:
@@ -49,7 +49,7 @@ def data_symbols(db, c, cfg, now):
     from .tm_study import requested_symbols,symbol_for
     from .swing_study import requested_symbols as swing_symbols
     from .discovery import requested
-    base=list(symbols((*cfg.watch_symbols,*requested(db,c,cfg,now),*connected_symbols(db,c,now))))
+    base=list(symbols((*cfg.watch_symbols,*requested(db,c,cfg,now),*connected_symbols(db,c,now,cfg.morning_enabled))))
     from sqlalchemy import select
     from .store import spy_options
     if c.execute(select(spy_options.c.id).where(spy_options.c.status.in_(('pending','open'))).limit(1)).first():base.append('SPY')

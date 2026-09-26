@@ -239,7 +239,7 @@ def report(db,c,now,limit=100,start='',end='',ticker='',week=''):
         'remaining_gates':['Direct intake session reconciliation','Full native weekly comparison','Official delivery ownership and rollback rehearsal','Source backup/restore before retirement']}
 
 
-async def run(db):
+async def run(db,cfg=None):
     owner=uuid.uuid4().hex
     while True:
         try:
@@ -247,6 +247,13 @@ async def run(db):
             if active:
                 def compute():
                     with db.tx() as c:
+                        if cfg is not None and not cfg.morning_enabled:
+                            old=db.get(c,'native-program-report-v1:summary',{})
+                            sm=smoothers(db,c,time.time())
+                            db.put(c,'native-program-report-v1:summary',{**old,'at':time.time(),
+                                'morning_status':'retired','smoothers':sm['summary'],
+                                'smoothers_truncated':sm['truncated'],'cutover_ready':False})
+                            return
                         r=report(db,c,time.time())
                         config=db.get(c,'native-smoothers-v1:config',{})
                         summary={'at':r['at'],'morning':r['morning']['summary'],'smoothers':r['smoothers']['summary'],

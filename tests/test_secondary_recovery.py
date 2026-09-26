@@ -325,3 +325,20 @@ def test_expired_review_explanation_uses_frozen_inputs_not_previous_quote_failur
         assert any('bid/ask' in x for x in row['decision']['readiness_previous_missing'])
         assert not any('bid/ask' in x for x in row['decision']['reasons'])
         assert row['verdict']=='insufficient_data' and not row['decision']['timely']
+
+
+def test_retired_morning_stops_extra_collection_but_retains_records(db):
+    from compass.projects import records,source_configs
+    cfg=Config(local=True,stocks=('SPY',),watchlist=('SPY',),morning_enabled=False,
+        morning_url='https://morning.invalid',morning_token='test',
+        smoothers_url='https://smoothers.invalid',smoothers_token='test')
+    with db.tx() as c:
+        ingest(db,c,'morning',{**source(),'symbol':'BKNG'},NOW)
+        ingest(db,c,'smoothers',{**source(),'symbol':'SHOP'},NOW)
+        assert connected_symbols(db,c,NOW)==('BKNG','SHOP')
+        assert data_symbols(db,c,cfg,NOW)==('SPY','SHOP')
+        covered={r['symbol'] for r in coverage(db,c,cfg,NOW)['rows']}
+        assert 'SHOP' in covered and 'BKNG' not in covered
+        assert c.execute(select(func.count()).select_from(records)).scalar_one()==2
+    assert source_configs(cfg)['morning']==('','')
+    assert source_configs(cfg)['smoothers']==('https://smoothers.invalid','test')

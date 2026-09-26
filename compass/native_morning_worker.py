@@ -206,6 +206,8 @@ def install(app,db,cfg):
     @app.post('/hooks/native/morning')
     @app.post('/hooks/native/morning/{token}')
     async def receive(request:Request,token:str=""):
+        if not cfg.morning_enabled:
+            raise HTTPException(410,"Morning ORB retired; historical records retained")
         supplied=("Bearer "+token) if token else request.headers.get('authorization','')
         if not intake_token or not secrets.compare_digest(supplied.encode(),('Bearer '+intake_token).encode()):
             raise HTTPException(401,'Invalid native intake credentials')
