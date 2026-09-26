@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "development_end": "2026-09-03",
+  "validation_end": "2026-09-11",
+  "later_end": "2026-09-22",
+  "minimum_sessions_per_phase": 5,
+  "exclude_sessions": [
+    "2026-09-07"
+  ],
+  "intervals": [
+    3,
+    1,
+    5
+  ],
+  "base_slippage_ticks_per_side": 1,
+  "stress_slippage_ticks_per_side": 4,
+  "instruments": {
+    "MNQ": {
+      "tick": 0.25,
+      "point_value": 2,
+      "fee_round_trip": 1.5
+    },
+    "MES": {
+      "tick": 0.25,
+      "point_value": 5,
+      "fee_round_trip": 1.5
+    },
+    "MGC": {
+      "tick": 0.1,
+      "point_value": 10,
+      "fee_round_trip": 2
+    },
+    "SIL": {
+      "tick": 0.005,
+      "point_value": 1000,
+      "fee_round_trip": 3
+    },
+    "NQ": {
+      "tick": 0.25,
+      "point_value": 20,
+      "fee_round_trip": 5
+    },
+    "ES": {
+      "tick": 0.25,
+      "point_value": 50,
+      "fee_round_trip": 5
+    },
+    "GC": {
+      "tick": 0.1,
+      "point_value": 100,
+      "fee_round_trip": 5
+    },
+    "SI": {
+      "tick": 0.005,
+      "point_value": 5000,
+      "fee_round_trip": 5
+    },
+    "MCL": {
+      "tick": 0.01,
+      "point_value": 100,
+      "fee_round_trip": 2
+    },
+    "CL": {
+      "tick": 0.01,
+      "point_value": 1000,
+      "fee_round_trip": 5
+    },
+    "YM": {
+      "tick": 1,
+      "point_value": 5,
+      "fee_round_trip": 5
+    },
+    "MYM": {
+      "tick": 1,
+      "point_value": 0.5,
+      "fee_round_trip": 1.5
+    },
+    "HG": {
+      "tick": 0.0005,
+      "point_value": 25000,
+      "fee_round_trip": 5
+    }
+  },
+  "gap_policy": "segments",
+  "default_symbols": [
+    "MES"
+  ]
+}
