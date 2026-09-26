@@ -4,6 +4,21 @@
  const el=id=>document.getElementById('discovery-'+id);
  function draw(){
   if(!report)return;
+  const board=report.weekday||{},watch=board.watchlist||{};
+  el('weekday').innerHTML='<p>'+esc(board.note||'Awaiting prospective observations')+'</p>'+
+   '<h3>Awaiting a price trigger</h3><p>'+esc(watch.note||'')+'</p>'+
+   table(['Symbol','Source','Direction','Freshness','Received'],(watch.rows||[]).map(r=>[
+    esc(r.symbol),esc(r.source),esc(r.direction),esc(r.freshness),when(r.received)]))+
+   '<p>'+num(watch.total||0,0)+' vendor rows'+(watch.truncated?' · first 100 shown':'')+'</p>'+
+   '<h3>Triggered research candidates</h3><p>'+num(board.total||0,0)+' retained; latest 100 shown</p>'+
+   (board.records||[]).map(r=>'<details><summary>'+esc(r.symbol)+' · '+esc(r.side)+' · '+esc(r.family)+' · '+when(r.captured_at)+'</summary>'+
+    '<p>'+esc(r.trigger)+' · '+esc(r.rule)+'</p>'+
+    table(['Stock status','Entry','Invalidation','Target','Outcome','Stock P&L'],[[esc(r.stock.status),num(r.stock.entry,4),num(r.stock.stop??r.invalidation,4),num(r.stock.target,4),esc(r.stock.outcome||r.stock.reason||'Pending'),num(r.stock.pnl,2)]])+
+    table(['Option status','Contract','Entry','Exit','Option P&L','Reason'],[[esc(r.option.status),esc(r.option.contract?.symbol||'Unavailable'),num(r.option.entry,2),num(r.option.exit,2),num(r.option.pnl,2),esc(r.option.exit_reason||r.option.waiting_reason||'')]])+
+    '<p>'+esc(r.option.basis||'Option results require usable entry and exit observations.')+'</p>'+
+    '<p>Frozen context group: '+esc(r.comparison_group)+'</p>'+
+    table(['Source','Scope','Freshness','Received'],r.context.map(e=>[esc(e.label),esc(e.scope),esc(e.status),when(e.received)]))+
+    '<details><summary>Frozen vendor evidence, including earnings and events</summary><pre>'+esc(JSON.stringify(r.context,null,2))+'</pre></details></details>').join('');
   const u=report.universe||{},w=report.worker||{};
   el('coverage').innerHTML='<p>'+esc(w.enabled?'Collecting':'New discovery paused')+' · checked '+when(w.at)+
    ' · '+num((u.symbols||[]).length,0)+' research symbols · '+num(Object.keys(u.dynamic||{}).length,0)+' discovered from flow</p>'+

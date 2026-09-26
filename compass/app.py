@@ -347,7 +347,9 @@ def create_app(cfg=None):
     def get_discovery():
         from .discovery import report
         with db.tx() as c:
-            return report(db,c,time.time())
+            from .weekday_candidates import report as weekday_report
+            now=time.time()
+            return {**report(db,c,now),'weekday':weekday_report(db,c,now)}
 
     @app.get('/api/swing-study')
     def get_swing_study():
