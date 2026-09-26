@@ -47,25 +47,58 @@ Atlas collectors, alerts, or an application outbox.
 Original source object keys map to numbered archived object keys in
 `manifest.json` under the artifact prefix.
 
-## Remaining retirement work
+## Retirement completed — September 26, 2026
 
-This is a verified historical archive, not a live import into Compass signal or
-performance tables. No source rows, objects, repositories, services, volumes, or
-projects were deleted. Atlas jobs have not been paused in this migration.
+The two remaining collectors, atlas-calibration-spy and atlas-calibration-candidate,
+were explicitly taken offline before the final comparison. Other non-database
+workloads were already completed, crashed, or offline.
 
-Before permanent removal, stop the old writers/schedules and check for changes
-after this snapshot; take a final snapshot if needed. Preserve the GitHub code
-history through repository archival or a separate verified export before deleting
-repositories. Compass's engine, collector, and dashboard deployments were not
-changed by this import.
+Final comparison deployment: `8fbf5b77-8f59-4011-bc28-fe0f7e0270b3`.
+All 9 tables / 1,391,236 rows and the artifact matched the verified Compass
+archives after the collectors stopped. The readback-verified final receipt is
+`retirement-check.json` under the database prefix above.
 
-The import worker has no cron or public endpoint and uses restart policy NEVER.
-Its final operational command is a read-only scope inspection, not another import.
-A redundant import deployment was superseded during the scope check; its partial
-archive prefix is not the authoritative verified backup above.
+Both Railway projects, `atlas-exposure-engine` and `Atlas AI`, were deleted
+from the active workspace. Railway places them in its 48-hour recovery window
+before permanent deletion of their services, environments, and stored data.
+The dashboard's Deleted tab confirms both projects.
 
-Validation: 9 focused backup/import tests passed. Actual database restoration and
-artifact verification passed; CI for the helper is tracked in PR #146.
+GitHub repositories `cyberstryder/Atlas`, `cyberstryder/atlas-ai-companion`,
+and `cyberstryder/atlas-exposure-engine` are archived and read-only, not deleted.
+This preserves full code and development history and stops scheduled GitHub
+workflows.
+
+Compass's engine, collector, dashboard, database, archive bucket, and original
+Smoothers service were retained. The Compass applications still report successful
+deployments. The temporary import worker has no cron, no public endpoint, and
+restart policy NEVER; its source credentials have been cleared and its command
+replaced with a completion notice.
+
+The original copy is a historical archive, not a live import into Compass signal
+or performance tables. Restoration remains available using the instructions above.
+
+Validation: actual isolated restore and final source comparison passed. Nine
+focused backup/import tests passed before the import. Helper code and evidence
+are preserved in PR #146.
+
+### Final comparison receipt
+
+```json
+{
+  "artifact_count": 1,
+  "artifact_prefix": "legacy-atlas/artifacts/20260926T184955Z-23caddef1c2d",
+  "at": 1790449650.0520732,
+  "checked_at": 1790449650.0214381,
+  "database_prefix": "database-backups/compass/20260926T184956Z-6cd9ebbd6182",
+  "row_count": 1391236,
+  "source_artifacts_match_verified_archive": true,
+  "source_database_matches_verified_archive": true,
+  "source_project": "bfb02ef3-6447-4bdd-bc0f-1224c06127d0",
+  "source_rows_deleted": 0,
+  "stage": "atlas_retirement_check_verified",
+  "table_count": 9
+}
+```
 
 ## Database receipt
 
