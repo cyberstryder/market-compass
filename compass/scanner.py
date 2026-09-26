@@ -107,7 +107,7 @@ def make_candidate(symbol,rule,side,price,stop,clock,reason,evidence=None):
         'reason':reason,'evidence':evidence or [],'rule_version':VERSION}
 
 
-def technical_candidates(f,arms,now,tick, research=False):
+def technical_candidates(f,arms,now,tick, research=False, orb_enabled=True):
     """Only completed-bar patterns; arms are durable and session-specific."""
     result=[]
     arms=dict(arms)
@@ -124,7 +124,7 @@ def technical_candidates(f,arms,now,tick, research=False):
         if candidate:
             result.append(candidate)
 
-    if f.get('or_complete'):
+    if orb_enabled and f.get('or_complete'):
         for side,level in (('long',f['or_high']),('short',f['or_low'])):
             key='orb_'+side
             armed=arms.get(key)
@@ -309,7 +309,7 @@ class Scanner:
         for symbol in changed:
             f=facts[symbol]
             tick=engine.specification(symbol)['tick']
-            items,arms=technical_candidates(f,db.get(c,'scanner_arms:'+symbol,{}),now,tick,research=True)
+            items,arms=technical_candidates(f,db.get(c,'scanner_arms:'+symbol,{}),now,tick,research=True,orb_enabled=cfg.orb_setups)
             db.put(c,'scanner_arms:'+symbol,arms)
             candidates.extend(items)
             if f.get('status')=='ready' and evaluation_session_open(symbol,now):
@@ -407,7 +407,7 @@ class Scanner:
             'paper_enabled':cfg.scanner_paper and cfg.paper_trading,
             'features_ready':sum(f.get('status')=='ready' and 0<=now-f.get('asof',0)<=90 for f in facts.values()),
             'last_updated_symbols':len(changed),'rules_version':VERSION,
-            'rules':['orb_retest','session_sweep_reclaim','trend_pullback','volume_breakout','exposure_level_break','flow_price_breakout'],
+            'rules':(['orb_retest'] if cfg.orb_setups else [])+['session_sweep_reclaim','trend_pullback','volume_breakout','exposure_level_break','flow_price_breakout'],
             'prop_account_rules':'Not configured: simulated risk limits do not model a prop-firm drawdown floor'})
 
     def retry_options(self,c,quotes,now,engine):
@@ -522,5 +522,5 @@ def focus_for_display(db,c,now):
         key=lambda row:(row.get('priority',0),row.get('at',0)),reverse=True)[:30]
 
 
-def research_candidates(f,arms,now,tick):
-    return technical_candidates(f,arms,now,tick,research=True)
+def research_candidates(f,arms,now,tick,orb_enabled=True):
+    return technical_candidates(f,arms,now,tick,research=True,orb_enabled=orb_enabled)

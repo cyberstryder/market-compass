@@ -35,7 +35,7 @@ Index("project_records_source_time", records.c.project, records.c.source_ts)
 
 
 def source_configs(cfg):
-    return {"morning": (cfg.morning_url, cfg.morning_token),
+    return {"morning": (cfg.morning_url, cfg.morning_token) if cfg.morning_enabled else ("", ""),
             "smoothers": (cfg.smoothers_url, cfg.smoothers_token)}
 
 

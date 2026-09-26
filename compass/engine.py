@@ -348,8 +348,8 @@ class Engine:
                     f=features(symbol,rows,now,coverage=coverage)
                     observe_bar(self.db,c,symbol,f,now)
                     from .futures_research import observe
-                    observe(self.db,c,symbol,f,now,self.study,spec(symbol))
-                s=candidate(symbol,rows[-2],bar,context,now)
+                    observe(self.db,c,symbol,f,now,self.study,spec(symbol),orb_enabled=self.cfg.orb_setups)
+                s=candidate(symbol,rows[-2],bar,context,now) if self.cfg.orb_setups else None
                 if s:
                     self.db.append(c,"signal","engine",symbol,s["signal_time"],s,s["id"])
                     self.enter(c,s,now)
@@ -363,7 +363,7 @@ class Engine:
             self.ideas.tick(c,now)
             from .observation_recovery import tick as recovery_tick
             recovery_tick(self.db,c,self.clock() if self.clock else now)
-            self.db.put(c,"worker:engine",{"at":now,"mode":policy(self.cfg)['mode'],"strategy_version":VERSION})
+            self.db.put(c,"worker:engine",{"at":now,"mode":policy(self.cfg)['mode'],"strategy_version":VERSION,"orb_setups_enabled":self.cfg.orb_setups,"morning_enabled":self.cfg.morning_enabled})
 
     async def run(self):
         while True:

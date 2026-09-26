@@ -13,7 +13,7 @@ from .universe import connected_symbols, data_symbols, symbols
 def coverage(db, c, cfg, now, refreshed=()):
     projects = {}
     for project, symbol in c.execute(select(records.c.project, records.c.symbol).where(
-            records.c.project.in_(("morning", "smoothers")), records.c.source_ts >= now-30*86400).distinct()):
+            records.c.project.in_(("morning", "smoothers") if cfg.morning_enabled else ("smoothers",)), records.c.source_ts >= now-30*86400).distinct()):
         try:
             normalized = symbols((symbol,))[0]
         except (ValueError, IndexError):
@@ -21,7 +21,7 @@ def coverage(db, c, cfg, now, refreshed=()):
         projects.setdefault(normalized, set()).add(project)
     subscribed = set(data_symbols(db, c, cfg, now))
     rows = []
-    universe=set(connected_symbols(db,c,now))
+    universe=set(connected_symbols(db,c,now,cfg.morning_enabled))
     if cfg.swing_ideas: universe.update(cfg.watch_symbols)
     from .discovery import requested
     discovery=set(requested(db,c,cfg,now)) if cfg.discovery else set()

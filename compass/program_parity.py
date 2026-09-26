@@ -106,11 +106,15 @@ def target_observation(db,c,p,now):
         basis='Retained completed stock bars; observed target touch is not an option exit or fill')
 
 
-def tick(db,owner,now):
+def tick(db,owner,now,morning_enabled=True):
     with db.tx() as c:
         if not db.lease(c,VERSION,owner,90): return
         results={}
         for project in ('morning','smoothers'):
+            if project=='morning' and not morning_enabled:
+                old=db.get(c,VERSION+':report',{}).get('projects',{}).get('morning',{})
+                results['morning']={**old,'retired':True,'checked':old.get('checked',0),'samples':old.get('samples',{}),'delivery':old.get('delivery',{})}
+                continue
             found=c.execute(select(records.c.payload).where(records.c.project==project)
                 .order_by(records.c.source_ts.desc()).limit(501)).scalars().all()
             calc=morning_options if project=='morning' else smoother_quality
@@ -136,10 +140,10 @@ def tick(db,owner,now):
             results['morning']['checked'],results['morning']['samples'],results['morning']['delivery'],results['smoothers']['counts'])
 
 
-async def run(db):
+async def run(db,cfg=None):
     owner=uuid.uuid4().hex
     while True:
-        try: await asyncio.to_thread(tick,db,owner,time.time())
+        try: await asyncio.to_thread(tick,db,owner,time.time(),cfg.morning_enabled if cfg is not None else True)
         except Exception as e:
             db.health('program_parity','error',type(e).__name__)
         await asyncio.sleep(60)

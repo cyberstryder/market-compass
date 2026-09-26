@@ -304,3 +304,15 @@ def test_smoothers_repeated_history_token_still_fails_closed():
     with httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(200,json={'bars':{},'next_page_token':'same'}))) as client:
         data=Data(SimpleNamespace(alpaca_key='test',alpaca_secret='test'),client)
         with pytest.raises(ValueError,match='Repeated pagination'):data.bar_batch(['A'],'30Min',NOW,NOW+86400)
+
+
+def test_retired_morning_rejects_intake_and_retains_history_route(tmp_path):
+    from fastapi.testclient import TestClient
+    from compass.app import create_app
+    from compass.config import Config
+    cfg=Config(local=True,role='web',db='sqlite:///'+str(tmp_path/'retired.db'),
+        morning_enabled=False,morning_token='test-token-xxxxxxxxxxxxxxxxxxxxxxxx',password='owner-private-test-password')
+    with TestClient(create_app(cfg)) as client:
+        assert client.post('/hooks/native/morning/test',json={}).status_code==410
+        assert client.post('/login',json={'password':'owner-private-test-password'}).status_code==200
+        assert client.get('/api/native/report').status_code==200

@@ -48,11 +48,11 @@ def queue(db,c,program,event_key,payload,now,parent_event=None,event_time=None,c
     return key
 
 
-def deliver_one(db,client,webhooks,enabled=False,now=None):
+def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
     if not enabled:return False
     now=time.time() if now is None else now
     with delivery_guard(db,shared=True) as c:
-        candidates=c.execute(select(outbox).where(outbox.c.status.in_(['pending','sending']))
+        candidates=c.execute(select(outbox).where(outbox.c.status.in_(['pending','sending']),outbox.c.program.not_in(disabled_programs))
             .order_by(outbox.c.created).limit(50).with_for_update(skip_locked=True)).mappings().all()
         job=None
         for row in candidates:
@@ -149,8 +149,9 @@ async def run(db,cfg):
     enabled=os.getenv('NATIVE_PROGRAM_SEND_ENABLED','false').lower()=='true'
     hooks=dict(cfg.discord_routes)
     hooks.update({p:os.getenv('NATIVE_'+p.upper()+'_DISCORD_WEBHOOK','') for p in ('morning','smoothers')})
+    if not cfg.morning_enabled: hooks["morning"]=""
     with httpx.Client(timeout=10,follow_redirects=False) as client:
         while True:
-            try:await asyncio.to_thread(deliver_one,db,client,hooks,enabled)
+            try:await asyncio.to_thread(deliver_one,db,client,hooks,enabled,None,() if cfg.morning_enabled else ("morning",))
             except Exception as e:db.health('native_outbox','error',type(e).__name__)
             await asyncio.sleep(1)

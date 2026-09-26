@@ -43,7 +43,7 @@ def test_pending_boundary_and_old_version_remain_explicit():
 
 
 def test_archive_audit_checks_real_post_fix_records_without_writes(db):
-    cfg=SimpleNamespace(watch_symbols=('TGT','SBUX','SPY'))
+    cfg=SimpleNamespace(morning_enabled=True,watch_symbols=('TGT','SBUX','SPY'))
     with db.tx() as c:
         for symbol in cfg.watch_symbols:
             db.put(c,'quote:'+symbol,quote(NOW+10))
@@ -66,6 +66,6 @@ def test_late_quote_is_not_claimed_usable(db):
     with db.tx() as c:
         archive(db,c,NOW+1,symbol='TGT',received=NOW+10)
         db.put(c,'quote:TGT',quote(NOW+1))
-        r=build(db,c,SimpleNamespace(watch_symbols=('TGT',)),NOW+11,since=NOW)
+        r=build(db,c,SimpleNamespace(morning_enabled=True,watch_symbols=('TGT',)),NOW+11,since=NOW)
         assert r['post_fix_archives']==1
         assert not r['focus_archives']['TGT']['last']['usable_when_recorded']

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import hmac
 import json
 import time
@@ -68,6 +69,7 @@ def create_app(cfg=None):
     @asynccontextmanager
     async def lifespan(app):
         cfg.validate()
+        logging.getLogger("uvicorn.error").info("Strategy switches: morning_orb=%s orb_setups=%s role=%s",cfg.morning_enabled,cfg.orb_setups,cfg.role)
         db.initialize()
         initialize_native_morning(db)
         nonlocal collectors,serializer
@@ -81,7 +83,8 @@ def create_app(cfg=None):
             collectors=Collectors(db,cfg)
             tasks.extend(asyncio.create_task(t) for t in collectors.tasks())
             tasks.append(asyncio.create_task(run_sources(db,cfg)))
-            tasks.append(asyncio.create_task(run_morning_history(db,cfg)))
+            if cfg.morning_enabled:
+                tasks.append(asyncio.create_task(run_morning_history(db,cfg)))
         if cfg.role in {"all","engine"}:
             engine = Engine(db,cfg,clock=time.time)
             tasks.extend([asyncio.create_task(engine.run()),asyncio.create_task(deliver(db,cfg))])
@@ -91,12 +94,13 @@ def create_app(cfg=None):
             from .discovery import Discovery
             tasks.append(asyncio.create_task(Discovery(db,cfg).run()))
             tasks.append(asyncio.create_task(run_obsidian(db,cfg)))
-            tasks.append(asyncio.create_task(run_strategy_tracking(db)))
+            if cfg.morning_enabled:
+                tasks.append(asyncio.create_task(run_strategy_tracking(db)))
             from .native_reports import run as run_native_reports
-            tasks.append(asyncio.create_task(run_native_reports(db)))
+            tasks.append(asyncio.create_task(run_native_reports(db,cfg)))
             from .native_outbox import run as run_native_outbox
             tasks.append(asyncio.create_task(run_native_outbox(db,cfg)))
-            if cfg.morning_token:
+            if cfg.morning_enabled and cfg.morning_token:
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"intake")))
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"samples")))
             if cfg.alpaca_key and cfg.alpaca_secret:
@@ -104,9 +108,10 @@ def create_app(cfg=None):
                 for role in ("schedule","target","premium"):
                     tasks.append(asyncio.create_task(run_native_smoothers(db,cfg,role)))
             from .program_parity import run as run_program_parity
-            tasks.append(asyncio.create_task(run_program_parity(db)))
+            tasks.append(asyncio.create_task(run_program_parity(db,cfg)))
             tasks.append(asyncio.create_task(run_storage_health(db,cfg)))
-            tasks.append(asyncio.create_task(run_morning_report(db)))
+            if cfg.morning_enabled:
+                tasks.append(asyncio.create_task(run_morning_report(db)))
             from .spy_brief import BriefWorker
             tasks.append(asyncio.create_task(BriefWorker(db,cfg).run()))
             from .forward_audit import run as run_forward_audit
