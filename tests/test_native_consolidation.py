@@ -79,6 +79,22 @@ def test_smoothers_missing_export_fields_stay_unknown():
     assert smoother_comparison(p,source)['differences']['is_featured']=={'native':False,'source':True}
 
 
+def test_smoothers_compares_original_persisted_featured_flag_without_rewriting_source():
+    from compass.native_reports import smoother_comparison
+    native=dict(direction='CALL',entry_price=100,target_price=102,signal_type='MAIN',status='OPEN',
+        quality_score=58.5,quality_tier='B',quality_rank=32,featured_rank=None,is_featured=False)
+    source={k:v for k,v in native.items() if k!='is_featured'}
+    source['quality_featured']=False
+    result=smoother_comparison(native,source)
+    assert result['status']=='matched_fields' and result['missing_source_fields']==[]
+    assert result['source_field_aliases']=={'is_featured':'quality_featured'}
+    assert 'is_featured' not in source
+    source['quality_featured']=True
+    assert smoother_comparison(native,source)['differences']['is_featured']=={'native':False,'source':True}
+    source['quality_featured']='false'
+    assert smoother_comparison(native,source)['missing_source_fields']==['is_featured']
+
+
 def test_smoothers_score_evidence_uses_frozen_entry_inputs():
     from compass.native_reports import smoother_score_evidence
     native=dict(stats_at_entry={'wins':3,'losses':1},config={'backtest_wr':.7},
