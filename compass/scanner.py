@@ -467,8 +467,7 @@ class Scanner:
         if not pending.get('research_only') and self.cfg.paper_trading:
             from .paper_risk import account
             risk=account(self.db,c,now,'option')
-            audit['risk_context']={**risk,'day':risk_day(now),'daily_loss_limit':self.cfg.daily_loss,
-                'daily_loss_locked':risk['realized']<=-self.cfg.daily_loss,
+            audit['risk_context']={**risk,'day':risk_day(now),
                 'basis':'Contemporaneous 0DTE paper account; selection may stop at an earlier gate'}
         previous=pending.get('last_selection',{})
         def signature(row):

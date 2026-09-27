@@ -48,7 +48,7 @@ def test_incomplete_migration_fails_closed(report_db,missing):
         assert reason=='Paper risk migration requires reconciliation'
 
 
-def test_each_account_has_its_own_capacity_and_loss_limit(report_db):
+def test_each_account_has_its_own_capacity_and_no_daily_loss_stop(report_db):
     db=report_db
     cfg=Config(paper_trading=True,local=True,setup_study=False)
     with db.tx() as c:
@@ -61,9 +61,11 @@ def test_each_account_has_its_own_capacity_and_loss_limit(report_db):
         for i in range(3):db.put(c,'position:option'+str(i),dict(status='open',asset='option'))
         assert engine.entry_check(c,option_signal,NOW)[0]=='Portfolio cap: three simultaneous simulated positions'
         for i in range(3):db.put(c,'position:option'+str(i),dict(status='closed',asset='option'))
-        account=paper_risk.account(db,c,NOW,'option');account['realized']=-300
+        # A deep realized loss no longer blocks new entries: there is no
+        # daily loss stop on any paper portfolio.
+        account=paper_risk.account(db,c,NOW,'option');account['realized']=-1000
         db.put(c,paper_risk.key(NOW,'option'),account)
-        assert engine.entry_check(c,option_signal,NOW)[0]=='Daily simulated loss limit'
+        assert engine.entry_check(c,option_signal,NOW)[0] is None
 
 
 def test_exit_updates_only_own_account_once_and_keeps_legacy_frozen(report_db):
@@ -107,8 +109,10 @@ def test_read_only_preview_has_no_side_effects_and_includes_carryover(report_db)
         legacy(db,c);db.put(c,'risk:'+paper_risk.risk_day(NOW),dict(realized=-426,entries=1))
         before=db.prefix(c,'')
         view=paper_risk.snapshot(db,c,Config(paper_trading=True,local=True),NOW)
-        assert view['accounts'][0]['daily_loss_locked']
-        assert not view['accounts'][1]['daily_loss_locked']
+        # Realized P&L is still tracked per account, but no account carries a
+        # loss lock: there is no daily loss stop.
+        assert 'daily_loss_locked' not in view['accounts'][0]
+        assert view['accounts'][0]['realized']==-426
         assert db.prefix(c,'')==before
 
 

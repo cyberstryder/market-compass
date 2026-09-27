@@ -33,9 +33,17 @@ class Config:
     spy_morning_brief: bool = field(default_factory=lambda: env("SPY_MORNING_BRIEF_ENABLED", "true") == "true")
     paper_trading: bool = field(default_factory=lambda: env("PAPER_TRADING_ENABLED", "false") == "true")
     risk: float = field(default_factory=lambda: float(env("SHADOW_RISK_DOLLARS","100")))
-    daily_loss: float = field(default_factory=lambda: float(env("SHADOW_MAX_DAILY_LOSS","300")))
     max_entries: int = field(default_factory=lambda: int(env("SHADOW_MAX_ENTRIES","0")))
     setup_study: bool = field(default_factory=lambda: env("SETUP_STUDY_ENABLED","true")=="true")
+    apex_magnet: bool = field(default_factory=lambda: env("APEX_MAGNET_ENABLED","true")=="true")
+    apex_magnet_radius: float = field(default_factory=lambda: float(env("APEX_MAGNET_RADIUS","0.02")))
+    apex_magnet_tolerance: float = field(default_factory=lambda: float(env("APEX_MAGNET_TOLERANCE","0.001")))
+    tape_confirmed: bool = field(default_factory=lambda: env("TAPE_CONFIRMED_ENABLED","true")=="true")
+    gap_continuation: bool = field(default_factory=lambda: env("GAP_CONTINUATION_ENABLED","true")=="true")
+    gap_min_gap: float = field(default_factory=lambda: float(env("GAP_MIN_GAP","0.015")))
+    gap_large_caps: str = field(default_factory=lambda: env("GAP_LARGE_CAP_SYMBOLS",""))
+    breakouts: bool = field(default_factory=lambda: env("BREAKOUTS_ENABLED","true")=="true")
+    day_trading_board: bool = field(default_factory=lambda: env("DAY_TRADING_BOARD_ENABLED","true")=="true")
     option_ideas: bool = field(default_factory=lambda: env("OPTION_IDEAS_ENABLED","true")=="true")
     ideas_alerts: bool = field(default_factory=lambda: env("OPTION_IDEAS_ALERTS","true")=="true")
     ideas_min_dte: int = field(default_factory=lambda: int(env("OPTION_IDEAS_MIN_DTE","1")))
@@ -97,7 +105,7 @@ class Config:
             raise ValueError("Additional futures require supported volume-ranked symbols")
         if self.max_entries < 0:
             raise ValueError("SHADOW_MAX_ENTRIES must be zero (unlimited) or positive")
-        if self.feed not in {"sip","iex"} or min(self.risk,self.daily_loss)<=0:
+        if self.feed not in {"sip","iex"} or self.risk<=0:
             raise ValueError("Invalid feed or simulation risk")
         if not 0<=self.history_budget<=1: raise ValueError("History recovery budget must be between $0 and $1 cumulative")
         if not 1<=self.ideas_min_dte<=self.ideas_target_dte<=self.ideas_max_dte<=90:

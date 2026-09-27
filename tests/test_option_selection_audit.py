@@ -28,9 +28,7 @@ def seed(db,c):
     ('expiry','No eligible listed same-day call contract'),
     ('quote','Missing or invalid fresh quote'),
     ('spread','Spread exceeds simulation liquidity limit'),
-    ('daily_loss','Daily simulated loss limit'),
     ('portfolio','Portfolio cap: three simultaneous simulated positions'),
-    ('premium','One unit exceeds risk or stop invalid'),
 ])
 def test_quiet_selection_exposes_real_gate_without_changing_it(db,case,reason):
     cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
@@ -41,12 +39,8 @@ def test_quiet_selection_exposes_real_gate_without_changing_it(db,case,reason):
             chain=db.get(c,'chain:SPY');chain['contracts'][0]['expiry']='2026-09-15';db.put(c,'chain:SPY',chain)
         if case=='quote':db.put(c,'quote:'+CONTRACT,quote(NOW-6,2,2.01))
         if case=='spread':db.put(c,'quote:'+CONTRACT,quote(NOW,1,2))
-        if case=='daily_loss':
-            risk=ledgers(db,c,NOW,persist=True)['option'];risk.update(realized=-cfg.daily_loss,entries=1)
-            db.put(c,key(NOW,'option'),risk)
         if case=='portfolio':
             for symbol in ('A','B','C'):db.put(c,'position:'+symbol,dict(status='open',asset='option'))
-        if case=='premium':db.put(c,'quote:'+CONTRACT,quote(NOW,10,10.01))
         audit={}
         assert not Engine(db,cfg).options(c,signal(),NOW,quiet=True,diagnostics=audit)
         assert audit['reason']==reason and audit['status']=='blocked'
@@ -123,7 +117,7 @@ def test_retry_freezes_exact_underlying_clock_and_contemporaneous_loss_lock(db,o
         assert saved['underlying_evidence']['age_seconds']==-offset
         assert saved['underlying_evidence']['fresh'] is False
         assert saved['underlying_evidence']['quote']['ts']==q['ts']
-        assert saved['risk_context']['daily_loss_locked'] is True
+        assert 'daily_loss_locked' not in saved['risk_context']
         assert saved['reason']=='Fresh underlying quote required'
         risk.update(realized=0,entries=0);db.put(c,key(NOW,'option'),risk)
         scanner.retry_options(c,{'SPY':quote(NOW+121)},NOW+121,engine)

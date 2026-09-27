@@ -88,8 +88,7 @@ def snapshot(db, c, cfg, now):
     positions = [p for p in db.prefix(c, 'position:').values() if p.get('status') == 'open']
     return dict(policy=VERSION, day=risk_day(now),
         accounts=[{**r, 'open_positions': sum(p.get('asset') == asset for p in positions),
-            'daily_loss_locked': r['realized'] <= -cfg.daily_loss,
-            'limits': dict(daily_loss=cfg.daily_loss, risk_per_entry=cfg.risk,
+            'limits': dict(risk_per_entry=cfg.risk,
                 max_entries=cfg.max_entries, concurrent_positions=3)} for asset, r in accounts.items()],
         legacy_basis='Historical combined risk states are frozen audit evidence, not current account limits.',
         day_basis='Existing exchange risk day (17:00 America/Chicago rollover) retained for all paper accounts.')

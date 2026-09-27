@@ -303,7 +303,7 @@ def create_app(cfg=None):
                 "flow":db.recent(c,"flow",limit=60),"matrix":matrix,
                 "risk":{"paper_portfolios":paper_risk_snapshot(db,c,cfg,now),
                     "legacy_combined":db.prefix(c,"risk:")},"ai_configured":bool(cfg.openai),
-                "limits":{"scope":"Each paper portfolio separately (paper-portfolios-v2)","risk_per_trade":cfg.risk,"daily_realized_loss":cfg.daily_loss,"max_positions":3,"max_entries":cfg.max_entries},
+                "limits":{"scope":"Each paper portfolio separately (paper-portfolios-v2)","risk_per_trade":cfg.risk,"max_positions":3,"max_entries":cfg.max_entries},
                 "notes":["Quotes are sampled up to 4 Hz; minute-bar decisions, not tick-perfect execution.",
                     "GEX/VEX are OI-based proxies. Open interest is daily; dealer inventory is unobserved.",
                     "TraderMatrix matrix fields are normalized from paid responses; flow rows follow the official schema and await open-session verification.",
@@ -347,6 +347,36 @@ def create_app(cfg=None):
     def get_tm_study():
         with db.tx() as c:
             return {**db.get(c,'tm-study-v1:report',{}),'worker':db.get(c,'tm-study-v1:worker',{})}
+
+    @app.get('/api/apex-magnets')
+    def get_apex_magnets():
+        from .apex_magnet import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/tape-confirmed')
+    def get_tape_confirmed():
+        from .tape_confirmed import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/gap-continuation')
+    def get_gap_continuation():
+        from .gap_continuation import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/breakouts')
+    def get_breakouts():
+        from .breakouts import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/day-trading-board')
+    def get_day_trading_board():
+        from .day_trading_board import display
+        with db.tx() as c:
+            return display(db,c,time.time())
 
     @app.get('/api/discovery')
     def get_discovery():

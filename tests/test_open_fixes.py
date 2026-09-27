@@ -99,7 +99,7 @@ def test_old_contract_quote_cannot_pass_active_contract_readiness():
     assert result[0]["symbol"]=="MESZ6" and not result[0]["quote_ready"]
 
 
-def test_option_selection_continues_after_first_fresh_contract_fails_risk(db):
+def test_option_selection_continues_after_first_fresh_contract_fails_spread(db):
     e=Engine(db,Config(local=True,risk=100,paper_trading=True))
     sig={"id":"underlying","symbol":"SPY","side":"long","signal_time":MONDAY,
         "signal_price":100,"stop_distance":1,"track":"intraday"}
@@ -107,14 +107,30 @@ def test_option_selection_continues_after_first_fresh_contract_fails_risk(db):
         {"symbol":"O:ELIGIBLE","expiry":"2026-09-14","type":"call","strike":101,"multiplier":100}]
     with db.tx() as c:
         db.put(c,"chain:SPY",{"asof":MONDAY,"contracts":contracts})
-        db.put(c,"quote:O:EXPENSIVE",quote(MONDAY,10,10.01))
+        db.put(c,"quote:O:EXPENSIVE",quote(MONDAY,10,12))
         db.put(c,"quote:O:ELIGIBLE",quote(MONDAY,2,2.01))
         e.options(c,sig,MONDAY)
         assert db.get(c,"position:O:EXPENSIVE") is None
         p=db.get(c,"position:O:ELIGIBLE")
         assert p["status"]=="open" and p["initial_risk"]<=100
-        assert p["selection_rejections"][0]["reason"]=="One unit exceeds risk or stop invalid"
+        assert p["selection_rejections"][0]["reason"]=="Spread exceeds simulation liquidity limit"
         assert len(db.recent(c,"alert"))==1
+
+
+def test_expensive_option_contract_enters_without_dollar_risk_cap(db):
+    # The legacy SHADOW_RISK_DOLLARS filter no longer applies to options:
+    # long-option risk is the premium paid. A $10-premium contract whose
+    # stop-distance risk exceeds $100 must still enter under the 1-contract cap.
+    e=Engine(db,Config(local=True,risk=100,paper_trading=True))
+    sig={"id":"underlying","symbol":"SPY","side":"long","signal_time":MONDAY,
+        "signal_price":100,"stop_distance":1,"track":"intraday"}
+    contracts=[{"symbol":"O:PRICEY","expiry":"2026-09-14","type":"call","strike":100,"multiplier":100}]
+    with db.tx() as c:
+        db.put(c,"chain:SPY",{"asof":MONDAY,"contracts":contracts})
+        db.put(c,"quote:O:PRICEY",quote(MONDAY,10,10.01))
+        assert e.options(c,sig,MONDAY)
+        p=db.get(c,"position:O:PRICEY")
+        assert p["status"]=="open" and p["qty"]==1
 
 
 def historical_fixture(cost=.001,fail=False,missing=False):

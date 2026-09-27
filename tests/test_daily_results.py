@@ -41,7 +41,7 @@ def test_paper_exit_day_is_not_entry_cohort_and_missing_is_not_loss(report_db):
         assert r['realized'][0]['net_pnl']==40
 
 
-def test_loss_lock_keeps_overnight_and_cash_research_open_and_reported(report_db,monkeypatch):
+def test_no_daily_loss_stop_deep_loss_neither_blocks_nor_reports_lock(report_db,monkeypatch):
     initialize(report_db)
     cfg=Config(local=True,paper_trading=True);engine=Engine(report_db,cfg)
     overnight=datetime(2026,9,20,18,tzinfo=CT).timestamp()
@@ -51,16 +51,11 @@ def test_loss_lock_keeps_overnight_and_cash_research_open_and_reported(report_db
         for i,now in enumerate((overnight,OPEN+300)):
             monkeypatch.setattr('compass.engine.time.time',lambda:now)
             report_db.put(c,'quote:MESZ6@1',quote(now))
-            assert not engine.enter(c,{**signal(str(i)), 'signal_time':now},now,quiet=i==1)
-        observations=list(c.execute(select(trials.c.payload)).scalars())
-        assert len(observations)==2 and all(r['status']=='open' for r in observations)
-        assert not report_db.prefix(c,'position:')
+            # A deep realized loss is tracked, not a stop: nothing blocks entry.
+            assert engine.entry_check(c,{**signal(str(i)), 'signal_time':now},now)[0] is None
         r=build(report_db,c,cfg,NOW,'2026-09-21')
-        assert r['futures']['totals']['open']==2
-        assert r['post_lock']['first_recorded_block_at']==overnight
-        assert r['post_lock']['cohort']['totals']['open']==2
+        assert r['post_lock']['status']=='no_loss_block_recorded'
         assert paper_risk.account(report_db,c,overnight,'future')['realized']==-300
-        assert sum(x['count'] for x in r['skips'])==2
         assert r['options']['totals']['total']==0
 
 

@@ -80,7 +80,6 @@ class Engine:
         elif q["ask"]-q["bid"]>max(s["tick"]*8,(q["ask"]+q["bid"])/2*(.08 if s["asset"]=="option" else .002)):
             reason="Spread exceeds simulation liquidity limit"
         risk=paper_risk.account(self.db,c,now,s["asset"],persist=True)
-        if risk["realized"]<=-self.cfg.daily_loss: reason="Daily simulated loss limit"
         if self.cfg.max_entries and risk["entries"]>=self.cfg.max_entries: reason="Configured simulated entry limit"
         if sum(p.get("status")=="open" and p.get("asset")==s["asset"] for p in self.db.prefix(c,"position:").values())>=3:
             reason="Portfolio cap: three simultaneous simulated positions"
@@ -93,9 +92,19 @@ class Engine:
             return str(error),None
         price,distance=prices['entry'],prices['distance']
         per_unit=distance*s["multiplier"]+2*s["fee"]+2*s["tick"]*s["multiplier"]
-        qty=min(s["max_qty"],int(self.cfg.risk/per_unit),int(q["ask_size"] if side=="long" else q["bid_size"]))
-        if qty<1 or (side=="long" and price-distance<=0):
-            return "One unit exceeds risk or stop invalid",None
+        if s["asset"]=="option":
+            # Long-option risk is defined by the premium paid, not by a
+            # stop-distance dollar cap. The legacy SHADOW_RISK_DOLLARS filter
+            # is intentionally not applied to options; the 1-contract cap and
+            # the spread/liquidity filters above remain the option controls.
+            # Futures and stocks keep dollar-based sizing (prop drawdown).
+            qty=min(s["max_qty"],int(q["ask_size"] if side=="long" else q["bid_size"]))
+            if qty<1 or (side=="long" and price-distance<=0):
+                return "No size available or stop invalid",None
+        else:
+            qty=min(s["max_qty"],int(self.cfg.risk/per_unit),int(q["ask_size"] if side=="long" else q["bid_size"]))
+            if qty<1 or (side=="long" and price-distance<=0):
+                return "One unit exceeds risk or stop invalid",None
         flatten=futures_session(now)["flatten_at"] if s["asset"]=="future" else hours[1]-900
         return None,{"spec":s,"quote":q,"price":price,"distance":distance,"per_unit":per_unit,"qty":qty,"risk":risk,"flatten_at":flatten,
                      'observed_at':now,'stop':prices['stop'],'target':prices['target']}
@@ -190,14 +199,26 @@ class Engine:
             for b in sorted(bars,key=lambda b:b["ts"]):
                 if b["ts"]<=p["last_bar_checked"] or b["ts"]<p["entered_at"] or b["ts"]+60>now: continue
                 p["last_bar_checked"]=b["ts"]
-                crossed=b["payload"]["l"]<=p["stop"] if long else b["payload"]["h"]>=p["stop"]
-                if crossed:
+                payload=b["payload"]
+                stop_crossed=payload["l"]<=p["stop"] if long else payload["h"]>=p["stop"]
+                target_touched=payload["h"]>=p["target"] if long else payload["l"]<=p["target"]
+                if stop_crossed:
+                    # A bar touching both levels is ambiguous intrabar; the
+                    # stop wins by conservative convention.
                     reason="stop_detected_in_bar"
                     price=min(price,p["stop"]-p["tick"]) if long else max(price,p["stop"]+p["tick"])
+                    break
+                if target_touched:
+                    # First touch in chronological bar order wins: a target
+                    # touched in a completed bar fills before any later quote
+                    # or bar can stop the position out.
+                    reason="target_detected_in_bar"
+                    price=max(price,p["target"]) if long else min(price,p["target"])
+                    break
             hours=session(day(now))
             deadline=p.get("flatten_at",hours[1]-900 if hours else None)
             if p.get("track")!="swing" and deadline and now>=deadline: reason=reason or "session_flatten"
-            if p.get('fill_version')==FILL_VERSION and reason and reason!='stop_detected_in_bar':
+            if p.get('fill_version')==FILL_VERSION and reason and reason not in ('stop_detected_in_bar','target_detected_in_bar'):
                 price=exit_price(p,q,reason)
             p["last_quote_ts"]=q["ts"]
             p["mark"]=price
@@ -360,10 +381,45 @@ class Engine:
                 self.scanner.scan(c,now,self)
             else:
                 self.scanner.retry_options(c,{k[6:]:q for k,q in self.db.prefix(c,'quote:').items()},now,self)
+            magnet_summary = None
+            if self.cfg.apex_magnet:
+                from .apex_magnet import scan as apex_magnet_scan
+                magnet_summary = apex_magnet_scan(self.db,c,self.cfg,now)
+            tape_summary = None
+            if self.cfg.tape_confirmed:
+                from .tape_confirmed import scan as tape_confirmed_scan
+                tape_summary = tape_confirmed_scan(self.db,c,self.cfg,now)
+            gap_summary = None
+            if self.cfg.gap_continuation:
+                from .gap_continuation import scan as gap_continuation_scan
+                gap_summary = gap_continuation_scan(self.db,c,self.cfg,now)
+            breakout_summary = None
+            if self.cfg.breakouts:
+                from .breakouts import scan as breakouts_scan
+                breakout_summary = breakouts_scan(self.db,c,self.cfg,now)
+            board_summary = None
+            if self.cfg.day_trading_board:
+                from .day_trading_board import scan as day_board_scan
+                board_summary = day_board_scan(self.db,c,self.cfg,now)
             self.ideas.tick(c,now)
             from .observation_recovery import tick as recovery_tick
             recovery_tick(self.db,c,self.clock() if self.clock else now)
             self.db.put(c,"worker:engine",{"at":now,"mode":policy(self.cfg)['mode'],"strategy_version":VERSION,"orb_setups_enabled":self.cfg.orb_setups,"morning_enabled":self.cfg.morning_enabled})
+        if magnet_summary and magnet_summary.get('ran'):
+            self.db.health('apex_magnet','running','%d symbols in radius, %d excluded' % (
+                magnet_summary['symbols'], sum(magnet_summary['excluded'].values())))
+        if tape_summary and tape_summary.get('ran'):
+            self.db.health('tape_confirmed','running','%d evaluated, %d confirmed' % (
+                tape_summary['evaluated'], tape_summary['confirmed']))
+        if gap_summary and gap_summary.get('ran'):
+            self.db.health('gap_continuation','running','%d symbols, %d qualified' % (
+                gap_summary['symbols'], gap_summary['qualified']))
+        if breakout_summary and breakout_summary.get('ran'):
+            self.db.health('breakouts','running','%d new events, %d forming' % (
+                breakout_summary['new_events'], breakout_summary['forming']))
+        if board_summary and board_summary.get('ran'):
+            self.db.health('day_trading_board','running','board %s, %d symbols' % (
+                board_summary.get('action') or 'steady', board_summary['symbols']))
 
     async def run(self):
         while True:
