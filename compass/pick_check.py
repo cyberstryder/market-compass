@@ -33,7 +33,10 @@ def _apex_section(display, symbol, direction, spot, target):
                    key=lambda r: r['magnet'], reverse=True)
     detail = {'nearest_above': above[0] if above else None,
               'nearest_below': below[0] if below else None,
-              'signal': rows[0].get('signal') if rows else None}
+              'signal': rows[0].get('signal') if rows else None,
+              'role': rows[0].get('role') if rows else None,
+              'vs_flip': rows[0].get('vs_flip') if rows else None,
+              'gamma_flip': rows[0].get('gamma_flip') if rows else None}
     note = None
     if target and spot:
         between = [r for r in (above if direction == 'long' else below)

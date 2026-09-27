@@ -13,7 +13,8 @@
   let extra='';
   if(key==='apex'){
    const a=detail.nearest_above,b=detail.nearest_below;
-   extra=(a?'<div>Nearest magnet above: <strong>'+money(a.magnet)+'</strong> ('+num(a.distance_pct*100,2)+'% away)'+(a.signal?' · '+esc(a.signal):'')+'</div>':'<div>No magnet above in radius.</div>')
+   const role=detail.role?'<div>Magnet role: <strong>'+esc(detail.role)+'</strong>'+(detail.vs_flip?' · spot <strong>'+esc(detail.vs_flip)+'</strong> the gamma flip'+(detail.gamma_flip?' ('+money(detail.gamma_flip)+')':''):'')+'</div>':'';
+   extra=role+(a?'<div>Nearest magnet above: <strong>'+money(a.magnet)+'</strong> ('+num(a.distance_pct*100,2)+'% away)'+(a.signal?' · '+esc(a.signal):'')+'</div>':'<div>No magnet above in radius.</div>')
         +(b?'<div>Nearest magnet below: <strong>'+money(b.magnet)+'</strong> ('+num(b.distance_pct*100,2)+'% away)'+(b.signal?' · '+esc(b.signal):'')+'</div>':'<div>No magnet below in radius.</div>');
   }else if(key==='tape'){
    extra='<div>Confirmed prints: '+esc(detail.confirmed??0)+' · with pick: '+esc(detail.with_pick??0)+' · against: '+esc(detail.against_pick??0)+'</div>';

@@ -1,13 +1,18 @@
 /* Evidence scanner panels. Endpoints are research evidence only: no alerts, no trades. */
 (()=>{
- let busy=false,boardBusy=false;
+ let busy=false,boardBusy=false,apexCache=null;
  const detail=(o,skip)=>Object.entries(o||{}).filter(([k])=>!(skip||[]).includes(k)).map(([k,v])=>esc(k)+': '+esc(typeof v==='object'?JSON.stringify(v):String(v??''))).join(' · ');
  const pct1=x=>x===null||x===undefined?'—':num(x*100,1)+'%';
 
  function renderApex(r){
   $('#apex-asof').textContent='Snapshot '+when(r.asof)+' · radius '+esc(r.radius??'—')+' · tolerance '+esc(r.tolerance??'—');
-  const rows=(r.rows||[]).slice(0,50);
-  $('#apex-rows').innerHTML=rows.length?table(['Symbol','Magnet','Spot','Distance','Role','Status'],rows.map(x=>[esc(x.symbol),num(x.magnet),num(x.spot),num((x.distance_pct||0)*100,2)+'%',esc(x.role),tag(x.status)]))+(r.rows.length>50?'<p class="fine">Nearest 50 of '+num(r.rows.length,0)+' shown.</p>':''):empty('No magnets in range','The latest vendor snapshot has no magnets within radius.');
+  apexCache=r;
+  const within=parseFloat(($('#apex-within')||{}).value||'0.02');
+  const filt=(r.rows||[]).filter(x=>(x.distance_pct??1)<=within);
+  const rows=filt.slice(0,50);
+  const role=x=>x.role==='support'?'<span class="tag good">Support</span>':x.role==='resistance'?'<span class="tag bad">Resistance</span>':esc(x.role||'—');
+  const flip=x=>x.vs_flip==='above'?'<span class="tag good">Above '+num(x.gamma_flip)+'</span>':x.vs_flip==='below'?'<span class="tag bad">Below '+num(x.gamma_flip)+'</span>':'<span class="tag">—</span>';
+  $('#apex-rows').innerHTML=rows.length?table(['Symbol','Magnet','Spot','Distance','Role','VS flip','Status'],rows.map(x=>[esc(x.symbol),num(x.magnet),num(x.spot),num((x.distance_pct||0)*100,2)+'%',role(x),flip(x),tag(x.status)]))+(filt.length>50?'<p class="fine">Nearest 50 of '+num(filt.length,0)+' within '+num(within*100,1)+'% shown.</p>':'<p class="fine">'+num(filt.length,0)+' within '+num(within*100,1)+'% of magnet.</p>'):empty('No magnets in range','No magnets within '+num(within*100,1)+'% — widen the Within filter.');
   const sig=(r.signals||[]).slice(0,20);
   $('#apex-signals').innerHTML=sig.length?table(['Time','Symbol','Detail'],sig.map(s=>[when(s.ts),esc(s.symbol),detail(s,['symbol','ts'])])):empty('No signal transitions','No magnet touches or breaks recorded recently.');
   const out=(r.outcomes||[]).slice(0,20);
@@ -75,6 +80,7 @@
 
  document.querySelector('[data-tab="scanners"]').addEventListener('click',loadScanners);
  document.querySelector('[data-tab="overview"]').addEventListener('click',loadBoard);
+ document.querySelector('#apex-within').addEventListener('change',()=>{if(apexCache)renderApex(apexCache);});
  window.addEventListener('hashchange',()=>{if(location.hash==='#scanners')loadScanners();if(location.hash==='#overview'||location.hash===''||location.hash==='#')loadBoard();});
  if(location.hash==='#scanners')loadScanners();
  loadBoard();

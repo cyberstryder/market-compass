@@ -39,7 +39,7 @@
 <p id="operating-mode" class="banner">Research mode · Paper trading paused</p><div id="connection" class="banner">Connecting to the shared market state…</div>
 <section id="scanners" class="tab">
 <div class="banner">Evidence scanners rebuilt from TraderMatrix site views. Evidence only — no alerts, no auto-admission, no trades. Nothing here is a trading signal until prospective measurement says otherwise.</div>
-<article class="panel"><div class="panel-head"><h2>Apex magnets</h2><span class="muted" id="apex-asof"></span></div><div id="apex-rows"></div><h3>Signal transitions</h3><div id="apex-signals"></div><h3>Session outcomes</h3><div id="apex-outcomes"></div>
+<article class="panel"><div class="panel-head"><h2>Apex magnets</h2><span class="muted" id="apex-asof"></span><label>Within <select id="apex-within"><option value="0.005">0.5%</option><option value="0.01">1%</option><option value="0.02" selected>2%</option><option value="0.05">5%</option><option value="1">All</option></select></label></div><div id="apex-rows"></div><h3>Signal transitions</h3><div id="apex-signals"></div><h3>Session outcomes</h3><div id="apex-outcomes"></div>
 <p class="fine">Vendor magnet levels joined with minute bars. Magnet drift history is not yet joined, so drift always reports current.</p></article>
 <article class="panel"><div class="panel-head"><h2>Tape confirmed</h2><span class="muted" id="tape-asof"></span></div><div id="tape-scorecard"></div><h3>Recent confirmed trials</h3><div id="tape-recent"></div>
 <p class="fine">Setup trials joined with ±15 minute same-direction flow (≥$250k premium, print score ≥85). Confirmed means the flow arrived before the trial was invalidated.</p></article>
