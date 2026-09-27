@@ -2,26 +2,50 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Market Compass</title><link rel="stylesheet" href="/static/style.css"></head><body>
 <aside class="sidebar"><a class="brand" href="/">↗ <span>Market<br>Compass</span></a><p class="eyebrow">WORKSPACE</p>
-<nav><button class="nav active" data-tab="overview">◈ Overview</button><button class="nav" data-tab="exposure">◎ Exposure</button>
-<button class="nav" data-tab="research-admin">▣ Research admin</button>
-<button class="nav" data-tab="tm-study">◇ TM scoring study</button>
-<button class="nav" data-tab="scanner">↗ Live scanner</button><button class="nav" data-tab="research">▤ Research desk</button>
-<button class="nav" data-tab="obsidian">◇ Obsidian Watchlist</button>
-<button class="nav" data-tab="projects">▦ Connected projects</button>
-<button class="nav" data-tab="daily-results">◷ Daily results</button>
-<button class="nav" data-tab="setup-study">◉ Setup results</button>
-<button class="nav" data-tab="option-ideas">◇ Options ideas</button>
-<button class="nav" data-tab="swing-ideas">↗ Swing ideas</button>
-<button class="nav" data-tab="discovery">◇ Discovery research</button>
-<button class="nav" data-tab="swing-study">◇ Swing comparison</button>
-<button class="nav" data-tab="spy-study">◈ SPY 0DTE outcomes</button>
-<button class="nav" data-tab="secondary">◇ Secondary review</button>
-<button class="nav" data-tab="flow">≋ Options flow</button><button class="nav" data-tab="trades">↗ Paper history</button>
-<button class="nav" data-tab="assistant">✧ Ask Compass</button><button class="nav" data-tab="health">◷ Feed health</button></nav>
+<nav>
+<p class="nav-group">Today</p>
+<button class="nav active" data-tab="overview">Today</button>
+<button class="nav" data-tab="scanner">Setup feed</button>
+<button class="nav" data-tab="flow">Options flow</button>
+<button class="nav" data-tab="exposure">GEX / exposure</button>
+<button class="nav" data-tab="assistant">Ask Compass</button>
+<p class="nav-group">Scanners</p>
+<button class="nav" data-tab="scanners">Evidence scanners</button>
+<p class="nav-group">Ideas</p>
+<button class="nav" data-tab="option-ideas">0DTE ideas</button>
+<button class="nav" data-tab="swing-ideas">Swing ideas</button>
+<button class="nav" data-tab="discovery">Discovery</button>
+<button class="nav" data-tab="obsidian">Obsidian inbox</button>
+<p class="nav-group">Studies</p>
+<button class="nav" data-tab="setup-study">Setup results</button>
+<button class="nav" data-tab="tm-study">TM scoring</button>
+<button class="nav" data-tab="swing-study">Swing comparison</button>
+<button class="nav" data-tab="spy-study">SPY 0DTE outcomes</button>
+<button class="nav" data-tab="secondary">Independent reviews</button>
+<p class="nav-group">Paper</p>
+<button class="nav" data-tab="trades">Paper ledger</button>
+<button class="nav" data-tab="daily-results">Daily results</button>
+<p class="nav-group">System</p>
+<button class="nav" data-tab="health">Feed health</button>
+<button class="nav" data-tab="projects">Programs</button>
+<button class="nav" data-tab="research-admin">Research map</button>
+<button class="nav" data-tab="research">Research desk</button>
+</nav>
 <div class="sidebar-foot"><span class="pill">RESEARCH MODE</span><p>No broker execution</p><button id="logout" class="quiet">Sign out</button></div></aside>
-<main class="workspace"><header><div><p class="eyebrow">MARKET INTELLIGENCE</p><h1 id="title">Session overview</h1></div>
+<main class="workspace"><header><div><p class="eyebrow">MARKET INTELLIGENCE</p><h1 id="title">Today</h1></div>
 <div class="header-right"><span id="market" class="pill">Checking session</span><p id="clock" class="mono"></p></div></header>
 <p id="operating-mode" class="banner">Research mode · Paper trading paused</p><div id="connection" class="banner">Connecting to the shared market state…</div>
+<section id="scanners" class="tab">
+<div class="banner">Evidence scanners rebuilt from TraderMatrix site views. Evidence only — no alerts, no auto-admission, no trades. Nothing here is a trading signal until prospective measurement says otherwise.</div>
+<article class="panel"><div class="panel-head"><h2>Apex magnets</h2><span class="muted" id="apex-asof"></span></div><div id="apex-rows"></div><h3>Signal transitions</h3><div id="apex-signals"></div><h3>Session outcomes</h3><div id="apex-outcomes"></div>
+<p class="fine">Vendor magnet levels joined with minute bars. Magnet drift history is not yet joined, so drift always reports current.</p></article>
+<article class="panel"><div class="panel-head"><h2>Tape confirmed</h2><span class="muted" id="tape-asof"></span></div><div id="tape-scorecard"></div><h3>Recent confirmed trials</h3><div id="tape-recent"></div>
+<p class="fine">Setup trials joined with ±15 minute same-direction flow (≥$250k premium, print score ≥85). Confirmed means the flow arrived before the trial was invalidated.</p></article>
+<article class="panel"><div class="panel-head"><h2>Gap continuation</h2><span class="muted" id="gap-asof"></span></div><div id="gap-board"></div><h3>Weekly outcomes</h3><div id="gap-weekly"></div>
+<p class="fine">Gaps ≥1.5% in curated large caps. 09:30–09:45 opening-range break plus a 10-minute hold; dealer opposition vetoes the setup.</p></article>
+<article class="panel"><div class="panel-head"><h2>Breakouts</h2><span class="muted" id="break-asof"></span></div><h3>Forming triangles</h3><div id="break-forming"></div><h3>Fresh breaks</h3><div id="break-fresh"></div><h3>Weekly outcomes</h3><div id="break-weekly"></div>
+<p class="fine">Close-only 20/50/253-session range breaks and mechanical 15-session triangle coils, volume-confirmed at 1.5×. Runs once daily after the close.</p></article>
+</section>
 <section id="research-admin" class="tab">
 <div class="research-intro"><div><p class="eyebrow">THE WHOLE RESEARCH PROGRAM</p><h2>What we have, what we know, what comes next.</h2><p>Collection, assessment, outcomes and alert delivery have separate evidence. Saving a record does not mean it has a Compass rating or a measured result.</p></div><a class="research-download" href="/api/research-admin?download=true">Download status</a></div>
 <div id="research-admin-summary" class="stats" aria-live="polite"></div>
@@ -199,7 +223,10 @@
 <div class="banner">Explore the latest vendor scanners, flow, market conditions, calendars, and positioning. Source time and retrieval time remain separate.</div>
 <article class="panel"><label for="research-source">Research source</label><select id="research-source"></select><div id="research-detail"></div></article>
 </section>
-<section id="overview" class="tab active"><div id="stats" class="stats"></div><div class="columns">
+<section id="overview" class="tab active"><div id="stats" class="stats"></div>
+<article class="panel"><div class="panel-head"><h2>Day trading board</h2><span class="muted" id="board-state"></span></div><div id="day-board"></div>
+<p class="fine">Built 08:30 CT, refreshed 09:00 CT, frozen at the open. Six-component catalyst score: earnings, economic, mover, flow, sector, radar. Watchlist only — the A+ alert gate is specified but not wired, so the board never alerts on its own.</p></article>
+<div class="columns">
 <article class="panel wide"><div class="panel-head"><h2>Watchlist & levels</h2><span class="muted">Latest observations</span></div><div id="watch"></div>
 <p class="fine">Futures use a 17:00–17:15 CT Globex range, then a new 08:30–08:45 CT regular-session range. Explicit contract IDs keep rolled prices separate.</p></article>
 <article class="panel"><div class="panel-head"><h2>Decision journal</h2><span class="dot"></span></div><div id="journal"></div></article></div>
@@ -255,5 +282,5 @@
 <p class="muted">Connections are checked. Live readiness still requires advancing source times, usable option inputs, and a recorded simulated entry, exit, and confirmed alert.</p>
 <p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></section>
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
-<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/daily-results.js"></script></body></html>
+<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/daily-results.js"></script></body></html>
 
