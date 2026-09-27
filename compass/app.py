@@ -378,6 +378,27 @@ def create_app(cfg=None):
         with db.tx() as c:
             return display(db,c,time.time())
 
+    class PickCheckIn(BaseModel):
+        ticker:str=Field(min_length=1,max_length=12)
+        direction:str=Field(min_length=1,max_length=10)
+        entry:float|None=None
+        target:float|None=None
+        source:str=Field(default='',max_length=120)
+
+    @app.post('/api/pick-check')
+    def post_pick_check(pick:PickCheckIn):
+        from .pick_check import check
+        try:
+            with db.tx() as c:
+                return check(db,c,time.time(),pick.ticker,pick.direction,pick.entry,pick.target,pick.source)
+        except ValueError as e:raise HTTPException(400,str(e))
+
+    @app.get('/api/pick-check/recent')
+    def get_pick_check_recent(limit:int=Query(1,ge=1,le=100)):
+        from .pick_check import recent
+        with db.tx() as c:
+            return {'checks':recent(db,c,limit)}
+
     @app.get('/api/discovery')
     def get_discovery():
         from .discovery import report

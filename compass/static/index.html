@@ -17,6 +17,7 @@
 <button class="nav" data-tab="discovery">Discovery</button>
 <button class="nav" data-tab="obsidian">Obsidian inbox</button>
 <button class="nav" data-tab="smoothers">Smoothers</button>
+<button class="nav" data-tab="pick-check">Pick checker</button>
 <p class="nav-group">Studies</p>
 <button class="nav" data-tab="setup-study">Setup results</button>
 <button class="nav" data-tab="tm-study">TM scoring</button>
@@ -85,6 +86,22 @@
 <button id="smoothers-handoff-rollback" type="button">Stop Compass Smoothers sending</button>
 <p>Rollback stops pending native sends. Check any in-flight or uncertain deliveries before manually resuming the original sender.</p>
 <pre id="smoothers-handoff-status" aria-live="polite"></pre></details></article>
+</section>
+<section id="pick-check" class="tab">
+<div class="banner">Stack one external pick against Compass evidence: Apex magnets, institutional tape, gap continuation, breakouts, and exposure. Evidence only — no auto-admission, no alerts, no trades.</div>
+<article class="panel"><h2>Check a pick</h2>
+<div class="research-controls">
+<label>Ticker <input id="pickcheck-ticker" placeholder="SPY" style="text-transform:uppercase"></label>
+<label>Direction <select id="pickcheck-direction"><option value="long">Long</option><option value="short">Short</option></select></label>
+<label>Entry <input id="pickcheck-entry" type="number" step="any" placeholder="optional"></label>
+<label>Target <input id="pickcheck-target" type="number" step="any" placeholder="optional"></label>
+<label>Analyst / source <input id="pickcheck-source" placeholder="e.g. sal"></label>
+</div>
+<button id="pickcheck-run" type="button">Check against evidence</button>
+</article>
+<div id="pickcheck-result"></div>
+<article class="panel"><h2>Recent checks</h2><div id="pickcheck-recent"></div>
+<p class="fine">Every check is logged so analyst hit rates can be measured later. Call/put map to long/short.</p></article>
 </section>
 <section id="secondary" class="tab">
 <div class="banner">Compass reviews each original candidate independently. Supported is a research assessment of the underlying direction. The original alerts and automation keep running.</div>
@@ -292,5 +309,5 @@
 <p class="muted">Connections are checked. Live readiness still requires advancing source times, usable option inputs, and a recorded simulated entry, exit, and confirmed alert.</p>
 <p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></section>
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
-<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/daily-results.js"></script></body></html>
+<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/pickcheck.js"></script><script src="/static/daily-results.js"></script></body></html>
 
