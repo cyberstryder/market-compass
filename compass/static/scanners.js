@@ -7,7 +7,7 @@
  function renderApex(r){
   $('#apex-asof').textContent='Snapshot '+when(r.asof)+' · radius '+esc(r.radius??'—')+' · tolerance '+esc(r.tolerance??'—');
   const rows=(r.rows||[]).slice(0,50);
-  $('#apex-rows').innerHTML=rows.length?table(['Symbol','Magnet','Spot','Distance','Role','Status'],rows.map(x=>[esc(x.symbol),num(x.magnet_price),num(x.spot),num((x.distance_pct||0)*100,2)+'%',esc(x.role),tag(x.status)]))+(r.rows.length>50?'<p class="fine">Nearest 50 of '+num(r.rows.length,0)+' shown.</p>':''):empty('No magnets in range','The latest vendor snapshot has no magnets within radius.');
+  $('#apex-rows').innerHTML=rows.length?table(['Symbol','Magnet','Spot','Distance','Role','Status'],rows.map(x=>[esc(x.symbol),num(x.magnet),num(x.spot),num((x.distance_pct||0)*100,2)+'%',esc(x.role),tag(x.status)]))+(r.rows.length>50?'<p class="fine">Nearest 50 of '+num(r.rows.length,0)+' shown.</p>':''):empty('No magnets in range','The latest vendor snapshot has no magnets within radius.');
   const sig=(r.signals||[]).slice(0,20);
   $('#apex-signals').innerHTML=sig.length?table(['Time','Symbol','Detail'],sig.map(s=>[when(s.ts),esc(s.symbol),detail(s,['symbol','ts'])])):empty('No signal transitions','No magnet touches or breaks recorded recently.');
   const out=(r.outcomes||[]).slice(0,20);

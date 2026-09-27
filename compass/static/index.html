@@ -16,6 +16,7 @@
 <button class="nav" data-tab="swing-ideas">Swing ideas</button>
 <button class="nav" data-tab="discovery">Discovery</button>
 <button class="nav" data-tab="obsidian">Obsidian inbox</button>
+<button class="nav" data-tab="smoothers">Smoothers</button>
 <p class="nav-group">Studies</p>
 <button class="nav" data-tab="setup-study">Setup results</button>
 <button class="nav" data-tab="tm-study">TM scoring</button>
@@ -63,6 +64,28 @@
 <article class="panel"><div class="panel-head"><h2>Individual received records</h2><label>Show <select id="tm-cohort"><option value="all">All registered records</option><option value="prospective">Prospective assessments</option><option value="scored">Complete Compass scores</option><option value="insufficient_data">Incomplete assessments</option><option value="historical_inventory">Historical inventory</option><option value="tm_selected">TM selected</option><option value="compass_selected">Compass selected</option><option value="both_selected">Both selected</option></select></label></div><p id="tm-record-status" class="fine" aria-live="polite"></p><div id="tm-study-records"></div><div class="research-controls"><button id="tm-previous" type="button">Previous</button><button id="tm-next" type="button">Next</button><button id="tm-newest" type="button">Newest records</button></div></article>
 </section>
 <section id="obsidian" class="tab"><div class="banner">Watchlist ideas, not provider trade entries. Reported percentages are separate from independently observed option prices.</div><article class="panel"><h2>Obsidian Watchlist</h2><div id="obsidian-status"></div><div id="obsidian-ideas"></div></article><article class="panel"><h2>Historical price audit</h2><div id="obsidian-history"></div></article><article class="panel"><h2>Provider updates</h2><div id="obsidian-events"></div></article></section>
+<section id="smoothers" class="tab">
+<div class="banner">Weekly stock signals, selected and ranked natively by Compass every Monday morning (9:35–10:30 CT). The original app remains the official sender until the handoff below is reviewed and armed.</div>
+<article class="panel"><div class="panel-head"><h2>Sender status</h2><span class="muted" id="smoothers-handoff-asof"></span></div><div id="smoothers-ownership"></div></article>
+<article class="panel"><div class="panel-head"><h2>Featured A+ picks</h2><span class="muted" id="smoothers-featured-asof"></span></div><div id="smoothers-featured"></div>
+<p class="fine">Top 10 by target ATR multiple among signals priceable at publication with non-negative modeled return. Ranked once Monday morning, before any outcome exists — never re-ranked after the fact.</p></article>
+<article class="panel"><div class="panel-head"><h2>Weekly roster</h2><label>Week <input id="smoothers-week" type="date"></label></div><div id="smoothers-roster"></div>
+<p class="fine">Entries are modeled at the first-hour close, not executable prices. WIN means the target was touched on a completed minute bar; UNRESOLVED means the week ended without a clean resolution.</p></article>
+<article class="panel"><h2>Past weeks</h2><div id="smoothers-history"></div></article>
+<article class="panel"><h2>Smoothers sender handoff</h2><details><summary>Review a complete week and prepare the next weekly cohort</summary>
+<p>The original app remains official during the comparison week. Activation requires matched weekly observations, current message previews, a review of the original channel, and the original sender paused. The source feed does not retain Discord delivery receipts.</p>
+<label>Completed review week (Monday date) <input id="smoothers-handoff-review" type="date"></label>
+<label>Next cohort (Monday date) <input id="smoothers-handoff-date" type="date"></label>
+<button id="smoothers-handoff-load" type="button">Load handoff status</button>
+<button id="smoothers-handoff-prepare" type="button">Prepare weekly evidence check</button>
+<label><input id="smoothers-handoff-paused" type="checkbox"> I have paused the original Smoothers sender</label>
+<label><input id="smoothers-handoff-reviewed" type="checkbox"> I reviewed and accepted the full week and message previews</label>
+<label><input id="smoothers-handoff-original" type="checkbox"> I checked the original channel's entry, roster, target and closure messages</label>
+<button id="smoothers-handoff-activate" type="button" disabled>Arm accepted weekly handoff</button>
+<button id="smoothers-handoff-rollback" type="button">Stop Compass Smoothers sending</button>
+<p>Rollback stops pending native sends. Check any in-flight or uncertain deliveries before manually resuming the original sender.</p>
+<pre id="smoothers-handoff-status" aria-live="polite"></pre></details></article>
+</section>
 <section id="secondary" class="tab">
 <div class="banner">Compass reviews each original candidate independently. Supported is a research assessment of the underlying direction. The original alerts and automation keep running.</div>
 <p id="secondary-status" class="fine"></p><div id="secondary-stats" class="stats"></div>
@@ -123,19 +146,6 @@
 <button id="native-handoff-rollback" type="button">Stop Compass official sending</button>
 <p>After rollback, resolve in-flight or unknown deliveries before manually resuming the original sender.</p>
 <pre id="native-handoff-status" aria-live="polite"></pre></details></article>
-<article class="panel"><h2>Smoothers sender handoff</h2><details><summary>Review a complete week and prepare the next weekly cohort</summary>
-<p>The original app remains official during the comparison week. Activation requires matched weekly observations, current message previews, a review of the original channel, and the original sender paused. The source feed does not retain Discord delivery receipts.</p>
-<label>Completed review week (Monday date) <input id="smoothers-handoff-review" type="date"></label>
-<label>Next cohort (Monday date) <input id="smoothers-handoff-date" type="date"></label>
-<button id="smoothers-handoff-load" type="button">Load handoff status</button>
-<button id="smoothers-handoff-prepare" type="button">Prepare weekly evidence check</button>
-<label><input id="smoothers-handoff-paused" type="checkbox"> I have paused the original Smoothers sender</label>
-<label><input id="smoothers-handoff-reviewed" type="checkbox"> I reviewed and accepted the full week and message previews</label>
-<label><input id="smoothers-handoff-original" type="checkbox"> I checked the original channel's entry, roster, target and closure messages</label>
-<button id="smoothers-handoff-activate" type="button" disabled>Arm accepted weekly handoff</button>
-<button id="smoothers-handoff-rollback" type="button">Stop Compass Smoothers sending</button>
-<p>Rollback stops pending native sends. Check any in-flight or uncertain deliveries before manually resuming the original sender.</p>
-<pre id="smoothers-handoff-status" aria-live="polite"></pre></details></article>
 <article class="panel"><h2>Program replacement checks</h2><div id="program-parity"></div></article>
 <article class="panel"><h2>Transfer to Compass</h2><div id="strategy-migration"></div></article>
 <article class="panel"><h2>Morning original-source archive</h2><p>This is the original-source mirror. Zero records here does not mean zero native Morning signals. Use <a href="#daily-results">Daily results</a> for the complete native daily census. Original candles and research candidates. Underlying outcomes are not option returns or executed trades.</p><label>Ticker <input id="morning-ticker" maxlength="50" placeholder="All tickers"></label> <label>From <input id="morning-start" type="date"></label> <label>Through <input id="morning-end" type="date"></label> <label>Stream <input id="morning-stream" maxlength="32" placeholder="All streams"></label> <button id="morning-load" type="button">Load report</button> <a id="morning-download" href="/api/projects/morning/report?download=true">Download JSON</a><div id="morning-report"><p>Load the latest 100 matching signals and 100 candidates. Narrow dates or ticker if the report is truncated.</p></div></article>
@@ -282,5 +292,5 @@
 <p class="muted">Connections are checked. Live readiness still requires advancing source times, usable option inputs, and a recorded simulated entry, exit, and confirmed alert.</p>
 <p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></section>
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
-<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/daily-results.js"></script></body></html>
+<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/daily-results.js"></script></body></html>
 
