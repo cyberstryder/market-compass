@@ -131,7 +131,7 @@ def test_shared_entry_retry_cannot_use_stale_quote(db):
         hooks={'smoothers':PRIMARY,'smoothers_shared':SHARED}
         assert deliver_one(db,client,hooks,True,NOW+1)
         assert deliver_one(db,client,hooks,True,NOW+2)
-        assert not deliver_one(db,client,hooks,True,NOW+23)
+        assert not deliver_one(db,client,hooks,True,NOW+61)
     with db.tx() as c:
         shared=c.execute(select(outbox).where(outbox.c.program=='smoothers_shared')).mappings().one()
         assert shared['status']=='suppressed'

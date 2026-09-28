@@ -35,13 +35,22 @@ def test_categories(db,symbol,source,payload,expected):
         assert 'Observed bid / ask' in text and 'Trade ID:' in text
 
 @pytest.mark.parametrize('patch',[
- {'ts':NOW-11},{'ts':NOW+1},{'bid':0},{'bid':2.2},{'ask':4},{'ts':None}, {'ask':float('nan')}
+ {'ts':NOW-61},{'ts':NOW+1},{'bid':0},{'bid':2.2},{'ask':4},{'ts':None}, {'ask':float('nan')}
 ])
 def test_bad_quotes_never_admitted(db,patch):
     r=row();r['payload']['last_quote'].update(patch)
     with db.tx() as c:
         assert assess(db,c,r,NOW)['action']=='research'
         assert not report(db,c,'2026-09-23')['records']
+
+def test_quote_delayed_by_delivery_tick_still_admitted(db):
+    # The Discord delivery tick verifies webhooks and sends before it assesses, so a
+    # quote that was fresh at selection can be tens of seconds old at assess time.
+    # That must not suppress the alert; the 120s entry expiry is the actionability bound.
+    r=row();r['payload']['last_quote']['ts']=NOW-30
+    with db.tx() as c:
+        a=assess(db,c,r,NOW)
+        assert a['action']=='publish' and a['category']=='options_0dte'
 
 def test_stock_only_and_mirrors_are_research(db):
     with db.tx() as c:
@@ -122,7 +131,7 @@ def test_stale_delivery_never_sends(db):
     def handler(req):raise AssertionError('stale quote must not send')
     async def run():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            await DeliveryWorker(db,Config(local=True)).send(client,'https://discord.com/api/webhooks/1/test',r,a['category'],NOW+11)
+            await DeliveryWorker(db,Config(local=True)).send(client,'https://discord.com/api/webhooks/1/test',r,a['category'],NOW+61)
     asyncio.run(run())
     with db.tx() as c:
         assert c.execute(select(discord_jobs.c.status)).scalar_one()=='suppressed'

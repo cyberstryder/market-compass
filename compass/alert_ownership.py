@@ -43,7 +43,11 @@ def classification(row, o):
 def quote_error(q, now):
     if not isinstance(q,dict):return 'No option quote'
     if not all(numeric(q.get(k)) for k in ('bid','ask','ts')):return 'Incomplete option quote'
-    if not 0<=now-q['ts']<=10:return 'Stale or future option quote'
+    # 60s, not 10s: the Discord delivery tick does webhook verifications and sends
+    # before it assesses, so a quote that was fresh at selection can legitimately be
+    # tens of seconds old by assess time. The 120s entry expiry remains the hard
+    # actionability bound; this gate only rejects genuinely stale data.
+    if not 0<=now-q['ts']<=60:return 'Stale or future option quote'
     if not 0<q['bid']<q['ask']:return 'Invalid or locked option quote'
     if (q['ask']-q['bid'])/((q['ask']+q['bid'])/2)>.25:return 'Option spread exceeds 25%'
     return None
