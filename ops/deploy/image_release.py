@@ -36,6 +36,14 @@ class ReleaseError(RuntimeError):
     pass
 
 
+class UnknownOutcomeError(ReleaseError):
+    """A network/timeout failure where a mutation may or may not have landed.
+
+    Never blindly retried: callers must reconcile (re-read the affected
+    object) before deciding whether the operation took effect.
+    """
+
+
 def validate(image, revision):
     if not re.fullmatch(re.escape(REGISTRY) + r'@sha256:[0-9a-f]{64}', image):
         raise ReleaseError('An immutable digest in the Compass GHCR repository is required')
@@ -43,19 +51,30 @@ def validate(image, revision):
         raise ReleaseError('A full source commit SHA is required')
 
 
-def request_json(url, body=None, headers=None):
+def request_json(url, body=None, headers=None, timeout=30, retries=0):
     req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None,
         headers={'Accept':'application/json','Content-Type':'application/json',
                  'User-Agent':'market-compass-image-promotion/1.0', **(headers or {})})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            return json.load(response)
-    except urllib.error.HTTPError as error:
-        raise ReleaseError(f'API HTTP {error.code} from {urllib.parse.urlsplit(url).hostname}; inspect deployment state before retrying') from None
-    except (urllib.error.URLError, ValueError) as error:
-        # Never print request headers, credentials or response bodies. A failed
-        # mutation is not automatically retried: deployment outcome may be unknown.
-        raise ReleaseError(f'API {type(error).__name__} from {urllib.parse.urlsplit(url).hostname}; inspect deployment state before retrying') from None
+    host = urllib.parse.urlsplit(url).hostname
+    attempt = 0
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as error:
+            raise ReleaseError(f'API HTTP {error.code} from {host}; inspect deployment state before retrying') from None
+        except (TimeoutError, OSError, ValueError) as error:
+            # TimeoutError (socket read timeouts surface as the builtin, not
+            # URLError) and other transport failures: the operation's outcome
+            # is unknown. Never print request headers, credentials or
+            # response bodies. Idempotent reads may opt into bounded retries;
+            # mutations must reconcile instead of retrying blindly.
+            if attempt < retries:
+                attempt += 1
+                time.sleep(min(2 ** attempt, 10))
+                continue
+            raise UnknownOutcomeError(
+                f'API {type(error).__name__} from {host}; outcome unknown; inspect deployment state before retrying') from None
 
 
 class Railway:
@@ -63,8 +82,9 @@ class Railway:
         if not token:raise ReleaseError('Missing RAILWAY_TOKEN GitHub Actions secret')
         self.token = token
 
-    def __call__(self, query, variables):
-        result = request_json(API, {'query':query,'variables':variables}, {'Project-Access-Token':self.token})
+    def __call__(self, query, variables, timeout=30, retries=0):
+        result = request_json(API, {'query':query,'variables':variables}, {'Project-Access-Token':self.token},
+                              timeout=timeout, retries=retries)
         if result.get('errors') or 'data' not in result:
             raise ReleaseError('Railway rejected the operation; no automatic retry')
         return result['data']
@@ -89,7 +109,7 @@ def promote(image, revision, api, head=current_main, sleep=time.sleep,
     # Inspect every target before changing any. Initial source migration and
     # registry credentials must be configured explicitly in Railway first.
     for name, service in SERVICES:
-        instance = api(INSTANCE, {'s':service,'e':ENVIRONMENT})['serviceInstance']
+        instance = api(INSTANCE, {'s':service,'e':ENVIRONMENT}, retries=3)['serviceInstance']
         source = instance.get('source') or {}
         if source.get('repo') or not (source.get('image') or '').startswith(REGISTRY+'@sha256:'):
             raise ReleaseError(name+': private image source cutover is not configured')
@@ -103,22 +123,42 @@ def promote(image, revision, api, head=current_main, sleep=time.sleep,
     for name, service in SERVICES:
         if head()!=revision:raise ReleaseError('Main changed during rollout; remaining services held')
         before = instances[service]
+        before_deploy_id = (before.get('latestDeployment') or {}).get('id')
         item = dict(name=name,service_id=service,previous_image=before['source']['image'],status='updating',verified=False)
         receipt['services'].append(item);save_receipt(receipt_path, receipt)
         # Update only the image. Railway may store replicas in regional config
         # while the legacy numReplicas field is null; never rewrite topology.
-        ok = api(UPDATE, {'s':service,'e':ENVIRONMENT,
-            'i':{'source':{'image':image}}})['serviceInstanceUpdate']
-        if not ok:raise ReleaseError(name+': image update was not accepted')
-        configured = api(INSTANCE, {'s':service,'e':ENVIRONMENT})['serviceInstance']['source']
+        try:
+            ok = api(UPDATE, {'s':service,'e':ENVIRONMENT,
+                'i':{'source':{'image':image}}})['serviceInstanceUpdate']
+        except UnknownOutcomeError:
+            # The update may have landed despite the timeout: read back the
+            # source instead of re-issuing the mutation blindly.
+            configured = api(INSTANCE, {'s':service,'e':ENVIRONMENT}, retries=3)['serviceInstance']['source']
+            ok = configured.get('image') == image and not configured.get('repo')
+        if not ok:raise ReleaseError(name+': image update was not accepted or is unconfirmed; remaining services held')
+        configured = api(INSTANCE, {'s':service,'e':ENVIRONMENT}, retries=3)['serviceInstance']['source']
         if configured.get('repo') or configured.get('image')!=image:
             raise ReleaseError(name+': source readback did not match requested digest')
-        deployment = api(DEPLOY, {'s':service,'e':ENVIRONMENT})['serviceInstanceDeployV2']
+        try:
+            # The deploy mutation can take a while to return a deployment id;
+            # give it a longer read window than the idempotent queries.
+            deployment = api(DEPLOY, {'s':service,'e':ENVIRONMENT}, timeout=120)['serviceInstanceDeployV2']
+        except UnknownOutcomeError:
+            # The deploy may have been created server-side despite the
+            # timeout. Adopt the new deployment if one appeared; otherwise
+            # fail cleanly so the rollout can be retried without risking a
+            # duplicate deployment.
+            latest = api(INSTANCE, {'s':service,'e':ENVIRONMENT}, retries=3)['serviceInstance'].get('latestDeployment') or {}
+            if latest.get('id') and latest.get('id') != before_deploy_id:
+                deployment = latest['id']
+            else:
+                raise ReleaseError(name+': deploy request timed out with no new deployment; safe to retry') from None
         if not deployment:raise ReleaseError(name+': no deployment receipt returned')
         item.update(deployment_id=deployment,status='deploying');save_receipt(receipt_path,receipt)
         deadline = clock()+timeout
         while clock()<deadline:
-            result = api(STATUS, {'id':deployment})['deployment']
+            result = api(STATUS, {'id':deployment}, retries=3)['deployment']
             if (result.get('projectId'),result.get('environmentId'),result.get('serviceId')) != (PROJECT,ENVIRONMENT,service):
                 raise ReleaseError('Deployment receipt does not belong to the expected target')
             item['status'] = result['status'];save_receipt(receipt_path,receipt)

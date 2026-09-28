@@ -13,7 +13,7 @@ class Fake:
     def __init__(self):
         self.calls=[];self.images={s:OLD for _,s in m.SERVICES};self.repo=None
         self.status='SUCCESS';self.replica=1;self.health='/health';self.busy=False;self.bad_meta=False
-    def __call__(self,q,v):
+    def __call__(self,q,v,**kwargs):
         self.calls.append((q,v))
         if q==m.INSTANCE:return {'serviceInstance':dict(source=dict(image=self.images[v['s']],repo=self.repo),numReplicas=self.replica,healthcheckPath=self.health,latestDeployment=dict(status='BUILDING' if self.busy else 'SUCCESS'))}
         if q==m.UPDATE:
@@ -91,3 +91,104 @@ def test_poll_timeout_preserves_receipt_and_stops_rollout(tmp_path):
                   clock=lambda:next(clock),sleep=lambda _:None)
     assert receipt.exists()
     assert len([q for q,_ in api.calls if q==m.DEPLOY])==1
+
+
+def test_socket_read_timeout_is_a_clean_release_error(monkeypatch):
+    def fail(request,timeout=30):
+        raise TimeoutError('The read operation timed out')
+    monkeypatch.setattr(m.urllib.request,'urlopen',fail)
+    with pytest.raises(m.UnknownOutcomeError,match='outcome unknown'):
+        m.request_json('https://example.com/graphql',body={'query':'{x}'})
+    # UnknownOutcomeError is still a ReleaseError for the top-level handler.
+    with pytest.raises(m.ReleaseError):
+        m.request_json('https://example.com/graphql',body={'query':'{x}'})
+
+
+def test_socket_timeout_never_leaks_credentials(monkeypatch):
+    def fail(request,timeout=30):
+        raise TimeoutError('The read operation timed out')
+    monkeypatch.setattr(m.urllib.request,'urlopen',fail)
+    with pytest.raises(m.ReleaseError) as caught:
+        m.request_json('https://example.com/private?token=secret-value',
+                       headers={'Authorization':'secret-value'})
+    assert 'secret-value' not in str(caught.value)
+    assert 'example.com' in str(caught.value)
+
+
+def test_idempotent_reads_retry_transient_timeouts(monkeypatch):
+    attempts={'n':0}
+    class Resp:
+        def __enter__(self):return self
+        def __exit__(self,*a):return False
+        def read(self):return b'{"data":{}}'
+    def flaky(request,timeout=30):
+        attempts['n']+=1
+        if attempts['n']<3:raise TimeoutError('The read operation timed out')
+        return Resp()
+    monkeypatch.setattr(m.urllib.request,'urlopen',flaky)
+    monkeypatch.setattr(m.time,'sleep',lambda _:None)
+    assert m.request_json('https://example.com/graphql',retries=3)=={'data':{}}
+    assert attempts['n']==3
+
+
+class DeployTimeoutFake(Fake):
+    """DEPLOY raises UnknownOutcomeError; latestDeployment id shows whether it landed."""
+    def __init__(self,landed):
+        super().__init__();self.landed=landed;self.new_id='dep-new-dashboard';self.deploy_attempted=set()
+    def __call__(self,q,v,**kwargs):
+        if q==m.INSTANCE:
+            self.calls.append((q,v))
+            sid=v['s']
+            if self.landed and sid==m.SERVICES[0][1] and sid in self.deploy_attempted:
+                latest=dict(id=self.new_id,status='SUCCESS')
+            else:
+                latest=dict(id='dep-old',status='SUCCESS')
+            return {'serviceInstance':dict(source=dict(image=self.images[sid],repo=self.repo),
+                    numReplicas=self.replica,healthcheckPath=self.health,latestDeployment=latest)}
+        if q==m.DEPLOY:
+            if v['s']==m.SERVICES[0][1]:
+                self.calls.append((q,v))
+                self.deploy_attempted.add(v['s'])
+                raise m.UnknownOutcomeError('The read operation timed out')
+            return super().__call__(q,v,**kwargs)
+        if q==m.STATUS:
+            self.calls.append((q,v))
+            sid=m.SERVICES[0][1] if v['id']==self.new_id else v['id']
+            return {'deployment':dict(id=v['id'],status='SUCCESS',projectId=m.PROJECT,
+                    environmentId=m.ENVIRONMENT,serviceId=sid,meta=dict(image=self.images[sid]))}
+        return super().__call__(q,v,**kwargs)
+
+
+def test_deploy_timeout_that_landed_is_adopted_and_verified(tmp_path):
+    api=DeployTimeoutFake(landed=True)
+    result=m.promote(IMAGE,SHA,api,head=lambda:SHA,receipt_path=tmp_path/'receipt.json')
+    first=result['services'][0]
+    assert first['verified'] and first['status']=='SUCCESS'
+    assert first['deployment_id']=='dep-new-dashboard'
+    # Rollout continued to the remaining services.
+    assert len([q for q,_ in api.calls if q==m.DEPLOY])==3
+
+
+def test_deploy_timeout_with_no_deployment_is_safe_to_retry(tmp_path):
+    api=DeployTimeoutFake(landed=False)
+    with pytest.raises(m.ReleaseError,match='safe to retry'):
+        m.promote(IMAGE,SHA,api,head=lambda:SHA,receipt_path=tmp_path/'receipt.json')
+    # Remaining services held: only one UPDATE was attempted.
+    assert len([q for q,_ in api.calls if q==m.UPDATE])==1
+
+
+class UpdateTimeoutFake(Fake):
+    """UPDATE raises UnknownOutcomeError after the image update actually landed."""
+    def __call__(self,q,v,**kwargs):
+        if q==m.UPDATE:
+            self.calls.append((q,v))
+            self.images[v['s']]=v['i']['source']['image']
+            raise m.UnknownOutcomeError('The read operation timed out')
+        return super().__call__(q,v,**kwargs)
+
+
+def test_update_timeout_with_confirmed_image_continues_rollout(tmp_path):
+    api=UpdateTimeoutFake()
+    result=m.promote(IMAGE,SHA,api,head=lambda:SHA,receipt_path=tmp_path/'receipt.json')
+    assert all(i['verified'] for i in result['services'])
+    assert all(img==IMAGE for img in api.images.values())
