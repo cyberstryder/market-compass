@@ -431,6 +431,30 @@ def create_app(cfg=None):
         with db.tx() as c:
             return display(db,c,time.time())
 
+    @app.get('/api/ict-golden-zone')
+    def get_ict_golden_zone():
+        from .golden_zone import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/ict-bos-fvg')
+    def get_ict_bos_fvg():
+        from .bos_fvg import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/ict-bos-gz-vwap')
+    def get_ict_bos_gz_vwap():
+        from .bos_gz_vwap import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/ict-paper-attribution')
+    def get_ict_paper_attribution():
+        from .ict_paper import attribution
+        with db.tx() as c:
+            return {'asof': time.time(), 'attribution': attribution(db, c)}
+
     class PickCheckIn(BaseModel):
         ticker:str=Field(min_length=1,max_length=12)
         direction:str=Field(min_length=1,max_length=10)

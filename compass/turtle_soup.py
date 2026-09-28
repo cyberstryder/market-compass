@@ -257,6 +257,8 @@ def scan(db, c, cfg, now):
                    {'signal_ts': best['signal_ts'], 'date': today,
                     'direction': best['direction'], 'at': now})
             n_signals += 1
+        from .ict_paper import submit as _paper_submit
+        _paper_submit(db, c, cfg, now, 'turtle_soup', symbol, best)
     db.put(c, 'ict_turtle_soup:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,
             'params': {'confirm_bars': confirm_bars, 'atr_frac': atr_frac,

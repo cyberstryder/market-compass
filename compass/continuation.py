@@ -264,6 +264,9 @@ def scan(db, c, cfg, now):
                       s, key='ictcont:%s:%s:%s:%s' % (
                           symbol, day(s['disp_ts']), s['direction'],
                           round(s['level_price'], 4)))
+        from .ict_paper import submit as _paper_submit
+        for s in sigs:
+            _paper_submit(db, c, cfg, now, 'continuation', symbol, s)
     db.put(c, 'ict_continuation:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,
             'status': 'running' if rows or not excluded else 'idle'})

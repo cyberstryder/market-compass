@@ -280,6 +280,10 @@ def scan(db, c, cfg, now):
                     'direction': best['direction'],
                     'divergent_leg': best['divergent_leg'], 'at': now})
             n_signals += 1
+        from .ict_paper import submit as _paper_submit
+        _paper_submit(db, c, cfg, now, 'smt_divergence',
+                      best.get('confirming_leg'),
+                      {k: v for k, v in row.items() if k != 'at'})
     db.put(c, 'ict_smt_divergence:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,
             'params': {'confirm_bars': confirm_bars, 'tick_fallback': tick_fb},

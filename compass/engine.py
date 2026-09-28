@@ -438,6 +438,18 @@ class Engine:
             if self.cfg.ict_tier_a_b:
                 from .tier_a_b import scan as ict_tier_a_b_scan
                 ict_summaries['tier_a_b'] = ict_tier_a_b_scan(self.db,c,self.cfg,now)
+            # ICT futures Phase 2 detectors: evidence snapshots always; paper
+            # fills only when ICT_FUTURES_PAPER_ENABLED is also on (handled
+            # inside each scan via ict_paper).
+            if self.cfg.ict_golden_zone:
+                from .golden_zone import scan as ict_golden_zone_scan
+                ict_summaries['golden_zone'] = ict_golden_zone_scan(self.db,c,self.cfg,now)
+            if self.cfg.ict_bos_fvg:
+                from .bos_fvg import scan as ict_bos_fvg_scan
+                ict_summaries['bos_fvg'] = ict_bos_fvg_scan(self.db,c,self.cfg,now)
+            if self.cfg.ict_bos_gz_vwap:
+                from .bos_gz_vwap import scan as ict_bos_gz_vwap_scan
+                ict_summaries['bos_gz_vwap'] = ict_bos_gz_vwap_scan(self.db,c,self.cfg,now)
             self.ideas.tick(c,now)
             from .observation_recovery import tick as recovery_tick
             recovery_tick(self.db,c,self.clock() if self.clock else now)
@@ -458,7 +470,8 @@ class Engine:
             self.db.health('day_trading_board','running','board %s, %d symbols' % (
                 board_summary.get('action') or 'steady', board_summary['symbols']))
         for _ict_name in ('session_liquidity','htf_levels','turtle_soup','smt_divergence',
-                          'aoi_zones','continuation','trendline_liquidity','tier_a_b'):
+                          'aoi_zones','continuation','trendline_liquidity','tier_a_b',
+                          'golden_zone','bos_fvg','bos_gz_vwap'):
             _s = ict_summaries.get(_ict_name)
             if _s and _s.get('ran'):
                 self.db.health('ict_' + _ict_name, 'running',

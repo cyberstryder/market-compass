@@ -291,6 +291,9 @@ def scan(db, c, cfg, now):
                     'direction': s['direction']})
             n_signals += 1
             prev = {'signal_ts': s['signal_ts']}
+        from .ict_paper import submit as _paper_submit
+        for s in srows:
+            _paper_submit(db, c, cfg, now, 'trendline_liquidity', symbol, s)
     db.put(c, 'ict_trendline_liquidity:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,
             'status': 'running' if rows or not excluded else 'idle'})

@@ -7,11 +7,16 @@ detectors stay instrument-agnostic and test-friendly.
 
 Evidence only. No alerts, no trades.
 """
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 from .market import number
+
+CT = ZoneInfo("America/Chicago")
 
 
 def _bars_from_window(window):
-    """Normalize bar_window rows ([ts,o,h,l,c,v,...]) to dicts."""
+    """Normalize bar_window rows ([ts,o,h,l,c,v,...]) to dicts (volume kept)."""
     out = []
     for row in window or []:
         try:
@@ -20,7 +25,8 @@ def _bars_from_window(window):
             continue
         if None in (ts, o, h, l, c):
             continue
-        out.append({'ts': ts, 'o': o, 'h': h, 'l': l, 'c': c})
+        out.append({'ts': ts, 'o': o, 'h': h, 'l': l, 'c': c,
+                    'v': row[5] if len(row) > 5 else None})
     return out
 
 
@@ -31,7 +37,8 @@ def _bars_from_recent(rows):
         p = r.get('payload') or {}
         if None in (r.get('ts'), p.get('o'), p.get('h'), p.get('l'), p.get('c')):
             continue
-        out.append({'ts': r['ts'], 'o': p['o'], 'h': p['h'], 'l': p['l'], 'c': p['c']})
+        out.append({'ts': r['ts'], 'o': p['o'], 'h': p['h'], 'l': p['l'],
+                    'c': p['c'], 'v': p.get('v')})
     return sorted(out, key=lambda b: b['ts'])
 
 
@@ -94,3 +101,117 @@ def fractal_swings(bars, n=2):
            any(l < bars[j]['l'] for j in range(i - n, i + n + 1) if j != i):
             lows.append((i, l))
     return highs, lows
+
+
+def session_vwap(bars, now, min_bars=20):
+    """CME Globex-day session VWAP over ascending bar dicts.
+
+    Session = bars with ts >= the most recent 17:00 America/Chicago boundary.
+    typical = (h+l+c)/3, weighted by volume when any volume is present,
+    else equal-weighted (the "minute-close approximation" convention).
+    Returns None when fewer than `min_bars` session bars are available.
+    """
+    if not bars:
+        return None
+    try:
+        now_f = float(now)
+    except (TypeError, ValueError):
+        return None
+    dt = datetime.fromtimestamp(now_f, CT)
+    boundary = dt.replace(hour=17, minute=0, second=0, microsecond=0)
+    if dt < boundary:
+        boundary = boundary - timedelta(days=1)
+    cutoff = boundary.timestamp()
+    sess = [b for b in bars if b.get('ts') is not None and b['ts'] >= cutoff]
+    try:
+        min_bars = int(min_bars)
+    except (TypeError, ValueError):
+        min_bars = 20
+    if len(sess) < min_bars:
+        return None
+    vols = [float(b.get('v') or 0) for b in sess]
+    weights = vols if sum(vols) > 0 else [1.0] * len(sess)
+    num = sum(((b['h'] + b['l'] + b['c']) / 3.0) * w
+              for b, w in zip(sess, weights))
+    den = sum(weights)
+    return num / den if den > 0 else None
+
+
+def detect_bos(bars, n=2, atr_period=14, body_frac=0.5, beyond_atr_frac=0.5):
+    """Break-of-structure closes beyond confirmed fractal swings.
+
+    Bullish BOS: close[i] > latest confirmed swing high (confirmed = swing
+    idx <= i - n) with displacement = bar body >= body_frac * range OR the
+    close clears the swing by >= beyond_atr_frac * ATR. Bearish mirror.
+    Returns oldest-first event dicts.
+    """
+    if len(bars) < 2 * n + 3:
+        return []
+    a = atr(bars, atr_period)
+    highs, lows = fractal_swings(bars, n)
+    events = []
+    for i in range(2 * n, len(bars)):
+        b = bars[i]
+        rng = b['h'] - b['l']
+        body = abs(b['c'] - b['o'])
+        sh = [(idx, p) for idx, p in highs if idx <= i - n]
+        if sh:
+            sidx, sp = max(sh)
+            if b['c'] > sp:
+                disp = (rng > 0 and body >= body_frac * rng) or \
+                       (a is not None and (b['c'] - sp) >= beyond_atr_frac * a)
+                if disp:
+                    events.append({'direction': 'long', 'bos_idx': i,
+                                   'bos_ts': b['ts'], 'swing_price': sp,
+                                   'swing_idx': sidx, 'close': b['c'], 'atr': a})
+                    continue
+        sl = [(idx, p) for idx, p in lows if idx <= i - n]
+        if sl:
+            sidx, sp = max(sl)
+            if b['c'] < sp:
+                disp = (rng > 0 and body >= body_frac * rng) or \
+                       (a is not None and (sp - b['c']) >= beyond_atr_frac * a)
+                if disp:
+                    events.append({'direction': 'short', 'bos_idx': i,
+                                   'bos_ts': b['ts'], 'swing_price': sp,
+                                   'swing_idx': sidx, 'close': b['c'], 'atr': a})
+    return events
+
+
+def detect_fvgs(bars):
+    """Classic 3-candle fair value gaps over ascending bar dicts.
+
+    Bullish FVG: low[i] > high[i-2], zone = (high[i-2], low[i]).
+    Bearish FVG: high[i] < low[i-2], zone = (low[i], high[i-2]).
+    Returns oldest-first dicts with direction/bottom/top/formed_idx/formed_ts.
+    """
+    out = []
+    for i in range(2, len(bars)):
+        first, last = bars[i - 2], bars[i]
+        if last['l'] > first['h']:
+            out.append({'direction': 'long', 'bottom': first['h'],
+                        'top': last['l'], 'formed_idx': i,
+                        'formed_ts': last['ts']})
+        elif last['h'] < first['l']:
+            out.append({'direction': 'short', 'bottom': last['h'],
+                        'top': first['l'], 'formed_idx': i,
+                        'formed_ts': last['ts']})
+    return out
+
+
+def fvg_mitigated(bars, fvg, up_to_idx=None):
+    """True when a bar after formation wicked into the FVG zone.
+
+    Bullish FVG mitigated when a later bar's low < zone top; bearish when a
+    later bar's high > zone bottom. `up_to_idx` caps the scan (inclusive).
+    """
+    end = len(bars) if up_to_idx is None else min(up_to_idx + 1, len(bars))
+    for k in range(fvg['formed_idx'] + 1, end):
+        b = bars[k]
+        if fvg['direction'] == 'long':
+            if b['l'] < fvg['top']:
+                return True
+        else:
+            if b['h'] > fvg['bottom']:
+                return True
+    return False

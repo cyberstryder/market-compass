@@ -177,6 +177,39 @@ def find_order_block(bars, atr=None, disp_atr_mult=1.5):
     }
 
 
+def _ob_trade_levels(ob, entry_close):
+    """Paper-trade levels for a newly formed order block.
+
+    Convention (documented choice): the OB is a momentum POI, so the paper
+    entry is the close following formation in the bias direction; the stop
+    sits beyond the OB far edge by 0.25x ATR; the target is exactly 2R.
+    Returns None when the bias is not directional or risk is non-positive.
+    """
+    bias = (ob or {}).get('bias')
+    entry = number(entry_close)
+    atr_v = number((ob or {}).get('atr'))
+    top, bottom = number(ob.get('top')), number(ob.get('bottom'))
+    if bias not in ('long', 'short') or not entry or not atr_v or atr_v <= 0:
+        return None
+    if top is None or bottom is None:
+        return None
+    buf = 0.25 * atr_v
+    if bias == 'long':
+        stop = bottom - buf
+        risk = entry - stop
+        target = entry + 2 * risk
+    else:
+        stop = top + buf
+        risk = stop - entry
+        target = entry - 2 * risk
+    if risk <= 0:
+        return None
+    return {'direction': bias, 'entry': entry, 'stop': stop, 'target': target,
+            'target_kind': 'two_r', 'risk_pts': risk,
+            'reward_pts': 2 * risk, 'rr': 2.0,
+            'level_kind': 'order_block', 'level_price': (top + bottom) / 2.0}
+
+
 def _classify_symbol(symbol, bars, now, eq_frac, disp_mult, range_session, defs):
     """Build one AOI row, or {'excluded': reason}."""
     win = _last_complete_window(now, range_session, defs)
@@ -205,7 +238,12 @@ def _classify_symbol(symbol, bars, now, eq_frac, disp_mult, range_session, defs)
          'formed_ts': end, 'at': now},
     ]
     ob = find_order_block(bars[-400:], disp_atr_mult=disp_mult)
-    ob_row = {'symbol': symbol, 'concept': 'aoi_zones', **ob, 'at': now} if ob else None
+    ob_row = None
+    if ob:
+        ob_row = {'symbol': symbol, 'concept': 'aoi_zones', **ob, 'at': now}
+        levels = _ob_trade_levels(ob, bars[-1]['c'])
+        if levels:
+            ob_row.update(levels)
     return {
         'symbol': symbol, 'range_session': range_session, 'session_date': sess_date,
         'range_high': hi, 'range_low': lo, 'range_mid': mid,
@@ -250,6 +288,8 @@ def scan(db, c, cfg, now):
                           {k: v for k, v in ob.items() if k != 'at'},
                           key='ictaoi:%s:ob:%d' % (symbol, int(ob['formed_ts'])))
                 db.put(c, seen_key, ob['formed_ts'])
+                from .ict_paper import submit as _paper_submit
+                _paper_submit(db, c, cfg, now, 'aoi_zones', symbol, ob)
     db.put(c, 'ict_aoi_zones:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,
             'range_session': range_session,
