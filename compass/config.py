@@ -27,8 +27,11 @@ class Config:
     discord: str = field(default_factory=lambda: env("DISCORD_WEBHOOK_URL"))
     discord_routes: dict = field(default_factory=lambda: {
         key: env('DISCORD_' + key.upper() + '_WEBHOOK_URL')
-        for key in ('spy_morning', 'futures', 'options_0dte', 'options_ideas', 'options_leaps', 'smoothers', 'swing',
-                    'unusual_options', 'exposure', 'intraday', 'research', 'system', 'magnets')})
+        # Condensed 2026-09-28: one route per Discord channel. Dead variables
+        # DISCORD_UNUSUAL_OPTIONS_WEBHOOK_URL, DISCORD_SWING_WEBHOOK_URL,
+        # DISCORD_SYSTEM_WEBHOOK_URL and DISCORD_EXPOSURE_WEBHOOK_URL are gone.
+        for key in ('spy_morning', 'options_0dte', 'intraday', 'magnets', 'options_ideas',
+                    'smoothers', 'futures', 'research')})
     discord_fallback: bool = field(default_factory=lambda: env('DISCORD_SHARED_FALLBACK', 'true') == 'true')
     spy_morning_brief: bool = field(default_factory=lambda: env("SPY_MORNING_BRIEF_ENABLED", "true") == "true")
     spy_timeframes_enabled: bool = field(default_factory=lambda: env("SPY_TIMEFRAMES_ENABLED", "false") == "true")

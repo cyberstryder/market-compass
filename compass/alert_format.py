@@ -10,15 +10,12 @@ CATEGORIES = {
     'smoothers': ('SMOOTHERS', 'Weekly swing'),
     'futures': ('FUTURES', 'Intraday futures'),
     'morning': ('MORNING ALGO', 'Morning intraday'),
-    'unusual_options': ('UNUSUAL OPTIONS', 'Intraday'),
     'end_of_day_algo': ('END OF DAY ALGO', 'End-of-day setup'),
-    'swing': ('SWING', 'Multi-session swing'),
     'options_0dte': ('0DTE OPTIONS', 'Same-day expiry'),
-    'options_ideas': ('OPTIONS IDEAS', 'Intraday options'),
+    'options_ideas': ('OPTIONS IDEAS', 'Intraday and multi-session options'),
     'swing_ideas': ('SWING IDEAS', 'Multi-session options'),
-    'exposure': ('EXPOSURE LEVELS', 'Intraday'),
     'intraday': ('INTRADAY STOCKS', 'Intraday'),
-    'system': ('SYSTEM', 'Service notice'),
+    'research': ('RESEARCH', 'Research and service notices'),
 }
 SETUPS = {
     'orb15-breakout-v1': '15-minute opening-range breakout',
@@ -74,8 +71,10 @@ def alert_identity(row, now=None):
     rule = p.get('rule') or str(p.get('strategy', '')).rsplit(':', 1)[-1]
     future = p.get('asset') == 'future' or FUTURE.fullmatch(symbol)
     # A supporting flow print never renames a technical or futures strategy.
+    # Condensed 2026-09-28: swing/unusual/exposure/system families fold into
+    # options_ideas, intraday and research respectively.
     if status == 'notification_test':
-        category = 'system'
+        category = 'research'
     elif project in ('morning', 'smoothers', 'futures'):
         category = project
     elif p.get('alert_category') in CATEGORIES:
@@ -83,11 +82,11 @@ def alert_identity(row, now=None):
     elif future:
         category = 'futures'
     elif p.get('track') == 'swing' or str(p.get('strategy', '')).startswith('swing20-'):
-        category = 'swing'
+        category = 'options_ideas'
     elif rule == 'flow_price_breakout':
-        category = 'unusual_options'
+        category = 'intraday'
     elif rule == 'exposure_level_break':
-        category = 'exposure'
+        category = 'intraday'
     elif option or status == 'options_skipped':
         category = 'options_0dte'
     else:
@@ -184,7 +183,7 @@ def message_for(row, now=None):
         lines.append('This verifies the alert channel. No position was opened.')
     if identity['setup']:
         lines.append('Setup: ' + identity['setup'])
-    if identity['category'] != 'system':
+    if identity['category'] != 'research':
         lines.append('Instrument: ' + identity['instrument'])
     prices = []
     entry_label = 'Entry reference' if p.get('status') == 'setup_triggered' else 'Simulated entry'

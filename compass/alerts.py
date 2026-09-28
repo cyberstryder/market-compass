@@ -6,7 +6,7 @@ import httpx
 from sqlalchemy import select, func, update
 from .store import events, discord_jobs
 from .alert_format import message_for, alert_identity
-from .alert_routes import ROUTES, ORIGINAL_SENDERS, route_for, destination, manifest
+from .alert_routes import ROUTES, ORIGINAL_SENDERS, PUBLICATION_ROUTES, route_for, destination, manifest
 from .operating_mode import paper_message
 from . import alert_ownership
 
@@ -30,7 +30,9 @@ def enqueue_routes(db, c, now):
                           .order_by(events.c.id).limit(200)).mappings())
     for row in rows:
         decision=alert_ownership.assess(db,c,row,now)
-        route=decision.get('category') or route_for(row)
+        # Publication categories predate the condensed channels; map the two
+        # retired families to their current routes before queuing.
+        route=PUBLICATION_ROUTES.get(decision.get('category'), decision.get('category')) or route_for(row)
         c.execute(db.insert(discord_jobs).values(event_id=row['id'], route=route,
             status='pending' if decision['action'] in ('publish','passthrough') else 'suppressed', queued_at=row['ts'], confirmation=decision)
             .on_conflict_do_nothing(index_elements=['event_id']))
@@ -153,6 +155,14 @@ class DeliveryWorker:
             # receipt. Never replay a potentially successful option alert.
             c.execute(update(discord_jobs).where(discord_jobs.c.status=='sending')
                 .values(status='ambiguous'))
+            # 2026-09-28 channel condensation: repoint still-pending jobs that
+            # were queued under retired route names so they drain normally.
+            for old_route, new_route in (('swing', 'options_ideas'), ('options_leaps', 'research'),
+                                         ('unusual_options', 'intraday'), ('exposure', 'intraday'),
+                                         ('system', 'research')):
+                c.execute(update(discord_jobs).where(
+                    discord_jobs.c.route == old_route, discord_jobs.c.status == 'pending')
+                    .values(route=new_route))
             enqueue_routes(self.db, c, now)
             self.suppress_paper(c, now)
             if not self.published:
@@ -190,9 +200,7 @@ class DeliveryWorker:
                     pending=c.execute(select(func.count()).select_from(discord_jobs).where(
                         discord_jobs.c.route==route,discord_jobs.c.status=='pending')).scalar_one()
                     owner=self.db.get(c,'native:ownership:smoothers',{}).get('owner','original')
-                if not pending and route=='options_leaps':
-                    self.health(route,'inactive','Research only; no qualified live alert producer or queued messages')
-                elif not pending and route=='smoothers' and owner=='original':
+                if not pending and route=='smoothers' and owner=='original':
                     self.health(route,'externally_managed','Original Smoothers owns notifications; Compass handoff is not active')
                 else:
                     self.health(route, 'not_configured', 'Awaiting this channel webhook; messages stay queued')

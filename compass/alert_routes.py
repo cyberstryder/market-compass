@@ -3,34 +3,37 @@ from urllib.parse import urlparse
 from .alert_format import alert_identity
 
 # Independent delivery queues. Source mirrors and experiments have their own home.
+# Condensed 2026-09-28: one route per Discord channel (morning-brief, 0dte,
+# intraday, ideas, smoothers, futures, compass). Magnet pushes share #intraday.
 ROUTES = {
-    'spy_morning': ('spy-0dte-plan', 'SPY 0DTE plans, drawings and contract-qualified trade alerts'),
+    'spy_morning': ('morning-brief', 'SPY 0DTE morning plan, then the TradingView AI drawing prompt'),
     'futures': ('futures', 'Futures signals, observations and simulated management'),
-    'options_0dte': ('options-0dte', 'Compass same-day option simulations'),
-    'options_ideas': ('options-ideas', 'Intraday options with later expirations'),
-    'swing': ('swing-ideas', 'Multi-session option ideas'),
-    'options_leaps': ('options-leaps', 'Long-dated options held across sessions; research only until a producer qualifies'),
+    'options_0dte': ('0dte', 'Compass same-day option simulations'),
+    'options_ideas': ('ideas', 'Intraday and multi-session option ideas'),
     'smoothers': ('smoothers', 'Smoothers-owned option lifecycle'),
-    'unusual_options': ('unusual-options', 'Unusual flow confirmed by a price setup'),
-    'exposure': ('exposure-levels', 'Exposure-level price setups'),
-    'intraday': ('intraday-stocks', 'Intraday stock / ETF setups and simulations'),
-    'research': ('compass-research', 'Secondary reviews, setup results and original-app mirrors'),
-    'system': ('compass-system', 'Service notices and explicit delivery tests'),
+    'intraday': ('intraday', 'Intraday stock / ETF setups, unusual flow and exposure breaks'),
+    'research': ('compass', 'Secondary reviews, setup results, research and service notices'),
+    'magnets': ('intraday', 'Apex magnet break pushes'),
 }
+
+# Publication categories predate the condensed channels. Map them to current
+# routes at delivery time; the publication record itself is unchanged.
+PUBLICATION_ROUTES = {'swing': 'options_ideas', 'options_leaps': 'research'}
 
 
 def route_for(row):
     p = row['payload']
-    if p.get('publication'):return p['publication']['category']
+    if p.get('publication'):
+        return PUBLICATION_ROUTES.get(p['publication']['category'], p['publication']['category'])
     if p.get('status') == 'notification_test':
-        return p.get('delivery_route') if p.get('delivery_route') in ROUTES else 'system'
+        return p.get('delivery_route') if p.get('delivery_route') in ROUTES else 'research'
     category = alert_identity(row)['category']
     if (p.get('status') in ('secondary_review', 'setup_result') or
             category in ('morning', 'smoothers')):
         return 'research'
     if category in ROUTES:
         return category
-    return {'swing_ideas': 'swing', 'end_of_day_algo': 'research'}.get(category, 'system')
+    return {'swing_ideas': 'options_ideas', 'end_of_day_algo': 'research'}.get(category, 'research')
 
 
 def variable(route):

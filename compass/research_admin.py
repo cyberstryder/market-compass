@@ -100,7 +100,7 @@ def build(data, supplements, policy):
          metric('Prospective assessments, 30d',tm_counts.get('prospective')),
          metric('Complete Compass scores, 30d',tm_counts.get('scored'))],
         'Feed counts: session '+str(flow.get('day') or day(now))+'; study: full 30-day receipt window plus separate lifetime inventory.', 'tm-study',
-        route='unusual_options', alert_policy='Enabled for qualifying setups when the scanner is on. Requires score 85+, $100k+, flow age ≤2 minutes and a price breakout.' if policy.get('scanner') else 'Scanner disabled; no new setup alerts.',
+        route='intraday', alert_policy='Enabled for qualifying setups when the scanner is on. Requires score 85+, $100k+, flow age ≤2 minutes and a price breakout.' if policy.get('scanner') else 'Scanner disabled; no new setup alerts.',
         checked_at=flow.get('received'), issues=flow_issues,
         next_step='Verify first-receipt coverage, then review later-session matched outcomes by score, delay and expiry. Keep the rubric fixed during evaluation.',
         version=tm.get('version'),measured=sum(r.get('count',0) for r in tm.get('outcome_counts',[]) if r.get('horizon')=='60m' and r.get('origin')=='prospective' and r.get('status')=='completed'))
@@ -164,7 +164,7 @@ def build(data, supplements, policy):
         version=str(smoothers.get('config_revision')) if smoothers.get('config_revision') is not None else None)
 
     for key, name, tab, route, days, description in (
-        ('swing_ideas', 'Swing Ideas', 'swing-ideas', 'swing', 90, 'Daily and weekly price setups with classified 14–60 DTE flow; fresh quotes are required for entry.'),
+        ('swing_ideas', 'Swing Ideas', 'swing-ideas', 'options_ideas', 90, 'Daily and weekly price setups with classified 14–60 DTE flow; fresh quotes are required for entry.'),
         ('option_ideas', 'Intraday Options Ideas', 'option-ideas', 'options_ideas', 30, 'Intraday price setups select eligible 1–21 DTE contracts; option expiry is not the holding period.')):
         item = data.get(key, {})
         counts = item.get('counts', {})
@@ -318,7 +318,7 @@ def build(data, supplements, policy):
         'Linked setup and secondary studies evaluate selected uses; not every vendor screener result receives independent outcome tracking.',
         [metric('Configured research feeds', len(feeds) if 'feeds' in data.get('scanner', {}) else None), metric('Current feed reports', sum(f.get('status') == 'current' for f in feeds) if 'feeds' in data.get('scanner', {}) else None)],
         'Latest status per configured source; source freshness and collection health are separate.', 'research',
-        route='exposure', alert_policy='Exposure price setups use their dedicated channel; raw context feeds are not broadcast automatically.',
+        route='intraday', alert_policy='Exposure price setups go to the intraday channel; raw context feeds are not broadcast automatically.',
         checked_at=data.get('scanner', {}).get('status', {}).get('at'),
         next_step='Inspect individual source coverage and the studies that actually use its evidence.')
 

@@ -663,7 +663,7 @@ def create_app(cfg=None):
 
     class AlertTest(BaseModel):
         request_id:uuid.UUID
-        route:str='system'
+        route:str='research'
 
     @app.post("/api/alerts/test")
     def test_alert(body:AlertTest):

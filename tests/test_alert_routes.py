@@ -3,9 +3,9 @@ import json
 import time
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from compass.alert_routes import route_for, manifest, destination
-from compass.alerts import DeliveryWorker, outbox_status
+from compass.alerts import DeliveryWorker, enqueue_routes, outbox_status
 from compass.config import Config
 from compass.store import Store, events, discord_jobs
 
@@ -34,8 +34,9 @@ def add(db, category='intraday', status='setup_triggered', **extra):
     ('futures', 'project_observation', 'futures'),
     ('futures', 'secondary_review', 'research'),
     ('options_0dte', 'setup_result', 'research'),
-    ('swing_ideas', 'swing_idea_new', 'swing'),
-    ('unusual_options', 'setup_triggered', 'unusual_options'),
+    ('swing_ideas', 'swing_idea_new', 'options_ideas'),
+    ('unusual_options', 'setup_triggered', 'intraday'),
+    ('exposure', 'setup_triggered', 'intraday'),
     ('spy_morning', 'spy_chart_prompt', 'spy_morning'),
 ])
 def test_family_routing(category, status, expected):
@@ -119,7 +120,7 @@ def test_restart_rotation_retains_receipts_and_route_order(db):
 def test_route_test_keeps_test_identity_and_no_native_ownership_change(db):
     row = {'symbol': 'SYSTEM', 'payload': {'status': 'notification_test', 'delivery_route': 'spy_morning'}}
     assert route_for(row) == 'spy_morning'
-    assert len(manifest(Config(local=True))) == 12
+    assert len(manifest(Config(local=True))) == 8
     with db.tx() as c: assert not db.prefix(c, 'native:ownership:')
 
 
@@ -149,12 +150,43 @@ def test_inactive_routes_do_not_hide_real_queued_or_owned_delivery_blocks(db):
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda req:pytest.fail('No network expected'))) as client:
             await worker.tick(client)
             with db.tx() as c:
-                assert db.get(c,'health:discord:options_leaps')['status']=='inactive'
+                assert db.get(c,'health:discord:futures')['status']=='not_configured'
                 assert db.get(c,'health:discord:smoothers')['status']=='externally_managed'
                 db.put(c,'native:ownership:smoothers',{'owner':'compass'})
-            add(db,'options_leaps')
+            add(db,'futures')
             await worker.tick(client)
             with db.tx() as c:
-                assert db.get(c,'health:discord:options_leaps')['status']=='not_configured'
+                assert db.get(c,'health:discord:futures')['status']=='not_configured'
                 assert db.get(c,'health:discord:smoothers')['status']=='not_configured'
     asyncio.run(run())
+
+
+def test_publication_categories_map_to_condensed_routes():
+    pub = lambda category: {'symbol': 'O:QQQ261002C00500000',
+                            'payload': {'publication': {'category': category}}}
+    assert route_for(pub('swing')) == 'options_ideas'
+    assert route_for(pub('options_leaps')) == 'research'
+    assert route_for(pub('options_ideas')) == 'options_ideas'
+
+
+def test_notification_test_defaults_to_research():
+    assert route_for({'symbol': 'SYSTEM', 'payload': {'status': 'notification_test', 'delivery_route': 'system'}}) == 'research'
+    assert route_for({'symbol': 'X', 'payload': {'status': 'notification_test'}}) == 'research'
+
+
+def test_legacy_route_pending_jobs_are_repointed(db):
+    legacy = {'swing': 'options_ideas', 'options_leaps': 'research',
+              'unusual_options': 'intraday', 'exposure': 'intraday', 'system': 'research'}
+    events = [add(db, 'intraday', id='legacy%d' % i) for i in range(5)]
+    with db.tx() as c:
+        enqueue_routes(db, c, time.time())
+        for event_id, route in zip(events, legacy):
+            c.execute(update(discord_jobs).where(discord_jobs.c.event_id == event_id).values(route=route))
+    worker = DeliveryWorker(db, Config(local=True, discord='', discord_fallback=False))
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda req: pytest.fail('No network expected'))) as client:
+            await worker.tick(client)
+    asyncio.run(run())
+    with db.tx() as c:
+        assert {r['route'] for r in c.execute(select(discord_jobs)).mappings()} == set(legacy.values())
+        assert all(r['status'] == 'pending' for r in c.execute(select(discord_jobs)).mappings())

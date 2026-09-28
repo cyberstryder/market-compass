@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import httpx
 from sqlalchemy import Table,Column,String,Float,JSON,select,func,text
 from .store import meta,identity
+from .alert_routes import PUBLICATION_ROUTES
 
 outbox=Table('native_program_outbox_v1',meta,
     Column('id',String(64),primary_key=True),Column('program',String(20),nullable=False),
@@ -128,7 +129,8 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
                         c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',delivery=dict(d,error='Entry was not confirmed delivered')))
                         continue
                 if decision['category']!=row['program']:
-                    url=webhooks.get(decision['category'],'')
+                    # Publication categories predate the condensed channels.
+                    url=webhooks.get(PUBLICATION_ROUTES.get(decision['category'],decision['category']),'')
                     if not re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',url):continue
                 row=dict(row,payload={'content':publication.format_message(dict(record,payload=decision['payload'])),
                     'username':'Market Compass','allowed_mentions':{'parse':[]}})

@@ -84,7 +84,7 @@ def test_original_sender_and_delivery_health_do_not_imply_research_readiness():
     report = build({'asof': NOW,
         'projects': {'native_programs': {'morning_sender': 'original',
             'morning': {'at': NOW, 'expiration_tracks': 15, 'expiration_samples': 80}}},
-        'delivery': {'pending': 2, 'routes': [{'route': 'swing', 'channel': 'swing-ideas',
+        'delivery': {'pending': 2, 'routes': [{'route': 'options_ideas', 'channel': 'ideas',
             'destination_mode': 'dedicated', 'pending': 2,
             'health': {'status': 'connected'}}]}},
         {'native_report': {'at': NOW, 'expiration_comparison': {

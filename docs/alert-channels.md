@@ -1,21 +1,20 @@
 # Compass alert channels
 
-The layout has **10 Compass delivery families plus the 2 original-program channels**. These are recommended channel names, not a claim that Discord channels have already been created. Compass Feed health → Alert channels shows the actual route mode, verified channel ID, queue and confirmations. `/api/alerts/routes` exposes the same authenticated inventory without webhook credentials.
+The layout has **8 Compass delivery routes plus the 2 original-program channels** (condensed 2026-09-28 from 13 routes). These are recommended channel names, not a claim that Discord channels have already been created. Compass Feed health → Alert channels shows the actual route mode, verified channel ID, queue and confirmations. `/api/alerts/routes` exposes the same authenticated inventory without webhook credentials.
 
 | Proposed channel | Messages | Set this variable on the Compass engine |
 | --- | --- | --- |
-| `spy-0dte-plan` | SPY morning plan, then the TradingView AI drawing prompt | `DISCORD_SPY_MORNING_WEBHOOK_URL` |
+| `morning-brief` | SPY morning plan, then the TradingView AI drawing prompt | `DISCORD_SPY_MORNING_WEBHOOK_URL` |
 | `futures` | Futures setups, source observations and simulated management | `DISCORD_FUTURES_WEBHOOK_URL` |
-| `options-0dte` | Other Compass same-day option simulations | `DISCORD_OPTIONS_0DTE_WEBHOOK_URL` |
-| `options-ideas` | Existing all-day option ideas, 1–21 DTE | `DISCORD_OPTIONS_IDEAS_WEBHOOK_URL` |
-| `swing-ideas` | Multi-session stock and option ideas | `DISCORD_SWING_WEBHOOK_URL` |
-| `unusual-options` | Unusual flow plus a confirmed price setup | `DISCORD_UNUSUAL_OPTIONS_WEBHOOK_URL` |
-| `exposure-levels` | Exposure-level price setups | `DISCORD_EXPOSURE_WEBHOOK_URL` |
-| `intraday-stocks` | Intraday stock and ETF setups/simulations | `DISCORD_INTRADAY_WEBHOOK_URL` |
-| `compass-research` | Secondary reviews, independent setup results, Morning/Smoothers mirrors | `DISCORD_RESEARCH_WEBHOOK_URL` |
-| `compass-system` | Service notices and explicit delivery tests | `DISCORD_SYSTEM_WEBHOOK_URL` |
+| `0dte` | Compass same-day option simulations (incl. SPY contract-qualified) | `DISCORD_OPTIONS_0DTE_WEBHOOK_URL` |
+| `ideas` | Intraday and multi-session option ideas | `DISCORD_OPTIONS_IDEAS_WEBHOOK_URL` |
+| `smoothers` | Smoothers-owned option lifecycle | `DISCORD_SMOOTHERS_WEBHOOK_URL` |
+| `intraday` | Intraday stock / ETF setups, unusual flow confirmations, exposure breaks, magnet pushes | `DISCORD_INTRADAY_WEBHOOK_URL` and `DISCORD_MAGNETS_WEBHOOK_URL` (separate webhook, same channel) |
+| `compass` | Secondary reviews, setup results, research and service notices | `DISCORD_RESEARCH_WEBHOOK_URL` |
 | `morning-algo` | Official Morning Algo alerts | Keep original app's `DISCORD_WEBHOOK_URL` |
 | `smoothers` | Official weekly Smoothers alerts and management | Keep original app's `DISCORD_WEBHOOK_URL` |
+
+Retired 2026-09-28: `swing-ideas`, `unusual-options`, `exposure-levels`, `compass-system`, `options-leaps` routes. Their messages now go to `ideas`, `intraday`, `intraday`, `compass` and `compass` respectively. The old `DISCORD_SWING_WEBHOOK_URL`, `DISCORD_UNUSUAL_OPTIONS_WEBHOOK_URL`, `DISCORD_EXPOSURE_WEBHOOK_URL` and `DISCORD_SYSTEM_WEBHOOK_URL` variables are no longer read; pending jobs queued under retired route names are repointed automatically on the next delivery tick.
 
 `end_of_day_algo` is a reserved presentation category with no active producer. It does not need another channel now. Existing legacy swing and swing-option ideas share one family, while source identity remains in every message. A futures secondary review goes to research; a futures signal or management message stays in futures.
 
