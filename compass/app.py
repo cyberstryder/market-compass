@@ -100,6 +100,9 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(run_native_reports(db,cfg)))
             from .native_outbox import run as run_native_outbox
             tasks.append(asyncio.create_task(run_native_outbox(db,cfg)))
+            if cfg.magnet_push_enabled:
+                from .magnet_push import run as run_magnet_push
+                tasks.append(asyncio.create_task(run_magnet_push(db,cfg)))
             if cfg.morning_enabled and cfg.morning_token:
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"intake")))
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"samples")))

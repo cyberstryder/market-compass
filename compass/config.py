@@ -28,7 +28,7 @@ class Config:
     discord_routes: dict = field(default_factory=lambda: {
         key: env('DISCORD_' + key.upper() + '_WEBHOOK_URL')
         for key in ('spy_morning', 'futures', 'options_0dte', 'options_ideas', 'options_leaps', 'smoothers', 'swing',
-                    'unusual_options', 'exposure', 'intraday', 'research', 'system')})
+                    'unusual_options', 'exposure', 'intraday', 'research', 'system', 'magnets')})
     discord_fallback: bool = field(default_factory=lambda: env('DISCORD_SHARED_FALLBACK', 'true') == 'true')
     spy_morning_brief: bool = field(default_factory=lambda: env("SPY_MORNING_BRIEF_ENABLED", "true") == "true")
     spy_timeframes_enabled: bool = field(default_factory=lambda: env("SPY_TIMEFRAMES_ENABLED", "false") == "true")
@@ -39,6 +39,9 @@ class Config:
     apex_magnet: bool = field(default_factory=lambda: env("APEX_MAGNET_ENABLED","true")=="true")
     apex_magnet_radius: float = field(default_factory=lambda: float(env("APEX_MAGNET_RADIUS","0.02")))
     apex_magnet_tolerance: float = field(default_factory=lambda: float(env("APEX_MAGNET_TOLERANCE","0.001")))
+    magnet_push_enabled: bool = field(default_factory=lambda: env("MAGNET_PUSH_ENABLED","false")=="true")
+    magnet_push_signals: tuple = field(default_factory=lambda: tuple(
+        s.strip() for s in env("MAGNET_PUSH_SIGNALS","broke_through").split(",") if s.strip()))
     tape_confirmed: bool = field(default_factory=lambda: env("TAPE_CONFIRMED_ENABLED","true")=="true")
     # ICT futures concept detectors (Phase 1: evidence-only, all default OFF).
     ict_session_liquidity: bool = field(default_factory=lambda: env("ICT_SESSION_LIQUIDITY_ENABLED","false")=="true")

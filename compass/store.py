@@ -34,6 +34,13 @@ gap_followups=Table('gap_followups_v1',meta,
     Column('created',Float,nullable=False),Column('deadline',Float,nullable=False),
     Column('payload',JSON,nullable=False))
 Index('gap_followups_active',gap_followups.c.status,gap_followups.c.deadline)
+# Durable outbox for push-on-transition magnet notifications. The scanner's
+# evidence function writes rows here; a drainer POSTs them to Discord.
+magnet_push_outbox=Table('magnet_push_outbox_v1',meta,
+    Column('id',String(64),primary_key=True),Column('status',String(24),nullable=False),
+    Column('created',Float,nullable=False),Column('payload',JSON,nullable=False),
+    Column('delivery',JSON,nullable=False))
+Index('magnet_push_pending',magnet_push_outbox.c.status,magnet_push_outbox.c.created)
 smoothers_daily=Table('smoothers_daily_comparison_v1',meta,
     Column('id',String(64),primary_key=True),Column('day',String(10),nullable=False),
     Column('family',String(32),nullable=False),Column('symbol',String(16),nullable=False),

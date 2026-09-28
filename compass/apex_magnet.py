@@ -1,8 +1,10 @@
 """Apex Magnet scanner: vendor magnet levels joined with our price action.
 
 Evidence only. This module never auto-admits to the live scanner, never
-alerts, and never trades. Rows are research candidates; signal outcomes are
-measured so a future promotion rule can be decided from data, not marketing.
+trades, and never enters positions. An opt-in push (MAGNET_PUSH_ENABLED)
+posts magnet-break transitions to Discord as notifications only. Rows are
+research candidates; signal outcomes are measured so a future promotion rule
+can be decided from data, not marketing.
 """
 import time
 
@@ -245,6 +247,11 @@ def scan(db, c, cfg, now):
             db.put(c, 'apex_magnet:signal:' + symbol,
                    {'signal': row['signal'], 'at': now, 'magnet': row['magnet'],
                     'spot': row['spot'], 'session': today})
+            # Push-on-transition: durable outbox row; a drainer sends to Discord.
+            # Evidence-only: this is a notification, never an alert or trade.
+            from . import magnet_push
+            magnet_push.maybe_queue(db, c, cfg, symbol, row, prev.get('signal'),
+                                    today, now)
         # Session rollover: close out the prior session's measurement.
         if prev.get('session') and prev['session'] != today and prev.get('signal'):
             prior_bounds = session(prev['session'])
