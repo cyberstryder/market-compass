@@ -379,6 +379,55 @@ def create_app(cfg=None):
         with db.tx() as c:
             return display(db,c,time.time())
 
+    # ICT futures concept detectors (Phase 1: evidence-only, read-only).
+    @app.get('/api/ict-session-liquidity')
+    def get_ict_session_liquidity():
+        from .session_liquidity import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/ict-htf-levels')
+    def get_ict_htf_levels():
+        from .htf_levels import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/ict-turtle-soup')
+    def get_ict_turtle_soup():
+        from .turtle_soup import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/ict-smt-divergence')
+    def get_ict_smt_divergence():
+        from .smt_divergence import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/ict-aoi-zones')
+    def get_ict_aoi_zones():
+        from .aoi_zones import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/ict-continuation')
+    def get_ict_continuation():
+        from .continuation import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/ict-trendline-liquidity')
+    def get_ict_trendline_liquidity():
+        from .trendline_liquidity import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/ict-tier-a-b')
+    def get_ict_tier_a_b():
+        from .tier_a_b import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
     class PickCheckIn(BaseModel):
         ticker:str=Field(min_length=1,max_length=12)
         direction:str=Field(min_length=1,max_length=10)

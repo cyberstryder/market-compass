@@ -410,6 +410,34 @@ class Engine:
             if self.cfg.day_trading_board:
                 from .day_trading_board import scan as day_board_scan
                 board_summary = day_board_scan(self.db,c,self.cfg,now)
+            # ICT futures concept detectors (Phase 1: evidence-only). Ordered
+            # by dependency: liquidity map -> HTF levels -> event detectors ->
+            # confluence tiering.
+            ict_summaries = {}
+            if self.cfg.ict_session_liquidity:
+                from .session_liquidity import scan as ict_session_liquidity_scan
+                ict_summaries['session_liquidity'] = ict_session_liquidity_scan(self.db,c,self.cfg,now)
+            if self.cfg.ict_htf_levels:
+                from .htf_levels import scan as ict_htf_levels_scan
+                ict_summaries['htf_levels'] = ict_htf_levels_scan(self.db,c,self.cfg,now)
+            if self.cfg.ict_turtle_soup:
+                from .turtle_soup import scan as ict_turtle_soup_scan
+                ict_summaries['turtle_soup'] = ict_turtle_soup_scan(self.db,c,self.cfg,now)
+            if self.cfg.ict_smt_divergence:
+                from .smt_divergence import scan as ict_smt_divergence_scan
+                ict_summaries['smt_divergence'] = ict_smt_divergence_scan(self.db,c,self.cfg,now)
+            if self.cfg.ict_aoi_zones:
+                from .aoi_zones import scan as ict_aoi_zones_scan
+                ict_summaries['aoi_zones'] = ict_aoi_zones_scan(self.db,c,self.cfg,now)
+            if self.cfg.ict_continuation:
+                from .continuation import scan as ict_continuation_scan
+                ict_summaries['continuation'] = ict_continuation_scan(self.db,c,self.cfg,now)
+            if self.cfg.ict_trendline_liquidity:
+                from .trendline_liquidity import scan as ict_trendline_liquidity_scan
+                ict_summaries['trendline_liquidity'] = ict_trendline_liquidity_scan(self.db,c,self.cfg,now)
+            if self.cfg.ict_tier_a_b:
+                from .tier_a_b import scan as ict_tier_a_b_scan
+                ict_summaries['tier_a_b'] = ict_tier_a_b_scan(self.db,c,self.cfg,now)
             self.ideas.tick(c,now)
             from .observation_recovery import tick as recovery_tick
             recovery_tick(self.db,c,self.clock() if self.clock else now)
@@ -429,6 +457,12 @@ class Engine:
         if board_summary and board_summary.get('ran'):
             self.db.health('day_trading_board','running','board %s, %d symbols' % (
                 board_summary.get('action') or 'steady', board_summary['symbols']))
+        for _ict_name in ('session_liquidity','htf_levels','turtle_soup','smt_divergence',
+                          'aoi_zones','continuation','trendline_liquidity','tier_a_b'):
+            _s = ict_summaries.get(_ict_name)
+            if _s and _s.get('ran'):
+                self.db.health('ict_' + _ict_name, 'running',
+                               'ran, %d symbols' % (_s.get('symbols', 0)))
 
     async def run(self):
         while True:

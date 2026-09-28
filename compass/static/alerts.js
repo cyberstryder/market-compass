@@ -101,6 +101,26 @@ function renderScanners(apex,tape,gaps){
   return items;
 }
 
+/* --- Smoothers featured A+ picks (weekly) --- */
+function renderSmoothers(report){
+  const items=[];
+  const s=(report&&report.smoothers)||{};
+  const rows=(s.rows||[]).filter(x=>x.native&&x.native.is_featured);
+  const week=s.week||'';
+  rows.slice(0,10).forEach(r=>{
+    const n=r.native||{};
+    const head='<strong>'+esc(r.symbol||'')+'</strong> '+(r.direction||n.direction||'')+
+      ' <span class="muted">featured A+</span>';
+    const det='Week of '+esc(week)+
+      (n.entry!=null?(' · Entry '+n.entry):'')+
+      (n.target!=null?(' · Target '+n.target):'');
+    // Use week start as timestamp (Monday)
+    let t=0;try{t=new Date(week+'T12:00:00').getTime()/1000;}catch(e){}
+    items.push({t:t,html:card('Week of '+esc(week),'SMOOTHERS',head,det,null)});
+  });
+  return items;
+}
+
 async function load(){
   const el=$('#alerts-feed');
   if(!el)return;
