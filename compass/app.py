@@ -440,7 +440,7 @@ def create_app(cfg=None):
         from .pick_check import check
         try:
             with db.tx() as c:
-                return check(db,c,time.time(),pick.ticker,pick.direction,pick.entry,pick.target,pick.source)
+                return check(db,c,time.time(),pick.ticker,pick.direction,pick.entry,pick.target,pick.source,cfg)
         except ValueError as e:raise HTTPException(400,str(e))
 
     @app.get('/api/pick-check/auto')
@@ -453,7 +453,7 @@ def create_app(cfg=None):
         from .pick_check import check
         try:
             with db.tx() as c:
-                return check(db,c,time.time(),ticker,direction,entry,target,source)
+                return check(db,c,time.time(),ticker,direction,entry,target,source,cfg)
         except ValueError as e:raise HTTPException(400,str(e))
 
     @app.get('/api/pick-check/recent')

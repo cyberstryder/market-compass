@@ -140,7 +140,15 @@ def _pillar_error(name, err):
             'basis': 'Scanner unavailable for this check (%s).' % (err.get('_error') or 'no data')}
 
 
-def check(db, c, now, ticker, direction, entry=None, target=None, source=''):
+def check(db, c, now, ticker, direction, entry=None, target=None, source='',
+          cfg=None):
+    """Evaluate one analyst pick against Compass evidence.
+
+    cfg is optional. When provided (and cfg.pick_backfill is not False),
+    pillars that report no_data because the underlying data was never
+    ingested get one bounded on-demand backfill attempt, then one
+    re-evaluation. The backfill can never raise; the check always completes.
+    """
     symbol = str(ticker or '').strip().upper()
     if not symbol:
         raise ValueError('ticker is required')
@@ -177,6 +185,12 @@ def check(db, c, now, ticker, direction, entry=None, target=None, source=''):
                     if not brk_d.get('_error') else _pillar_error('breakout', brk_d),
         'exposure': _exposure_section(db, c, symbol),
     }
+    backfilled = []
+    if cfg is not None and getattr(cfg, 'pick_backfill', True):
+        pillars, backfilled, bf_spot = _maybe_backfill(
+            db, c, cfg, now, symbol, direction, spot or entry, target, pillars)
+        if spot is None and bf_spot:
+            spot = bf_spot
     for_code = {'supports': 1, 'neutral': 0, 'info': 0, 'no_data': 0, 'contradicts': -1}
     score = sum(for_code[p['alignment']] for p in pillars.values())
     counted = sum(1 for p in pillars.values() if p['alignment'] not in ('no_data', 'info'))
@@ -184,9 +198,56 @@ def check(db, c, now, ticker, direction, entry=None, target=None, source=''):
     record = {'ticker': symbol, 'direction': direction, 'entry': entry, 'target': target,
               'source': str(source or '')[:120], 'at': now, 'spot': spot,
               'pillars': pillars, 'evidence_score': score, 'pillars_counted': counted,
+              'backfilled': backfilled,
               'note': 'Research evidence only. No auto-admission, no alerts, no trades.'}
     db.append(c, 'pick_check', 'dashboard', symbol, now, record)
     return record
+
+
+def _maybe_backfill(db, c, cfg, now, symbol, direction, spot, target, pillars):
+    """One bounded on-demand backfill pass for no_data pillars. Never raises.
+
+    Returns (pillars, backfilled_names, spot_or_None).
+    """
+    try:
+        from . import pick_backfill as bf
+        wants, reeval = set(), set()
+        if pillars['apex']['alignment'] == 'no_data' and bf.apex_needs(db, c, symbol, now):
+            wants.update(('apex', 'bars'))
+            reeval.add('apex')
+        if pillars['tape']['alignment'] == 'no_data' and bf.flow_needs(db, c, now):
+            wants.add('flow')
+            reeval.add('tape')
+        if pillars['gap']['alignment'] == 'no_data' and bf.gap_needs(db, c, symbol, now):
+            wants.add('bars')
+            reeval.add('gap')
+        if pillars['breakout']['alignment'] == 'no_data' and bf.breakout_needs(db, c, symbol):
+            wants.add('bars')
+            reeval.add('breakout')
+        if not wants and pillars['tape']['alignment'] != 'no_data':
+            return pillars, [], None
+        result = bf.backfill(db, c, cfg, symbol, wants, now) if wants else \
+            {'fetched': [], 'errors': {}}
+        fetched = set(result.get('fetched') or [])
+        sections, row_spot = bf.reevaluate(db, c, cfg, symbol, direction,
+                                           spot, target, now, reeval)
+        # The backfill marker means "this section rests on data fetched by
+        # this pass". Sections recomputed from standing data (e.g. flow
+        # context from an already-fresh feed) still update the pillar, but
+        # are not marked as backfilled.
+        sources = {'apex': 'apex', 'gap': 'minute_bars',
+                   'breakout': 'daily_bars', 'tape': 'flow'}
+        done = []
+        for name, section in sections.items():
+            pillars[name] = section
+            if sources.get(name) in fetched:
+                detail = section.get('detail')
+                if isinstance(detail, dict):
+                    detail['backfilled'] = True
+                done.append(name)
+        return pillars, sorted(done), row_spot
+    except Exception:  # noqa: BLE001 - the check always completes
+        return pillars, [], None
 
 
 def recent(db, c, limit=50):
