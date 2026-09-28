@@ -3,8 +3,10 @@
 <title>Market Compass</title><link rel="stylesheet" href="/static/style.css"></head><body>
 <aside class="sidebar"><a class="brand" href="/">↗ <span>Market<br>Compass</span></a><p class="eyebrow">WORKSPACE</p>
 <nav>
+<p class="nav-group">Alerts</p>
+<button class="nav active" data-tab="alerts">Alert feed</button>
 <p class="nav-group">Today</p>
-<button class="nav active" data-tab="overview">Today</button>
+<button class="nav" data-tab="overview">Today</button>
 <button class="nav" data-tab="scanner">Setup feed</button>
 <button class="nav" data-tab="flow">Options flow</button>
 <button class="nav" data-tab="exposure">GEX / exposure</button>
@@ -252,7 +254,10 @@
 <div class="banner">Explore the latest vendor scanners, flow, market conditions, calendars, and positioning. Source time and retrieval time remain separate.</div>
 <article class="panel"><label for="research-source">Research source</label><select id="research-source"></select><div id="research-detail"></div></article>
 </section>
-<section id="overview" class="tab active"><div id="stats" class="stats"></div>
+<section id="alerts" class="tab active"><div class="panel-head"><h2>Alert feed</h2><span class="muted" id="alerts-updated"></span></div>
+<div id="alerts-feed"></div>
+<p class="fine">One stream: 0DTE setups (with Discord delivery status), Flash Agentic triggers (with Compass evidence), and the latest scanner signals. Auto-refreshes every minute while open. Nothing here places trades.</p></section>
+<section id="overview" class="tab"><div id="stats" class="stats"></div>
 <article class="panel"><div class="panel-head"><h2>Day trading board</h2><span class="muted" id="board-state"></span></div><div id="day-board"></div>
 <p class="fine">Built 08:30 CT, refreshed 09:00 CT, frozen at the open. Six-component catalyst score: earnings, economic, mover, flow, sector, radar. Watchlist only — the A+ alert gate is specified but not wired, so the board never alerts on its own.</p></article>
 <div class="columns">
@@ -311,5 +316,5 @@
 <p class="muted">Connections are checked. Live readiness still requires advancing source times, usable option inputs, and a recorded simulated entry, exit, and confirmed alert.</p>
 <p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></section>
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
-<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/pickcheck.js"></script><script src="/static/daily-results.js"></script></body></html>
+<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/pickcheck.js"></script><script src="/static/daily-results.js"></script><script src="/static/alerts.js"></script></body></html>
 
