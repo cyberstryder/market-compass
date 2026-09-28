@@ -70,14 +70,39 @@
     target:$('#pickcheck-target').value==='' ? null : Number($('#pickcheck-target').value),
     source:$('#pickcheck-source').value.trim()};
    const r=await j('/api/pick-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-   renderResult(r);loadRecent();
+   renderResult(r);loadRecent();loadScorecard();
   }catch(e){$('#pickcheck-result').innerHTML=empty('Check failed',e.message);}
   btn.disabled=false;
+ }
+
+ function renderScorecard(d){
+  const el=$('#pickcheck-scorecard');if(!el)return;
+  const by=d.by_source||[],rows=d.checks||[],h=d.horizon_sessions||5;
+  $('#pickcheck-scorecard-asof').textContent=d.asof?('as of '+when(d.asof)+' · '+h+'-session horizon'):'';
+  if(!rows.length){el.innerHTML=empty('No checks yet','Check a pick above and its outcome will be measured here.');return;}
+  const pct=x=>x==null?'—':(x>=0?'+':'')+num(x,1)+'%';
+  const oc=o=>{const s=(o||{}).status||'unknown';const cls=s==='win'?'good':s==='loss'?'bad':'';return '<span class="tag '+cls+'">'+s+'</span>';};
+  let html='<h3>By analyst</h3>'+table(['Analyst','Checks','W','L','Open','Hit %','Avg ret','Avg MFE','Score on wins','Score on losses'],
+   by.map(b=>[esc(b.source),b.checks,b.wins,b.losses,b.open,
+    b.hit_rate==null?'—':num(b.hit_rate*100,1)+'%',
+    pct(b.avg_horizon_return_pct),pct(b.avg_mfe_pct),
+    b.avg_evidence_score_win==null?'—':num(b.avg_evidence_score_win,1),
+    b.avg_evidence_score_loss==null?'—':num(b.avg_evidence_score_loss,1)]));
+  html+='<h3>Checks</h3>'+table(['Time','Ticker','Dir','Entry','Target','Source','Score','Outcome','MFE','Ret'],
+   rows.map(x=>{const o=x.outcome||{};const sc=x.evidence_score??0;return [when(x.at),'<strong>'+esc(x.ticker||'')+'</strong>',esc(x.direction||''),
+    money(x.entry),money(x.target),esc(x.source||'—'),(sc>=0?'+':'')+sc,
+    oc(o.status)+'<div class="fine">'+esc(o.basis||'')+'</div>',pct(o.mfe_pct),pct(o.horizon_return_pct)];}));
+  el.innerHTML=html;
+ }
+
+ async function loadScorecard(){
+  try{const d=await j('/api/pick-check/scorecard?limit=100');renderScorecard(d);}
+  catch(e){const el=$('#pickcheck-scorecard');if(el)el.innerHTML=empty('Could not load scorecards',e.message);}
  }
 
  document.addEventListener('DOMContentLoaded',()=>{
   if(!$('#pick-check'))return;
   $('#pickcheck-run').onclick=runCheck;
-  loadRecent();
+  loadRecent();loadScorecard();
  });
 })();

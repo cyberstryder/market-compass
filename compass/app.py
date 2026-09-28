@@ -399,6 +399,12 @@ def create_app(cfg=None):
         with db.tx() as c:
             return {'checks':recent(db,c,limit)}
 
+    @app.get('/api/pick-check/scorecard')
+    def get_pick_check_scorecard(limit:int=Query(1,ge=1,le=200),horizon:int=Query(5,ge=1,le=20)):
+        from . import pick_scorecard
+        with db.tx() as c:
+            return pick_scorecard.scorecard(db,c,time.time(),limit=limit,horizon_sessions=horizon)
+
     @app.get('/api/discovery')
     def get_discovery():
         from .discovery import report
