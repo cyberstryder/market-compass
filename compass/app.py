@@ -124,7 +124,8 @@ def create_app(cfg=None):
             tasks.append(asyncio.create_task(SwingStudy(db,cfg).run()))
             from .spy_study import Study as SPYStudy
             tasks.append(asyncio.create_task(SPYStudy(db,cfg).run()))
-            tasks.append(asyncio.create_task(SPYTimeframes(db,cfg).run()))
+            if cfg.spy_timeframes_enabled:
+                tasks.append(asyncio.create_task(SPYTimeframes(db,cfg).run()))
         tasks.append(asyncio.create_task(heartbeat()))
         try:
             yield
