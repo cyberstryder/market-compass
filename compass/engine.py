@@ -156,9 +156,18 @@ class Engine:
         s,q,price,distance,per_unit,qty,risk=(plan[k] for k in ("spec","quote","price","distance","per_unit","qty","risk"))
         now=plan['observed_at']
         direction=1 if side=="long" else -1
+        if s["asset"]=="option":
+            # A long option's worst case is the premium paid, not the modeled
+            # stop distance: R accounting uses premium + round-trip fees so a
+            # full premium loss reads as exactly -1R.
+            initial_risk=price*s["multiplier"]*qty+2*s["fee"]*qty
+            risk_basis="premium_paid"
+        else:
+            initial_risk=per_unit*qty
+            risk_basis="stop_distance"
         trade={**signal,**s,"status":"open","entry":price,"entered_at":now,"entry_quote_ts":q["ts"],
-            "stop":plan['stop'],"target":plan['target'],"qty":qty,"initial_risk":per_unit*qty,
-            "fill_model":FILL_DESCRIPTION,"fill_version":FILL_VERSION,
+            "stop":plan['stop'],"target":plan['target'],"qty":qty,"initial_risk":initial_risk,
+            "risk_basis":risk_basis,"fill_model":FILL_DESCRIPTION,"fill_version":FILL_VERSION,
             "last_quote_ts":q["ts"],"last_bar_checked":signal["signal_time"]-60,
             "risk_day":risk_day(now),"risk_policy":paper_risk.VERSION,
             "paper_portfolio":paper_risk.portfolio(s["asset"]),"flatten_at":plan["flatten_at"]}

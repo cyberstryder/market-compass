@@ -47,7 +47,7 @@ def _apex_section(display, symbol, direction, spot, target):
                     'dealer positioning may pin or stall price there.' % between[0]['magnet'])
     return {'alignment': 'info' if rows else 'no_data', 'note': note,
             'detail': detail,
-            'basis': 'Vendor magnet levels joined with minute bars; drift history not joined.'}
+            'basis': 'Vendor magnet levels joined with minute bars; magnet drift from level first-seen history.'}
 
 
 def _tape_section(display, symbol, direction):

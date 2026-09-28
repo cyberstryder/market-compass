@@ -78,7 +78,7 @@ All application services require DATABASE_URL referencing Postgres.DATABASE_URL 
 
 Equity/0DTE entries use the cash session and stop 30 minutes before its close; intraday positions flatten 15 minutes before that close. Futures scan the Globex session, exclude the 15:15–15:30 CT halt and 16:00–17:00 CT maintenance break, stop new entries at 15:15 CT and flatten at 15:45 CT (earlier on calendar early closes). Each trade retains its flatten deadline through a restart. Shared daily risk follows the CME trading day at 17:00 CT, so midnight does not reset overnight risk. Swings carry overnight. This is a research schedule, not a prop-firm rule set.
 
-Risk defaults: $100 planned risk per entry, $300 daily realized-loss stop, 10 entries/day, three simultaneous positions, max two MES/MNQ contracts or one option contract per entry. Gap losses can exceed planned risk. Correlated positions are capped by count, not beta or stress testing.
+Risk defaults: $100 planned risk per entry for futures/stocks (options risk the premium paid, with no dollar cap); no daily loss stop; no entry cap by default (SHADOW_MAX_ENTRIES=0 disables it); three simultaneous positions per asset class; max two MES/MNQ contracts or one option contract per entry. Gap losses can exceed planned risk. Correlated positions are capped by count, not beta or stress testing.
 
 ## Data behavior and limits
 

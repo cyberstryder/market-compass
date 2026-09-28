@@ -112,7 +112,11 @@ def test_option_selection_continues_after_first_fresh_contract_fails_spread(db):
         e.options(c,sig,MONDAY)
         assert db.get(c,"position:O:EXPENSIVE") is None
         p=db.get(c,"position:O:ELIGIBLE")
-        assert p["status"]=="open" and p["initial_risk"]<=100
+        assert p["status"]=="open"
+        # Premium-paid R accounting: risk is the $2.02 ask premium + fees,
+        # not the 30%-of-ask stop distance (~$61).
+        assert p["initial_risk"]==pytest.approx(2.02*100+2*.65)
+        assert p["risk_basis"]=="premium_paid"
         assert p["selection_rejections"][0]["reason"]=="Spread exceeds simulation liquidity limit"
         assert len(db.recent(c,"alert"))==1
 

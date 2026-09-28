@@ -60,7 +60,8 @@ def select_magnet(apex):
             flip = number(r['price'])
             break
     return {'price': number(magnet['price']), 'score': number(magnet['score']),
-            'net_gex': number(magnet.get('net_gex')), 'oi': number(magnet.get('oi'))}, flip
+            'net_gex': number(magnet.get('net_gex')), 'oi': number(magnet.get('oi')),
+            'known_at': number(magnet.get('known_at'))}, flip
 
 
 def detect_signal(bars, magnet, sess_open, tolerance=TOLERANCE_DEFAULT):
@@ -142,12 +143,22 @@ def classify_row(symbol, apex, bars, daily_closes, sector, now,
     sma20 = sum(daily_closes[-20:]) / 20 if len(daily_closes) >= 20 else None
     day_pct = ((daily_closes[-1] / daily_closes[-2]) - 1
                if len(daily_closes) >= 2 and daily_closes[-2] else None)
+    # Magnet drift: research.py stamps each level with known_at (first-seen ts).
+    # A magnet whose level first appeared during this session drifted intraday;
+    # one known since before the open has been stable all session.
+    known_at = magnet.get('known_at')
+    if known_at:
+        magnet_basis = 'intraday' if known_at >= sess_open else 'stable'
+    else:
+        magnet_basis = 'current'
     return {
         'symbol': symbol, 'spot': spot, 'spot_ts': apex.get('source_ts'),
         'day_pct': day_pct, 'sma20': sma20,
         'sma20_side': ('above' if spot > sma20 else 'below') if sma20 else None,
         'magnet': magnet['price'], 'magnet_score': magnet['score'],
-        'magnet_basis': 'current',
+        'magnet_basis': magnet_basis,
+        'magnet_known_at': known_at,
+        'magnet_age_s': round(now - known_at, 1) if known_at else None,
         'distance_pct': distance, 'role': 'resistance' if magnet['price'] > spot else 'support',
         'vs_flip': ('above' if spot > flip else 'below') if flip else None,
         'gamma_flip': flip, 'signal': signal, 'tests': tests,

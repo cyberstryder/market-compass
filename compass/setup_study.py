@@ -66,19 +66,27 @@ class SetupStudy:
         elif not fresh(q, now) or not stamp <= q['ts'] <= now:
             cause = 'Fresh two-sided quote after the signal is required'
         long = signal['side'] == 'long'
-        entry = stop = target = risk = None
+        entry = stop = target = risk = risk_basis = None
         if cause is None:
             try:
                 prices = bracket(signal, q, spec)
                 entry,stop,target = (prices[k] for k in ('entry','stop','target'))
-                risk = prices['distance']*spec['multiplier']+2*spec['fee']
+                if spec['asset']=='option':
+                    # A long option's worst case is the premium paid, not the
+                    # modeled stop distance: a full premium loss must read as
+                    # -1R, not -3R.
+                    risk = entry*spec['multiplier']+2*spec['fee']
+                    risk_basis = 'premium_paid'
+                else:
+                    risk = prices['distance']*spec['multiplier']+2*spec['fee']
+                    risk_basis = 'stop_distance'
             except ValueError as error:
                 cause = str(error)
         p = {**{k:signal[k] for k in ('id','symbol','side','strategy','rule','signal_time','signal_price','track','underlying','underlying_side') if k in signal},
             **spec, 'id':key, 'source_id':signal['id'], 'version':VERSION, 'qty':1,
             'status':'excluded' if cause else 'open', 'reason':cause,
             'started':now, 'finished':now if cause else None, 'entry':entry, 'stop':stop, 'target':target,
-            'evaluation_policy':'independent-all-setups-v1', 'entry_spread':q['ask']-q['bid'] if fresh(q,now) else None, 'initial_risk':risk, 'flatten_at':deadline, 'alerted':alerted, 'primary':primary,
+            'evaluation_policy':'independent-all-setups-v1', 'entry_spread':q['ask']-q['bid'] if fresh(q,now) else None, 'initial_risk':risk, 'risk_basis':risk_basis, 'flatten_at':deadline, 'alerted':alerted, 'primary':primary,
             'fill_version':FILL_VERSION, 'fill_model':FILL_DESCRIPTION, 'observation_model':'recorded-quotes-v2',
             'replayed_samples':0,
             'last_quote_ts':q['ts'] if fresh(q, now) else None, 'samples':0, 'max_gap_seconds':0,

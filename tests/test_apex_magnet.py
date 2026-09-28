@@ -117,6 +117,45 @@ def test_classify_row_excluded_stale_apex():
     assert row == {'excluded': 'apex_not_fresh'}
 
 
+# --- magnet drift (level first-seen history) ---
+
+def _levels_with_known_at(known_at):
+    return [
+        {'price': 102.0, 'score': 90, 'kind': 'apex', 'net_gex': 1.0,
+         'oi': 5000, 'known_at': known_at},
+        {'price': 98.0, 'score': 70, 'kind': 'apex', 'net_gex': 0.5,
+         'oi': 3000, 'known_at': known_at},
+        {'price': 99.0, 'score': None, 'kind': 'gamma_flip'},
+    ]
+
+
+def test_magnet_basis_stable_when_level_known_before_open():
+    bars = am._bars_from_window(minute_bars(OPEN, [99.0, 99.5, 100.0, 100.5, 101.0, 101.2]))
+    payload = apex_payload(spot=101.2, levels=_levels_with_known_at(OPEN - 3600))
+    row = am.classify_row('SPY', payload, bars, daily_closes(), 'Technology', NOW)
+    assert row['magnet_basis'] == 'stable'
+    assert row['magnet_known_at'] == OPEN - 3600
+    assert row['magnet_age_s'] == pytest.approx(NOW - (OPEN - 3600), abs=0.2)
+
+
+def test_magnet_basis_intraday_when_level_appeared_today():
+    bars = am._bars_from_window(minute_bars(OPEN, [99.0, 99.5, 100.0, 100.5, 101.0, 101.2]))
+    payload = apex_payload(spot=101.2, levels=_levels_with_known_at(OPEN + 3600))
+    row = am.classify_row('SPY', payload, bars, daily_closes(), 'Technology', NOW)
+    assert row['magnet_basis'] == 'intraday'
+    assert row['magnet_known_at'] == OPEN + 3600
+
+
+def test_magnet_basis_current_without_known_at():
+    # Snapshots predating the known_at stamp degrade to the old label.
+    bars = am._bars_from_window(minute_bars(OPEN, [99.0, 99.5, 100.0, 100.5, 101.0, 101.2]))
+    row = am.classify_row('SPY', apex_payload(spot=101.2), bars, daily_closes(),
+                          'Technology', NOW)
+    assert row['magnet_basis'] == 'current'
+    assert row['magnet_known_at'] is None
+    assert row['magnet_age_s'] is None
+
+
 # --- scan end to end ---
 
 class Cfg:
