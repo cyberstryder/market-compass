@@ -45,12 +45,21 @@ def test_summary_buckets_taken_and_skipped(tmp_path):
         s.append(c, 'paper_decision', 'engine', 'AAPL', NOW - 500,
                  {'strategy': 'compass-scanner-orb', 'track': 'intraday',
                   'status': 'skipped', 'reason': 'Stale quote'}, 'skip:2')
+        # Engine option-selection rejects keep the underlying signal's
+        # strategy (no '0dte' prefix) and track 'intraday'; the
+        # `options_skipped` status must still route them to the 0DTE bucket.
+        s.append(c, 'paper_decision', 'engine', 'TSLA', NOW - 400,
+                 {'strategy': 'underlying-orb-v2', 'track': 'intraday',
+                  'status': 'options_skipped',
+                  'reason': 'No recent options chain'}, 'skip:3')
         out = summary.build(s, c, NOW)
     assert out['day'] == DAY
     z = out['zero_dte']
     assert {t['symbol'] for t in z['trades']} == {'SPY', 'QQQ'}
     assert z['wins'] == 1 and z['open'] == 1 and z['net_pnl'] == 25.0
-    assert len(z['skipped']) == 1 and z['skipped'][0]['symbol'] == 'SPY'
+    assert len(z['skipped']) == 2
+    assert {x['symbol'] for x in z['skipped']} == {'SPY', 'TSLA'}
+    assert z['skipped'][0]['symbol'] == 'TSLA'  # newest first
     i = out['intraday']
     assert [t['symbol'] for t in i['trades']] == ['AAPL']
     assert i['losses'] == 1

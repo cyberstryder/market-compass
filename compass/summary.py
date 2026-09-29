@@ -52,8 +52,11 @@ def _bucket(t):
     return None
 
 
-def _skip_bucket(strategy, track):
-    if (strategy or '').startswith('0dte'):
+def _skip_bucket(status, strategy, track):
+    # Engine option-selection rejects are emitted as `options_skipped` with
+    # the underlying signal's strategy (e.g. 'underlying-orb-v2'), so the
+    # event status — not the strategy prefix — decides the 0DTE bucket.
+    if status == 'options_skipped' or (strategy or '').startswith('0dte'):
         return 'zero_dte'
     if track == 'intraday':
         return 'intraday'
@@ -88,19 +91,20 @@ def build(db, c, now):
         rows.sort(key=lambda r: r['entered_at'] or 0, reverse=True)
 
     p = events.c.payload
+    status = p['status'].as_string()
     strat = p['strategy'].as_string()
     track = p['track'].as_string()
     reason = p['reason'].as_string()
-    q = (select(events.c.symbol, strat, track, reason, func.count(),
+    q = (select(events.c.symbol, status, strat, track, reason, func.count(),
                func.max(events.c.ts))
          .where(events.c.ts >= session['open'], events.c.ts < now,
                 events.c.source == 'engine',
                 events.c.kind.in_(('alert', 'paper_decision')),
-                p['status'].as_string().in_(('skipped', 'options_skipped')))
-         .group_by(events.c.symbol, strat, track, reason))
+                status.in_(('skipped', 'options_skipped')))
+         .group_by(events.c.symbol, status, strat, track, reason))
     skipped = {'zero_dte': [], 'intraday': []}
-    for symbol, s, tr, r, n, last in c.execute(q):
-        b = _skip_bucket(s, tr)
+    for symbol, st, s, tr, r, n, last in c.execute(q):
+        b = _skip_bucket(st, s, tr)
         if b in skipped:
             skipped[b].append({'symbol': symbol, 'strategy': s,
                                'reason': r or 'No reason recorded',
