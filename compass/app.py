@@ -455,6 +455,24 @@ def create_app(cfg=None):
         with db.tx() as c:
             return {'asof': time.time(), 'attribution': attribution(db, c)}
 
+    @app.get('/api/yt-morning-drive')
+    def get_yt_morning_drive():
+        from .morning_drive import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/yt-icc')
+    def get_yt_icc():
+        from .icc import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/yt-rumers-box')
+    def get_yt_rumers_box():
+        from .rumers_box import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
     class PickCheckIn(BaseModel):
         ticker:str=Field(min_length=1,max_length=12)
         direction:str=Field(min_length=1,max_length=10)

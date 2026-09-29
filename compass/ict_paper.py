@@ -33,6 +33,9 @@ STRATEGY_TAGS = {
     'aoi_zones': 'ict-aoi-zones',
     'continuation': 'ict-continuation',
     'trendline_liquidity': 'ict-trendline-liquidity',
+    'morning_drive': 'yt-morning-drive',
+    'icc': 'yt-icc',
+    'rumers_box': 'yt-rumers-box',
 }
 
 # detector -> config attr carrying its own enabled flag
@@ -45,6 +48,9 @@ DETECTOR_FLAGS = {
     'aoi_zones': 'ict_aoi_zones',
     'continuation': 'ict_continuation',
     'trendline_liquidity': 'ict_trendline_liquidity',
+    'morning_drive': 'ict_morning_drive',
+    'icc': 'ict_icc',
+    'rumers_box': 'ict_rumers_box',
 }
 
 
@@ -57,10 +63,14 @@ def paper_enabled(cfg, detector):
         bool(getattr(cfg, flag, False))
 
 
-def submit(db, c, cfg, now, detector, symbol, sig):
+def submit(db, c, cfg, now, detector, symbol, sig, track=None,
+           flatten_at=None):
     """Open a simulated position from a detector signal.
 
     `sig` needs direction ('long'/'short'), entry, stop, target (prices).
+    `track` (e.g. 'swing') is stored on the trade; the engine exits() loop
+    skips session flatten for track=='swing'. `flatten_at` overrides the
+    default session flatten (e.g. an earlier time stop).
     Returns {'submitted': bool, 'reason': str, ...}. Never raises on bad
     input: bad signals are declined with a reason.
     """
@@ -111,11 +121,14 @@ def submit(db, c, cfg, now, detector, symbol, sig):
         'fill_model': FILL_DESCRIPTION, 'fill_version': FILL_VERSION,
         'risk_day': risk_day(now), 'risk_policy': paper_risk.VERSION,
         'paper_portfolio': paper_risk.portfolio('future'),
-        'flatten_at': futures_session(now)['flatten_at'],
+        'flatten_at': flatten_at if flatten_at is not None
+        else futures_session(now)['flatten_at'],
         'signal_rr': number(sig.get('rr')),
         'signal_level': sig.get('level_kind'),
         'source': 'ict_paper',
     }
+    if track:
+        trade['track'] = track
     db.put(c, pos_key, trade)
     db.put(c, 'trade:' + trade_id, trade)
     risk = paper_risk.account(db, c, now, 'future', persist=True)
