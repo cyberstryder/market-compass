@@ -42,3 +42,19 @@ select{font:inherit;border:1px solid var(--line);border-radius:6px;background:va
 .pips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .pip{font-size:10px;padding:2px 7px;border-radius:4px;background:#2a2f3a;color:#9aa3b5}
 .pip.p-sup{background:#1d3a2a;color:#7dd8a8}.pip.p-con{background:#4a1d1d;color:#f07d7d}.pip.p-neu{background:#3a3a1d;color:#d8d87d}
+
+/* Channel sections: one accordion per Discord channel. */
+.nav .chn{display:block;font-size:9px;color:var(--muted);letter-spacing:1px;font-weight:400}
+.nav.active .chn{color:var(--mint)}
+.acc-section{margin-bottom:14px}
+.acc-head{width:100%;display:flex;align-items:baseline;gap:14px;background:var(--panel);border:1px solid var(--line);color:var(--text);text-align:left;padding:18px 22px}
+.acc-head:hover{border-color:#3b5749}
+.acc-title{font-size:18px;font-weight:700;letter-spacing:-.4px}
+.acc-chn{font-size:11px;color:var(--muted);letter-spacing:1px}
+.acc-head .chev{margin-left:auto;color:var(--muted);transition:transform .15s}
+.acc-section.open .acc-head .chev{transform:rotate(180deg)}
+.acc-section.open .acc-head{border-color:#3b5749}
+.acc-section .acc-body{display:none;padding-top:20px}
+.acc-section.open .acc-body{display:block}
+.tab.legacy{display:block}
+#health-panels,#program-panels{margin-top:8px}

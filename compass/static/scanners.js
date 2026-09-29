@@ -78,11 +78,11 @@
   finally{boardBusy=false;}
  }
 
- document.querySelector('[data-tab="scanners"]').addEventListener('click',loadScanners);
- document.querySelector('[data-tab="overview"]').addEventListener('click',loadBoard);
+ document.querySelector('[data-section="intraday"]').addEventListener('click',loadScanners);
+ document.querySelector('[data-section="morning-brief"]').addEventListener('click',loadBoard);
  document.querySelector('#apex-within').addEventListener('change',()=>{if(apexCache)renderApex(apexCache);});
- window.addEventListener('hashchange',()=>{if(location.hash==='#scanners')loadScanners();if(location.hash==='#overview'||location.hash===''||location.hash==='#')loadBoard();});
- if(location.hash==='#scanners')loadScanners();
+ window.addEventListener('hashchange',()=>{if(location.hash==='#intraday')loadScanners();if(location.hash==='#morning-brief')loadBoard();});
+ if(location.hash==='#intraday')loadScanners();
  loadBoard();
  setInterval(()=>{if($('#scanners').classList.contains('active'))loadScanners();if($('#overview').classList.contains('active'))loadBoard();},60000);
 })();

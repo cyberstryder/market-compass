@@ -7,23 +7,33 @@ const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notati
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
 const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated','event_stale','poll_stale','vendor_stale','mixed'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
-const titles={alerts:'Alert feed','daily-results':'Daily results',discovery:'Discovery','spy-study':'SPY 0DTE outcomes','swing-study':'Swing comparison','tm-study':'TM scoring','research-admin':'Research map',obsidian:'Obsidian inbox',smoothers:'Smoothers','pick-check':'Pick checker','swing-ideas':'Swing ideas','option-ideas':'0DTE ideas','setup-study':'Setup results',secondary:'Independent reviews',projects:'Programs',scanner:'Setup feed',research:'Research desk',overview:'Today',exposure:'GEX / exposure',flow:'Options flow',trades:'Paper ledger',assistant:'Ask Compass',health:'Feed health',scanners:'Evidence scanners'};
+const TITLES={'morning-brief':'Morning Brief','0dte':'0DTE','intraday':'Intraday','ideas':'Ideas','smoothers':'Smoothers','futures':'Futures','compass':'Compass'};
+/* Old per-tab hashes redirect to their new section. */
+const LEGACY={alerts:'compass',overview:'morning-brief',scanner:'intraday',flow:'intraday',exposure:'intraday',assistant:'compass',scanners:'intraday','option-ideas':'0dte','swing-ideas':'compass',discovery:'compass',obsidian:'compass',smoothers:'ideas','pick-check':'ideas','setup-study':'futures','tm-study':'compass','swing-study':'compass','spy-study':'0dte',secondary:'compass',trades:'compass','daily-results':'compass',health:'compass',projects:'compass','research-admin':'compass',research:'compass'};
 let lastState=null,first=true,testEvent=null;
-function selectTab(tab){
- if(!Object.hasOwn(titles,tab))return;
- const button=Array.from(document.querySelectorAll('.nav')).find(n=>n.dataset.tab===tab);
- if(!button||!$('#'+tab))return;
- document.querySelectorAll('.nav,.tab').forEach(n=>n.classList.remove('active'));
- button.classList.add('active');$('#'+tab).classList.add('active');$('#title').textContent=titles[tab];
- if(location.hash!=='#'+tab)history.replaceState(null,'','#'+tab);
- if(tab==='setup-study'&&lastState)renderSetupStudy(lastState.setup_study);
- if(tab==='tm-study'&&lastState)renderTMStudy(lastState.tm_study);
- if(tab==='swing-study'&&lastState)renderSwingStudy(lastState.swing_study);
- if(tab==='spy-study'&&lastState)renderSPYStudy(lastState.spy_study);
+function selectTab(key){
+ key=LEGACY[key]||key;
+ if(!Object.hasOwn(TITLES,key))return;
+ document.querySelectorAll('.acc-section').forEach(s=>{const on=s.id==='sec-'+key;s.classList.toggle('open',on);s.classList.toggle('active',on);});
+ document.querySelectorAll('.acc-section .tab').forEach(t=>t.classList.toggle('active',t.closest('.acc-section').classList.contains('open')));
+ document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.tab===key));
+ $('#title').textContent=TITLES[key];
+ if(location.hash!=='#'+key)history.replaceState(null,'','#'+key);
+ if(window.__detectorsRefresh)window.__detectorsRefresh(key);
+ if(key==='futures'&&lastState)renderSetupStudy(lastState.setup_study);
+ if(key==='compass'&&lastState){renderTMStudy(lastState.tm_study);renderSwingStudy(lastState.swing_study);}
+ if(key==='0dte'&&lastState)renderSPYStudy(lastState.spy_study);
+ const sec=document.getElementById('sec-'+key);if(sec)sec.scrollIntoView({block:'start'});
+}
+function toggleSection(key){
+ const sec=document.getElementById('sec-'+key);
+ if(sec&&sec.classList.contains('open')){document.querySelectorAll('.acc-section').forEach(s=>{s.classList.remove('open','active');});document.querySelectorAll('.acc-section .tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.nav').forEach(n=>n.classList.remove('active'));history.replaceState(null,'',' ');}
+ else selectTab(key);
 }
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>selectTab(b.dataset.tab));
+document.querySelectorAll('.acc-head').forEach(b=>b.onclick=()=>toggleSection(b.dataset.section));
 window.addEventListener('hashchange',()=>selectTab(location.hash.slice(1)));
-selectTab(location.hash.slice(1));
+selectTab(location.hash.slice(1)||'compass');
 $('#logout').onclick=async()=>{await fetch('/logout',{method:'POST'});location.href='/login';};
 let secondaryReport=null,secondaryReportRequest=0;
 function vendorMatrix(items){
@@ -243,7 +253,6 @@ function renderProjects(data){
  }).join(''):empty('No matching source observations','Connected sources can be healthy while no strategy signal has fired.');
 }
 $('#project-filter').onchange=()=>{if(lastState)renderProjects(lastState.projects);};
-if(location.hash==='#projects')document.querySelector('[data-tab="projects"]').click();
 
 function renderSecondary(data){
  if(!data)return;
@@ -322,7 +331,6 @@ $('#secondary-period-reset').onclick=()=>{
  $('#secondary-period-note').textContent='Rolling 30-day comparison restored.';
  if(lastState)renderSecondary(lastState.secondary);
 };
-if(location.hash==='#secondary')document.querySelector('[data-tab="secondary"]').click();
 poll();
 
 function renderSetupStudy(d){
@@ -377,7 +385,6 @@ for(const id of ['phase','view','contract','arm','cohort'])$('#study-feeds-'+id)
 $('#study-feeds-previous').onclick=()=>{futuresFeedsPage=Math.max(0,futuresFeedsPage-1);if(lastState)renderFuturesFeeds(lastState.setup_study||{});};
 $('#study-feeds-next').onclick=()=>{futuresFeedsPage++;if(lastState)renderFuturesFeeds(lastState.setup_study||{});};
 $('#study-cohort').onchange=()=>{if(lastState)renderSetupStudy(lastState.setup_study);};
-if(location.hash==='#setup-study')document.querySelector('[data-tab="setup-study"]').click();
 
 function renderOptionIdeas(d){
  if(!d)return;
@@ -401,7 +408,6 @@ function renderOptionIdeas(d){
  }).join('')||empty('Waiting for a qualifying options idea','Fresh price triggers prioritize a chain and live quotes. Pending candidates are not option entries.');
 }
 $('#ideas-filter').onchange=()=>{if(lastState)renderOptionIdeas(lastState.option_ideas);};
-if(location.hash==='#option-ideas')document.querySelector('[data-tab="option-ideas"]').click();
 
 function renderSwingIdeas(d,asof){
  if(!d)return;
@@ -431,7 +437,6 @@ function renderSwingIdeas(d,asof){
  $('#swings-coverage').innerHTML=table(['Symbol','Daily / weekly history','Recent minute bars','Decision','Last scan'],(d.coverage||[]).map(p=>[esc(p.symbol),p.daily_ready?'Ready':esc(p.reason||'Warming up'),p.price_ready?'Ready':'Waiting',tag(p.status),when(p.at)]));
 }
 $('#swings-filter').onchange=()=>{if(lastState)renderSwingIdeas(lastState.swing_ideas,lastState.asof);};
-if(location.hash==='#swing-ideas')document.querySelector('[data-tab="swing-ideas"]').click();
 
 function morningParams(){return new URLSearchParams({ticker:$('#morning-ticker').value.trim(),start:$('#morning-start').value,end:$('#morning-end').value,stream:$('#morning-stream').value.trim(),limit:'100'});}
 $('#morning-load').onclick=async()=>{

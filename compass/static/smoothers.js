@@ -77,9 +77,9 @@
   }finally{busy=false;}
  }
 
- document.querySelector('[data-tab="smoothers"]').addEventListener('click',loadSmoothers);
+ document.querySelector('[data-section="ideas"]').addEventListener('click',loadSmoothers);
  $('#smoothers-week').addEventListener('change',()=>{busy=false;loadSmoothers();});
- window.addEventListener('hashchange',()=>{if(location.hash==='#smoothers')loadSmoothers();});
- if(location.hash==='#smoothers')loadSmoothers();
+ window.addEventListener('hashchange',()=>{if(location.hash==='#ideas')loadSmoothers();});
+ if(location.hash==='#ideas')loadSmoothers();
  setInterval(()=>{if($('#smoothers').classList.contains('active'))loadSmoothers();},60000);
 })();

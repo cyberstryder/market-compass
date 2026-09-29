@@ -46,6 +46,6 @@
   finally{busy=false;}
  }
  el('filter').addEventListener('input',draw);
- document.querySelector('[data-tab="discovery"]').addEventListener('click',load);
+ document.querySelector('[data-section="compass"]').addEventListener('click',load);
  window.addEventListener('hashchange',load);setInterval(load,15000);load();
 })();

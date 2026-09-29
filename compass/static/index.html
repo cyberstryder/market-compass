@@ -3,148 +3,32 @@
 <title>Market Compass</title><link rel="stylesheet" href="/static/style.css"></head><body>
 <aside class="sidebar"><a class="brand" href="/">↗ <span>Market<br>Compass</span></a><p class="eyebrow">WORKSPACE</p>
 <nav>
-<p class="nav-group">Alerts</p>
-<button class="nav active" data-tab="alerts">Alert feed</button>
-<p class="nav-group">Today</p>
-<button class="nav" data-tab="overview">Today</button>
-<button class="nav" data-tab="scanner">Setup feed</button>
-<button class="nav" data-tab="flow">Options flow</button>
-<button class="nav" data-tab="exposure">GEX / exposure</button>
-<button class="nav" data-tab="assistant">Ask Compass</button>
-<p class="nav-group">Scanners</p>
-<button class="nav" data-tab="scanners">Evidence scanners</button>
-<p class="nav-group">Ideas</p>
-<button class="nav" data-tab="option-ideas">0DTE ideas</button>
-<button class="nav" data-tab="swing-ideas">Swing ideas</button>
-<button class="nav" data-tab="discovery">Discovery</button>
-<button class="nav" data-tab="obsidian">Obsidian inbox</button>
-<button class="nav" data-tab="smoothers">Smoothers</button>
-<button class="nav" data-tab="pick-check">Pick checker</button>
-<p class="nav-group">Studies</p>
-<button class="nav" data-tab="setup-study">Setup results</button>
-<button class="nav" data-tab="tm-study">TM scoring</button>
-<button class="nav" data-tab="swing-study">Swing comparison</button>
-<button class="nav" data-tab="spy-study">SPY 0DTE outcomes</button>
-<button class="nav" data-tab="secondary">Independent reviews</button>
-<p class="nav-group">Paper</p>
-<button class="nav" data-tab="trades">Paper ledger</button>
-<button class="nav" data-tab="daily-results">Daily results</button>
-<p class="nav-group">System</p>
-<button class="nav" data-tab="health">Feed health</button>
-<button class="nav" data-tab="projects">Programs</button>
-<button class="nav" data-tab="research-admin">Research map</button>
-<button class="nav" data-tab="research">Research desk</button>
+<button class="nav" data-tab="morning-brief">Morning Brief <span class="chn">#morning-brief</span></button>
+<button class="nav" data-tab="0dte">0DTE <span class="chn">#0dte</span></button>
+<button class="nav" data-tab="intraday">Intraday <span class="chn">#intraday</span></button>
+<button class="nav" data-tab="ideas">Ideas <span class="chn">#ideas</span></button>
+<button class="nav" data-tab="smoothers">Smoothers <span class="chn">#smoothers</span></button>
+<button class="nav" data-tab="futures">Futures <span class="chn">#futures</span></button>
+<button class="nav" data-tab="compass">Compass <span class="chn">#compass</span></button>
 </nav>
 <div class="sidebar-foot"><span class="pill">RESEARCH MODE</span><p>No broker execution</p><button id="logout" class="quiet">Sign out</button></div></aside>
-<main class="workspace"><header><div><p class="eyebrow">MARKET INTELLIGENCE</p><h1 id="title">Today</h1></div>
+<main class="workspace"><header><div><p class="eyebrow">MARKET INTELLIGENCE</p><h1 id="title">Compass</h1></div>
 <div class="header-right"><span id="market" class="pill">Checking session</span><p id="clock" class="mono"></p></div></header>
 <p id="operating-mode" class="banner">Research mode · Paper trading paused</p><div id="connection" class="banner">Connecting to the shared market state…</div>
-<section id="scanners" class="tab">
-<div class="banner">Evidence scanners rebuilt from TraderMatrix site views. Evidence only — no alerts, no auto-admission, no trades. Nothing here is a trading signal until prospective measurement says otherwise.</div>
-<article class="panel"><div class="panel-head"><h2>Apex magnets</h2><span class="muted" id="apex-asof"></span><label>Within <select id="apex-within"><option value="0.005">0.5%</option><option value="0.01">1%</option><option value="0.02" selected>2%</option><option value="0.05">5%</option><option value="1">All</option></select></label></div><div id="apex-rows"></div><h3>Signal transitions</h3><div id="apex-signals"></div><h3>Session outcomes</h3><div id="apex-outcomes"></div>
-<p class="fine">Vendor magnet levels joined with minute bars. Magnet drift history is not yet joined, so drift always reports current.</p></article>
-<article class="panel"><div class="panel-head"><h2>Tape confirmed</h2><span class="muted" id="tape-asof"></span></div><div id="tape-scorecard"></div><h3>Recent confirmed trials</h3><div id="tape-recent"></div>
-<p class="fine">Setup trials joined with ±15 minute same-direction flow (≥$250k premium, print score ≥85). Confirmed means the flow arrived before the trial was invalidated.</p></article>
-<article class="panel"><div class="panel-head"><h2>Gap continuation</h2><span class="muted" id="gap-asof"></span></div><div id="gap-board"></div><h3>Weekly outcomes</h3><div id="gap-weekly"></div>
-<p class="fine">Gaps ≥1.5% in curated large caps. 09:30–09:45 opening-range break plus a 10-minute hold; dealer opposition vetoes the setup.</p></article>
-<article class="panel"><div class="panel-head"><h2>Breakouts</h2><span class="muted" id="break-asof"></span></div><h3>Forming triangles</h3><div id="break-forming"></div><h3>Fresh breaks</h3><div id="break-fresh"></div><h3>Weekly outcomes</h3><div id="break-weekly"></div>
-<p class="fine">Close-only 20/50/253-session range breaks and mechanical 15-session triangle coils, volume-confirmed at 1.5×. Runs once daily after the close.</p></article>
-</section>
-<section id="research-admin" class="tab">
-<div class="research-intro"><div><p class="eyebrow">THE WHOLE RESEARCH PROGRAM</p><h2>What we have, what we know, what comes next.</h2><p>Collection, assessment, outcomes and alert delivery have separate evidence. Saving a record does not mean it has a Compass rating or a measured result.</p></div><a class="research-download" href="/api/research-admin?download=true">Download status</a></div>
-<div id="research-admin-summary" class="stats" aria-live="polite"></div>
-<article class="panel research-gap"><h2>TraderMatrix coverage</h2><div id="research-admin-coverage"></div></article>
-<div class="research-controls"><label for="research-admin-search">Find a program<input id="research-admin-search" type="search" placeholder="Morning, swings, futures…"></label><label for="research-admin-filter">Show<select id="research-admin-filter"><option value="all">All workstreams</option><option value="attention">Needs attention</option><option value="results">Has measured results</option></select></label><p id="research-admin-count" class="muted" aria-live="polite"></p></div>
-<div id="research-admin-streams" class="research-cards"></div>
-<article class="panel"><h2>Saved evidence and reporting limits</h2><div id="research-admin-storage"></div><div id="research-admin-notes"></div></article>
-</section>
-<section id="tm-study" class="tab">
-<div class="banner">Received TraderMatrix records · Separate Compass assessments · Forward underlying moves</div>
-<div id="tm-study-summary" class="stats"></div>
-<article class="panel"><h2>Coverage and frozen rules</h2><div id="tm-study-coverage"></div><p class="fine">Compass points: EMA alignment 20, observed VWAP alignment 20, completed 15-minute trend 20, five-minute breakout 10, relative volume 10, volume/OI with sufficient OI 10, premium 10. Missing inputs produce an incomplete score. These provisional points are not a probability.</p></article>
-<article class="panel"><div class="panel-head"><h2>Same-record selection comparison</h2><label>Checkpoint <select id="tm-horizon"><option value="60m">60 trading minutes (primary)</option><option value="15m">15 trading minutes</option><option value="close">Upcoming session close</option><option value="1session">One later session</option><option value="3session">Three later sessions</option><option value="5session">Five later sessions</option></select></label></div><div id="tm-study-comparisons"></div><p class="fine">TM-only means TM ≥85; Compass-only means Compass ≥70; both means both thresholds. Arms overlap. Every comparison uses records with both complete scores and the same checkpoint. Positive moves are underlying midpoint changes, not option profits or trading wins.</p></article>
-<article class="panel"><div class="panel-head"><h2>Coverage and outcomes by group</h2><label>Group by <select id="tm-dimension"><option value="delay">Source age at receipt</option><option value="tm_score">TM score</option><option value="compass_score">Compass score</option><option value="dte">Expiration group</option><option value="flow_type">Flow type</option><option value="option_type">Call / put</option><option value="oi_bucket">Open interest</option><option value="direction">Direction</option><option value="receipt_session">Receipt session</option><option value="receipt_day">Receipt day</option></select></label></div><div id="tm-study-buckets"></div><p class="fine">Groups include prospective records with incomplete scores. Missing price measurements remain in their denominators. Delayed flow is measured after Compass receives it.</p></article>
-<article class="panel"><div class="panel-head"><h2>Individual received records</h2><label>Show <select id="tm-cohort"><option value="all">All registered records</option><option value="prospective">Prospective assessments</option><option value="scored">Complete Compass scores</option><option value="insufficient_data">Incomplete assessments</option><option value="historical_inventory">Historical inventory</option><option value="tm_selected">TM selected</option><option value="compass_selected">Compass selected</option><option value="both_selected">Both selected</option></select></label></div><p id="tm-record-status" class="fine" aria-live="polite"></p><div id="tm-study-records"></div><div class="research-controls"><button id="tm-previous" type="button">Previous</button><button id="tm-next" type="button">Next</button><button id="tm-newest" type="button">Newest records</button></div></article>
-</section>
-<section id="obsidian" class="tab"><div class="banner">Watchlist ideas, not provider trade entries. Reported percentages are separate from independently observed option prices.</div><article class="panel"><h2>Obsidian Watchlist</h2><div id="obsidian-status"></div><div id="obsidian-ideas"></div></article><article class="panel"><h2>Historical price audit</h2><div id="obsidian-history"></div></article><article class="panel"><h2>Provider updates</h2><div id="obsidian-events"></div></article></section>
-<section id="smoothers" class="tab">
-<div class="banner">Weekly stock signals, selected and ranked natively by Compass every Monday morning (9:35–10:30 CT). The original app remains the official sender until the handoff below is reviewed and armed.</div>
-<article class="panel"><div class="panel-head"><h2>Sender status</h2><span class="muted" id="smoothers-handoff-asof"></span></div><div id="smoothers-ownership"></div></article>
-<article class="panel"><div class="panel-head"><h2>Featured A+ picks</h2><span class="muted" id="smoothers-featured-asof"></span></div><div id="smoothers-featured"></div>
-<p class="fine">Top 10 by target ATR multiple among signals priceable at publication with non-negative modeled return. Ranked once Monday morning, before any outcome exists — never re-ranked after the fact.</p></article>
-<article class="panel"><div class="panel-head"><h2>Weekly roster</h2><label>Week <input id="smoothers-week" type="date"></label></div><div id="smoothers-roster"></div>
-<p class="fine">Entries are modeled at the first-hour close, not executable prices. WIN means the target was touched on a completed minute bar; UNRESOLVED means the week ended without a clean resolution.</p></article>
-<article class="panel"><h2>Past weeks</h2><div id="smoothers-history"></div></article>
-<article class="panel"><h2>Smoothers sender handoff</h2><details><summary>Review a complete week and prepare the next weekly cohort</summary>
-<p>The original app remains official during the comparison week. Activation requires matched weekly observations, current message previews, a review of the original channel, and the original sender paused. The source feed does not retain Discord delivery receipts.</p>
-<label>Completed review week (Monday date) <input id="smoothers-handoff-review" type="date"></label>
-<label>Next cohort (Monday date) <input id="smoothers-handoff-date" type="date"></label>
-<button id="smoothers-handoff-load" type="button">Load handoff status</button>
-<button id="smoothers-handoff-prepare" type="button">Prepare weekly evidence check</button>
-<label><input id="smoothers-handoff-paused" type="checkbox"> I have paused the original Smoothers sender</label>
-<label><input id="smoothers-handoff-reviewed" type="checkbox"> I reviewed and accepted the full week and message previews</label>
-<label><input id="smoothers-handoff-original" type="checkbox"> I checked the original channel's entry, roster, target and closure messages</label>
-<button id="smoothers-handoff-activate" type="button" disabled>Arm accepted weekly handoff</button>
-<button id="smoothers-handoff-rollback" type="button">Stop Compass Smoothers sending</button>
-<p>Rollback stops pending native sends. Check any in-flight or uncertain deliveries before manually resuming the original sender.</p>
-<pre id="smoothers-handoff-status" aria-live="polite"></pre></details></article>
-</section>
-<section id="pick-check" class="tab">
-<div class="banner">Stack one external pick against Compass evidence: Apex magnets, institutional tape, gap continuation, breakouts, and exposure. Evidence only — no auto-admission, no alerts, no trades.</div>
-<article class="panel"><h2>Check a pick</h2>
-<div class="research-controls">
-<label>Ticker <input id="pickcheck-ticker" placeholder="SPY" style="text-transform:uppercase"></label>
-<label>Direction <select id="pickcheck-direction"><option value="long">Long</option><option value="short">Short</option></select></label>
-<label>Entry <input id="pickcheck-entry" type="number" step="any" placeholder="optional"></label>
-<label>Target <input id="pickcheck-target" type="number" step="any" placeholder="optional"></label>
-<label>Analyst / source <input id="pickcheck-source" placeholder="e.g. sal"></label>
-</div>
-<button id="pickcheck-run" type="button">Check against evidence</button>
-</article>
-<div id="pickcheck-result"></div>
-<article class="panel"><h2>Recent checks</h2><div id="pickcheck-recent"></div>
-<p class="fine">Every check is logged so analyst hit rates can be measured later. Call/put map to long/short.</p></article>
-<article class="panel"><div class="panel-head"><h2>Analyst scorecards</h2><span class="muted" id="pickcheck-scorecard-asof"></span></div><div id="pickcheck-scorecard"></div>
-<p class="fine">Outcomes are measured mechanically from daily bars after each check: a target touched within 5 sessions is a win; without a target, the sign of the 5-session direction-adjusted underlying move decides. Open means fewer than 5 sessions have printed. Moves are underlying percentages, not option P&amp;L. Evidence only.</p></article>
-</section>
-<section id="secondary" class="tab">
-<div class="banner">Compass reviews each original candidate independently. Supported is a research assessment of the underlying direction. The original alerts and automation keep running.</div>
-<p id="secondary-status" class="fine"></p><div id="secondary-stats" class="stats"></div>
-<article class="panel"><h2>Current review data</h2><p id="secondary-readiness-note" class="fine"></p><div id="secondary-readiness"></div><div id="secondary-pending"></div></article>
-<article class="panel"><div class="panel-head"><h2>Originals versus Compass selection</h2><label for="secondary-horizon">Checkpoint <select id="secondary-horizon"><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60" selected>60 minutes</option></select></label></div>
-<p class="fine">Both columns use the same quote at review time and the same later checkpoint. Returns are direction-adjusted underlying midpoint changes before costs. They are not option returns or broker P&amp;L. Missing data are excluded and counted.</p>
-<p><label for="secondary-since">Review start (your device time) <input id="secondary-since" type="datetime-local" step="1"></label> <button id="secondary-period-apply" type="button">Load period</button> <button id="secondary-period-reset" type="button">Rolling 30 days</button></p>
-<p id="secondary-period-note" class="fine">Choose a start time to separate a corrected collection period. Results include measurements available when loaded.</p>
-<div id="secondary-comparison"></div><div id="secondary-weekly"></div>
-<p class="fine">Watch and rejected candidates remain in the comparison. A missed positive move is shown alongside an avoided negative move. The per-candidate filter result assigns zero exposure to unselected candidates; it is not portfolio performance. No automatic rule optimization runs.</p></article>
-<article class="panel"><div class="panel-head"><h2>Secondary assessments</h2><label for="secondary-filter">Source <select id="secondary-filter"><option value="all">All sources</option><option value="obsidian">Obsidian Watchlist</option><option value="morning">Morning Algo</option><option value="smoothers">Smoothers</option><option value="futures">TradingView futures</option><option value="compass_futures">Compass futures</option></select></label></div><div id="secondary-reviews"></div></article>
-</section>
-<section id="projects" class="tab">
-<div class="banner">Signals and outcomes from Morning Algo, New Smoothers, and the automated futures strategies. Market context is captured separately; each project keeps its original rules and results.</div>
-<div id="project-status" class="stats"></div>
-<article class="panel"><h2>Native Morning and Smoothers</h2><div id="native-programs"></div></article>
-<article class="panel"><h2>Native reports and delivery reconciliation</h2>
-<p>Calculated from Compass records. Original-source comparisons remain optional; missing data stays visible.</p>
-<label>Ticker <input id="native-ticker" maxlength="50" placeholder="All tickers"></label>
-<label>Morning from <input id="native-start" type="date"></label><label>through <input id="native-end" type="date"></label>
-<label>Smoothers week (Monday) <input id="native-week" type="date"></label>
-<button id="native-report-load" type="button">Load native report</button> <a id="native-report-download" href="/api/native/report?download=true">Download JSON</a>
-<div id="native-report-result" aria-live="polite"></div></article>
-<article class="panel"><h2>Smoothers configurations</h2>
-<p>Compass owns the settings. Changes affect future weekly jobs; a started cohort keeps its original revision.</p>
-<button id="native-config-load" type="button">Load configurations</button>
-<div id="native-config-status" aria-live="polite"></div>
-<label>Ticker <select id="native-config-ticker"></select></label>
-<label>S1 <input id="native-s1" type="number" min="1" max="500"></label>
-<label>S2 <input id="native-s2" type="number" min="1" max="500"></label>
-<label>S3 <input id="native-s3" type="number" min="1" max="500"></label>
-<label>Target fraction <input id="native-pm" type="number" step="0.001" min="0.001" max="0.999"></label>
-<label><input id="native-enabled" type="checkbox"> Enabled</label>
-<label>Change reason <input id="native-config-reason" maxlength="300"></label>
-<button id="native-config-save" type="button" disabled>Save new revision</button>
-<label>Earlier revision <select id="native-config-history"></select></label>
-<button id="native-config-restore" type="button" disabled>Restore settings as new revision</button>
-</article>
+
+<section id="sec-morning-brief" class="acc-section"><button class="acc-head" data-section="morning-brief"><span class="acc-title">Morning Brief</span><span class="acc-chn">#morning-brief</span><span class="chev">▾</span></button><div class="acc-body">
+<section id="overview" class="tab legacy"><div id="stats" class="stats"></div>
+<article class="panel"><div class="panel-head"><h2>Day trading board</h2><span class="muted" id="board-state"></span></div><div id="day-board"></div>
+<p class="fine">Built 08:30 CT, refreshed 09:00 CT, frozen at the open. Six-component catalyst score: earnings, economic, mover, flow, sector, radar. Watchlist only — the A+ alert gate is specified but not wired, so the board never alerts on its own.</p></article>
+<div class="columns">
+<article class="panel wide"><div class="panel-head"><h2>Watchlist & levels</h2><span class="muted">Latest observations</span></div><div id="watch"></div>
+<p class="fine">Futures use a 17:00–17:15 CT Globex range, then a new 08:30–08:45 CT regular-session range. Explicit contract IDs keep rolled prices separate.</p></article>
+<article class="panel"><div class="panel-head"><h2>Decision journal</h2><span class="dot"></span></div><div id="journal"></div></article></div>
+<article class="panel"><div class="panel-head"><h2>Research rules</h2><span class="pill">v0.1 · forward test</span></div><div class="rule-grid">
+<div><h3>Futures / intraday</h3><p>Closed-minute break of the active 15-minute range. Futures scan overnight and reset the range at the cash open. ATR stop, 2R target, fresh bid/ask required.</p></div>
+<div><h3>0DTE</h3><p>Underlying breakout selects an eligible same-day call or put. Up to eight nearby contracts are checked for fresh quotes and valid contract metadata; account limits do not gate research.</p></div>
+<div><h3>Swings</h3><p>Completed daily close above the preceding 20 daily highs. Entry waits for the next session and an executable quote.</p></div></div></article></section>
+<article class="panel"><h2>Morning original-source archive</h2><p>This is the original-source mirror. Zero records here does not mean zero native Morning signals. Use <a href="#daily-results">Daily results</a> for the complete native daily census. Original candles and research candidates. Underlying outcomes are not option returns or executed trades.</p><label>Ticker <input id="morning-ticker" maxlength="50" placeholder="All tickers"></label> <label>From <input id="morning-start" type="date"></label> <label>Through <input id="morning-end" type="date"></label> <label>Stream <input id="morning-stream" maxlength="32" placeholder="All streams"></label> <button id="morning-load" type="button">Load report</button> <a id="morning-download" href="/api/projects/morning/report?download=true">Download JSON</a><div id="morning-report"><p>Load the latest 100 matching signals and 100 candidates. Narrow dates or ticker if the report is truncated.</p></div></article>
 <article class="panel"><h2>Morning routing preparation</h2>
 <p>Prepare a future-session shadow route. This does not change TradingView or the official sender. Arrange an additional shadow delivery and retain the existing TradingView-to-Morning route before scheduling. Do not replace the primary webhook.</p>
 <button id="native-route-load" type="button">Load routing</button>
@@ -167,35 +51,16 @@
 <button id="native-handoff-rollback" type="button">Stop Compass official sending</button>
 <p>After rollback, resolve in-flight or unknown deliveries before manually resuming the original sender.</p>
 <pre id="native-handoff-status" aria-live="polite"></pre></details></article>
-<article class="panel"><h2>Program replacement checks</h2><div id="program-parity"></div></article>
-<article class="panel"><h2>Transfer to Compass</h2><div id="strategy-migration"></div></article>
-<article class="panel"><h2>Morning original-source archive</h2><p>This is the original-source mirror. Zero records here does not mean zero native Morning signals. Use <a href="#daily-results">Daily results</a> for the complete native daily census. Original candles and research candidates. Underlying outcomes are not option returns or executed trades.</p><label>Ticker <input id="morning-ticker" maxlength="50" placeholder="All tickers"></label> <label>From <input id="morning-start" type="date"></label> <label>Through <input id="morning-end" type="date"></label> <label>Stream <input id="morning-stream" maxlength="32" placeholder="All streams"></label> <button id="morning-load" type="button">Load report</button> <a id="morning-download" href="/api/projects/morning/report?download=true">Download JSON</a><div id="morning-report"><p>Load the latest 100 matching signals and 100 candidates. Narrow dates or ticker if the report is truncated.</p></div></article>
-<article class="panel"><div class="panel-head"><h2>Combined observations</h2><label for="project-filter">Project <select id="project-filter"><option value="all">All projects</option><option value="morning">Morning Algo</option><option value="smoothers">New Smoothers</option><option value="futures">Automated futures</option></select></label></div><div id="project-records"></div>
-<p class="fine">Morning checkpoints measure underlying moves. Smoothers WIN means its underlying target was reached. Futures events come from TradingView's strategy emulator; actual broker fills remain unverified. Historical imports have no reconstructed entry context.</p></article>
-</section>
-<section id="scanner" class="tab">
-<div class="banner">One watchlist, shared market context. Triggered setups include entry, invalidation, targets, and source clocks. All trades are simulated.</div>
-<div id="scanner-stats" class="stats"></div>
-<article class="panel"><div class="panel-head"><h2>Setup feed</h2><label class="inline-label" for="scanner-filter">Show <select id="scanner-filter"><option value="active">Active setups</option><option value="all">All recent decisions</option></select></label></div><div id="opportunities"></div></article>
-<article class="panel"><h2>Symbols receiving focused research</h2><div id="scanner-focus"></div><p class="fine">Live stock prices cover the full watchlist. Option chains and vendor analytics prioritize developing setups and rotate through the remaining names.</p></article>
-<article class="panel"><h2>Research coverage</h2><div id="scanner-coverage"></div></article>
-</section>
-<section id="option-ideas" class="tab">
+</div></section>
+
+<section id="sec-0dte" class="acc-section"><button class="acc-head" data-section="0dte"><span class="acc-title">0DTE</span><span class="acc-chn">#0dte</span><span class="chev">▾</span></button><div class="acc-body">
+<section id="option-ideas" class="tab legacy">
 <div class="banner">Options ideas discovered throughout the cash session. Each selected call or put has its own quoted entry, underlying invalidation, premium exits and follow-up observations.</div>
 <p id="ideas-status" class="fine"></p><div id="ideas-stats" class="stats"></div>
 <article class="panel"><div class="panel-head"><h2>All-day options ideas</h2><label for="ideas-filter">Show <select id="ideas-filter"><option value="all">All recent ideas</option><option value="active">Pending and open</option><option value="closed">Completed outcomes</option></select></label></div><div id="ideas-records"></div>
 <p class="fine">Pending ideas have no option entry. Missing observation paths remain unresolved. Expiration date and intraday holding period are separate. Overlapping one-contract results are not account performance.</p></article>
 </section>
-<section id="swing-ideas" class="tab">
-<div class="banner">SWING IDEAS · Bullish and bearish daily setups with fresh, vendor-classified options flow. Selected contracts are tracked across stock sessions.</div>
-<p><a href="/#swing-study">Compare all technical candidates, including rejected flow →</a></p>
-<p id="swings-status" class="fine"></p><div id="swings-stats" class="stats"></div>
-<article class="panel"><div class="panel-head"><h2>Swing ideas and outcomes</h2><label for="swings-filter">Show <select id="swings-filter"><option value="all">All recent ideas</option><option value="active">Pending and open</option><option value="closed">Completed outcomes</option></select></label></div><div id="swings-records"></div>
-<p class="fine">Pending candidates have no option entry. Closed markets preserve the last observed mark. Overnight gaps can exceed stops; missing open-session observations remain unresolved. These overlapping one-contract experiments are separate from Smoothers and account performance.</p></article>
-<article class="panel"><h2>Results by swing setup</h2><div id="swings-groups"></div></article>
-<article class="panel"><h2>Swing scan coverage</h2><p id="swings-coverage-summary" class="fine"></p><details data-key="swing-coverage"><summary>Watchlist readiness</summary><div id="swings-coverage"></div></details></article>
-</section>
-<section id="spy-study" class="tab">
+<section id="spy-study" class="tab legacy">
 <div class="banner">SPY daily plan → confirmation → same-day option observation · One-contract paper research</div>
 <div id="spy-study-summary" class="stats"></div>
 <article class="panel"><h2>1 / 3 / 5 / 15-minute comparison</h2><p>Separate research with the same breakout and exit rules. Live alerts keep their existing confirmation schedule.</p><div id="spy-study-timeframes"></div>
@@ -216,14 +81,158 @@
 <article class="panel"><h2>Recorded option and underlying path</h2><p id="spy-study-path-status" class="fine">Open an entered observation’s recorded path below its decision.</p><div id="spy-study-path"></div>
 <div class="research-controls"><button id="spy-study-path-next" type="button" disabled>Next path page</button><button id="spy-study-path-reset" type="button" disabled>Refresh path</button></div></article>
 </section>
-<section id="discovery" class="tab">
-<div class="notice">Independent flow-led continuation and bounce research. No orders or Discord alerts.</div>
-<article class="panel"><h2>Weekday candidates</h2><div id="discovery-weekday"></div></article>
-<article class="panel"><h2>Discovery coverage</h2><div id="discovery-coverage"></div></article>
-<article class="panel"><h2>Why a symbol did not qualify</h2><label>Symbol <input id="discovery-filter" placeholder="AMD" maxlength="15"></label><div id="discovery-reasons"></div></article>
-<article class="panel"><h2>Forward observations</h2><div id="discovery-records"></div></article>
+<article class="panel"><h2>0DTE selection diagnostics</h2><div id="zero-dte-diagnostics"></div></article>
+</div></section>
+
+<section id="sec-intraday" class="acc-section"><button class="acc-head" data-section="intraday"><span class="acc-title">Intraday</span><span class="acc-chn">#intraday</span><span class="chev">▾</span></button><div class="acc-body">
+<section id="scanners" class="tab legacy">
+<div class="banner">Evidence scanners rebuilt from TraderMatrix site views. Evidence only — no alerts, no auto-admission, no trades. Nothing here is a trading signal until prospective measurement says otherwise.</div>
+<article class="panel"><div class="panel-head"><h2>Apex magnets</h2><span class="muted" id="apex-asof"></span><label>Within <select id="apex-within"><option value="0.005">0.5%</option><option value="0.01">1%</option><option value="0.02" selected>2%</option><option value="0.05">5%</option><option value="1">All</option></select></label></div><div id="apex-rows"></div><h3>Signal transitions</h3><div id="apex-signals"></div><h3>Session outcomes</h3><div id="apex-outcomes"></div>
+<p class="fine">Vendor magnet levels joined with minute bars. Magnet drift history is not yet joined, so drift always reports current.</p></article>
+<article class="panel"><div class="panel-head"><h2>Tape confirmed</h2><span class="muted" id="tape-asof"></span></div><div id="tape-scorecard"></div><h3>Recent confirmed trials</h3><div id="tape-recent"></div>
+<p class="fine">Setup trials joined with ±15 minute same-direction flow (≥$250k premium, print score ≥85). Confirmed means the flow arrived before the trial was invalidated.</p></article>
+<article class="panel"><div class="panel-head"><h2>Gap continuation</h2><span class="muted" id="gap-asof"></span></div><div id="gap-board"></div><h3>Weekly outcomes</h3><div id="gap-weekly"></div>
+<p class="fine">Gaps ≥1.5% in curated large caps. 09:30–09:45 opening-range break plus a 10-minute hold; dealer opposition vetoes the setup.</p></article>
+<article class="panel"><div class="panel-head"><h2>Breakouts</h2><span class="muted" id="break-asof"></span></div><h3>Forming triangles</h3><div id="break-forming"></div><h3>Fresh breaks</h3><div id="break-fresh"></div><h3>Weekly outcomes</h3><div id="break-weekly"></div>
+<p class="fine">Close-only 20/50/253-session range breaks and mechanical 15-session triangle coils, volume-confirmed at 1.5×. Runs once daily after the close.</p></article>
 </section>
-<section id="swing-study" class="tab">
+<article class="panel"><div class="panel-head"><h2>Magnet-break push</h2><span class="muted" id="magnet-push-asof"></span></div><div id="magnet-push-status"><p class="muted">Loading…</p></div>
+<p class="fine">Posts to #intraday on broke_through transitions via the dedicated magnets webhook. Durable outbox with retry and 429 handling; delivery receipts below.</p></article>
+<section id="scanner" class="tab legacy">
+<div class="banner">One watchlist, shared market context. Triggered setups include entry, invalidation, targets, and source clocks. All trades are simulated.</div>
+<div id="scanner-stats" class="stats"></div>
+<article class="panel"><div class="panel-head"><h2>Setup feed</h2><label class="inline-label" for="scanner-filter">Show <select id="scanner-filter"><option value="active">Active setups</option><option value="all">All recent decisions</option></select></label></div><div id="opportunities"></div></article>
+<article class="panel"><h2>Symbols receiving focused research</h2><div id="scanner-focus"></div><p class="fine">Live stock prices cover the full watchlist. Option chains and vendor analytics prioritize developing setups and rotate through the remaining names.</p></article>
+<article class="panel"><h2>Research coverage</h2><div id="scanner-coverage"></div></article>
+</section>
+<section id="flow" class="tab legacy"><div class="banner">TraderMatrix supplies filtered unusual activity through polling. Massive supplies live prints for selected contracts. Neither view establishes a trade's opening or closing intent.</div>
+<article class="panel"><h2>TraderMatrix unusual activity</h2><div id="vendor-flows"></div></article>
+<article class="panel"><h2>Massive large option prints</h2><p class="muted">$100k minimum · selected contracts only</p><div id="flows"></div></article></section>
+<section id="exposure" class="tab legacy"><div class="banner">Compare vendor exposure with the local research proxy. A recent fetch does not make an old market snapshot current.</div>
+<h2>TraderMatrix GEX / VEX</h2><p class="muted">Concentrations across the expirations returned by the vendor. Methodology and units remain vendor defined.</p><div id="matrix"></div>
+<article class="panel"><div class="panel-head"><h2>Strike / expiration map</h2><div class="map-controls"><select id="map-symbol" aria-label="Map symbol"></select><select id="map-metric" aria-label="Exposure measure"><option value="gex">GEX</option><option value="vex">VEX</option></select></div></div><div id="strike-map"></div></article>
+<h2>Local exposure & input coverage</h2><p class="muted">Daily open interest, calls positive / puts negative. Local VEX estimates vanna; it is not assumed equivalent to TraderMatrix VEX.</p><div id="exposures"></div><h2>Greek input diagnostics</h2><div id="greek-diagnostics"></div></section>
+</div></section>
+
+<section id="sec-ideas" class="acc-section"><button class="acc-head" data-section="ideas"><span class="acc-title">Ideas</span><span class="acc-chn">#ideas</span><span class="chev">▾</span></button><div class="acc-body">
+<section id="smoothers" class="tab legacy">
+<div class="banner">Weekly stock signals, selected and ranked natively by Compass every Monday morning (9:35–10:30 CT). The original app remains the official sender until the handoff below is reviewed and armed.</div>
+<article class="panel"><div class="panel-head"><h2>Sender status</h2><span class="muted" id="smoothers-handoff-asof"></span></div><div id="smoothers-ownership"></div></article>
+<article class="panel"><div class="panel-head"><h2>Featured A+ picks</h2><span class="muted" id="smoothers-featured-asof"></span></div><div id="smoothers-featured"></div>
+<p class="fine">Top 10 by target ATR multiple among signals priceable at publication with non-negative modeled return. Ranked once Monday morning, before any outcome exists — never re-ranked after the fact.</p></article>
+<article class="panel"><div class="panel-head"><h2>Weekly roster</h2><label>Week <input id="smoothers-week" type="date"></label></div><div id="smoothers-roster"></div>
+<p class="fine">Entries are modeled at the first-hour close, not executable prices. WIN means the target was touched on a completed minute bar; UNRESOLVED means the week ended without a clean resolution.</p></article>
+<article class="panel"><h2>Past weeks</h2><div id="smoothers-history"></div></article>
+</section>
+<section id="pick-check" class="tab legacy">
+<div class="banner">Stack one external pick against Compass evidence: Apex magnets, institutional tape, gap continuation, breakouts, and exposure. Evidence only — no auto-admission, no alerts, no trades.</div>
+<article class="panel"><h2>Check a pick</h2>
+<div class="research-controls">
+<label>Ticker <input id="pickcheck-ticker" placeholder="SPY" style="text-transform:uppercase"></label>
+<label>Direction <select id="pickcheck-direction"><option value="long">Long</option><option value="short">Short</option></select></label>
+<label>Entry <input id="pickcheck-entry" type="number" step="any" placeholder="optional"></label>
+<label>Target <input id="pickcheck-target" type="number" step="any" placeholder="optional"></label>
+<label>Analyst / source <input id="pickcheck-source" placeholder="e.g. sal"></label>
+</div>
+<button id="pickcheck-run" type="button">Check against evidence</button>
+</article>
+<div id="pickcheck-result"></div>
+<article class="panel"><h2>Recent checks</h2><div id="pickcheck-recent"></div>
+<p class="fine">Every check is logged so analyst hit rates can be measured later. Call/put map to long/short.</p></article>
+<article class="panel"><div class="panel-head"><h2>Analyst scorecards</h2><span class="muted" id="pickcheck-scorecard-asof"></span></div><div id="pickcheck-scorecard"></div>
+<p class="fine">Outcomes are measured mechanically from daily bars after each check: a target touched within 5 sessions is a win; without a target, the sign of the 5-session direction-adjusted underlying move decides. Open means fewer than 5 sessions have printed. Moves are underlying percentages, not option P&amp;L. Evidence only.</p></article>
+</section>
+</div></section>
+
+<section id="sec-smoothers" class="acc-section"><button class="acc-head" data-section="smoothers"><span class="acc-title">Smoothers</span><span class="acc-chn">#smoothers</span><span class="chev">▾</span></button><div class="acc-body">
+<article class="panel"><h2>Smoothers sender handoff</h2><details open><summary>Review a complete week and prepare the next weekly cohort</summary>
+<p>The original app remains official during the comparison week. Activation requires matched weekly observations, current message previews, a review of the original channel, and the original sender paused. The source feed does not retain Discord delivery receipts.</p>
+<label>Completed review week (Monday date) <input id="smoothers-handoff-review" type="date"></label>
+<label>Next cohort (Monday date) <input id="smoothers-handoff-date" type="date"></label>
+<button id="smoothers-handoff-load" type="button">Load handoff status</button>
+<button id="smoothers-handoff-prepare" type="button">Prepare weekly evidence check</button>
+<label><input id="smoothers-handoff-paused" type="checkbox"> I have paused the original Smoothers sender</label>
+<label><input id="smoothers-handoff-reviewed" type="checkbox"> I reviewed and accepted the full week and message previews</label>
+<label><input id="smoothers-handoff-original" type="checkbox"> I checked the original channel's entry, roster, target and closure messages</label>
+<button id="smoothers-handoff-activate" type="button" disabled>Arm accepted weekly handoff</button>
+<button id="smoothers-handoff-rollback" type="button">Stop Compass Smoothers sending</button>
+<p>Rollback stops pending native sends. Check any in-flight or uncertain deliveries before manually resuming the original sender.</p>
+<pre id="smoothers-handoff-status" aria-live="polite"></pre></details></article>
+<article class="panel"><h2>Smoothers configurations</h2>
+<p>Compass owns the settings. Changes affect future weekly jobs; a started cohort keeps its original revision.</p>
+<button id="native-config-load" type="button">Load configurations</button>
+<div id="native-config-status" aria-live="polite"></div>
+<label>Ticker <select id="native-config-ticker"></select></label>
+<label>S1 <input id="native-s1" type="number" min="1" max="500"></label>
+<label>S2 <input id="native-s2" type="number" min="1" max="500"></label>
+<label>S3 <input id="native-s3" type="number" min="1" max="500"></label>
+<label>Target fraction <input id="native-pm" type="number" step="0.001" min="0.001" max="0.999"></label>
+<label><input id="native-enabled" type="checkbox"> Enabled</label>
+<label>Change reason <input id="native-config-reason" maxlength="300"></label>
+<button id="native-config-save" type="button" disabled>Save new revision</button>
+<label>Earlier revision <select id="native-config-history"></select></label>
+<button id="native-config-restore" type="button" disabled>Restore settings as new revision</button>
+</article>
+</div></section>
+
+<section id="sec-futures" class="acc-section"><button class="acc-head" data-section="futures"><span class="acc-title">Futures</span><span class="acc-chn">#futures</span><span class="chev">▾</span></button><div class="acc-body">
+<div class="banner">ICT concept detectors and YouTube-trader method detectors. Evidence only — nothing here alerts, admits, or trades until its flags are explicitly enabled.</div>
+<article class="panel"><div class="panel-head"><h2>ICT detectors</h2><span class="muted" id="ict-detector-asof"></span><label>Detector <select id="ict-detector-select">
+<option value="/api/ict-session-liquidity">Session liquidity</option>
+<option value="/api/ict-htf-levels">HTF levels</option>
+<option value="/api/ict-turtle-soup">Turtle soup</option>
+<option value="/api/ict-smt-divergence">SMT divergence</option>
+<option value="/api/ict-aoi-zones">AOI zones</option>
+<option value="/api/ict-continuation">Continuation</option>
+<option value="/api/ict-trendline-liquidity">Trendline liquidity</option>
+<option value="/api/ict-tier-a-b">Tier A/B</option>
+<option value="/api/ict-golden-zone">Golden zone + VWAP</option>
+<option value="/api/ict-bos-fvg">BOS + FVG</option>
+<option value="/api/ict-bos-gz-vwap">BOS + golden zone / VWAP</option>
+</select></label></div><div id="ict-detector-body"><p class="muted">Loading…</p></div>
+<p class="fine">Session liquidity and HTF levels are level-map producers without mechanical triggers; the rest expose entry, stop, and target levels.</p></article>
+<article class="panel"><div class="panel-head"><h2>YouTube-trader methods</h2><span class="muted" id="yt-method-asof"></span><label>Method <select id="yt-method-select">
+<option value="/api/yt-morning-drive">Morning-drive fade (Riley Coleman)</option>
+<option value="/api/yt-icc">ICC (tradesbysci)</option>
+<option value="/api/yt-rumers-box">Rumers Box</option>
+</select></label></div><div id="yt-method-body"><p class="muted">Loading…</p></div>
+<p class="fine">Mechanical skeletons of discretionary methods. Their creators' performance claims are unverified — judge these on paper results only.</p></article>
+<article class="panel"><div class="panel-head"><h2>Paper attribution</h2><span class="muted" id="ict-paper-asof"></span></div><div id="ict-paper-attribution"><p class="muted">Loading…</p></div>
+<p class="fine">Per-method wins, losses, and realized P&amp;L over closed simulated trades. Simulated fills only — no broker orders, no alerts.</p></article>
+<article class="panel"><h2>Futures session & contracts</h2><div id="future-readiness"></div></article>
+<section id="setup-study-futures" class="tab legacy">
+<article class="panel"><h2>Futures market conditions</h2><p class="fine">Forward hypotheses using completed bars. Candidate means a proposed strategy match, not an approved trade. Costs are illustrative; overlapping trials are not account returns. Unknown conditions and quote gaps remain visible. No execution is enabled.</p><p class="fine">Research follows the market session independently of Lucid account hours. Latest assessments below are timestamped; they do not establish uninterrupted coverage.</p><div id="study-census"></div><div id="study-market"></div></article>
+<article class="panel"><h2>Futures entry comparisons</h2><p id="study-variants-status" class="fine"></p><div id="study-variants"></div></article>
+<article class="panel"><h2>Do extra feeds improve futures setups?</h2>
+<p class="fine">Forward comparisons share the original setup, fill, exit and costs. Price only covers all 12 futures. SPY/QQQ confirmation covers the six index futures; flow and combined filters cover ES/MES and NQ/MNQ. GEX/VEX is context, not a directional filter.</p>
+<p id="study-feeds-status" class="fine" role="status"></p>
+<div class="map-controls">
+<label>Period <select id="study-feeds-phase"><option value="evaluation">Frozen evaluation</option><option value="warmup">Partial-session warmup</option></select></label>
+<label>Compare by <select id="study-feeds-view"><option value="groups">Setup</option><option value="conditions">Time of day / market condition</option><option value="exposure_groups">GEX / VEX context</option></select></label>
+<label>Contract <select id="study-feeds-contract"><option value="">All contracts</option></select></label>
+<label>Filter <select id="study-feeds-arm"><option value="">All filters</option><option value="price_only">Price only</option><option value="cross_market">Cross-market confirmation</option><option value="flow">Flow confirmation</option><option value="combined">Both confirmations</option></select></label>
+<label>Cohort <select id="study-feeds-cohort"><option value="all">All candidates</option><option value="alerted">Alerted</option><option value="quiet">Cooldown candidates</option></select></label>
+</div><p id="study-feeds-coverage" class="fine"></p><div class="map-controls"><button id="study-feeds-previous" type="button" disabled>Previous comparisons</button><button id="study-feeds-next" type="button" disabled>Next comparisons</button></div><div id="study-feeds"></div>
+<p class="fine">R per opportunity compares both policies on the same resolved trials with known feed decisions. Skipped trades contribute zero exposure; unknown feeds and unresolved paths contribute no return. These overlapping experiments are not account returns. Time and context cuts are exploratory. <a href="https://github.com/cyberstryder/market-compass/blob/main/docs/futures-feed-comparison.md" target="_blank" rel="noopener">Frozen feed-comparison protocol</a></p></article>
+</section>
+</div></section>
+
+<section id="sec-compass" class="acc-section"><button class="acc-head" data-section="compass"><span class="acc-title">Compass</span><span class="acc-chn">#compass</span><span class="chev">▾</span></button><div class="acc-body">
+<section id="alerts" class="tab legacy"><div class="panel-head"><h2>Alert feed</h2><span class="muted" id="alerts-updated"></span></div>
+<div id="alerts-feed"></div>
+<p class="fine">One stream: 0DTE setups (with Discord delivery status), Flash Agentic triggers (with Compass evidence), and the latest scanner signals. Auto-refreshes every minute while open. Nothing here places trades.</p></section>
+<section id="setup-study" class="tab legacy"><div class="banner">All stock, futures and scanner 0DTE setups are evaluated independently, including research-only candidates. Account entry, position and loss limits do not stop these experiments. Overlapping trials are not an account equity curve.</div>
+<p id="study-status" class="fine"></p><article class="panel"><div class="panel-head"><h2>Results by setup</h2><label for="study-cohort">Cohort <select id="study-cohort"><option value="all">All evaluated setups</option><option value="alerted">Alerted setups</option><option value="quiet">Non-alerted setups (research and cooldown)</option></select></label></div><div id="study-groups"></div></article>
+<article class="panel"><div class="panel-head"><h2>Individual setup outcomes</h2><div class="map-controls"><button id="study-previous" type="button" disabled>Previous records</button><button id="study-next" type="button" disabled>Next records</button><button id="study-newest" type="button">Newest records</button></div></div><p id="study-record-status" class="fine" aria-live="polite"></p><div id="study-records"></div></article></section>
+<section id="tm-study" class="tab legacy">
+<div class="banner">Received TraderMatrix records · Separate Compass assessments · Forward underlying moves</div>
+<div id="tm-study-summary" class="stats"></div>
+<article class="panel"><h2>Coverage and frozen rules</h2><div id="tm-study-coverage"></div><p class="fine">Compass points: EMA alignment 20, observed VWAP alignment 20, completed 15-minute trend 20, five-minute breakout 10, relative volume 10, volume/OI with sufficient OI 10, premium 10. Missing inputs produce an incomplete score. These provisional points are not a probability.</p></article>
+<article class="panel"><div class="panel-head"><h2>Same-record selection comparison</h2><label>Checkpoint <select id="tm-horizon"><option value="60m">60 trading minutes (primary)</option><option value="15m">15 trading minutes</option><option value="close">Upcoming session close</option><option value="1session">One later session</option><option value="3session">Three later sessions</option><option value="5session">Five later sessions</option></select></label></div><div id="tm-study-comparisons"></div><p class="fine">TM-only means TM ≥85; Compass-only means Compass ≥70; both means both thresholds. Arms overlap. Every comparison uses records with both complete scores and the same checkpoint. Positive moves are underlying midpoint changes, not option profits or trading wins.</p></article>
+<article class="panel"><div class="panel-head"><h2>Coverage and outcomes by group</h2><label>Group by <select id="tm-dimension"><option value="delay">Source age at receipt</option><option value="tm_score">TM score</option><option value="compass_score">Compass score</option><option value="dte">Expiration group</option><option value="flow_type">Flow type</option><option value="option_type">Call / put</option><option value="oi_bucket">Open interest</option><option value="direction">Direction</option><option value="receipt_session">Receipt session</option><option value="receipt_day">Receipt day</option></select></label></div><div id="tm-study-buckets"></div><p class="fine">Groups include prospective records with incomplete scores. Missing price measurements remain in their denominators. Delayed flow is measured after Compass receives it.</p></article>
+<article class="panel"><div class="panel-head"><h2>Individual received records</h2><label>Show <select id="tm-cohort"><option value="all">All registered records</option><option value="prospective">Prospective assessments</option><option value="scored">Complete Compass scores</option><option value="insufficient_data">Incomplete assessments</option><option value="historical_inventory">Historical inventory</option><option value="tm_selected">TM selected</option><option value="compass_selected">Compass selected</option><option value="both_selected">Both selected</option></select></label></div><p id="tm-record-status" class="fine" aria-live="polite"></p><div id="tm-study-records"></div><div class="research-controls"><button id="tm-previous" type="button">Previous</button><button id="tm-next" type="button">Next</button><button id="tm-newest" type="button">Newest records</button></div></article>
+</section>
+<section id="swing-study" class="tab legacy">
 <div class="banner">Swing candidate comparison · Technical-only, fresh flow and delayed flow · Underlying moves at the same candidate clock</div>
 <div id="swing-study-summary" class="stats"></div>
 <article class="panel"><h2>Candidate coverage and frozen rules</h2><div id="swing-study-coverage"></div>
@@ -244,57 +253,57 @@
 </select></label></div><div id="swing-study-groups"></div></article>
 <article class="panel"><div class="panel-head"><h2>Individual technical candidates</h2><label for="swing-study-cohort">Show <select id="swing-study-cohort">
 <option value="all">All registered candidates</option><option value="prospective">Prospective candidates</option>
-<option value="fresh_flow">Fresh flow</option><option value="delayed_flow">Delayed flow</option><option value="fresh_vendor_blocked">Fresh prints, vendor gate blocked</option>
-<option value="no_confirming_flow">No confirming observed flow</option><option value="unavailable">Flow coverage unavailable</option><option value="historical_inventory">Historical inventory</option>
+<option value="fresh_flow">Fresh flow</option><option value="delayed_flow">Delayed flow</option>
+<option value="fresh_vendor_blocked">Fresh prints, vendor gate blocked</option>
+<option value="no_confirming_flow">No confirming observed flow</option>
+<option value="unavailable">Flow coverage unavailable</option>
+<option value="historical_inventory">Historical inventory</option>
 </select></label></div><p id="swing-study-page-status" class="fine" aria-live="polite"></p><div id="swing-study-records"></div>
 <div class="research-controls"><button id="swing-study-prev" type="button">Previous</button><button id="swing-study-next" type="button">Next</button><button id="swing-study-newest" type="button">Newest candidates</button></div></article>
-<article class="panel"><h2>Separate option admission ledger</h2><div id="swing-study-options"></div><p><a href="/#swing-ideas">Open admitted Swing option observations →</a></p><p class="fine">Pending/excluded option ideas have no assumed fill. Option returns remain in their original ledger and are never substituted for this candidate study's stock moves.</p></article>
+<article class="panel"><h2>Separate option admission ledger</h2><div id="swing-study-options"></div><p><a href="#swing-ideas">Open admitted Swing option observations →</a></p><p class="fine">Pending/excluded option ideas have no assumed fill. Option returns remain in their original ledger and are never substituted for this candidate study's stock moves.</p></article>
 </section>
-<section id="research" class="tab">
+<section id="secondary" class="tab legacy">
+<div class="banner">Compass reviews each original candidate independently. Supported is a research assessment of the underlying direction. The original alerts and automation keep running.</div>
+<p id="secondary-status" class="fine"></p><div id="secondary-stats" class="stats"></div>
+<article class="panel"><h2>Current review data</h2><p id="secondary-readiness-note" class="fine"></p><div id="secondary-readiness"></div><div id="secondary-pending"></div></article>
+<article class="panel"><div class="panel-head"><h2>Originals versus Compass selection</h2><label for="secondary-horizon">Checkpoint <select id="secondary-horizon"><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60" selected>60 minutes</option></select></label></div>
+<p class="fine">Both columns use the same quote at review time and the same later checkpoint. Returns are direction-adjusted underlying midpoint changes before costs. They are not option returns or broker P&amp;L. Missing data are excluded and counted.</p>
+<p><label for="secondary-since">Review start (your device time) <input id="secondary-since" type="datetime-local" step="1"></label> <button id="secondary-period-apply" type="button">Load period</button> <button id="secondary-period-reset" type="button">Rolling 30 days</button></p>
+<p id="secondary-period-note" class="fine">Choose a start time to separate a corrected collection period. Results include measurements available when loaded.</p>
+<div id="secondary-comparison"></div><div id="secondary-weekly"></div>
+<p class="fine">Watch and rejected candidates remain in the comparison. A missed positive move is shown alongside an avoided negative move. The per-candidate filter result assigns zero exposure to unselected candidates; it is not portfolio performance. No automatic rule optimization runs.</p></article>
+<article class="panel"><div class="panel-head"><h2>Secondary assessments</h2><label for="secondary-filter">Source <select id="secondary-filter"><option value="all">All sources</option><option value="obsidian">Obsidian Watchlist</option><option value="morning">Morning Algo</option><option value="smoothers">Smoothers</option><option value="futures">TradingView futures</option><option value="compass_futures">Compass futures</option></select></label></div><div id="secondary-reviews"></div></article>
+</section>
+<section id="swing-ideas" class="tab legacy">
+<div class="banner">SWING IDEAS · Bullish and bearish daily setups with fresh, vendor-classified options flow. Selected contracts are tracked across stock sessions.</div>
+<p><a href="/#swing-study">Compare all technical candidates, including rejected flow →</a></p>
+<p id="swings-status" class="fine"></p><div id="swings-stats" class="stats"></div>
+<article class="panel"><div class="panel-head"><h2>Swing ideas and outcomes</h2><label for="swings-filter">Show <select id="swings-filter"><option value="all">All recent ideas</option><option value="active">Pending and open</option><option value="closed">Completed outcomes</option></select></label></div><div id="swings-records"></div>
+<p class="fine">Pending candidates have no option entry. Closed markets preserve the last observed mark. Overnight gaps can exceed stops; missing open-session observations remain unresolved. These overlapping one-contract experiments are separate from Smoothers and account performance.</p></article>
+<article class="panel"><h2>Results by swing setup</h2><div id="swings-groups"></div></article>
+<article class="panel"><h2>Swing scan coverage</h2><p id="swings-coverage-summary" class="fine"></p><details data-key="swing-coverage"><summary>Watchlist readiness</summary><div id="swings-coverage"></div></details></article>
+</section>
+<section id="discovery" class="tab legacy">
+<div class="notice">Independent flow-led continuation and bounce research. No orders or Discord alerts.</div>
+<article class="panel"><h2>Weekday candidates</h2><div id="discovery-weekday"></div></article>
+<article class="panel"><h2>Discovery coverage</h2><div id="discovery-coverage"></div></article>
+<article class="panel"><h2>Why a symbol did not qualify</h2><label>Symbol <input id="discovery-filter" placeholder="AMD" maxlength="15"></label><div id="discovery-reasons"></div></article>
+<article class="panel"><h2>Forward observations</h2><div id="discovery-records"></div></article>
+</section>
+<section id="obsidian" class="tab legacy"><div class="banner">Watchlist ideas, not provider trade entries. Reported percentages are separate from independently observed option prices.</div><article class="panel"><h2>Obsidian Watchlist</h2><div id="obsidian-status"></div><div id="obsidian-ideas"></div></article><article class="panel"><h2>Historical price audit</h2><div id="obsidian-history"></div></article><article class="panel"><h2>Provider updates</h2><div id="obsidian-events"></div></article></section>
+<section id="research" class="tab legacy">
 <div class="banner">Explore the latest vendor scanners, flow, market conditions, calendars, and positioning. Source time and retrieval time remain separate.</div>
 <article class="panel"><label for="research-source">Research source</label><select id="research-source"></select><div id="research-detail"></div></article>
 </section>
-<section id="alerts" class="tab active"><div class="panel-head"><h2>Alert feed</h2><span class="muted" id="alerts-updated"></span></div>
-<div id="alerts-feed"></div>
-<p class="fine">One stream: 0DTE setups (with Discord delivery status), Flash Agentic triggers (with Compass evidence), and the latest scanner signals. Auto-refreshes every minute while open. Nothing here places trades.</p></section>
-<section id="overview" class="tab"><div id="stats" class="stats"></div>
-<article class="panel"><div class="panel-head"><h2>Day trading board</h2><span class="muted" id="board-state"></span></div><div id="day-board"></div>
-<p class="fine">Built 08:30 CT, refreshed 09:00 CT, frozen at the open. Six-component catalyst score: earnings, economic, mover, flow, sector, radar. Watchlist only — the A+ alert gate is specified but not wired, so the board never alerts on its own.</p></article>
-<div class="columns">
-<article class="panel wide"><div class="panel-head"><h2>Watchlist & levels</h2><span class="muted">Latest observations</span></div><div id="watch"></div>
-<p class="fine">Futures use a 17:00–17:15 CT Globex range, then a new 08:30–08:45 CT regular-session range. Explicit contract IDs keep rolled prices separate.</p></article>
-<article class="panel"><div class="panel-head"><h2>Decision journal</h2><span class="dot"></span></div><div id="journal"></div></article></div>
-<article class="panel"><div class="panel-head"><h2>Research rules</h2><span class="pill">v0.1 · forward test</span></div><div class="rule-grid">
-<div><h3>Futures / intraday</h3><p>Closed-minute break of the active 15-minute range. Futures scan overnight and reset the range at the cash open. ATR stop, 2R target, fresh bid/ask required.</p></div>
-<div><h3>0DTE</h3><p>Underlying breakout selects an eligible same-day call or put. Up to eight nearby contracts are checked for fresh quotes and valid contract metadata; account limits do not gate research.</p></div>
-<div><h3>Swings</h3><p>Completed daily close above the preceding 20 daily highs. Entry waits for the next session and an executable quote.</p></div></div></article></section>
-<section id="exposure" class="tab"><div class="banner">Compare vendor exposure with the local research proxy. A recent fetch does not make an old market snapshot current.</div>
-<h2>TraderMatrix GEX / VEX</h2><p class="muted">Concentrations across the expirations returned by the vendor. Methodology and units remain vendor defined.</p><div id="matrix"></div>
-<article class="panel"><div class="panel-head"><h2>Strike / expiration map</h2><div class="map-controls"><select id="map-symbol" aria-label="Map symbol"></select><select id="map-metric" aria-label="Exposure measure"><option value="gex">GEX</option><option value="vex">VEX</option></select></div></div><div id="strike-map"></div></article>
-<h2>Local exposure & input coverage</h2><p class="muted">Daily open interest, calls positive / puts negative. Local VEX estimates vanna; it is not assumed equivalent to TraderMatrix VEX.</p><div id="exposures"></div><h2>Greek input diagnostics</h2><div id="greek-diagnostics"></div></section>
-<section id="flow" class="tab"><div class="banner">TraderMatrix supplies filtered unusual activity through polling. Massive supplies live prints for selected contracts. Neither view establishes a trade's opening or closing intent.</div>
-<article class="panel"><h2>TraderMatrix unusual activity</h2><div id="vendor-flows"></div></article>
-<article class="panel"><h2>Massive large option prints</h2><p class="muted">$100k minimum · selected contracts only</p><div id="flows"></div></article></section>
-<section id="setup-study" class="tab"><div class="banner">All stock, futures and scanner 0DTE setups are evaluated independently, including research-only candidates. Account entry, position and loss limits do not stop these experiments. Overlapping trials are not an account equity curve.</div>
-<p id="study-status" class="fine"></p><article class="panel"><div class="panel-head"><h2>Results by setup</h2><label for="study-cohort">Cohort <select id="study-cohort"><option value="all">All evaluated setups</option><option value="alerted">Alerted setups</option><option value="quiet">Non-alerted setups (research and cooldown)</option></select></label></div><div id="study-groups"></div></article>
-<article class="panel"><h2>Futures market conditions</h2><p class="fine">Forward hypotheses using completed bars. Candidate means a proposed strategy match, not an approved trade. Costs are illustrative; overlapping trials are not account returns. Unknown conditions and quote gaps remain visible. No execution is enabled.</p><p class="fine">Research follows the market session independently of Lucid account hours. Latest assessments below are timestamped; they do not establish uninterrupted coverage.</p><div id="study-census"></div><div id="study-market"></div></article>
-<article class="panel"><h2>Futures entry comparisons</h2><p id="study-variants-status" class="fine"></p><div id="study-variants"></div></article>
-<article class="panel"><h2>Do extra feeds improve futures setups?</h2>
-<p class="fine">Forward comparisons share the original setup, fill, exit and costs. Price only covers all 12 futures. SPY/QQQ confirmation covers the six index futures; flow and combined filters cover ES/MES and NQ/MNQ. GEX/VEX is context, not a directional filter.</p>
-<p id="study-feeds-status" class="fine" role="status"></p>
-<div class="map-controls">
-<label>Period <select id="study-feeds-phase"><option value="evaluation">Frozen evaluation</option><option value="warmup">Partial-session warmup</option></select></label>
-<label>Compare by <select id="study-feeds-view"><option value="groups">Setup</option><option value="conditions">Time of day / market condition</option><option value="exposure_groups">GEX / VEX context</option></select></label>
-<label>Contract <select id="study-feeds-contract"><option value="">All contracts</option></select></label>
-<label>Filter <select id="study-feeds-arm"><option value="">All filters</option><option value="price_only">Price only</option><option value="cross_market">Cross-market confirmation</option><option value="flow">Flow confirmation</option><option value="combined">Both confirmations</option></select></label>
-<label>Cohort <select id="study-feeds-cohort"><option value="all">All candidates</option><option value="alerted">Alerted</option><option value="quiet">Cooldown candidates</option></select></label>
-</div><p id="study-feeds-coverage" class="fine"></p><div class="map-controls"><button id="study-feeds-previous" type="button" disabled>Previous comparisons</button><button id="study-feeds-next" type="button" disabled>Next comparisons</button></div><div id="study-feeds"></div>
-<p class="fine">R per opportunity compares both policies on the same resolved trials with known feed decisions. Skipped trades contribute zero exposure; unknown feeds and unresolved paths contribute no return. These overlapping experiments are not account returns. Time and context cuts are exploratory. <a href="https://github.com/cyberstryder/market-compass/blob/main/docs/futures-feed-comparison.md" target="_blank" rel="noopener">Frozen feed-comparison protocol</a></p></article>
-<article class="panel"><div class="panel-head"><h2>Individual setup outcomes</h2><div class="map-controls"><button id="study-previous" type="button" disabled>Previous records</button><button id="study-next" type="button" disabled>Next records</button><button id="study-newest" type="button">Newest records</button></div></div><p id="study-record-status" class="fine" aria-live="polite"></p><div id="study-records"></div></article></section>
-<section id="daily-results" class="tab"><article class="panel"><h2>Daily results and verification</h2><p>Complete daily totals. Paper account returns, overlapping research observations and weekly targets are reported separately.</p><label>Trading day <input id="daily-day" type="date"></label> <button id="daily-load" type="button">Load daily results</button> <a id="daily-download" href="/api/daily-results?download=true">Download JSON</a><p id="daily-status" role="status">Load the latest opened futures session or choose a date.</p><div id="daily-report"></div></article></section>
-<section id="trades" class="tab"><div class="banner">Historical paper benchmark. In research mode, new paper entries and account notifications are paused. Existing positions finish silently under their original rules. Use Daily results for independent research.</div>
-<article class="panel"><h2>Trade ledger</h2><div id="ledger"></div></article></section>
-<section id="assistant" class="tab"><article class="panel ask-panel"><p class="eyebrow">SHARED MARKET CONTEXT</p><h2>What would you like to understand?</h2>
+<section id="research-admin" class="tab legacy">
+<div class="research-intro"><div><p class="eyebrow">THE WHOLE RESEARCH PROGRAM</p><h2>What we have, what we know, what comes next.</h2><p>Collection, assessment, outcomes and alert delivery have separate evidence. Saving a record does not mean it has a Compass rating or a measured result.</p></div><a class="research-download" href="/api/research-admin?download=true">Download status</a></div>
+<div id="research-admin-summary" class="stats" aria-live="polite"></div>
+<article class="panel research-gap"><h2>TraderMatrix coverage</h2><div id="research-admin-coverage"></div></article>
+<div class="research-controls"><label for="research-admin-search">Find a program<input id="research-admin-search" type="search" placeholder="Morning, swings, futures…"></label><label for="research-admin-filter">Show<select id="research-admin-filter"><option value="all">All workstreams</option><option value="attention">Needs attention</option><option value="results">Has measured results</option></select></label><p id="research-admin-count" class="muted" aria-live="polite"></p></div>
+<div id="research-admin-streams" class="research-cards"></div>
+<article class="panel"><h2>Saved evidence and reporting limits</h2><div id="research-admin-storage"></div><div id="research-admin-notes"></div></article>
+</section>
+<section id="assistant" class="tab legacy"><article class="panel ask-panel"><p class="eyebrow">SHARED MARKET CONTEXT</p><h2>What would you like to understand?</h2>
 <p class="muted">Ask about market setups, options from 0DTE through LEAPS, recorded levels, or why a simulated trade was skipped.</p>
 <form id="ask"><label for="question">Your question</label><textarea id="question" maxlength="2000" rows="3" placeholder="What is missing before we can trust the SPY exposure view?" required></textarea>
 <div class="ask-actions"><button type="submit">Ask Compass →</button><button id="ask-cancel" type="button" class="quiet" hidden>Cancel</button></div></form>
@@ -305,16 +314,36 @@
 <p id="ask-wait-note" class="fine"></p>
 <details id="ask-evidence" hidden open><summary id="ask-evidence-title">Data supplied to this answer</summary><p id="ask-evidence-note" class="fine"></p><div id="ask-facts" class="ask-facts"></div></details>
 </section><p id="answer" class="answer" aria-live="polite"></p><p id="answer-time" class="fine"></p></article></section>
-<section id="health" class="tab"><div class="banner">A running server does not mean market data is ready. Check both source timestamps and collector heartbeats during open sessions.</div>
+<section id="trades" class="tab legacy"><div class="banner">Historical paper benchmark. In research mode, new paper entries and account notifications are paused. Existing positions finish silently under their original rules. Use Daily results for independent research.</div>
+<article class="panel"><h2>Trade ledger</h2><div id="ledger"></div></article></section>
+<section id="daily-results" class="tab legacy"><article class="panel"><h2>Daily results and verification</h2><p>Complete daily totals. Paper account returns, overlapping research observations and weekly targets are reported separately.</p><label>Trading day <input id="daily-day" type="date"></label> <button id="daily-load" type="button">Load daily results</button> <a id="daily-download" href="/api/daily-results?download=true">Download JSON</a><p id="daily-status" role="status">Load the latest opened futures session or choose a date.</p><div id="daily-report"></div></article></section>
+<div id="health-panels">
+<div class="banner">A running server does not mean market data is ready. Check both source timestamps and collector heartbeats during open sessions.</div>
 <article class="panel"><h2>Quotes required for simulation</h2><div id="quote-checks"></div></article>
-<article class="panel"><h2>Futures session & contracts</h2><div id="future-readiness"></div></article>
 <article class="panel"><h2>Storage and archives</h2><div id="storage-health"></div></article>
-<article class="panel"><h2>Observation reliability</h2><div id="observation-reliability"></div></article><article class="panel"><h2>0DTE selection diagnostics</h2><div id="zero-dte-diagnostics"></div></article><article class="panel" id="session-gaps"><h2>Session totals and unresolved observations</h2><p class="fine">Complete session cohort counts. Browse every recorded gap without treating missing outcomes as losses.</p><label>Observation type <select name="asset"><option value="future">Futures</option><option value="option">Intraday option ideas</option></select></label> <label>Session scope <select name="scope"><option value="full">Full futures session (includes overnight)</option><option value="cash">Since equity cash open</option></select></label> <label>Session date <input name="session_day" type="date"></label> <button data-load>Load / refresh session</button> <button data-next disabled>Load more gaps</button><p class="fine">Dates name the trading day when the session closes. Leave blank for the latest session that has opened. Options use cash hours.</p><p data-summary></p><p data-status aria-live="polite">Load a session to inspect its complete totals and gaps.</p><div data-records></div></article><article class="panel"><h2>Forward acceptance</h2><div id="forward-acceptance"></div></article><article class="panel"><h2>Independent collectors</h2><div id="health-table"></div><p id="workers" class="fine"></p></article>
+<article class="panel"><h2>Observation reliability</h2><div id="observation-reliability"></div></article><article class="panel" id="session-gaps"><h2>Session totals and unresolved observations</h2><p class="fine">Complete session cohort counts. Browse every recorded gap without treating missing outcomes as losses.</p><label>Observation type <select name="asset"><option value="future">Futures</option><option value="option">Intraday option ideas</option></select></label> <label>Session scope <select name="scope"><option value="full">Full futures session (includes overnight)</option><option value="cash">Since equity cash open</option></select></label> <label>Session date <input name="session_day" type="date"></label> <button data-load>Load / refresh session</button> <button data-next disabled>Load more gaps</button><p class="fine">Dates name the trading day when the session closes. Leave blank for the latest session that has opened. Options use cash hours.</p><p data-summary></p><p data-status aria-live="polite">Load a session to inspect its complete totals and gaps.</p><div data-records></div></article><article class="panel"><h2>Forward acceptance</h2><div id="forward-acceptance"></div></article><article class="panel"><h2>Independent collectors</h2><div id="health-table"></div><p id="workers" class="fine"></p></article>
 <article class="panel"><h2>Alert channels</h2><div id="alert-routes"></div></article>
 <article class="panel"><h2>Discord delivery</h2><div id="delivery"></div><label for="test-route">Test channel</label><select id="test-route"><option value="research">compass</option></select><button id="test-alert" type="button">Send test alert</button><p id="test-result" class="fine" aria-live="polite"></p></article>
 <article class="panel"><h2>First-session verification</h2>
 <p class="muted">Connections are checked. Live readiness still requires advancing source times, usable option inputs, and a recorded simulated entry, exit, and confirmed alert.</p>
-<p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></section>
-<footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
-<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/pickcheck.js"></script><script src="/static/daily-results.js"></script><script src="/static/alerts.js"></script></body></html>
+<p class="fine">Futures use the CME trading day for risk limits, including the overnight session. New entries stop at 15:15 CT; intraday futures flatten at 15:45 CT, or earlier on an exchange early close. Equity and 0DTE rules use the cash session.</p></article></div>
+<div id="program-panels">
+<div class="banner">Signals and outcomes from Morning Algo, New Smoothers, and the automated futures strategies. Market context is captured separately; each project keeps its original rules and results.</div>
+<div id="project-status" class="stats"></div>
+<article class="panel"><h2>Native Morning and Smoothers</h2><div id="native-programs"></div></article>
+<article class="panel"><h2>Native reports and delivery reconciliation</h2>
+<p>Calculated from Compass records. Original-source comparisons remain optional; missing data stays visible.</p>
+<label>Ticker <input id="native-ticker" maxlength="50" placeholder="All tickers"></label>
+<label>Morning from <input id="native-start" type="date"></label><label>through <input id="native-end" type="date"></label>
+<label>Smoothers week (Monday) <input id="native-week" type="date"></label>
+<button id="native-report-load" type="button">Load native report</button> <a id="native-report-download" href="/api/native/report?download=true">Download JSON</a>
+<div id="native-report-result" aria-live="polite"></div></article>
+<article class="panel"><h2>Program replacement checks</h2><div id="program-parity"></div></article>
+<article class="panel"><h2>Transfer to Compass</h2><div id="strategy-migration"></div></article>
+<article class="panel"><div class="panel-head"><h2>Combined observations</h2><label for="project-filter">Project <select id="project-filter"><option value="all">All projects</option><option value="morning">Morning Algo</option><option value="smoothers">New Smoothers</option><option value="futures">Automated futures</option></select></label></div><div id="project-records"></div>
+<p class="fine">Morning checkpoints measure underlying moves. Smoothers WIN means its underlying target was reached. Futures events come from TradingView's strategy emulator; actual broker fills remain unverified. Historical imports have no reconstructed entry context.</p></article>
+</div>
+</div></section>
 
+<footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
+<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/pickcheck.js"></script><script src="/static/daily-results.js"></script><script src="/static/alerts.js"></script><script src="/static/detectors.js"></script></body></html>
