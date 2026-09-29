@@ -622,6 +622,12 @@ def create_app(cfg=None):
         headers={'Content-Disposition':'attachment; filename="daily-results.json"'} if download else None
         return JSONResponse(report,headers=headers)
 
+    @app.get('/api/summary')
+    def get_summary():
+        from .summary import build as summary_build
+        with db.tx() as c:
+            return summary_build(db, c, time.time())
+
     @app.get("/api/secondary")
     def get_secondary():
         with db.tx() as c: return secondary_snapshot(db,c,time.time(),clock=time.time)

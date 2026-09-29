@@ -3,6 +3,7 @@
 <title>Market Compass</title><link rel="stylesheet" href="/static/style.css"></head><body>
 <aside class="sidebar"><a class="brand" href="/">↗ <span>Market<br>Compass</span></a><p class="eyebrow">WORKSPACE</p>
 <nav>
+<button class="nav" data-tab="summary">Summary</button>
 <button class="nav" data-tab="morning-brief">Morning Brief <span class="chn">#morning-brief</span></button>
 <button class="nav" data-tab="0dte">0DTE <span class="chn">#0dte</span></button>
 <button class="nav" data-tab="intraday">Intraday <span class="chn">#intraday</span></button>
@@ -15,6 +16,15 @@
 <main class="workspace"><header><div><p class="eyebrow">MARKET INTELLIGENCE</p><h1 id="title">Compass</h1></div>
 <div class="header-right"><span id="market" class="pill">Checking session</span><p id="clock" class="mono"></p></div></header>
 <p id="operating-mode" class="banner">Research mode · Paper trading paused</p><div id="connection" class="banner">Connecting to the shared market state…</div>
+
+<section id="sec-summary" class="acc-section"><button class="acc-head" data-section="summary"><span class="acc-title">Summary</span><span class="chev">▾</span></button><div class="acc-body">
+<div class="banner">What we took, what we skipped, and why. Detail stays in the sections below.</div>
+<article class="panel"><div class="panel-head"><h2>0DTE options</h2><span class="muted" id="summary-day"></span></div><div id="summary-0dte"><p class="muted">Loading…</p></div></article>
+<article class="panel"><div class="panel-head"><h2>Intraday</h2></div><div id="summary-intraday"><p class="muted">Loading…</p></div></article>
+<article class="panel"><div class="panel-head"><h2>Futures</h2></div><div id="summary-futures"><p class="muted">Loading…</p></div></article>
+<article class="panel"><div class="panel-head"><h2>Smoothers</h2><span class="muted" id="summary-smoothers-week"></span></div><div id="summary-smoothers"><p class="muted">Loading…</p></div>
+<p class="fine">The Smoothers page itself is unchanged — this is just the week's glance.</p></article>
+</div></section>
 
 <section id="sec-morning-brief" class="acc-section"><button class="acc-head" data-section="morning-brief"><span class="acc-title">Morning Brief</span><span class="acc-chn">#morning-brief</span><span class="chev">▾</span></button><div class="acc-body">
 <section id="overview" class="tab legacy"><div id="stats" class="stats"></div>
@@ -346,4 +356,4 @@
 </div></section>
 
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
-<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/pickcheck.js"></script><script src="/static/daily-results.js"></script><script src="/static/alerts.js"></script><script src="/static/detectors.js"></script></body></html>
+<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/pickcheck.js"></script><script src="/static/daily-results.js"></script><script src="/static/alerts.js"></script><script src="/static/detectors.js"></script><script src="/static/summary.js"></script></body></html>

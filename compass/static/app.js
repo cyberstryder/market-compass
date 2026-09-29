@@ -7,7 +7,7 @@ const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notati
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
 const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated','event_stale','poll_stale','vendor_stale','mixed'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
-const TITLES={'morning-brief':'Morning Brief','0dte':'0DTE','intraday':'Intraday','ideas':'Ideas','smoothers':'Smoothers','futures':'Futures','compass':'Compass'};
+const TITLES={'summary':'Summary','morning-brief':'Morning Brief','0dte':'0DTE','intraday':'Intraday','ideas':'Ideas','smoothers':'Smoothers','futures':'Futures','compass':'Compass'};
 /* Old per-tab hashes redirect to their new section. */
 const LEGACY={alerts:'compass',overview:'morning-brief',scanner:'intraday',flow:'intraday',exposure:'intraday',assistant:'compass',scanners:'intraday','option-ideas':'0dte','swing-ideas':'compass',discovery:'compass',obsidian:'compass',smoothers:'ideas','pick-check':'ideas','setup-study':'futures','tm-study':'compass','swing-study':'compass','spy-study':'0dte',secondary:'compass',trades:'compass','daily-results':'compass',health:'compass',projects:'compass','research-admin':'compass',research:'compass'};
 let lastState=null,first=true,testEvent=null;
@@ -23,6 +23,7 @@ function selectTab(key){
  if(key==='futures'&&lastState)renderSetupStudy(lastState.setup_study);
  if(key==='compass'&&lastState){renderTMStudy(lastState.tm_study);renderSwingStudy(lastState.swing_study);}
  if(key==='0dte'&&lastState)renderSPYStudy(lastState.spy_study);
+ if(key==='summary'&&window.__renderSummary)window.__renderSummary();
  const sec=document.getElementById('sec-'+key);if(sec)sec.scrollIntoView({block:'start'});
 }
 function toggleSection(key){
@@ -33,7 +34,7 @@ function toggleSection(key){
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>selectTab(b.dataset.tab));
 document.querySelectorAll('.acc-head').forEach(b=>b.onclick=()=>toggleSection(b.dataset.section));
 window.addEventListener('hashchange',()=>selectTab(location.hash.slice(1)));
-selectTab(location.hash.slice(1)||'compass');
+selectTab(location.hash.slice(1)||'summary');
 $('#logout').onclick=async()=>{await fetch('/logout',{method:'POST'});location.href='/login';};
 let secondaryReport=null,secondaryReportRequest=0;
 function vendorMatrix(items){
