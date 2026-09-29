@@ -6,6 +6,13 @@ zone (61.8%-78.6% retracement of the leg) overlapping session VWAP (within
 0.25x ATR) is the POI. Signal fires when price retraces into the zone:
 direction is counter to the leg (mean reversion toward the leg origin).
 
+EMA-CROSS CONFIRMATION (added 2026-09-29): a signal additionally requires
+the fast EMA (default 9) to have crossed the slow EMA (default 21) in the
+signal's direction within the last ICT_GZ_EMA_CROSS_LOOKBACK (default 5)
+bars ending at the signal bar -- the trigger Stormzy-style GZ+VWAP trades
+use. Kill-switch: ICT_GZ_EMA_CROSS_ENABLED=false restores zone+VWAP-only
+behavior.
+
 CONVENTION DEVIATION (documented): the brief says "stop beyond 78.6% by
 0.25 ATR". For a counter-leg entry the 78.6% level sits on the *favorable*
 side of the trade (a deeper retracement helps a fade targeting the origin),
@@ -30,6 +37,9 @@ VWAP_TOL_ATR_FRAC_DEFAULT = 0.25
 STOP_ATR_FRAC_DEFAULT = 0.25
 MIN_RR_DEFAULT = 1.5
 VWAP_MIN_BARS_DEFAULT = 20
+EMA_FAST_DEFAULT = 9
+EMA_SLOW_DEFAULT = 21
+EMA_CROSS_LOOKBACK_DEFAULT = 5
 
 
 def _bars_from_window(window):
@@ -112,16 +122,77 @@ def vwap_confluence_ok(zone, vwap, atr_v,
     return dist <= tol_atr_frac * atr_v
 
 
+def _ema(values, period):
+    """EMA series aligned with `values`; first period-1 entries are None.
+
+    Seeded with the simple average of the first `period` values.
+    """
+    out = [None] * len(values)
+    if period < 1 or len(values) < period:
+        return out
+    k = 2.0 / (period + 1.0)
+    e = sum(values[:period]) / period
+    out[period - 1] = e
+    for i in range(period, len(values)):
+        e = values[i] * k + e * (1.0 - k)
+        out[i] = e
+    return out
+
+
+def ema_cross_ok(bars, direction, fast=EMA_FAST_DEFAULT, slow=EMA_SLOW_DEFAULT,
+                 lookback=EMA_CROSS_LOOKBACK_DEFAULT, up_to_idx=None):
+    """EMA-cross confirmation for a signal.
+
+    `direction` is the *signal* direction: 'long' needs a bullish cross
+    (fast crossing above slow), 'short' a bearish cross. True when the
+    cross happened within the last `lookback` bars ending at `up_to_idx`
+    (default: the most recent bar). Needs at least `slow` + 1 closes --
+    without enough history no confirmation is possible, so False.
+    """
+    if up_to_idx is None:
+        up_to_idx = len(bars) - 1
+    try:
+        fast, slow, lookback = int(fast), int(slow), int(lookback)
+    except (TypeError, ValueError):
+        return False
+    if not (1 <= fast < slow) or lookback < 1:
+        return False
+    if up_to_idx < slow or up_to_idx >= len(bars):
+        return False
+    closes = [number(b.get('c')) for b in bars[:up_to_idx + 1]]
+    if any(c is None for c in closes) or len(closes) < slow + 1:
+        return False
+    ef, es = _ema(closes, fast), _ema(closes, slow)
+    want = 1 if direction == 'long' else -1  # sign of (fast - slow) after cross
+    lo = max(slow, up_to_idx - lookback + 1)
+    for i in range(lo, up_to_idx + 1):
+        prev = (ef[i - 1] or 0) - (es[i - 1] or 0)
+        cur = (ef[i] or 0) - (es[i] or 0)
+        prev_s = 1 if prev > 0 else (-1 if prev < 0 else 0)
+        cur_s = 1 if cur > 0 else (-1 if cur < 0 else 0)
+        # TradingView crossunder/cross convention: coming from the opposite
+        # side *or* from equilibrium counts as a cross.
+        if prev_s != want and cur_s == want:
+            return True
+    return False
+
+
 def detect_signal(bars, leg, vwap, atr_v,
                   vwap_tol_atr_frac=VWAP_TOL_ATR_FRAC_DEFAULT,
                   stop_atr_frac=STOP_ATR_FRAC_DEFAULT,
-                  min_rr=MIN_RR_DEFAULT):
+                  min_rr=MIN_RR_DEFAULT,
+                  ema_fast=EMA_FAST_DEFAULT, ema_slow=EMA_SLOW_DEFAULT,
+                  ema_cross_lookback=EMA_CROSS_LOOKBACK_DEFAULT,
+                  require_ema_cross=False):
     """Most recent retrace-into-zone after the leg extreme, counter-leg direction.
 
     Returns the signal dict, or None when VWAP confluence fails, no bar
     retraces into the zone, or risk is non-positive. When the leg origin
     yields rr < min_rr the target is extended to exactly min_rr (per the
-    "leg origin or 1.5R" brief).
+    "leg origin or 1.5R" brief). With require_ema_cross=True the signal is
+    additionally gated on a fresh fast/slow EMA cross in the signal's
+    direction (see ema_cross_ok); the cross state is always reported in
+    the returned dict as 'ema_cross'.
     """
     if not atr_v or atr_v <= 0 or number(vwap) is None:
         return None
@@ -137,6 +208,11 @@ def detect_signal(bars, leg, vwap, atr_v,
     if sig_idx is None:
         return None
     entry = bars[sig_idx]['c']
+    direction = 'short' if leg['direction'] == 'bullish' else 'long'
+    crossed = ema_cross_ok(bars, direction, fast=ema_fast, slow=ema_slow,
+                           lookback=ema_cross_lookback, up_to_idx=sig_idx)
+    if require_ema_cross and not crossed:
+        return None
     stop_atr_frac = number(stop_atr_frac)
     if stop_atr_frac is None:
         stop_atr_frac = STOP_ATR_FRAC_DEFAULT
@@ -177,7 +253,9 @@ def detect_signal(bars, leg, vwap, atr_v,
             'entry': entry, 'stop': stop, 'target': target,
             'target_kind': target_kind,
             'risk_pts': risk, 'reward_pts': reward, 'rr': rr,
-            'stop_buf_atr_frac': stop_atr_frac, 'atr': atr_v}
+            'stop_buf_atr_frac': stop_atr_frac, 'atr': atr_v,
+            'ema_fast': ema_fast, 'ema_slow': ema_slow,
+            'ema_cross_lookback': ema_cross_lookback, 'ema_cross': crossed}
 
 
 def _exclusion_reason(bars, leg, vwap, atr_v, tol_atr_frac):
@@ -221,9 +299,29 @@ def scan(db, c, cfg, now):
                        or VWAP_MIN_BARS_DEFAULT)
     except (TypeError, ValueError):
         vwap_min = VWAP_MIN_BARS_DEFAULT
+    try:
+        ema_fast = int(number(getattr(cfg, 'ict_gz_ema_fast',
+                                      EMA_FAST_DEFAULT)) or EMA_FAST_DEFAULT)
+        ema_slow = int(number(getattr(cfg, 'ict_gz_ema_slow',
+                                      EMA_SLOW_DEFAULT)) or EMA_SLOW_DEFAULT)
+        ema_lookback = int(number(getattr(cfg, 'ict_gz_ema_cross_lookback',
+                                          EMA_CROSS_LOOKBACK_DEFAULT))
+                           or EMA_CROSS_LOOKBACK_DEFAULT)
+    except (TypeError, ValueError):
+        ema_fast, ema_slow = EMA_FAST_DEFAULT, EMA_SLOW_DEFAULT
+        ema_lookback = EMA_CROSS_LOOKBACK_DEFAULT
+    if not (1 <= ema_fast < ema_slow):
+        ema_fast, ema_slow = EMA_FAST_DEFAULT, EMA_SLOW_DEFAULT
+    require_ema = getattr(cfg, 'ict_gz_ema_cross', True)
+    if isinstance(require_ema, str):
+        require_ema = require_ema.strip().lower() in ('1', 'true', 'yes', 'on')
+    require_ema = bool(require_ema)
     params = {'fractal_n': n, 'leg_atr_mult': leg_mult,
               'vwap_tol_atr_frac': tol_frac, 'stop_atr_frac': stop_frac,
-              'min_rr': min_rr, 'vwap_min_bars': vwap_min}
+              'min_rr': min_rr, 'vwap_min_bars': vwap_min,
+              'ema_fast': ema_fast, 'ema_slow': ema_slow,
+              'ema_cross_lookback': ema_lookback,
+              'ema_cross_required': require_ema}
     rows, excluded = {}, {}
     today = day(now)
     n_signals = 0
@@ -240,10 +338,24 @@ def scan(db, c, cfg, now):
         vwap = session_vwap(bars, now, min_bars=vwap_min)
         sig = (detect_signal(bars, leg, vwap, atr_v,
                              vwap_tol_atr_frac=tol_frac,
-                             stop_atr_frac=stop_frac, min_rr=min_rr)
+                             stop_atr_frac=stop_frac, min_rr=min_rr,
+                             ema_fast=ema_fast, ema_slow=ema_slow,
+                             ema_cross_lookback=ema_lookback,
+                             require_ema_cross=require_ema)
                if leg else None)
         if sig is None:
-            reason = _exclusion_reason(bars, leg, vwap, atr_v, tol_frac)
+            if leg is not None and require_ema:
+                # Zone + VWAP + retrace passed but the EMA cross didn't fire:
+                # report the real reason instead of the generic 'no_retrace'.
+                probe = detect_signal(bars, leg, vwap, atr_v,
+                                      vwap_tol_atr_frac=tol_frac,
+                                      stop_atr_frac=stop_frac, min_rr=min_rr,
+                                      require_ema_cross=False)
+                reason = ('no_ema_cross' if probe is not None
+                          else _exclusion_reason(bars, leg, vwap, atr_v,
+                                                 tol_frac))
+            else:
+                reason = _exclusion_reason(bars, leg, vwap, atr_v, tol_frac)
             excluded[reason] = excluded.get(reason, 0) + 1
             rows[symbol] = {'symbol': symbol, 'excluded': reason, 'at': now,
                             'n_legs': len(legs),

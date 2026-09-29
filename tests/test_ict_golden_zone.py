@@ -142,7 +142,7 @@ def test_scan_throttled(db):
 def test_scan_writes_snapshot_and_signal_without_paper(db):
     with db.tx() as c:
         _seed(db, c)
-        out = gz.scan(db, c, _cfg(), NOW)
+        out = gz.scan(db, c, _cfg(ict_gz_ema_cross=False), NOW)
         assert out['ran'] is True
         snap = db.get(c, 'ict_golden_zone:latest')
         assert snap['rows'][SYM]['direction'] == 'short'
@@ -154,7 +154,7 @@ def test_scan_writes_snapshot_and_signal_without_paper(db):
 
 
 def test_scan_submits_paper_when_both_flags_on(db):
-    cfg = _cfg(ict_futures_paper=True)
+    cfg = _cfg(ict_futures_paper=True, ict_gz_ema_cross=False)
     with db.tx() as c:
         _seed(db, c)
         gz.scan(db, c, cfg, NOW)
@@ -182,3 +182,111 @@ def test_display_note_mentions_paper(db):
         payload = gz.display(db, c, NOW)
     assert 'ICT_FUTURES_PAPER_ENABLED' in payload['note']
     assert 'No live orders' in payload['note']
+
+
+# --- EMA-cross confirmation ---
+
+def _mkbars(closes):
+    bars = []
+    for i, c in enumerate(closes):
+        o = closes[i - 1] if i else c
+        bars.append({'ts': OPEN + i * 60, 'o': o, 'h': max(o, c) + 0.1,
+                     'l': min(o, c) - 0.1, 'c': c, 'v': 100})
+    return bars
+
+
+def test_ema_cross_ok_bullish_within_lookback():
+    bars = _mkbars([10.0] * 15 + [10.5, 11.0, 11.5, 12.0, 12.5])
+    assert gz.ema_cross_ok(bars, 'long', fast=3, slow=5) is True
+    assert gz.ema_cross_ok(bars, 'short', fast=3, slow=5) is False
+
+
+def test_ema_cross_ok_bearish_within_lookback():
+    bars = _mkbars([12.0] * 15 + [11.5, 11.0, 10.5, 10.0, 9.5])
+    assert gz.ema_cross_ok(bars, 'short', fast=3, slow=5) is True
+    assert gz.ema_cross_ok(bars, 'long', fast=3, slow=5) is False
+
+
+def test_ema_cross_ok_rejects_stale_cross():
+    closes = [10.0] * 5 + [10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 14.5, 15] \
+        + [15.0] * 8  # cross happened ~13 bars before the end
+    bars = _mkbars(closes)
+    assert gz.ema_cross_ok(bars, 'long', fast=3, slow=5, lookback=5) is False
+    assert gz.ema_cross_ok(bars, 'long', fast=3, slow=5,
+                           lookback=20) is True
+
+
+def test_ema_cross_ok_flat_and_short_series():
+    assert gz.ema_cross_ok(_mkbars([10.0] * 20), 'long',
+                           fast=3, slow=5) is False
+    assert gz.ema_cross_ok(_mkbars([10, 11, 12, 13]), 'long',
+                           fast=3, slow=5) is False  # < slow + 1 bars
+    assert gz.ema_cross_ok(_mkbars([10.0] * 20), 'long',
+                           fast=5, slow=5) is False  # fast >= slow
+
+
+def _trend_reversal_bars():
+    """40 bars: climb 100 -> 113.5, flat top, then a steep drop into the
+    golden zone. The 3/5 bearish EMA cross lands inside the last 5 bars."""
+    closes = [100.0] * 10
+    closes += [100 + i * 0.9 for i in range(1, 16)]
+    closes += [113.4] * 10
+    closes += [111.5, 109.6, 107.7, 105.8, 103.9]
+    return _mkbars(closes)
+
+
+def test_detect_signal_ema_gate_passes_with_fresh_cross():
+    from compass.ict_common import atr
+    bars = _trend_reversal_bars()
+    a = atr(bars, 14)
+    leg = gz.detect_legs(bars)[-1]
+    assert leg['direction'] == 'bullish'
+    zlo, zhi = gz.golden_zone(leg)
+    sig = gz.detect_signal(bars, leg, (zlo + zhi) / 2, a,
+                           require_ema_cross=True,
+                           ema_fast=3, ema_slow=5, ema_cross_lookback=5)
+    assert sig is not None
+    assert sig['direction'] == 'short'
+    assert sig['ema_cross'] is True
+    assert zlo <= sig['entry'] <= zhi
+
+
+def test_detect_signal_ema_gate_blocks_without_cross(bars):
+    from compass.ict_common import atr, session_vwap
+    a = atr(bars, 14)
+    leg = gz.detect_legs(bars)[-1]
+    vwap = session_vwap(bars, NOW, min_bars=5)
+    # 16 bars can't confirm a 9/21 cross: gated signal is suppressed...
+    assert gz.detect_signal(bars, leg, vwap, a,
+                            require_ema_cross=True) is None
+    # ...while the ungated path keeps the pre-existing behavior.
+    sig = gz.detect_signal(bars, leg, vwap, a, require_ema_cross=False)
+    assert sig is not None
+    assert sig['ema_cross'] is False
+
+
+def test_scan_excludes_no_ema_cross_by_default(db):
+    with db.tx() as c:
+        _seed(db, c)
+        out = gz.scan(db, c, _cfg(), NOW)
+    assert out['ran'] is True
+    assert out['signals'] == 0
+    with db.tx() as c:
+        snap = db.get(c, 'ict_golden_zone:latest')
+        assert snap['rows'][SYM]['excluded'] == 'no_ema_cross'
+        assert snap['excluded'].get('no_ema_cross') == 1
+        assert db.recent(c, 'ict_golden_zone_signal', limit=10) == []
+    assert snap['params']['ema_cross_required'] is True
+    assert snap['params']['ema_fast'] == 9
+    assert snap['params']['ema_slow'] == 21
+
+
+def test_scan_ema_gate_kill_switch(db):
+    cfg = _cfg(ict_gz_ema_cross=False)
+    with db.tx() as c:
+        _seed(db, c)
+        out = gz.scan(db, c, cfg, NOW)
+        assert out['signals'] == 1
+        snap = db.get(c, 'ict_golden_zone:latest')
+        assert snap['rows'][SYM]['direction'] == 'short'
+        assert snap['params']['ema_cross_required'] is False
