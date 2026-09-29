@@ -9,7 +9,7 @@ with or without an egress proxy and always sends the Origin header
 TradingView's edge requires. Bars are cached locally as JSON with a daily
 refresh cadence. The engine tick path NEVER touches the network --
 htf_levels reads the cache only via daily_bars_for_scan(). A manual refresh:
-    python -m compass.tradingview_daily --symbols NQ.c.0,ES.c.0,GC.v.0,SI.v.0,CL.v.0
+    python -m compass.tradingview_daily --symbols MNQ.c.0,MES.c.0,MGC.v.0,SIL.v.0,MCL.v.0
 (Scheduling a refresh is deferred to Phase 2.)
 
 Evidence only. No alerts, no trades, no credentials. Every public entry
@@ -45,16 +45,16 @@ REFRESH_PAUSE_S = 2.0                   # pacing between symbols
 
 # ICT alias root -> TradingView continuous front-month future.
 TV_SYMBOLS = {
-    "NQ": "CME_MINI:NQ1!",
-    "ES": "CME_MINI:ES1!",
-    "GC": "COMEX:GC1!",
-    "SI": "COMEX:SI1!",
-    "CL": "NYMEX:CL1!",
+    "MNQ": "CME_MINI:MNQ1!", "NQ": "CME_MINI:NQ1!",
+    "MES": "CME_MINI:MES1!", "ES": "CME_MINI:ES1!",
+    "MGC": "COMEX:MGC1!", "GC": "COMEX:GC1!",
+    "SIL": "COMEX:SIL1!", "SI": "COMEX:SI1!",
+    "MCL": "NYMEX:MCL1!", "CL": "NYMEX:CL1!",
 }
 
 
 def tv_symbol_for(alias):
-    """Map an ICT alias like 'NQ.c.0' to a TradingView symbol, or None."""
+    """Map an ICT alias like 'MNQ.c.0' to a TradingView symbol, or None."""
     root = (alias or "").split(".")[0].strip().upper()
     return TV_SYMBOLS.get(root)
 
@@ -476,7 +476,7 @@ def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(
         description="Refresh cached TradingView daily bars for ICT futures.")
-    ap.add_argument("--symbols", default="NQ.c.0,ES.c.0,GC.v.0,SI.v.0,CL.v.0",
+    ap.add_argument("--symbols", default="MNQ.c.0,MES.c.0,MGC.v.0,SIL.v.0,MCL.v.0",
                     help="comma-separated ICT aliases")
     ap.add_argument("--cache-dir", default=None)
     ap.add_argument("--force", action="store_true",

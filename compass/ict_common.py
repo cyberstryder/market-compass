@@ -1,18 +1,25 @@
 """Shared helpers for the ICT futures concept detectors.
 
-Production futures bars land under resolved keys like
-`bar_window:NQ.c.0@123456` (alias@instrument_id), while tests write the
-bare alias (`bar_window:NQ.c.0`). These helpers resolve either form so
-detectors stay instrument-agnostic and test-friendly.
+Production futures bars land under dated-contract keys like
+`bar_window:MNQZ25@123456` (raw symbol @ instrument id), as written by the
+Databento collectors, while tests write the bare alias
+(`bar_window:MNQ.c.0`). These helpers resolve either form so detectors
+stay instrument-agnostic and test-friendly: an alias such as `MNQ.c.0`
+or `MGC.v.0` resolves to the newest dated-contract window for its root.
 
 Evidence only. No alerts, no trades.
 """
+import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from .instruments import future_root
 from .market import number
 
 CT = ZoneInfo("America/Chicago")
+
+# bar_window:<ROOT><month><yy>@<iid>, e.g. bar_window:MNQZ25@123456
+_DATED_WINDOW = re.compile(r'^bar_window:([A-Z]+)([FGHJKMNQUVXZ]\d{1,4})@(.+)$')
 
 
 def _bars_from_window(window):
@@ -42,21 +49,37 @@ def _bars_from_recent(rows):
     return sorted(out, key=lambda b: b['ts'])
 
 
-def resolve_bar_key(db, c, alias):
-    """Return the db key suffix holding bars for `alias`.
-
-    Prefers an exact `bar_window:<alias>` hit (tests), else the newest
-    `bar_window:<alias>@<iid>` production key. Returns None when neither exists.
-    """
-    if db.get(c, 'bar_window:' + alias, None):
-        return alias
+def _newest(rows_by_key):
     best, best_ts = None, -1
-    for key in db.prefix(c, 'bar_window:' + alias + '@'):
-        rows = db.get(c, key, [])
+    for key, rows in rows_by_key:
         ts = rows[-1][0] if rows and len(rows[-1]) else -1
         if ts and ts > best_ts:
             best, best_ts = key[11:], ts
     return best
+
+
+def resolve_bar_key(db, c, alias):
+    """Return the db key suffix holding bars for `alias`.
+
+    Prefers an exact `bar_window:<alias>` hit (tests), else the newest
+    `bar_window:<alias>@<iid>` key. Futures aliases (`MNQ.c.0`,
+    `MGC.v.0`) additionally resolve to the newest dated-contract window
+    for their root (`bar_window:MNQZ25@<iid>`), which is the form the
+    Databento collectors actually write. Returns None when neither exists.
+    """
+    if db.get(c, 'bar_window:' + alias, None):
+        return alias
+    hit = _newest((key, db.get(c, key, []))
+                  for key in db.prefix(c, 'bar_window:' + alias + '@'))
+    if hit is not None:
+        return hit
+    root = future_root(alias)
+    if root:
+        dated = [(key, db.get(c, key, []))
+                 for key in db.prefix(c, 'bar_window:' + root)
+                 if (m := _DATED_WINDOW.match(key)) and m.group(1) == root]
+        return _newest(dated)
+    return None
 
 
 def ict_bars(db, c, alias, limit=1800):
