@@ -127,12 +127,47 @@ def _ict_section(db, c, symbol, direction, now):
     else:
         alignment, note = 'no_data', \
             'no ICT detector has usable data for this symbol'
+    tb_verdict, tb_note = _trend_bias_note(db, c, root, direction, now)
+    if tb_verdict:
+        verdicts['trend_bias'] = tb_verdict
+    if tb_note:
+        note = (note + ' ' + tb_note) if note else tb_note
     return {'alignment': alignment, 'note': note, 'detail': verdicts,
             'basis': 'Precomputed ICT futures detector snapshots (latest scan '
                      'per method); a fired signal in the pick direction '
                      'supports, an opposite signal contradicts.'}
 
 
+def _trend_bias_note(db, c, root, direction, now):
+    """Daily-regime framing for a futures pick. Returns (verdict_dict, note).
+
+    Never moves the score (verdict is 'info'); it only frames the trade as
+    with-trend (runner framing) or counter-trend (scalp framing), per the
+    3R rule's trend-bias component.
+    """
+    try:
+        latest = db.get(c, 'trend_bias:latest', {}) or {}
+        if now - (latest.get('at') or 0) > ICT_STALE_AFTER:
+            return None, None
+        row = _ict_row_for(latest.get('rows') or {}, root)
+        if not row or row.get('excluded'):
+            return None, None
+        regime = str(row.get('regime') or '')
+        if regime not in ('bullish', 'bearish'):
+            return None, None
+        with_trend = (regime == 'bullish' and direction == 'long') or \
+                     (regime == 'bearish' and direction == 'short')
+        framing = ('with-trend — runner framing'
+                   if with_trend else
+                   'counter-trend — scalp framing (take profits quickly)')
+        note = '%s regime (close %s %d-day SMA); pick is %s' % (
+            regime, 'above' if regime == 'bullish' else 'below',
+            int(row.get('sma_len') or 50), framing)
+        return {'label': 'Trend bias (daily SMA)', 'verdict': 'info',
+                'note': note}, (None if with_trend else
+                                'Counter-trend vs daily regime: scalp framing.')
+    except Exception:  # noqa: BLE001 - regime context never breaks the check
+        return None, None
 def _apex_section(display, symbol, direction, spot, target):
     rows = _rows_for(display.get('rows'), symbol)
     above = sorted([r for r in rows if (r.get('magnet') or 0) > (spot or 0)],

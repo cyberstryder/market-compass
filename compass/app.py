@@ -473,6 +473,12 @@ def create_app(cfg=None):
         with db.tx() as c:
             return display(db,c,time.time())
 
+    @app.get('/api/trend-bias')
+    def get_trend_bias():
+        from .trend_bias import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
     class PickCheckIn(BaseModel):
         ticker:str=Field(min_length=1,max_length=12)
         direction:str=Field(min_length=1,max_length=10)

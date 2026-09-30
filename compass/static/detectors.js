@@ -20,6 +20,17 @@ function renderSignals(d){
   }));
 }
 
+function renderRegimes(d){
+  const rows=d.regime_rows||[];
+  if(!rows.length)return empty('No regime data','The daily scan has not produced regimes yet. Evidence only.');
+  return table(['Symbol','Regime','Close','SMA','Distance %'],rows.map(r=>[
+    esc(r.symbol||'—'),
+    r.excluded?esc('no data ('+r.excluded+')'):'<strong>'+esc(r.regime||'—')+'</strong>',
+    r.close==null?'—':num(r.close,2),r.sma==null?'—':num(r.sma,2),
+    r.dist_pct==null?'—':num(r.dist_pct,2)+'%'
+  ]));
+}
+
 async function loadDetector(selId,bodyId,asofId){
   const sel=$(selId),body=$(bodyId);if(!sel||!body)return;
   const d=await getJSON(sel.value);
@@ -27,7 +38,7 @@ async function loadDetector(selId,bodyId,asofId){
   if(asofId&&$(asofId))$(asofId).textContent=d.asof?('as of '+when(d.asof)):'';
   body.innerHTML='<p class="fine">'+esc(d.note||'Research evidence only.')+'</p>'+
     '<p>'+num((d.signals||[]).length,0)+' recent signals'+(d.params&&Object.keys(d.params).length?' · <span class="fine">'+esc(JSON.stringify(d.params)).slice(0,200)+'</span>':'')+'</p>'+
-    renderSignals(d);
+    (d.regime_rows?renderRegimes(d):renderSignals(d));
 }
 
 async function loadAttribution(){

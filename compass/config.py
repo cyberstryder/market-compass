@@ -65,6 +65,8 @@ class Config:
     ict_morning_drive: bool = field(default_factory=lambda: env("ICT_MORNING_DRIVE_ENABLED","false")=="true")
     ict_icc: bool = field(default_factory=lambda: env("ICT_ICC_ENABLED","false")=="true")
     ict_rumers_box: bool = field(default_factory=lambda: env("ICT_RUMERS_BOX_ENABLED","false")=="true")
+    ict_trend_bias: bool = field(default_factory=lambda: env("ICT_TREND_BIAS_ENABLED","false")=="true")
+    ict_trend_bias_sma_len: int = field(default_factory=lambda: int(env("ICT_TREND_BIAS_SMA_LEN","50")))
     ict_futures_paper: bool = field(default_factory=lambda: env("ICT_FUTURES_PAPER_ENABLED","false")=="true")
     ict_symbols: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("ICT_SYMBOLS","MNQ.c.0,MES.c.0,MGC.v.0,SIL.v.0,MCL.v.0").split(",") if s.strip()))
     ict_htf_tradingview: bool = field(default_factory=lambda: env("ICT_HTF_TRADINGVIEW","false")=="true")

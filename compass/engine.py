@@ -462,6 +462,11 @@ class Engine:
             if self.cfg.ict_rumers_box:
                 from .rumers_box import scan as yt_rumers_box_scan
                 ict_summaries['rumers_box'] = yt_rumers_box_scan(self.db,c,self.cfg,now)
+            # Daily trend-bias regime (Rumers 3R rule): evidence-only context,
+            # never a filter or sizer.
+            if self.cfg.ict_trend_bias:
+                from .trend_bias import scan as ict_trend_bias_scan
+                ict_summaries['trend_bias'] = ict_trend_bias_scan(self.db,c,self.cfg,now)
             self.ideas.tick(c,now)
             from .observation_recovery import tick as recovery_tick
             recovery_tick(self.db,c,self.clock() if self.clock else now)
@@ -489,6 +494,10 @@ class Engine:
             if _s and _s.get('ran'):
                 self.db.health('ict_' + _ict_name, 'running',
                                'ran, %d symbols' % (_s.get('symbols', 0)))
+        _tb = ict_summaries.get('trend_bias')
+        if _tb and _tb.get('ran'):
+            self.db.health('trend_bias', 'running',
+                           'ran, %d symbols' % (_tb.get('symbols', 0)))
 
     async def run(self):
         while True:
