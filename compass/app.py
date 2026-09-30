@@ -282,7 +282,14 @@ def create_app(cfg=None):
             from .operating_mode import policy, paper_message
             positions=list(db.prefix(c,"position:").values())
             trades=sorted(db.prefix(c,"trade:").values(),key=lambda p:p.get("entered_at",0),reverse=True)[:100]
-            data={"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","operating_policy":policy(cfg),"markets":markets,
+            # The engine writes its live operating policy to the shared DB on
+            # every tick; prefer it over this service's own config so the
+            # dashboard banner reflects what is actually paper trading.
+            eng_policy=db.get(c,"operating_policy",{}) or {}
+            live_policy=(eng_policy if isinstance(eng_policy,dict)
+                         and "paper_entries_enabled" in eng_policy
+                         and now-eng_policy.get("at",0)<300 else policy(cfg))
+            data={"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","operating_policy":live_policy,"markets":markets,
                 "storage":storage_snapshot(db,c,now),"health":health,"workers":workers,"quotes":watch,
                 "scanner":scanner_snapshot(db,c,cfg,now),
                 "projects":projects_snapshot(db,c,cfg,now),
@@ -633,6 +640,15 @@ def create_app(cfg=None):
         from .summary import build as summary_build
         with db.tx() as c:
             return summary_build(db, c, time.time())
+
+    @app.get('/api/daily-status')
+    def get_daily_status(day:str=Query('',max_length=10)):
+        from .daily_status import build as daily_status_build
+        try:
+            with db.tx() as c:
+                return daily_status_build(db, c, cfg, time.time(), day or None)
+        except ValueError as exc:
+            raise HTTPException(422,str(exc)) from exc
 
     @app.get("/api/secondary")
     def get_secondary():

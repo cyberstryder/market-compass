@@ -3,6 +3,7 @@
 <title>Market Compass</title><link rel="stylesheet" href="/static/style.css"></head><body>
 <aside class="sidebar"><a class="brand" href="/">↗ <span>Market<br>Compass</span></a><p class="eyebrow">WORKSPACE</p>
 <nav>
+<button class="nav" data-tab="daily">Daily</button>
 <button class="nav" data-tab="summary">Summary</button>
 <button class="nav" data-tab="morning-brief">Morning Brief <span class="chn">#morning-brief</span></button>
 <button class="nav" data-tab="0dte">0DTE <span class="chn">#0dte</span></button>
@@ -15,6 +16,13 @@
 <main class="workspace"><header><div><p class="eyebrow">MARKET INTELLIGENCE</p><h1 id="title">Compass</h1></div>
 <div class="header-right"><span id="market" class="pill">Checking session</span><p id="clock" class="mono"></p></div></header>
 <p id="operating-mode" class="banner">Research mode · Paper trading paused</p><div id="connection" class="banner">Connecting to the shared market state…</div>
+
+<section id="sec-daily" class="acc-section"><button class="acc-head" data-section="daily"><span class="acc-title">Daily</span><span class="chev">▾</span></button><div class="acc-body">
+<div class="banner">One trading day across every section. Pick a date; every number below comes from the same records its section shows. Detail stays in the sections.</div>
+<article class="panel"><div class="panel-head"><h2>Trading day</h2><span class="muted" id="daily-asof"></span></div>
+<div class="research-controls"><label>Day <input id="daily-day" type="date"></label><button id="daily-load" type="button">Load day</button><p id="daily-note" class="fine"></p></div>
+<div id="daily-body"><p class="muted">Loading…</p></div></article>
+</div></section>
 
 <section id="sec-summary" class="acc-section"><button class="acc-head" data-section="summary"><span class="acc-title">Summary</span><span class="chev">▾</span></button><div class="acc-body">
 <div class="banner">What we took, what we skipped, and why. Detail stays in the sections below.</div>
@@ -345,4 +353,4 @@
 </div></section>
 
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span id="updated"></span></footer></main>
-<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/summary.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/pickcheck.js"></script><script src="/static/daily-results.js"></script><script src="/static/alerts.js"></script><script src="/static/detectors.js"></script></body></html>
+<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/summary.js"></script><script src="/static/app.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/pickcheck.js"></script><script src="/static/daily-results.js"></script><script src="/static/alerts.js"></script><script src="/static/detectors.js"></script><script src="/static/panels.js"></script><script src="/static/daily.js"></script></body></html>

@@ -58,3 +58,12 @@ select{font:inherit;border:1px solid var(--line);border-radius:6px;background:va
 .acc-section.open .acc-body{display:block}
 .tab.legacy{display:block}
 #health-panels,#program-panels{margin-top:8px}
+/* collapsible panels */
+article.panel > .panel-head,article.panel > h2,article.panel > h3{cursor:pointer}
+article.panel > h2,article.panel > h3{display:flex;align-items:baseline;gap:10px}
+.pchev{margin-left:auto;color:var(--muted);transition:transform .15s;font-size:11px;flex-shrink:0}
+article.panel.collapsed .pchev{transform:rotate(-90deg)}
+article.panel.collapsed > :not(.panel-head):not(h2):not(h3){display:none}
+.panel-tools{margin-bottom:14px}
+.panel-tools .quiet{padding:4px 8px;font-size:12px}
+.daily-sec h3{margin:22px 0 10px}
