@@ -7,9 +7,29 @@ logged so analyst hit rates can be measured later.
 import time
 
 from . import apex_magnet, tape_confirmed, gap_continuation, breakouts
+from .instruments import FUTURES, future_root
 
 LONG = {'long', 'bullish', 'call', 'calls', 'c'}
 SHORT = {'short', 'bearish', 'put', 'puts', 'p'}
+
+# detector key, :latest snapshot key, display label
+ICT_DETECTORS = (
+    ('golden_zone', 'ict_golden_zone:latest', 'Golden Zone + VWAP'),
+    ('bos_fvg', 'ict_bos_fvg:latest', 'BOS + FVG'),
+    ('bos_gz_vwap', 'ict_bos_gz_vwap:latest', 'BOS + GZ/VWAP'),
+    ('turtle_soup', 'ict_turtle_soup:latest', 'Turtle Soup'),
+    ('smt_divergence', 'ict_smt_divergence:latest', 'SMT Divergence'),
+    ('aoi_zones', 'ict_aoi_zones:latest', 'AOI Zones'),
+    ('continuation', 'ict_continuation:latest', 'Continuation'),
+    ('trendline_liquidity', 'ict_trendline_liquidity:latest',
+     'Trendline Liquidity'),
+    ('morning_drive', 'morning_drive:latest', 'Morning-Drive Fade'),
+    ('icc', 'icc:latest', 'ICC'),
+    ('rumers_box', 'rumers_box:latest', 'Rumers Box'),
+)
+
+# A detector snapshot older than this is too stale to judge a live pick.
+ICT_STALE_AFTER = 24 * 3600
 
 
 def normalize_direction(raw):
@@ -23,6 +43,94 @@ def normalize_direction(raw):
 
 def _rows_for(rows, symbol):
     return [r for r in (rows or []) if str(r.get('symbol') or '').upper() == symbol]
+
+
+def _futures_root(symbol):
+    """Contract root for a futures pick symbol, or None for non-futures."""
+    root = future_root(symbol or '')
+    if root:
+        return root
+    bare = str(symbol or '').split('.')[0].strip().upper()
+    return bare if bare in FUTURES else None
+
+
+def _ict_row_for(rows, root):
+    """Find the detector row covering `root`. SMT rows are keyed by pair."""
+    for r in (rows or {}).values() if isinstance(rows, dict) else (rows or []):
+        sym = str(r.get('symbol') or '')
+        if _futures_root(sym) == root:
+            return r
+        pair = str(r.get('pair') or '')
+        if pair and root in {_futures_root(p) for p in pair.split(':')}:
+            return r
+    return None
+
+
+def _ict_verdict(det_key, label, latest_key, db, c, root, direction, now):
+    """One detector's verdict on a futures pick.
+
+    Returns (verdict, note) with verdict in
+    supports/contradicts/neutral/no_data.
+    """
+    latest = db.get(c, latest_key, {}) or {}
+    rows = latest.get('rows') or {}
+    at = latest.get('at') or 0
+    if not rows or now - at > ICT_STALE_AFTER:
+        return 'no_data', 'detector has not run recently'
+    row = _ict_row_for(rows, root)
+    if row is None:
+        return 'no_data', 'symbol not in detector universe'
+    if row.get('excluded') == 'no_bars':
+        return 'no_data', 'no bar data for symbol'
+    if row.get('excluded'):
+        return 'neutral', 'scanned, no setup (%s)' % row['excluded']
+    sig_dir = str(row.get('direction') or '').lower()
+    sig_ts = row.get('signal_ts') or row.get('at') or at
+    age_h = (now - sig_ts) / 3600 if sig_ts else None
+    age = '' if age_h is None else ' %.1fh ago' % age_h
+    if sig_dir == direction:
+        return 'supports', 'fired %s%s' % (sig_dir, age)
+    if sig_dir in ('long', 'short'):
+        return 'contradicts', 'fired %s%s' % (sig_dir, age)
+    return 'neutral', 'signal without direction%s' % age
+
+
+def _ict_section(db, c, symbol, direction, now):
+    """Aggregate ICT-detector evidence for a futures pick.
+
+    Reads each detector's precomputed :latest snapshot (no new scanning);
+    never raises.
+    """
+    root = _futures_root(symbol)
+    verdicts = {}
+    for det_key, latest_key, label in ICT_DETECTORS:
+        try:
+            v, note = _ict_verdict(det_key, label, latest_key, db, c, root,
+                                  direction, now)
+        except Exception:  # noqa: BLE001 - one bad detector never breaks the check
+            v, note = 'no_data', 'read error'
+        verdicts[det_key] = {'label': label, 'verdict': v, 'note': note}
+    n_sup = sum(1 for v in verdicts.values() if v['verdict'] == 'supports')
+    n_con = sum(1 for v in verdicts.values() if v['verdict'] == 'contradicts')
+    n_dat = sum(1 for v in verdicts.values() if v['verdict'] != 'no_data')
+    if n_sup and not n_con:
+        alignment, note = 'supports', \
+            '%d detector(s) fired with the pick' % n_sup
+    elif n_con and not n_sup:
+        alignment, note = 'contradicts', \
+            '%d detector(s) fired against the pick' % n_con
+    elif n_sup and n_con:
+        alignment, note = 'neutral', \
+            'detectors split: %d with, %d against' % (n_sup, n_con)
+    elif n_dat:
+        alignment, note = 'neutral', 'detectors scanned, no setup fired'
+    else:
+        alignment, note = 'no_data', \
+            'no ICT detector has usable data for this symbol'
+    return {'alignment': alignment, 'note': note, 'detail': verdicts,
+            'basis': 'Precomputed ICT futures detector snapshots (latest scan '
+                     'per method); a fired signal in the pick direction '
+                     'supports, an opposite signal contradicts.'}
 
 
 def _apex_section(display, symbol, direction, spot, target):
@@ -185,6 +293,8 @@ def check(db, c, now, ticker, direction, entry=None, target=None, source='',
                     if not brk_d.get('_error') else _pillar_error('breakout', brk_d),
         'exposure': _exposure_section(db, c, symbol),
     }
+    if _futures_root(symbol):
+        pillars['ict'] = _ict_section(db, c, symbol, direction, now)
     backfilled = []
     if cfg is not None and getattr(cfg, 'pick_backfill', True):
         pillars, backfilled, bf_spot = _maybe_backfill(

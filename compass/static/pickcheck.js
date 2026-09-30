@@ -1,6 +1,6 @@
 /* Pick checker: stack one external pick against Compass evidence. Read-only views plus a POST to /api/pick-check. */
 (()=>{
- const PILLARS=[['apex','Apex magnets'],['tape','Institutional tape'],['gap','Gap continuation'],['breakout','Breakouts'],['exposure','Exposure / GEX']];
+ const PILLARS=[['apex','Apex magnets'],['tape','Institutional tape'],['gap','Gap continuation'],['breakout','Breakouts'],['exposure','Exposure / GEX'],['ict','ICT futures']];
  const ALIGN_CLS={supports:'good',contradicts:'bad',neutral:'',info:'',no_data:''};
  const alignTag=a=>'<span class="tag '+(ALIGN_CLS[a]||'')+'">'+esc((a||'no_data').replaceAll('_',' '))+'</span>';
 
@@ -25,6 +25,9 @@
   }else if(key==='exposure'){
    const keys=Object.keys(detail).slice(0,6);
    extra=keys.length?'<div class="fine">'+esc(keys.map(k=>k+'='+String(detail[k]).slice(0,40)).join(' · '))+'</div>':'<div>No exposure snapshot for this symbol.</div>';
+  }else if(key==='ict'){
+   const vs=Object.values(detail||{});
+   extra=vs.length?vs.map(v=>'<div>'+esc(v.label||'')+': <strong>'+esc((v.verdict||'no_data').replaceAll('_',' '))+'</strong>'+(v.note?' <span class="fine">— '+esc(v.note)+'</span>':'')+'</div>').join(''):'<div>No ICT detector data.</div>';
   }
   return '<article class="panel research-card"><div class="panel-head"><h2>'+esc(PILLARS.find(x=>x[0]===key)[1])+'</h2>'+alignTag(p.alignment)+'</div>'
    +(p.note?'<p>'+esc(p.note)+'</p>':'')
@@ -34,7 +37,7 @@
 
  function renderResult(r){
   const pills=r.pillars||{};
-  const names={'apex':'apex','tape':'tape','gap':'gap','breakout':'breakout','exposure':'exposure'};
+  const names={'apex':'apex','tape':'tape','gap':'gap','breakout':'breakout','exposure':'exposure','ict':'ict'};
   const counted=r.pillars_counted??0,score=r.evidence_score??0;
   $('#pickcheck-result').innerHTML=
    '<article class="panel"><div class="panel-head"><h2>'+esc(r.ticker)+' · '+esc(r.direction)+'</h2><span class="pill">evidence score '+(score>=0?'+':'')+score+' / '+counted+' pillars</span></div>'

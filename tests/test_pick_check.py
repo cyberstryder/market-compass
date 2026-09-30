@@ -106,3 +106,103 @@ def test_record_logged_and_retrievable(db):
     rec = rows[0]['payload']
     assert rec['ticker'] == 'SPY' and rec['source'] == 'sal'
     assert set(rec['pillars']) == {'apex', 'tape', 'gap', 'breakout', 'exposure'}
+
+
+def seed_ict(db, c, det_key, rows, at=NOW):
+    db.put(c, det_key + ':latest', {'at': at, 'rows': rows})
+
+
+def test_ict_pillar_absent_for_equity(db):
+    with db.tx() as c:
+        out = pc.check(db, c, NOW, 'SPY', 'long', 600.0, 610.0, 'sal')
+    assert 'ict' not in out['pillars']
+
+
+def test_ict_supports_when_detector_fired_with_pick(db):
+    with db.tx() as c:
+        seed_ict(db, c, 'ict_bos_fvg', {
+            'MNQ.c.0': {'symbol': 'MNQ.c.0', 'direction': 'short',
+                       'signal_ts': NOW - 1800, 'at': NOW}})
+        out = pc.check(db, c, NOW, 'MNQ', 'short', 30685.25, 30664.25,
+                       'stormzy')
+    ict = out['pillars']['ict']
+    assert ict['alignment'] == 'supports'
+    assert ict['detail']['bos_fvg']['verdict'] == 'supports'
+    assert ict['detail']['golden_zone']['verdict'] == 'no_data'
+
+
+def test_ict_contradicts_on_opposite_signal(db):
+    with db.tx() as c:
+        seed_ict(db, c, 'ict_bos_fvg', {
+            'MNQ.c.0': {'symbol': 'MNQ.c.0', 'direction': 'long',
+                       'signal_ts': NOW - 1800, 'at': NOW}})
+        out = pc.check(db, c, NOW, 'MNQ', 'short', 30685.25, 30664.25,
+                       'stormzy')
+    assert out['pillars']['ict']['alignment'] == 'contradicts'
+
+
+def test_ict_neutral_on_excluded_no_setup(db):
+    with db.tx() as c:
+        seed_ict(db, c, 'ict_bos_fvg', {
+            'MNQ.c.0': {'symbol': 'MNQ.c.0', 'excluded': 'no_bos',
+                       'at': NOW}})
+        out = pc.check(db, c, NOW, 'MNQ', 'short', 30685.25, 30664.25,
+                       'stormzy')
+    ict = out['pillars']['ict']
+    assert ict['alignment'] == 'neutral'
+    assert ict['detail']['bos_fvg']['verdict'] == 'neutral'
+
+
+def test_ict_no_data_on_no_bars_and_stale(db):
+    with db.tx() as c:
+        seed_ict(db, c, 'ict_bos_fvg', {
+            'MNQ.c.0': {'symbol': 'MNQ.c.0', 'excluded': 'no_bars',
+                       'at': NOW}})
+        seed_ict(db, c, 'ict_golden_zone', {
+            'MNQ.c.0': {'symbol': 'MNQ.c.0', 'direction': 'short',
+                       'signal_ts': NOW - 1800, 'at': NOW}},
+                 at=NOW - 100 * 3600)
+        out = pc.check(db, c, NOW, 'MNQ', 'short', 30685.25, 30664.25,
+                       'stormzy')
+    ict = out['pillars']['ict']
+    assert ict['detail']['bos_fvg']['verdict'] == 'no_data'
+    assert ict['detail']['golden_zone']['verdict'] == 'no_data'
+    assert ict['alignment'] == 'no_data'
+
+
+def test_ict_smt_pair_matching(db):
+    with db.tx() as c:
+        seed_ict(db, c, 'ict_smt_divergence', {
+            'MNQ.c.0:MES.c.0': {'pair': 'MNQ.c.0:MES.c.0',
+                               'direction': 'short',
+                               'signal_ts': NOW - 900, 'at': NOW}})
+        out = pc.check(db, c, NOW, 'MNQ', 'short', 30685.25, 30664.25,
+                       'stormzy')
+    ict = out['pillars']['ict']
+    assert ict['detail']['smt_divergence']['verdict'] == 'supports'
+    assert ict['alignment'] == 'supports'
+
+
+def test_ict_split_detectors_neutral(db):
+    with db.tx() as c:
+        seed_ict(db, c, 'ict_bos_fvg', {
+            'MNQ.c.0': {'symbol': 'MNQ.c.0', 'direction': 'short',
+                       'signal_ts': NOW - 1800, 'at': NOW}})
+        seed_ict(db, c, 'ict_turtle_soup', {
+            'MNQ.c.0': {'symbol': 'MNQ.c.0', 'direction': 'long',
+                       'signal_ts': NOW - 1800, 'at': NOW}})
+        out = pc.check(db, c, NOW, 'MNQ', 'short', 30685.25, 30664.25,
+                       'stormzy')
+    assert out['pillars']['ict']['alignment'] == 'neutral'
+
+
+def test_ict_pillar_counts_in_score(db):
+    with db.tx() as c:
+        seed_ict(db, c, 'ict_bos_fvg', {
+            'MNQ.c.0': {'symbol': 'MNQ.c.0', 'direction': 'short',
+                       'signal_ts': NOW - 1800, 'at': NOW}})
+        out = pc.check(db, c, NOW, 'MNQ', 'short', 30685.25, 30664.25,
+                       'stormzy')
+    # 5 equity pillars no_data (not counted) + ict supports (+1, counted)
+    assert out['evidence_score'] == 1
+    assert out['pillars_counted'] == 1
