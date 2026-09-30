@@ -25,6 +25,7 @@ MONDAY = stamp("2026-09-14T08:46:00")
 T_40_BEFORE_CLOSE = stamp("2026-09-14T14:20:00")
 T_20_BEFORE_CLOSE = stamp("2026-09-14T14:40:00")
 T_10_BEFORE_CLOSE = stamp("2026-09-14T14:50:00")
+T_3_BEFORE_CLOSE = stamp("2026-09-14T14:57:00")
 
 
 @pytest.fixture
@@ -99,12 +100,22 @@ def test_option_entry_allowed_twenty_minutes_before_close(db):
         assert db.get(c, "position:O:OPT")["status"] == "open"
 
 
-def test_option_entry_blocked_inside_fifteen_minute_cutoff(db):
+def test_option_entry_allowed_ten_minutes_before_close(db):
+    # 5-min cutoff allows entries up to 14:55 CT.
     e = Engine(db, Config(local=True, risk=100, paper_trading=True))
     with db.tx() as c:
         db.put(c, "chain:SPY", {"asof": T_10_BEFORE_CLOSE, "contracts": contracts()})
         db.put(c, "quote:O:OPT", quote(T_10_BEFORE_CLOSE))
-        assert not e.options(c, underlying_signal(T_10_BEFORE_CLOSE), T_10_BEFORE_CLOSE)
+        assert e.options(c, underlying_signal(T_10_BEFORE_CLOSE), T_10_BEFORE_CLOSE)
+        assert db.get(c, "position:O:OPT")["status"] == "open"
+
+
+def test_option_entry_blocked_inside_five_minute_cutoff(db):
+    e = Engine(db, Config(local=True, risk=100, paper_trading=True))
+    with db.tx() as c:
+        db.put(c, "chain:SPY", {"asof": T_3_BEFORE_CLOSE, "contracts": contracts()})
+        db.put(c, "quote:O:OPT", quote(T_3_BEFORE_CLOSE))
+        assert not e.options(c, underlying_signal(T_3_BEFORE_CLOSE), T_3_BEFORE_CLOSE)
         assert db.get(c, "position:O:OPT") is None
 
 
@@ -133,18 +144,36 @@ def test_stock_quote_freshness_unchanged_at_five_seconds(db):
 def test_option_gate_env_overrides(monkeypatch):
     monkeypatch.setenv("OPTION_QUOTE_MAX_AGE", "90")
     monkeypatch.setenv("OPTION_MAX_SPREAD_PCT", "0.15")
-    monkeypatch.setenv("OPTION_ENTRY_CUTOFF_MIN", "5")
+    monkeypatch.setenv("OPTION_ENTRY_CUTOFF_MIN", "10")
+    monkeypatch.setenv("OPTION_FLATTEN_MIN", "10")
     cfg = Config(local=True)
     assert cfg.option_quote_max_age == 90
     assert cfg.option_max_spread_pct == pytest.approx(0.15)
-    assert cfg.option_entry_cutoff_min == 5
+    assert cfg.option_entry_cutoff_min == 10
+    assert cfg.option_flatten_min == 10
 
 
 def test_option_gate_config_defaults():
     cfg = Config(local=True)
     assert cfg.option_quote_max_age == 60
     assert cfg.option_max_spread_pct == pytest.approx(0.12)
-    assert cfg.option_entry_cutoff_min == 15
+    assert cfg.option_entry_cutoff_min == 5
+    assert cfg.option_flatten_min == 5
+
+
+def test_option_flatten_five_minutes_before_close(db):
+    e = Engine(db, Config(local=True, risk=100, paper_trading=True))
+    with db.tx() as c:
+        db.put(c, "chain:SPY", {"asof": T_20_BEFORE_CLOSE, "contracts": contracts()})
+        db.put(c, "quote:O:OPT", quote(T_20_BEFORE_CLOSE))
+        assert e.options(c, underlying_signal(T_20_BEFORE_CLOSE), T_20_BEFORE_CLOSE)
+        pos = db.get(c, "position:O:OPT")
+        assert pos["flatten_at"] == pytest.approx(stamp("2026-09-14T14:55:00"))
+
+
+def test_option_cutoff_below_flatten_rejected():
+    with pytest.raises(ValueError):
+        Config(local=True, option_entry_cutoff_min=3, option_flatten_min=5).validate()
 
 
 def test_option_gate_config_validation(monkeypatch):

@@ -74,7 +74,7 @@ class Engine:
         if s["asset"]=="future":
             if not futures_session(now,symbol)["entry_open"]: reason="Outside futures entry session or exchange pause"
         else:
-            # Options get a shorter late-session entry cutoff (default 15 min,
+            # Options get a shorter late-session entry cutoff (default 5 min,
             # matching the option flatten deadline) since late-day is prime
             # 0DTE time; stocks keep the 30-minute research cutoff.
             cutoff=self.cfg.option_entry_cutoff_min*60 if s["asset"]=="option" else 1800
@@ -114,7 +114,7 @@ class Engine:
             qty=min(s["max_qty"],int(self.cfg.risk/per_unit),int(q["ask_size"] if side=="long" else q["bid_size"]))
             if qty<1 or (side=="long" and price-distance<=0):
                 return "One unit exceeds risk or stop invalid",None
-        flatten=futures_session(now)["flatten_at"] if s["asset"]=="future" else hours[1]-900
+        flatten=futures_session(now)["flatten_at"] if s["asset"]=="future" else hours[1]-self.cfg.option_flatten_min*60
         return None,{"spec":s,"quote":q,"price":price,"distance":distance,"per_unit":per_unit,"qty":qty,"risk":risk,"flatten_at":flatten,
                      'observed_at':now,'stop':prices['stop'],'target':prices['target']}
 
@@ -242,7 +242,7 @@ class Engine:
                     price=max(price,p["target"]) if long else min(price,p["target"])
                     break
             hours=session(day(now))
-            deadline=p.get("flatten_at",hours[1]-900 if hours else None)
+            deadline=p.get("flatten_at",hours[1]-self.cfg.option_flatten_min*60 if hours else None)
             if p.get("track")!="swing" and deadline and now>=deadline: reason=reason or "session_flatten"
             if p.get('fill_version')==FILL_VERSION and reason and reason not in ('stop_detected_in_bar','target_detected_in_bar'):
                 price=exit_price(p,q,reason)
