@@ -36,6 +36,7 @@ class Config:
     spy_morning_brief: bool = field(default_factory=lambda: env("SPY_MORNING_BRIEF_ENABLED", "true") == "true")
     spy_timeframes_enabled: bool = field(default_factory=lambda: env("SPY_TIMEFRAMES_ENABLED", "false") == "true")
     paper_trading: bool = field(default_factory=lambda: env("PAPER_TRADING_ENABLED", "false") == "true")
+    stock_paper_trades: bool = field(default_factory=lambda: env("STOCK_PAPER_TRADES", "false") == "true")
     risk: float = field(default_factory=lambda: float(env("SHADOW_RISK_DOLLARS","100")))
     max_entries: int = field(default_factory=lambda: int(env("SHADOW_MAX_ENTRIES","0")))
     setup_study: bool = field(default_factory=lambda: env("SETUP_STUDY_ENABLED","true")=="true")

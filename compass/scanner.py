@@ -392,8 +392,11 @@ class Scanner:
                     engine.ideas.queue(c,item,now)
                     if cfg.scanner_paper and cfg.paper_trading:
                         signal={k:v for k,v in item.items() if k not in ('entry','stop','target')}
-                        filled=engine.enter(c,signal,now,quiet=True)
-                        item['paper_status']='entered' if filled else 'risk_or_position_blocked'
+                        if cfg.stock_paper_trades:
+                            filled=engine.enter(c,signal,now,quiet=True)
+                            item['paper_status']='entered' if filled else 'risk_or_position_blocked'
+                        else:
+                            item['paper_status']='stock_entries_disabled'
                         if symbol in cfg.watch_symbols:
                             db.put(c,'pending_options:'+item['id'],{'signal':signal,'created_at':now,'expires_at':item['expires_at'],'status':'waiting'})
                     db.append(c,'alert','scanner',symbol,now,{**item,'status':'setup_triggered'},'setup:'+item['id'])

@@ -57,11 +57,10 @@ async function render(){
   const d=await get('/api/summary');
   $('#summary-day').textContent='Trading day '+d.day;
   $('#summary-0dte').innerHTML=bucketBlock(d.zero_dte);
-  $('#summary-intraday').innerHTML=bucketBlock(d.intraday);
   $('#summary-futures').innerHTML=futuresBlock(d.futures);
  }catch(e){
   const msg=empty('Summary unavailable','Could not load /api/summary.');
-  $('#summary-0dte').innerHTML=msg;$('#summary-intraday').innerHTML=msg;$('#summary-futures').innerHTML=msg;
+  $('#summary-0dte').innerHTML=msg;$('#summary-futures').innerHTML=msg;
  }
  loadSmoothers();
  busy=false;

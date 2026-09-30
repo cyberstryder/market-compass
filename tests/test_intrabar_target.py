@@ -26,7 +26,7 @@ def db(tmp_path):
 
 @pytest.fixture
 def cfg():
-    return Config(local=True, risk=100, paper_trading=True)
+    return Config(local=True, risk=100, paper_trading=True, stock_paper_trades=True)
 
 
 def quote(now=NOW, bid=102.10, ask=102.11):

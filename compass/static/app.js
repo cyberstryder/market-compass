@@ -7,9 +7,9 @@ const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notati
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
 const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated','event_stale','poll_stale','vendor_stale','mixed'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
-const TITLES={'summary':'Summary','morning-brief':'Morning Brief','0dte':'0DTE','intraday':'Intraday','ideas':'Ideas','smoothers':'Smoothers','futures':'Futures','compass':'Compass'};
+const TITLES={'summary':'Summary','morning-brief':'Morning Brief','0dte':'0DTE','ideas':'Ideas','smoothers':'Smoothers','futures':'Futures','compass':'Compass'};
 /* Old per-tab hashes redirect to their new section. */
-const LEGACY={alerts:'compass',overview:'morning-brief',scanner:'intraday',flow:'intraday',exposure:'intraday',assistant:'compass',scanners:'intraday','option-ideas':'0dte','swing-ideas':'compass',discovery:'compass',obsidian:'compass',smoothers:'ideas','pick-check':'ideas','setup-study':'futures','tm-study':'compass','swing-study':'compass','spy-study':'0dte',secondary:'compass',trades:'compass','daily-results':'compass',health:'compass',projects:'compass','research-admin':'compass',research:'compass'};
+const LEGACY={alerts:'compass',overview:'morning-brief',intraday:'compass',scanner:'compass',flow:'compass',exposure:'compass',assistant:'compass',scanners:'compass','option-ideas':'0dte','swing-ideas':'compass',discovery:'compass',obsidian:'compass',smoothers:'ideas','pick-check':'ideas','setup-study':'futures','tm-study':'compass','swing-study':'compass','spy-study':'0dte',secondary:'compass',trades:'compass','daily-results':'compass',health:'compass',projects:'compass','research-admin':'compass',research:'compass'};
 let lastState=null,first=true,testEvent=null;
 function selectTab(key){
  key=LEGACY[key]||key;
@@ -166,7 +166,7 @@ $('#test-alert').onclick=async()=>{const button=$('#test-alert');button.disabled
  try{const r=await fetch('/api/alerts/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:crypto.randomUUID(),route:$('#test-route').value})});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Test request failed');testEvent=d.event_id;$('#test-result').textContent='Test event #'+testEvent+' queued. Waiting for Discord’s saved-message confirmation.';}
  catch(e){$('#test-result').textContent=e.message;}finally{button.disabled=false;}};
 function renderScanner(scanner){
- if(!scanner)return;
+ if(!scanner||!$('#scanner-filter'))return;
  const status=scanner.status;
  const rows=scanner.opportunities.filter(o=>$('#scanner-filter').value==='all'||['triggered','watch','blocked'].includes(o.status));
  const active=scanner.opportunities.filter(o=>o.status==='triggered').length;
@@ -225,7 +225,7 @@ function renderStrikeMap(matrices){
  const rows=near.map(r=>[num(r.strike),...(r[metric+'_cells']||[]).slice(0,8).map(v=>v===null?'—':'<span class="exposure-cell '+(v>=0?'positive':'negative')+' strength-'+Math.min(4,Math.ceil(Math.abs(v)/maximum*4))+'" title="'+esc(num(v))+'">'+compact(v)+'</span>')]);
  $('#strike-map').innerHTML='<p class="fine">'+esc(m.symbol)+' · '+metric.toUpperCase()+' · Source '+when(m.source_ts)+' · Fetched '+when(m.received)+(m.cached?' · vendor cache':'')+' · nearest 25 strikes / first 8 expirations · vendor units</p>'+table(['Strike',...m.expirations.slice(0,8).map(e=>e.expiry)],rows);
 }
-$('#scanner-filter').onchange=()=>{if(lastState)renderScanner(lastState.scanner);};
+const _sf=$('#scanner-filter');if(_sf)_sf.onchange=()=>{if(lastState)renderScanner(lastState.scanner);};
 $('#research-source').onchange=loadResearch;
 $('#map-symbol').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};
 $('#map-metric').onchange=()=>{if(lastState)renderStrikeMap(lastState.matrix);};

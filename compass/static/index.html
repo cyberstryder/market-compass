@@ -6,7 +6,6 @@
 <button class="nav" data-tab="summary">Summary</button>
 <button class="nav" data-tab="morning-brief">Morning Brief <span class="chn">#morning-brief</span></button>
 <button class="nav" data-tab="0dte">0DTE <span class="chn">#0dte</span></button>
-<button class="nav" data-tab="intraday">Intraday <span class="chn">#intraday</span></button>
 <button class="nav" data-tab="ideas">Ideas <span class="chn">#ideas</span></button>
 <button class="nav" data-tab="smoothers">Smoothers <span class="chn">#smoothers</span></button>
 <button class="nav" data-tab="futures">Futures <span class="chn">#futures</span></button>
@@ -20,7 +19,6 @@
 <section id="sec-summary" class="acc-section"><button class="acc-head" data-section="summary"><span class="acc-title">Summary</span><span class="chev">▾</span></button><div class="acc-body">
 <div class="banner">What we took, what we skipped, and why. Detail stays in the sections below.</div>
 <article class="panel"><div class="panel-head"><h2>0DTE options</h2><span class="muted" id="summary-day"></span></div><div id="summary-0dte"><p class="muted">Loading…</p></div></article>
-<article class="panel"><div class="panel-head"><h2>Intraday</h2></div><div id="summary-intraday"><p class="muted">Loading…</p></div></article>
 <article class="panel"><div class="panel-head"><h2>Futures</h2></div><div id="summary-futures"><p class="muted">Loading…</p></div></article>
 <article class="panel"><div class="panel-head"><h2>Smoothers</h2><span class="muted" id="summary-smoothers-week"></span></div><div id="summary-smoothers"><p class="muted">Loading…</p></div>
 <p class="fine">The Smoothers page itself is unchanged — this is just the week's glance.</p></article>
@@ -92,36 +90,6 @@
 <div class="research-controls"><button id="spy-study-path-next" type="button" disabled>Next path page</button><button id="spy-study-path-reset" type="button" disabled>Refresh path</button></div></article>
 </section>
 <article class="panel"><h2>0DTE selection diagnostics</h2><div id="zero-dte-diagnostics"></div></article>
-</div></section>
-
-<section id="sec-intraday" class="acc-section"><button class="acc-head" data-section="intraday"><span class="acc-title">Intraday</span><span class="acc-chn">#intraday</span><span class="chev">▾</span></button><div class="acc-body">
-<section id="scanners" class="tab legacy">
-<div class="banner">Evidence scanners rebuilt from TraderMatrix site views. Evidence only — no alerts, no auto-admission, no trades. Nothing here is a trading signal until prospective measurement says otherwise.</div>
-<article class="panel"><div class="panel-head"><h2>Apex magnets</h2><span class="muted" id="apex-asof"></span><label>Within <select id="apex-within"><option value="0.005">0.5%</option><option value="0.01">1%</option><option value="0.02" selected>2%</option><option value="0.05">5%</option><option value="1">All</option></select></label></div><div id="apex-rows"></div><h3>Signal transitions</h3><div id="apex-signals"></div><h3>Session outcomes</h3><div id="apex-outcomes"></div>
-<p class="fine">Vendor magnet levels joined with minute bars. Magnet drift history is not yet joined, so drift always reports current.</p></article>
-<article class="panel"><div class="panel-head"><h2>Tape confirmed</h2><span class="muted" id="tape-asof"></span></div><div id="tape-scorecard"></div><h3>Recent confirmed trials</h3><div id="tape-recent"></div>
-<p class="fine">Setup trials joined with ±15 minute same-direction flow (≥$250k premium, print score ≥85). Confirmed means the flow arrived before the trial was invalidated.</p></article>
-<article class="panel"><div class="panel-head"><h2>Gap continuation</h2><span class="muted" id="gap-asof"></span></div><div id="gap-board"></div><h3>Weekly outcomes</h3><div id="gap-weekly"></div>
-<p class="fine">Gaps ≥1.5% in curated large caps. 09:30–09:45 opening-range break plus a 10-minute hold; dealer opposition vetoes the setup.</p></article>
-<article class="panel"><div class="panel-head"><h2>Breakouts</h2><span class="muted" id="break-asof"></span></div><h3>Forming triangles</h3><div id="break-forming"></div><h3>Fresh breaks</h3><div id="break-fresh"></div><h3>Weekly outcomes</h3><div id="break-weekly"></div>
-<p class="fine">Close-only 20/50/253-session range breaks and mechanical 15-session triangle coils, volume-confirmed at 1.5×. Runs once daily after the close.</p></article>
-</section>
-<article class="panel"><div class="panel-head"><h2>Magnet-break push</h2><span class="muted" id="magnet-push-asof"></span></div><div id="magnet-push-status"><p class="muted">Loading…</p></div>
-<p class="fine">Posts to #intraday on broke_through transitions via the dedicated magnets webhook. Durable outbox with retry and 429 handling; delivery receipts below.</p></article>
-<section id="scanner" class="tab legacy">
-<div class="banner">One watchlist, shared market context. Triggered setups include entry, invalidation, targets, and source clocks. All trades are simulated.</div>
-<div id="scanner-stats" class="stats"></div>
-<article class="panel"><div class="panel-head"><h2>Setup feed</h2><label class="inline-label" for="scanner-filter">Show <select id="scanner-filter"><option value="active">Active setups</option><option value="all">All recent decisions</option></select></label></div><div id="opportunities"></div></article>
-<article class="panel"><h2>Symbols receiving focused research</h2><div id="scanner-focus"></div><p class="fine">Live stock prices cover the full watchlist. Option chains and vendor analytics prioritize developing setups and rotate through the remaining names.</p></article>
-<article class="panel"><h2>Research coverage</h2><div id="scanner-coverage"></div></article>
-</section>
-<section id="flow" class="tab legacy"><div class="banner">TraderMatrix supplies filtered unusual activity through polling. Massive supplies live prints for selected contracts. Neither view establishes a trade's opening or closing intent.</div>
-<article class="panel"><h2>TraderMatrix unusual activity</h2><div id="vendor-flows"></div></article>
-<article class="panel"><h2>Massive large option prints</h2><p class="muted">$100k minimum · selected contracts only</p><div id="flows"></div></article></section>
-<section id="exposure" class="tab legacy"><div class="banner">Compare vendor exposure with the local research proxy. A recent fetch does not make an old market snapshot current.</div>
-<h2>TraderMatrix GEX / VEX</h2><p class="muted">Concentrations across the expirations returned by the vendor. Methodology and units remain vendor defined.</p><div id="matrix"></div>
-<article class="panel"><div class="panel-head"><h2>Strike / expiration map</h2><div class="map-controls"><select id="map-symbol" aria-label="Map symbol"></select><select id="map-metric" aria-label="Exposure measure"><option value="gex">GEX</option><option value="vex">VEX</option></select></div></div><div id="strike-map"></div></article>
-<h2>Local exposure & input coverage</h2><p class="muted">Daily open interest, calls positive / puts negative. Local VEX estimates vanna; it is not assumed equivalent to TraderMatrix VEX.</p><div id="exposures"></div><h2>Greek input diagnostics</h2><div id="greek-diagnostics"></div></section>
 </div></section>
 
 <section id="sec-ideas" class="acc-section"><button class="acc-head" data-section="ideas"><span class="acc-title">Ideas</span><span class="acc-chn">#ideas</span><span class="chev">▾</span></button><div class="acc-body">
@@ -232,6 +200,26 @@
 <section id="alerts" class="tab legacy"><div class="panel-head"><h2>Alert feed</h2><span class="muted" id="alerts-updated"></span></div>
 <div id="alerts-feed"></div>
 <p class="fine">One stream: 0DTE setups (with Discord delivery status), Flash Agentic triggers (with Compass evidence), and the latest scanner signals. Auto-refreshes every minute while open. Nothing here places trades.</p></section>
+<section id="scanners" class="tab legacy">
+<div class="banner">Evidence scanners rebuilt from TraderMatrix site views. Evidence only — no alerts, no auto-admission, no trades. Nothing here is a trading signal until prospective measurement says otherwise.</div>
+<article class="panel"><div class="panel-head"><h2>Apex magnets</h2><span class="muted" id="apex-asof"></span><label>Within <select id="apex-within"><option value="0.005">0.5%</option><option value="0.01">1%</option><option value="0.02" selected>2%</option><option value="0.05">5%</option><option value="1">All</option></select></label></div><div id="apex-rows"></div><h3>Signal transitions</h3><div id="apex-signals"></div><h3>Session outcomes</h3><div id="apex-outcomes"></div>
+<p class="fine">Vendor magnet levels joined with minute bars. Magnet drift history is not yet joined, so drift always reports current.</p></article>
+<article class="panel"><div class="panel-head"><h2>Tape confirmed</h2><span class="muted" id="tape-asof"></span></div><div id="tape-scorecard"></div><h3>Recent confirmed trials</h3><div id="tape-recent"></div>
+<p class="fine">Setup trials joined with ±15 minute same-direction flow (≥$250k premium, print score ≥85). Confirmed means the flow arrived before the trial was invalidated.</p></article>
+<article class="panel"><div class="panel-head"><h2>Gap continuation</h2><span class="muted" id="gap-asof"></span></div><div id="gap-board"></div><h3>Weekly outcomes</h3><div id="gap-weekly"></div>
+<p class="fine">Gaps ≥1.5% in curated large caps. 09:30–09:45 opening-range break plus a 10-minute hold; dealer opposition vetoes the setup.</p></article>
+<article class="panel"><div class="panel-head"><h2>Breakouts</h2><span class="muted" id="break-asof"></span></div><h3>Forming triangles</h3><div id="break-forming"></div><h3>Fresh breaks</h3><div id="break-fresh"></div><h3>Weekly outcomes</h3><div id="break-weekly"></div>
+<p class="fine">Close-only 20/50/253-session range breaks and mechanical 15-session triangle coils, volume-confirmed at 1.5×. Runs once daily after the close.</p></article>
+</section>
+<article class="panel"><div class="panel-head"><h2>Magnet-break push</h2><span class="muted" id="magnet-push-asof"></span></div><div id="magnet-push-status"><p class="muted">Loading…</p></div>
+<p class="fine">Posts to #intraday on broke_through transitions via the dedicated magnets webhook. Durable outbox with retry and 429 handling; delivery receipts below.</p></article>
+<section id="flow" class="tab legacy"><div class="banner">TraderMatrix supplies filtered unusual activity through polling. Massive supplies live prints for selected contracts. Neither view establishes a trade's opening or closing intent.</div>
+<article class="panel"><h2>TraderMatrix unusual activity</h2><div id="vendor-flows"></div></article>
+<article class="panel"><h2>Massive large option prints</h2><p class="muted">$100k minimum · selected contracts only</p><div id="flows"></div></article></section>
+<section id="exposure" class="tab legacy"><div class="banner">Compare vendor exposure with the local research proxy. A recent fetch does not make an old market snapshot current.</div>
+<h2>TraderMatrix GEX / VEX</h2><p class="muted">Concentrations across the expirations returned by the vendor. Methodology and units remain vendor defined.</p><div id="matrix"></div>
+<article class="panel"><div class="panel-head"><h2>Strike / expiration map</h2><div class="map-controls"><select id="map-symbol" aria-label="Map symbol"></select><select id="map-metric" aria-label="Exposure measure"><option value="gex">GEX</option><option value="vex">VEX</option></select></div></div><div id="strike-map"></div></article>
+<h2>Local exposure & input coverage</h2><p class="muted">Daily open interest, calls positive / puts negative. Local VEX estimates vanna; it is not assumed equivalent to TraderMatrix VEX.</p><div id="exposures"></div><h2>Greek input diagnostics</h2><div id="greek-diagnostics"></div></section>
 <section id="setup-study" class="tab legacy"><div class="banner">All stock, futures and scanner 0DTE setups are evaluated independently, including research-only candidates. Account entry, position and loss limits do not stop these experiments. Overlapping trials are not an account equity curve.</div>
 <p id="study-status" class="fine"></p><article class="panel"><div class="panel-head"><h2>Results by setup</h2><label for="study-cohort">Cohort <select id="study-cohort"><option value="all">All evaluated setups</option><option value="alerted">Alerted setups</option><option value="quiet">Non-alerted setups (research and cooldown)</option></select></label></div><div id="study-groups"></div></article>
 <article class="panel"><div class="panel-head"><h2>Individual setup outcomes</h2><div class="map-controls"><button id="study-previous" type="button" disabled>Previous records</button><button id="study-next" type="button" disabled>Next records</button><button id="study-newest" type="button">Newest records</button></div></div><p id="study-record-status" class="fine" aria-live="polite"></p><div id="study-records"></div></article></section>

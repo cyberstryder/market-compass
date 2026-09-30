@@ -11,7 +11,7 @@ DAY=86400
 
 @pytest.fixture
 def cfg():
-    return Config(local=True,risk=100,paper_trading=True,stocks=('SPY',),
+    return Config(local=True,risk=100,paper_trading=True,stock_paper_trades=True,stocks=('SPY',),
                   futures=('MES.c.0',),extra_futures=(),databento='',
                   alpaca_key='',alpaca_secret='',matrix='',massive='',
                   discord='',openai='')

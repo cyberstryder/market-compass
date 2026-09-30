@@ -153,6 +153,14 @@ class Engine:
                 trial=c.execute(select(trials.c.payload).where(trials.c.id==trial_id)).scalar_one_or_none() if trial_id else None
                 research_notice(self.db,c,signal,trial,now)
             return False
+        if spec(signal["symbol"])["asset"]=="stock" and not self.cfg.stock_paper_trades:
+            skip_reason="Stock paper entries disabled (options and futures only)"
+            skipped={**signal,"status":"skipped","reason":skip_reason}
+            if quiet:
+                self.db.append(c,'paper_decision','engine',signal["symbol"],now,skipped,'skip:'+signal["id"])
+            else:
+                self.alert(c,signal["symbol"],skipped,"skip:"+signal["id"])
+            return False
         reason,plan=self.entry_check(c,signal,now)
         symbol,side=signal["symbol"],signal["side"]
         if reason:
