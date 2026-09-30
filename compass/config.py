@@ -99,6 +99,11 @@ class Config:
     research: bool = field(default_factory=lambda: env("RESEARCH_FEEDS_ENABLED","true")=="true")
     option_focus: int = field(default_factory=lambda: int(env("OPTION_FOCUS_SYMBOLS","12")))
     chain_dte: int = field(default_factory=lambda: int(env("OPTION_CHAIN_MAX_DTE","90")))
+    # 0DTE option entry gates (relaxed 2026-09-30: the 5s quote / 8% spread /
+    # 30-min-cutoff trio was rejecting most same-day contracts).
+    option_quote_max_age: int = field(default_factory=lambda: int(env("OPTION_QUOTE_MAX_AGE","60")))
+    option_max_spread_pct: float = field(default_factory=lambda: float(env("OPTION_MAX_SPREAD_PCT","0.12")))
+    option_entry_cutoff_min: int = field(default_factory=lambda: int(env("OPTION_ENTRY_CUTOFF_MIN","15")))
     obsidian_history: bool = field(default_factory=lambda: env("OBSIDIAN_HISTORY_AUDIT_ENABLED","false")=="true")
     obsidian_url: str = field(default_factory=lambda: env("OBSIDIAN_FEED_URL"), repr=False)
     morning_enabled: bool = field(default_factory=lambda: env("MORNING_ORB_ENABLED","true")=="true")
@@ -151,6 +156,12 @@ class Config:
             raise ValueError("Options chain horizon must cover the swing expiration range")
         if not 1<=self.option_focus<=30 or not 1<=self.chain_dte<=180:
             raise ValueError("Invalid options focus or expiration horizon")
+        if not 1<=self.option_quote_max_age<=600:
+            raise ValueError("OPTION_QUOTE_MAX_AGE must be 1-600 seconds")
+        if not 0.01<=self.option_max_spread_pct<=0.50:
+            raise ValueError("OPTION_MAX_SPREAD_PCT must be 0.01-0.50")
+        if not 0<=self.option_entry_cutoff_min<=120:
+            raise ValueError("OPTION_ENTRY_CUTOFF_MIN must be 0-120 minutes")
         if not 0<=self.discovery_limit<=100 or len(self.discovery_seeds)>100:
             raise ValueError("Discovery limits must be between zero and 100")
         if self.discovery and len(set(self.watch_symbols)|set(self.discovery_seeds))>500:

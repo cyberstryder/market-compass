@@ -37,7 +37,7 @@ def test_quiet_selection_exposes_real_gate_without_changing_it(db,case,reason):
         if case=='chain':db.put(c,'chain:SPY',{})
         if case=='expiry':
             chain=db.get(c,'chain:SPY');chain['contracts'][0]['expiry']='2026-09-15';db.put(c,'chain:SPY',chain)
-        if case=='quote':db.put(c,'quote:'+CONTRACT,quote(NOW-6,2,2.01))
+        if case=='quote':db.put(c,'quote:'+CONTRACT,quote(NOW-120,2,2.01))
         if case=='spread':db.put(c,'quote:'+CONTRACT,quote(NOW,1,2))
         if case=='portfolio':
             for symbol in ('A','B','C'):db.put(c,'position:'+symbol,dict(status='open',asset='option'))

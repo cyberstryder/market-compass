@@ -72,12 +72,20 @@ class Engine:
         reason=None
         if s["asset"]=="future":
             if not futures_session(now,symbol)["entry_open"]: reason="Outside futures entry session or exchange pause"
-        elif not hours or not hours[0]<=now<hours[1]-1800: reason="Outside research entry session"
+        else:
+            # Options get a shorter late-session entry cutoff (default 15 min,
+            # matching the option flatten deadline) since late-day is prime
+            # 0DTE time; stocks keep the 30-minute research cutoff.
+            cutoff=self.cfg.option_entry_cutoff_min*60 if s["asset"]=="option" else 1800
+            if not hours or not hours[0]<=now<hours[1]-cutoff: reason="Outside research entry session"
         if reason: return reason,None
         if self.db.get(c,"position:"+symbol,{}).get("status")=="open": reason="Existing simulated position"
-        elif not fresh(q,now) or q['ts']>now: reason="Missing, stale, locked/invalid, or empty bid/ask quote"
+        # 0DTE option quotes routinely go 15-60s without an update on all but
+        # the hottest strikes; options use a dedicated freshness age.
+        quote_age=self.cfg.option_quote_max_age if s["asset"]=="option" else 5
+        if not fresh(q,now,quote_age) or q['ts']>now: reason="Missing, stale, locked/invalid, or empty bid/ask quote"
         elif q["ts"]<signal["signal_time"]: reason="No quote after signal"
-        elif q["ask"]-q["bid"]>max(s["tick"]*8,(q["ask"]+q["bid"])/2*(.08 if s["asset"]=="option" else .002)):
+        elif q["ask"]-q["bid"]>max(s["tick"]*8,(q["ask"]+q["bid"])/2*(self.cfg.option_max_spread_pct if s["asset"]=="option" else .002)):
             reason="Spread exceeds simulation liquidity limit"
         risk=paper_risk.account(self.db,c,now,s["asset"],persist=True)
         if self.cfg.max_entries and risk["entries"]>=self.cfg.max_entries: reason="Configured simulated entry limit"
@@ -270,7 +278,7 @@ class Engine:
             audit['checked_contracts']+=1
             evidence=dict(symbol=o['symbol'],checked_at=checked_at,quote_source=q.get('source') if q else None,
                 quote_age_seconds=checked_at-q['ts'] if q and q.get('ts') is not None else None)
-            if fresh(q,checked_at):
+            if fresh(q,checked_at,self.cfg.option_quote_max_age):
                 option_signal={**signal,"id":identity(signal["id"],o["symbol"]),"symbol":o["symbol"],
                     "underlying":signal["symbol"],"underlying_side":signal['side'],
                     "underlying_invalidation":signal.get('invalidation'),
