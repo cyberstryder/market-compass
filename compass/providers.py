@@ -17,8 +17,8 @@ from .diagnostics import redacted_detail
 from .vendor import matrix_summary
 from .greek_diagnostics import diagnose
 from .flow_recovery import collect as collect_flow
-from .futures import selection
-from .instruments import future_root
+from .futures import selection,lead_contract,risk_day
+from .instruments import future_root,DATED
 from .futures_replay import ReplayBars
 from .futures_ingress import IngressProbe
 from .futures_writer import FuturesWriter
@@ -356,9 +356,22 @@ class Collectors:
     def future_targets(self):
         targets=selection(self.cfg.futures,time.time())
         symbols={t["raw_symbol"] for t in targets}
+        now=time.time()
         with self.db.tx() as c:
             for p in self.db.prefix(c,"position:").values():
-                if p.get("status")=="open" and p.get("asset")=="future" and future_root(p["symbol"]) in ("MES","MNQ","ES","NQ"): symbols.add(p["symbol"].split("@")[0])
+                if p.get("status")!="open" or p.get("asset")!="future": continue
+                root=future_root(p.get("symbol") or "")
+                if root not in ("MES","MNQ","ES","NQ"): continue
+                raw=(p.get("symbol") or "").split("@")[0]
+                if DATED.fullmatch(raw):
+                    # Already a dated raw contract (e.g. MESZ6@42001581); keep streaming it.
+                    symbols.add(raw)
+                    continue
+                # Configured aliases (e.g. MES.c.0 from ICT paper positions) are not valid
+                # raw_symbol subscriptions; Databento rejects them and the whole stream dies.
+                # Resolve to the lead contract as of entry instead.
+                entered=p.get("entered_at") or now
+                symbols.add(lead_contract(root,risk_day(entered))["raw_symbol"])
         return targets,sorted(symbols)
 
     async def futures(self):
