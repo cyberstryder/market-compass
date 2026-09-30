@@ -25,7 +25,7 @@ def seed(db,c):
 
 @pytest.mark.parametrize('case,reason',[
     ('chain','No recent options chain'),
-    ('expiry','No eligible listed same-day call contract'),
+    ('expiry','No eligible listed call contract within 7 DTE'),
     ('quote','Missing or invalid fresh quote'),
     ('spread','Spread exceeds simulation liquidity limit'),
     ('portfolio','Portfolio cap: three simultaneous simulated positions'),
@@ -36,7 +36,7 @@ def test_quiet_selection_exposes_real_gate_without_changing_it(db,case,reason):
         seed(db,c)
         if case=='chain':db.put(c,'chain:SPY',{})
         if case=='expiry':
-            chain=db.get(c,'chain:SPY');chain['contracts'][0]['expiry']='2026-09-15';db.put(c,'chain:SPY',chain)
+            chain=db.get(c,'chain:SPY');chain['contracts'][0]['expiry']='2026-09-22';db.put(c,'chain:SPY',chain)
         if case=='quote':db.put(c,'quote:'+CONTRACT,quote(NOW-120,2,2.01))
         if case=='spread':db.put(c,'quote:'+CONTRACT,quote(NOW,1,2))
         if case=='portfolio':

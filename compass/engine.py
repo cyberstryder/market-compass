@@ -4,6 +4,7 @@ import logging
 import time
 import uuid
 import re
+from datetime import date
 from .market import levels,fresh,day,session,dedup
 from .store import identity
 from .alert_format import alert_context
@@ -264,10 +265,11 @@ class Engine:
         chain=self.db.get(c,"chain:"+signal["symbol"],{})
         now=self.clock() if self.clock else now
         audit=diagnostics if diagnostics is not None else {}
-        audit.update(version='0dte-selection-v2',at=now,status='blocked',reason=None,
+        audit.update(version='0dte-selection-v3',at=now,status='blocked',reason=None,
             chain_age_seconds=now-chain['asof'] if chain.get('asof') is not None else None,
             chain_source=chain.get('source'),chain_complete=chain.get('complete'),
-            same_day_contracts=0,checked_contracts=0,rejections=[])
+            eligible_contracts=0,checked_contracts=0,rejections=[],
+            max_dte=self.cfg.option_0dte_max_dte)
         if now-chain.get("asof",0)>120:
             audit['reason']='No recent options chain'
             if not quiet:
@@ -275,9 +277,19 @@ class Engine:
                     "parent_signal":signal["id"]},"option-skip:"+signal["id"])
             return False
         kind="call" if signal["side"]=="long" else "put"
-        opts=[o for o in chain.get("contracts",[]) if o.get("expiry")==day(now) and o.get("type")==kind and o.get("multiplier")==100]
-        opts.sort(key=lambda o:abs(o["strike"]-signal["signal_price"]))
-        audit['same_day_contracts']=len(opts)
+        today=day(now)
+        max_dte=self.cfg.option_0dte_max_dte
+        def eligible(o):
+            # Same-day plus weekly expiries: names without daily expirations (e.g. MU)
+            # still get 0DTE-style coverage on their nearest weekly.
+            if o.get("type")!=kind or o.get("multiplier")!=100: return False
+            try: dte=(date.fromisoformat(str(o.get("expiry")))-date.fromisoformat(today)).days
+            except (ValueError,TypeError): return False
+            return 0<=dte<=max_dte
+        opts=[o for o in chain.get("contracts",[]) if eligible(o)]
+        # Nearest expiry first (most gamma for 0DTE-style moves), then closest strike.
+        opts.sort(key=lambda o:(str(o.get("expiry")),abs(o["strike"]-signal["signal_price"])))
+        audit['eligible_contracts']=len(opts)
         audit['contracts_truncated']=len(opts)>8
         rejected=audit['rejections']
         for o in opts[:8]:
@@ -331,7 +343,7 @@ class Engine:
                 rejected.append({**evidence,'reason':'Entry recheck declined; see saved skip event'})
             else: rejected.append({**evidence,"reason":"Missing or invalid fresh quote"})
         reasons=list(dict.fromkeys(r['reason'] for r in rejected))
-        audit['reason']='No eligible listed same-day '+kind+' contract' if not opts else '; '.join(reasons)
+        audit['reason']='No eligible listed '+kind+' contract within '+str(max_dte)+' DTE' if not opts else '; '.join(reasons)
         if not quiet:
             self.alert(c,signal["symbol"],{**alert_context(signal),"status":"options_skipped","reason":"No eligible 0DTE contract passes quote, spread and risk checks","rejections":rejected,
                 "parent_signal":signal["id"]},"option-skip:"+signal["id"])

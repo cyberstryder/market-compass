@@ -105,6 +105,11 @@ class Config:
     option_quote_max_age: int = field(default_factory=lambda: int(env("OPTION_QUOTE_MAX_AGE","60")))
     option_max_spread_pct: float = field(default_factory=lambda: float(env("OPTION_MAX_SPREAD_PCT","0.12")))
     option_entry_cutoff_min: int = field(default_factory=lambda: int(env("OPTION_ENTRY_CUTOFF_MIN","15")))
+    # 0DTE contract pool: the scanner day-trades short-dated contracts for 0DTE-style
+    # moves. 0 = same-day expiry only; 7 (default) includes the nearest weekly so
+    # names without daily expirations (e.g. MU) are covered too. Positions still
+    # flatten 15 minutes before the close regardless of expiry.
+    option_0dte_max_dte: int = field(default_factory=lambda: int(env("OPTION_0DTE_MAX_DTE","7")))
     obsidian_history: bool = field(default_factory=lambda: env("OBSIDIAN_HISTORY_AUDIT_ENABLED","false")=="true")
     obsidian_url: str = field(default_factory=lambda: env("OBSIDIAN_FEED_URL"), repr=False)
     morning_enabled: bool = field(default_factory=lambda: env("MORNING_ORB_ENABLED","true")=="true")
@@ -163,6 +168,8 @@ class Config:
             raise ValueError("OPTION_MAX_SPREAD_PCT must be 0.01-0.50")
         if not 0<=self.option_entry_cutoff_min<=120:
             raise ValueError("OPTION_ENTRY_CUTOFF_MIN must be 0-120 minutes")
+        if not 0<=self.option_0dte_max_dte<=30:
+            raise ValueError("OPTION_0DTE_MAX_DTE must be 0-30 days")
         if not 0<=self.discovery_limit<=100 or len(self.discovery_seeds)>100:
             raise ValueError("Discovery limits must be between zero and 100")
         if self.discovery and len(set(self.watch_symbols)|set(self.discovery_seeds))>500:
