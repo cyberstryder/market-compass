@@ -702,6 +702,15 @@ def create_app(cfg=None):
             item=db.get(c,'matrix:'+symbol)
         return item or {'symbol':symbol,'status':'waiting','strikes':[],'expirations':[]}
 
+    @app.get('/api/gamma-flip')
+    def get_gamma_flip(symbol:str):
+        # Evidence-only regime context; futures GEX symbols included.
+        if symbol not in set(cfg.watch_symbols) | {'NQ','ES'}:
+            raise HTTPException(400,'Unknown symbol')
+        with db.tx() as c:
+            item=db.get(c,'gamma_flip:'+symbol)
+        return item or {'symbol':symbol,'status':'waiting','flip':None}
+
     @app.get('/api/scanner')
     def get_scanner():
         with db.tx() as c:

@@ -71,7 +71,8 @@ def test_unknown_clocks_stay_unknown(stamp):
 def test_core_matrices_survive_continuous_focus_churn(db):
     names=tuple('S'+chr(65+i) for i in range(20))
     cfg=Config(local=True,stocks=('SPY','QQQ','IWM'),watchlist=names,option_focus=5)
-    seen={s:[] for s in cfg.watch_symbols}
+    # Futures GEX symbols bypass the watchlist but join the core rotation.
+    seen={s:[] for s in list(cfg.watch_symbols)+['NQ','ES']}
     with db.tx() as c:
         for i in range(120):
             now=NOW+i*5

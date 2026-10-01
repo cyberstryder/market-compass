@@ -8,18 +8,21 @@ from .vendor_freshness import confirmation, context_check
 
 def matrix_target(db, c, cfg, now, cursor=0):
     core = [s for s in ('SPY', 'QQQ', 'IWM') if s in cfg.watch_symbols]
+    # Vendor futures GEX (NQ/ES) is polled for the futures side; these are not
+    # equity watchlist symbols so they bypass the watchlist filter below.
+    futures_gex = ['NQ', 'ES']
     held = [p.get('underlying', p.get('symbol')) for p in db.prefix(c, 'position:').values()
             if p.get('status') == 'open' and p.get('asset') != 'future']
     focus = focus_symbols(db, c, cfg, now, cfg.option_focus)
-    candidates = list(dict.fromkeys(core + held + focus + list(cfg.watch_symbols)))
+    candidates = list(dict.fromkeys(core + futures_gex + held + focus + list(cfg.watch_symbols)))
     jobs = db.prefix(c, 'matrix_job:')
     stamps = {key[7:]:stamp for key,stamp in c.execute(select(state.c.key,
         state.c.value['received'].as_float()).where(state.c.key.startswith('matrix:')))}
     due = {'core': [], 'held': [], 'focus': [], 'background': []}
     for symbol in candidates:
-        if symbol not in cfg.watch_symbols:
+        if symbol not in cfg.watch_symbols and symbol not in futures_gex:
             continue
-        tier = 'core' if symbol in core else 'held' if symbol in held else 'focus' if symbol in focus else 'background'
+        tier = 'core' if symbol in core or symbol in futures_gex else 'held' if symbol in held else 'focus' if symbol in focus else 'background'
         job = jobs.get('matrix_job:' + symbol, {})
         attempted = job.get('attempted_at', stamps.get(symbol) or 0)
         interval = 60 if tier in ('core', 'held') else 180 if tier == 'focus' else 1800

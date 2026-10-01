@@ -759,6 +759,14 @@ class Collectors:
                     **{k:result.get(k) for k in ('cached','vendor_stale','vendor_refresh_seconds','cache_policy')},
                     'method':'Relative concentration within vendor GEX/VEX totals; not a dealer-inventory or direction claim'})
                 self.db.put(c,"matrix:"+symbol,result)
+                try:
+                    from .gamma_flip import compute_flip
+                    flip=compute_flip(result.get("strikes") or [],result.get("spot"))
+                except Exception:
+                    flip={"status":"error","flip":None,"reason":"flip computation failed"}
+                self.db.put(c,"gamma_flip:"+symbol,{"symbol":symbol,"source":"tradermatrix",
+                    "source_ts":result["source_ts"],"received":received,**flip,
+                    "evidence_only":"regime context; never an entry trigger"})
             log_observation('matrix:'+symbol,result,received)
         now=time.time()
         with self.db.tx() as c:
