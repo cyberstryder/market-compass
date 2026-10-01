@@ -241,3 +241,22 @@ def test_display_includes_traps(db):
     assert out['traps'][0]['target'] == 95.0
     # traps also feed the weekly outcome table
     assert any(r['pattern'] == 'bull_trap' for r in out['weekly_outcomes'])
+
+
+def test_scan_uses_watch_symbols_universe(db):
+    # Breakout scan covers the full watchlist (watch_symbols), not just cfg.stocks.
+    class WideCfg:
+        breakouts = True
+        stocks = ['BRK']
+        watch_symbols = ['BRK', 'WIDE']
+
+    bars = [dict(b, ts=float(i), day='2026-09-%02d' % (i + 1))
+            for i, b in enumerate(flat_range(20))]
+    bars.append(dict(B(100, 102, 99, 101, 2_000_000), ts=20.0, day='2026-09-21'))
+    with db.tx() as c:
+        seed_daily(db, c, 'WIDE', bars)
+        out = bo.scan(db, c, WideCfg(), NOW)
+    assert out['new_events'] >= 1
+    with db.tx() as c:
+        eid = 'brk:WIDE:%s:range20:up' % DAY
+        assert db.get(c, 'breakout:' + eid) is not None

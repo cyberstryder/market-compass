@@ -84,7 +84,7 @@ def test_cadence_build_refresh_freeze(morning):
         assert dtb.scan(db, c, Cfg(), T_BUILD - 60)['action'] is None
         assert db.get(c, 'board:' + DAY) is None
         r = dtb.scan(db, c, Cfg(), T_BUILD + 60)
-        assert r['action'] == 'built' and r['symbols'] == 2
+        assert r['action'] == 'built' and r['symbols'] == 3  # SPY, QQQ + MU
         board = db.get(c, 'board:' + DAY)
         assert board['rows'][0]['symbol'] == 'SPY'  # ranked first
         assert board['frozen'] is False
@@ -117,7 +117,7 @@ def test_evening_review(morning):
         review = db.get(c, 'board_review:' + DAY)
         spy = next(n for n in review['names'] if n['symbol'] == 'SPY')
         assert spy['had_candidate'] is True and spy['day_range_pct'] is not None
-        assert review['board_hit_rate'] == pytest.approx(0.5)
+        assert review['board_hit_rate'] == pytest.approx(1/3)  # SPY hit of 3 (SPY, QQQ, MU)
         # 1 off-board alert (XYZ) of 2 total alerts (SPY setup_triggered + XYZ).
         assert review['off_board_alert_fraction'] == pytest.approx(0.5)
 

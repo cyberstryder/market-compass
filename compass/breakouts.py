@@ -229,7 +229,10 @@ def scan(db, c, cfg, now):
     if db.get(c, 'breakouts:scanned_day') == today:
         return {'ran': False, 'reason': 'done_today'}
     new_events, forming = 0, 0
-    for symbol in cfg.stocks:
+    # Scan the full watchlist (144 TradingView combined list), not just the
+    # 15-stock 0DTE focus. Data is already collected for all of them.
+    universe = getattr(cfg, 'watch_symbols', cfg.stocks)
+    for symbol in universe:
         bars = daily_bars(db, c, symbol)
         if len(bars) < 16:
             continue

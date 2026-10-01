@@ -169,7 +169,10 @@ def score_symbol(db, c, symbol, now, ctx):
 
 
 def build_board(db, c, cfg, now, ctx):
-    rows = [score_symbol(db, c, symbol, now, ctx) for symbol in cfg.stocks]
+    # MU explicitly included per Josh (2026-10-01) — ensures it's scored even
+    # if the STOCK_SYMBOLS env var drifts from the 15-stock expansion.
+    universe = list(dict.fromkeys([*cfg.stocks, 'MU']))
+    rows = [score_symbol(db, c, symbol, now, ctx) for symbol in universe]
     rows.sort(key=lambda r: (-r['total'], -(abs(r['day_pct'] or 0))))
     return {'day': _today_str(now), 'built_at': now, 'refreshed_at': now,
             'frozen': False, 'frozen_at': None, 'rows': rows[:BOARD_LIMIT],
