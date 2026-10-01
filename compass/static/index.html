@@ -156,6 +156,17 @@
 <p class="fine">Every check is logged so analyst hit rates can be measured later. Call/put map to long/short.</p></article>
 <article class="panel"><div class="panel-head"><h2>Analyst scorecards</h2><span class="muted" id="pickcheck-scorecard-asof"></span></div><div id="pickcheck-scorecard"></div>
 <p class="fine">Outcomes are measured mechanically from daily bars after each check: a target touched within 5 sessions is a win; without a target, the sign of the 5-session direction-adjusted underlying move decides. Open means fewer than 5 sessions have printed. Moves are underlying percentages, not option P&amp;L. Evidence only.</p></article>
+<section id="ticker-read" class="tab legacy">
+<div class="banner">Assemble a structured directional read for one ticker from Compass's own data: session structure, VWAP, apex magnets, gamma flip, tape flow, and gap status. Mechanical factors and a net lean — evidence only, no entries, no targets, no trade signal.</div>
+<article class="panel"><h2>Ticker read</h2>
+<div class="research-controls">
+<label>Ticker <input id="tickerread-symbol" placeholder="MU" style="text-transform:uppercase"></label>
+</div>
+<button id="tickerread-run" type="button">Read ticker</button>
+</article>
+<div id="tickerread-result"></div>
+<p class="fine">Factors describe what the data shows, never what to do. The lean is a pure count of bullish minus bearish factors.</p>
+</section>
 </section>
 </div></section>
 
@@ -382,4 +393,4 @@
 </div></section>
 
 <footer>Market Compass · private research · timestamps displayed in America/Chicago · <span>Data as of <span id="clock" class="mono">—</span></span> · <span id="updated"></span></footer></main>
-<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/summary.js"></script><script src="/static/app.js"></script><script src="/static/terminal.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/pickcheck.js"></script><script src="/static/daily-results.js"></script><script src="/static/alerts.js"></script><script src="/static/detectors.js"></script><script src="/static/panels.js"></script><script src="/static/daily.js"></script></body></html>
+<script src="/static/research-admin.js"></script><script src="/static/setup-records.js"></script><script src="/static/tm-study.js"></script><script src="/static/swing-study.js"></script><script src="/static/spy-study.js"></script><script src="/static/summary.js"></script><script src="/static/app.js"></script><script src="/static/terminal.js"></script><script src="/static/scanners.js"></script><script src="/static/discovery.js"></script><script src="/static/session-gaps.js"></script><script src="/static/assistant.js"></script><script src="/static/native.js"></script><script src="/static/smoothers.js"></script><script src="/static/pickcheck.js"></script><script src="/static/tickerread.js"></script><script src="/static/daily-results.js"></script><script src="/static/alerts.js"></script><script src="/static/detectors.js"></script><script src="/static/panels.js"></script><script src="/static/daily.js"></script></body></html>

@@ -9,7 +9,7 @@ const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
 const TITLES={'terminal':'Terminal','daily':'Daily','summary':'Summary','morning-brief':'Morning Brief','0dte':'0DTE','ideas':'Ideas','smoothers':'Smoothers','futures':'Futures','compass':'Compass'};
 /* Old per-tab hashes redirect to their new section. */
-const LEGACY={alerts:'compass',overview:'morning-brief',intraday:'compass',scanner:'compass',flow:'compass',exposure:'compass',assistant:'compass',scanners:'compass','option-ideas':'0dte','swing-ideas':'compass',discovery:'compass',obsidian:'compass',smoothers:'ideas','pick-check':'ideas','setup-study':'futures','tm-study':'compass','swing-study':'compass','spy-study':'0dte',secondary:'compass',trades:'compass','daily-results':'compass',health:'compass',projects:'compass','research-admin':'compass',research:'compass'};
+const LEGACY={alerts:'compass',overview:'morning-brief',intraday:'compass',scanner:'compass',flow:'compass',exposure:'compass',assistant:'compass',scanners:'compass','option-ideas':'0dte','swing-ideas':'compass',discovery:'compass',obsidian:'compass',smoothers:'ideas','pick-check':'ideas','ticker-read':'ideas','setup-study':'futures','tm-study':'compass','swing-study':'compass','spy-study':'0dte',secondary:'compass',trades:'compass','daily-results':'compass',health:'compass',projects:'compass','research-admin':'compass',research:'compass'};
 let lastState=null,first=true,testEvent=null;
 function selectTab(key){
  key=LEGACY[key]||key;

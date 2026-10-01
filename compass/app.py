@@ -531,6 +531,13 @@ def create_app(cfg=None):
         with db.tx() as c:
             return pick_scorecard.scorecard(db,c,time.time(),limit=limit,horizon_sessions=horizon)
 
+    @app.get('/api/ticker-read')
+    def get_ticker_read(symbol:str=Query(...,min_length=1,max_length=12)):
+        # Mechanical ticker read: structured directional read from Compass's
+        # own data. Evidence only — no entries, no targets, no trade signal.
+        from .ticker_read import read
+        return read(db, symbol, time.time())
+
     @app.get('/api/discovery')
     def get_discovery():
         from .discovery import report
