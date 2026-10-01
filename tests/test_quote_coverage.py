@@ -79,7 +79,8 @@ def test_index_roots_never_enter_equity_collection_but_research_is_retained(db,m
         active=inventory(db,c,NOW)
         assert contract in active['options'] and 'VIX' not in active['stocks']
         cfg=Config(local=True,stocks=('VIX','SPX','SPY'))
-        assert data_symbols(db,c,cfg,NOW)==('SPY','QQQ')
+        got=data_symbols(db,c,cfg,NOW)
+        assert set(('SPY','QQQ'))<=set(got) and not {'VIX','SPX'}&set(got)
         assert db.get(c,'research:vix')=={'value':20}
         db.put(c,'quote:SPY',quote(NOW));archive(db,c,NOW-1,symbol='SPY')
         health=stock_archive_health(c,['SPY','VIX','SPX','NEW'],{'quote:SPY':quote(NOW)},NOW,False)

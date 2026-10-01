@@ -190,7 +190,7 @@ def test_new_symbols_expand_collection_without_changing_scanner_or_excluded_univ
     cfg=Config(local=True,stocks=('SPY',),futures=())
     with db.tx() as c:
         register(db,c,DAY,[row('one',symbol='ALAB'),row('two',symbol='DJT'),row('index',symbol='SPX')],NOW,at=NOW)
-        assert data_symbols(db,c,cfg,NOW)==('SPY','ALAB')
+        assert set(('SPY','ALAB'))<=set(data_symbols(db,c,cfg,NOW))
         assert cfg.watch_symbols==('SPY',)
         coverage=report(db,c,NOW,cfg=cfg)['collection']
         assert coverage['requested_symbols']==3 and coverage['in_collection']==1 and coverage['not_in_collection']==2

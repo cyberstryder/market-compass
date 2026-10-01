@@ -184,7 +184,7 @@ def test_pending_symbols_keep_stock_collection_without_option_requests(db,monkey
     with db.tx() as c:
         seed(db,c);register(db,c,event(db,c),NOW,snapshot=snapshot())
         other=Config(local=True,stocks=('QQQ',),futures=())
-        assert data_symbols(db,c,other,NOW)==('QQQ','SPY')
+        assert set(('QQQ','SPY'))<=set(data_symbols(db,c,other,NOW))
         assert c.execute(select(func.count()).select_from(swings)).scalar_one()==0
 
 

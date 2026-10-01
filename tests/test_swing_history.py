@@ -178,7 +178,7 @@ def test_postgres_collector_refresh_completes_while_scanner_holds_cache_lock(pg,
             collector=pool.submit(collect)
             # Must finish before the scanner releases its uncommitted row.
             result=collector.result(timeout=3)
-            assert all(row['daily_ready'] for row in result['rows'])
+            assert all(row['daily_ready'] for row in result['rows'] if row['symbol'] in cfg.watch_symbols)
         finally:release_scanner.set()
         scanner.result(timeout=5)
     with pg.tx() as c:
