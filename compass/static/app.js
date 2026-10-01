@@ -15,7 +15,6 @@ function selectTab(key){
  key=LEGACY[key]||key;
  if(!Object.hasOwn(TITLES,key))return;
  document.querySelectorAll('.acc-section').forEach(s=>{const on=s.id==='sec-'+key;s.classList.toggle('open',on);s.classList.toggle('active',on);});
- document.querySelectorAll('.acc-section .tab').forEach(t=>t.classList.toggle('active',t.closest('.acc-section').classList.contains('open')));
  document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.tab===key));
  $('#title').textContent=TITLES[key];
  if(location.hash!=='#'+key)history.replaceState(null,'','#'+key);
