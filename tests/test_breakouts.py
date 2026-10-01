@@ -165,3 +165,79 @@ def test_display_board(db):
     assert len(out['forming']) == 1 and len(out['fresh']) == 1
     assert out['weekly_outcomes'][0]['mean_d20'] == pytest.approx(0.05)
     assert out['note'].startswith('Research evidence only')
+
+
+def _trap_bars():
+    # 20 flat sessions (95-100), then a break up to 101, then back inside to 97.
+    bars = [dict(b, ts=float(i), day='2026-09-%02d' % (i + 1))
+            for i, b in enumerate(flat_range(20))]
+    bars.append(dict(B(100, 102, 99, 101, 2_000_000), ts=20.0, day='2026-09-21'))
+    bars.append(dict(B(101, 101, 96, 97, 1_500_000), ts=21.0, day='2026-09-22'))
+    return bars
+
+
+def test_detect_trap_bull():
+    bars = _trap_bars()
+    trap = bo.detect_trap(bars)
+    assert trap is not None
+    assert trap['kind'] == 'bull_trap'
+    assert trap['direction'] == 'down'  # fade direction
+    assert trap['target'] == 95.0  # opposite range edge
+    assert trap['break_day'] == '2026-09-21'
+    assert trap['trap_day'] == '2026-09-22'
+
+
+def test_detect_trap_bear():
+    bars = [dict(b, ts=float(i), day='2026-09-%02d' % (i + 1))
+            for i, b in enumerate(flat_range(20))]
+    bars.append(dict(B(96, 97, 93, 94, 2_000_000), ts=20.0, day='2026-09-21'))
+    bars.append(dict(B(94, 98, 93, 97, 1_500_000), ts=21.0, day='2026-09-22'))
+    trap = bo.detect_trap(bars)
+    assert trap is not None
+    assert trap['kind'] == 'bear_trap'
+    assert trap['direction'] == 'up'
+    assert trap['target'] == 100.0
+
+
+def test_detect_trap_no_false_positive():
+    # Break up and holds above range -> no trap.
+    bars = [dict(b, ts=float(i), day='2026-09-%02d' % (i + 1))
+            for i, b in enumerate(flat_range(20))]
+    bars.append(dict(B(100, 102, 99, 101, 2_000_000), ts=20.0, day='2026-09-21'))
+    bars.append(dict(B(101, 103, 100, 102, 1_500_000), ts=21.0, day='2026-09-22'))
+    bars.append(dict(B(102, 104, 101, 103, 1_500_000), ts=22.0, day='2026-09-23'))
+    assert bo.detect_trap(bars) is None
+
+
+def test_detect_trap_needs_data():
+    bars = [dict(b, ts=float(i)) for i, b in enumerate(flat_range(10))]
+    assert bo.detect_trap(bars) is None
+
+
+def test_scan_creates_trap_event(db):
+    bars = _trap_bars()
+    with db.tx() as c:
+        seed_daily(db, c, 'BRK', bars)
+        out = bo.scan(db, c, Cfg(), NOW)
+    assert out['new_events'] >= 1
+    with db.tx() as c:
+        events = [e for k, e in db.prefix(c, 'breakout:').items()
+                  if isinstance(e, dict) and e.get('kind') in ('bull_trap', 'bear_trap')]
+    assert len(events) == 1
+    assert events[0]['direction'] == 'down'
+    assert events[0]['target'] == 95.0
+    assert events[0]['status'] == 'fresh'
+
+
+def test_display_includes_traps(db):
+    with db.tx() as c:
+        db.put(c, 'breakout:t1',
+               {'id': 't1', 'symbol': 'TRP', 'day': DAY, 'pattern': 'bull_trap',
+                'kind': 'bull_trap', 'direction': 'down', 'target': 95.0,
+                'break_day': DAY, 'status': 'fresh',
+                'marks': {'d20': 0.03}})
+        out = bo.display(db, c, NOW)
+    assert len(out['traps']) == 1
+    assert out['traps'][0]['target'] == 95.0
+    # traps also feed the weekly outcome table
+    assert any(r['pattern'] == 'bull_trap' for r in out['weekly_outcomes'])

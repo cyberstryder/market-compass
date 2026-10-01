@@ -56,6 +56,8 @@
   $('#break-forming').innerHTML=f.length?table(['Symbol','Day','Pattern','State','Evaluated'],f.map(s=>[esc(s.symbol),esc(s.day),esc(s.flavor),tag(s.state),when(s.evaluated_at)])):empty('No coils forming','No 15-session triangle coils detected.');
   const fr=(r.fresh||[]).slice(0,25);
   $('#break-fresh').innerHTML=fr.length?table(['Symbol','Day','Pattern','Direction','Level','Vol ×','Confirmation','Status'],fr.map(e=>[esc(e.symbol),esc(e.day),esc(e.pattern),esc(e.direction),num(e.level),e.volume_ratio==null?'—':num(e.volume_ratio,2)+'×',tag(e.confirmation),tag(e.status)])):empty('No fresh breaks','No volume-confirmed range breaks in the last sessions.');
+  const tr=(r.traps||[]).slice(0,25);
+  $('#break-traps').innerHTML=tr.length?table(['Symbol','Trap day','Type','Fade','Target','Break day'],tr.map(e=>[esc(e.symbol),esc(e.day),esc(e.pattern),esc(e.direction),num(e.target),esc(e.break_day||'—')])):empty('No traps','No bull/bear traps detected in the last sessions.');
   const w=(r.weekly_outcomes||[]);
   $('#break-weekly').innerHTML=w.length?table(['Pattern','Direction','Confirmation','n','Win rate','Mean 20d'],w.map(x=>[esc(x.pattern),esc(x.direction),esc(x.confirmation),num(x.n,0),pct1(x.win_rate),num((x.mean_d20||0)*100,2)+'%'])):empty('No weekly outcomes yet','Cells accumulate as breaks resolve.');
  }

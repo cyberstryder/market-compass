@@ -9,6 +9,11 @@ Pure price-and-volume patterns, computed entirely from our own daily bars:
 
 Evidence only: no alerts, no admission, no trades. Forward marks (5/10/20
 sessions + max favorable/adverse excursion) feed the weekly outcome table.
+  - Bull/bear traps: a 20-session range break that closes back INSIDE the
+    range within 3 sessions. The failed breakout traps momentum chasers;
+    the fade direction is flagged with the opposite range edge as target.
+    Backtested 62% directional win rate; best expressed as credit spreads
+    held to expiration (long premium bleeds on IV crush).
 """
 from .market import number, session, day
 
@@ -16,6 +21,8 @@ VOLUME_RATIO = 1.5
 VOLUME_LOOKBACK = 20
 FRESH_SESSIONS = 3
 INVALIDATION_SESSIONS = 3
+TRAP_LOOKBACK = 20
+TRAP_WINDOW = 3
 RANGE_FLAVORS = {'range20': 20, 'range50': 50, 'range52w': 253}
 FLAT_PCT = 0.005
 
@@ -61,6 +68,49 @@ def detect_range_break(bars, lookback):
             'volume_ratio': ratio,
             'confirmation': 'confirmed' if ratio is not None and ratio >= VOLUME_RATIO
                             else 'unconfirmed_break'}
+
+
+def detect_trap(bars, lookback=TRAP_LOOKBACK, window=TRAP_WINDOW):
+    """Bull/bear trap: 20-session range break that closes back inside within `window` sessions.
+
+    Scans each of the last `window` bars for a range break, then checks whether
+    a subsequent close fell back inside the broken range. Returns a trap dict
+    or None. The fade direction is opposite the break; the target is the
+    opposite range edge.
+    """
+    if len(bars) < lookback + 2:
+        return None
+    # check each candidate break day in the window (oldest first)
+    for offset in range(window, 0, -1):
+        bi = len(bars) - offset - 1  # break-day index
+        win = bars[bi - lookback:bi]
+        if len(win) < lookback:
+            continue
+        range_high = max(b['h'] for b in win)
+        range_low = min(b['l'] for b in win)
+        bc = bars[bi]['c']
+        if bc > range_high:
+            break_dir, trap_kind = 'up', 'bull_trap'
+        elif bc < range_low:
+            break_dir, trap_kind = 'down', 'bear_trap'
+        else:
+            continue
+        # did a later close fall back inside the range?
+        for j in range(bi + 1, len(bars)):
+            cj = bars[j]['c']
+            if range_low <= cj <= range_high:
+                fade = 'down' if break_dir == 'up' else 'up'
+                target = range_low if fade == 'down' else range_high
+                return {'kind': trap_kind, 'break_direction': break_dir,
+                        'direction': fade, 'target': target,
+                        'range_high': range_high, 'range_low': range_low,
+                        'break_day': bars[bi]['day'], 'trap_day': bars[j]['day'],
+                        'break_close': bc, 'trap_close': cj}
+            # a further break in the same direction invalidates the trap setup
+            if (break_dir == 'up' and cj > range_high) or \
+               (break_dir == 'down' and cj < range_low):
+                break
+    return None
 
 
 def _blocks(bars15):
@@ -204,6 +254,30 @@ def scan(db, c, cfg, now):
                            'direction': brk['direction'],
                            'confirmation': brk['confirmation']}, key=eid)
                 new_events += 1
+        # --- bull/bear traps: 20d break that closed back inside within 3 sessions ---
+        trap = detect_trap(bars)
+        if trap:
+            eid = 'trap:%s:%s:%s' % (symbol, trap['trap_day'], trap['kind'])
+            if db.get(c, 'breakout:' + eid) is None:
+                event = {'id': eid, 'symbol': symbol, 'day': trap['trap_day'],
+                         'pattern': trap['kind'], 'kind': trap['kind'],
+                         'direction': trap['direction'],
+                         'break_direction': trap['break_direction'],
+                         'break_day': trap['break_day'],
+                         'level': trap['trap_close'], 'target': trap['target'],
+                         'range_high': trap['range_high'],
+                         'range_low': trap['range_low'],
+                         'close': trap['trap_close'],
+                         'confirmation': 'n/a', 'status': 'fresh',
+                         'sessions_since_break': 0, 'marks': {},
+                         'evaluated_at': now}
+                _update_marks(db, c, event, bars)
+                db.put(c, 'breakout:' + eid, event)
+                db.append(c, 'breakout_event', 'breakouts', symbol, now,
+                          {'event_id': eid, 'pattern': trap['kind'],
+                           'direction': trap['direction'],
+                           'confirmation': 'n/a'}, key=eid)
+                new_events += 1
         # --- triangles: firing check on prior-15 coil, forming check on last 15 ---
         fired_today = False
         if len(bars) >= 16:
@@ -261,8 +335,8 @@ def scan(db, c, cfg, now):
                     event['status'] = 'done'
                 event['evaluated_at'] = now
                 db.put(c, 'breakout:' + event['id'], event)
-            elif event.get('kind') == 'range_break' and event.get('status') == 'fresh':
-                # A break is actionable for FRESH_SESSIONS sessions after the close.
+            elif event.get('kind') in ('range_break', 'bull_trap', 'bear_trap') and event.get('status') == 'fresh':
+                # A break/trap is actionable for FRESH_SESSIONS sessions after the close.
                 event['sessions_since_break'] = event.get('sessions_since_break', 0) + 1
                 if event['sessions_since_break'] >= FRESH_SESSIONS:
                     event['status'] = 'done'
@@ -274,17 +348,21 @@ def scan(db, c, cfg, now):
 
 
 def display(db, c, now, days=7):
-    """Board: forming coils + fresh breaks/fires. Weekly outcome table."""
+    """Board: forming coils + fresh breaks/fires + bull/bear traps. Weekly outcome table."""
     today = day(now)
-    forming, fresh = [], []
+    forming, fresh, traps = [], [], []
     for key, state in db.prefix(c, 'triangle_state:').items():
         if isinstance(state, dict) and state.get('state') == 'forming':
             forming.append(state)
     events = [e for k, e in db.prefix(c, 'breakout:').items() if isinstance(e, dict)]
     for e in events:
         if e.get('status') in ('fresh', 'firing'):
-            fresh.append(e)
+            if e.get('kind') in ('bull_trap', 'bear_trap'):
+                traps.append(e)
+            else:
+                fresh.append(e)
     fresh.sort(key=lambda e: e.get('day', ''), reverse=True)
+    traps.sort(key=lambda e: e.get('day', ''), reverse=True)
 
     table = {}
     for e in events:
@@ -300,5 +378,6 @@ def display(db, c, now, days=7):
              'n': v['n'], 'win_rate': v['wins'] / v['n'],
              'mean_d20': v['sum_ret'] / v['n']} for k, v in sorted(table.items())]
     return {'asof': now, 'forming': forming, 'fresh': fresh[:50],
+            'traps': traps[:25],
             'weekly_outcomes': rows,
             'note': 'Research evidence only. No auto-admission, no alerts, no trades.'}
