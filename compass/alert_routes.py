@@ -18,6 +18,9 @@ ROUTES = {
 
 # Publication categories predate the condensed channels. Map them to current
 # routes at delivery time; the publication record itself is unchanged.
+# Historical publication categories only: nothing in the codebase produces
+# 'options_leaps' anymore (classification branch removed), but old stored
+# trade records may still carry it.
 PUBLICATION_ROUTES = {'swing': 'options_ideas', 'options_leaps': 'research'}
 
 

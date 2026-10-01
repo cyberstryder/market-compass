@@ -18,7 +18,7 @@ POLICY = (
     'Available or liquid calls do not establish bullishness; available or liquid puts do not establish bearishness. '
     'The requested option side expresses the question, not observed buying, institutional conviction or a forecast. '
     'Support any directional lean with independent, timestamped underlying trend, price structure or contextualized flow evidence '
-    'appropriate to the requested horizon. Intraday VWAP, EMAs and nearby GEX cannot establish a multi-month LEAPS thesis. '
+    'appropriate to the requested horizon. Intraday VWAP, EMAs and nearby GEX cannot establish a multi-month thesis. '
     'When horizon-appropriate directional evidence is absent, state insufficient directional evidence; do not infer a lean '
     'from contract availability or disguise that inference with words such as plausible or conditional. '
     'For quote-only or verification requests, report the requested facts without adding an unsolicited market thesis. '

@@ -88,7 +88,8 @@ function render(d){
  const missing=d.health.filter(h=>['not_configured','error','stale','waiting','partial','blocked','poll_stale','event_stale','clock_error','no_events','vendor_stale'].includes(h.status));
  const populated=Object.keys(d.quotes).length;
  $('#connection').textContent=missing.length?missing.length+' components need attention. Open Feed health for configuration and freshness details.':!d.markets.equities&&!d.markets.futures?'Markets are closed. Feed health distinguishes worker activity from the age of the last market observation.':populated?'Source timestamps and quote checks determine which observations can be used.':'Infrastructure is running. Waiting for market observations.';
- $('#operating-mode').textContent=d.operating_policy?.paper_entries_enabled?'Research with optional paper benchmark':'Research mode · Paper trading paused across all categories';
+ const opm=d.operating_policy||{};
+ $('#operating-mode').textContent=opm.stale?'Research mode':opm.paper_entries_enabled?'Research with optional paper benchmark':'Research mode · Paper trading paused across all categories';
  const open=d.trades.filter(p=>p.status==='open').length;
  const closed=d.trades.filter(p=>p.status==='closed');
  const evaluated=d.setup_study?.groups||[];
@@ -132,10 +133,10 @@ function render(d){
  $('#zero-dte-diagnostics').innerHTML='<p>Audit '+when(zd.at)+' · Scanner '+tag(zd.scanner_enabled===undefined?'unknown':zd.scanner_enabled?'enabled':'disabled')+' · Scanner portfolio simulations '+tag(zd.enabled===undefined?'unknown':zd.enabled?'enabled':'disabled')+'</p><p>Retries updated in the last 24 hours: '+num(zd.candidates,0)+' · Detailed reasons saved: '+num(zd.instrumented,0)+' · Missing older diagnostics: '+num(zd.missing_diagnostics,0)+(zd.truncated?' · TRUNCATED SAMPLE':'')+'</p>'+
  table(['Last saved selection reason','Candidates'],Object.entries(zd.last_attempt_reasons||{}).map(([reason,count])=>[esc(reason),num(count,0)]))+
  table(['Recorded terminal or notification reason','Notifications (may overlap retries)'],Object.entries(zd.notification_skip_reasons||{}).map(([reason,count])=>[esc(reason),num(count,0)]))+(zd.notification_skips_truncated?'<p class="fine">Notification sample capped at 1,000.</p>':'')+
- table(['Paper portfolio','Risk date','Realized P&L','Entries','Open / cap','Status'],(zd.paper_portfolios?.accounts||[]).map(r=>[esc(r.label),esc(r.day),num(r.realized),num(r.entries,0),num(r.open_positions,0)+' / '+num(r.limits?.concurrent_positions,0),tag(!r.ready?'Reconciliation required':r.daily_loss_locked?'Daily loss locked':'Available')]))+
- '<p>Each paper portfolio: daily loss limit $'+num(zd.limits?.daily_loss)+' · Risk per entry $'+num(zd.limits?.risk_per_entry)+' · '+esc(zd.paper_portfolios?.day_basis||'')+'</p>'+
+ table(['Paper portfolio','Risk date','Realized P&L','Entries','Open / cap','Status'],(zd.paper_portfolios?.accounts||[]).map(r=>[esc(r.label),esc(r.day),num(r.realized),num(r.entries,0),num(r.open_positions,0)+' / '+num(r.limits?.concurrent_positions,0),tag(!r.ready?'Reconciliation required':'Available')]))+
+ '<p>Each paper portfolio: Risk per entry $'+num(zd.limits?.risk_per_entry)+' · '+esc(zd.paper_portfolios?.day_basis||'')+'</p>'+
  '<details><summary>Historical combined ledger</summary><p>'+esc(zd.paper_portfolios?.legacy_basis||'')+'</p>'+table(['Legacy risk date','Realized P&L','Entries'],(zd.legacy_risk||[]).map(r=>[esc(r.day),num(r.realized),num(r.entries,0)]))+'</details>'+
- table(['Recent underlying','Retry state','Last attempt','Selection evidence','Quote age / valid','Loss lock at attempt','Terminal reason'],(zd.recent||[]).map(r=>[esc(r.symbol),tag(r.status),when(r.selection?.at),esc(r.selection?.reason||'No detailed diagnostic saved'),r.selection?.underlying_evidence?(num(r.selection.underlying_evidence.age_seconds,2)+'s / '+(r.selection.underlying_evidence.fresh?'yes':'no')):'Not recorded',r.selection?.risk_context?(esc(r.selection.risk_context.portfolio||'Legacy combined')+' · '+(r.selection.risk_context.ready===false?'Reconciliation required':r.selection.risk_context.daily_loss_locked?'Locked':'Available')):'Not recorded',esc(r.reason||'—')]))+
+ table(['Recent underlying','Retry state','Last attempt','Selection evidence','Quote age / valid','Risk state at attempt','Terminal reason'],(zd.recent||[]).map(r=>[esc(r.symbol),tag(r.status),when(r.selection?.at),esc(r.selection?.reason||'No detailed diagnostic saved'),r.selection?.underlying_evidence?(num(r.selection.underlying_evidence.age_seconds,2)+'s / '+(r.selection.underlying_evidence.fresh?'yes':'no')):'Not recorded',r.selection?.risk_context?(esc(r.selection.risk_context.portfolio||'Legacy combined')+' · '+(r.selection.risk_context.ready===false?'Reconciliation required':'Available')):'Not recorded',esc(r.reason||'—')]))+
  '<p class="fine">'+esc(zd.note||'Awaiting selection audit')+'</p>';
 
  $('#forward-acceptance').innerHTML='<p>Correction period begins '+when(fa.since)+'</p>'+table(['Option cohort','Total','States','Reasons'],[['Before correction',num(fa.options_before?.total,0),esc(JSON.stringify(fa.options_before?.states||{})),esc(JSON.stringify(fa.options_before?.reasons||{}))],['After correction',num(fa.options_after?.total,0),esc(JSON.stringify(fa.options_after?.states||{})),esc(JSON.stringify(fa.options_after?.reasons||{}))]])+'<p>Swing daily history ready: '+num(fa.swing_daily_ready,0)+' / '+num(fa.swing_symbols,0)+' · Technical candidates '+num(fa.swing_technical_candidates,0)+' · Without flow '+num(fa.swing_without_flow,0)+'</p><p>Current swing scan: '+esc(JSON.stringify(fa.swing_scan||{}))+'</p><p class="fine">'+esc(fa.note||'Waiting for audit')+'</p>';
@@ -180,7 +181,7 @@ function renderScanner(scanner){
  $('#scanner-focus').innerHTML=scanner.focus.length?table(['Symbol','Reason','Requested'],scanner.focus.map(f=>[esc(f.symbol),esc(f.reason),when(f.at)])):empty('No additional symbols prioritized','Core index coverage continues while the full watchlist is scanned.');
  $('#scanner-coverage').innerHTML=table(['Research feed','State','Source age','Retrieved','Target cadence','Cache / live eligibility'],scanner.feeds.map(f=>[esc(f.label),tag(f.status),f.source_age!=null?age(f.source_age):(f.item_clocks||[]).some(r=>r.source_ts!=null)?'<details data-key="clocks-'+esc(f.key)+'"><summary>Per-item clocks</summary>'+table(['Symbol','State','Source time','Age'],f.item_clocks.map(r=>[esc(r.symbol||'Unspecified'),tag(r.status),when(r.source_ts),age(r.source_age)]))+'</details>':age(null),when(f.received),age(f.target_interval),esc((f.cached===true?'Cached':f.cached===false?'Not cached':'Cache unknown')+' · '+(f.usage==='context_only'?'Context only':f.eligible_for_live_confirmation?'Clocks current; price confirmation required':'Not current confirmation'))]))+'<p class="fine">Target cadence is a scheduling goal. Provider caching, quotas, and failures can delay a refresh. Unknown source times are not treated as current. Mixed feeds retain each item’s clock.</p>';
 }
-let researchKey='',researchLoaded=0;
+let researchKey='',researchLoaded=0,researchLoading=false;
 function updateResearchChoices(feeds){
  const select=$('#research-source');
  if(!select.options.length){select.innerHTML=feeds.map(f=>'<option value="'+esc(f.key)+'">'+esc(f.label)+'</option>').join('');}
@@ -193,16 +194,18 @@ function readable(value){
 }
 async function loadResearch(){
  const key=$('#research-source').value;
- if(!key)return;
+ if(!key||researchLoading)return;
+ researchLoading=true;
  researchLoaded=Date.now();researchKey=key;
  try{
   const response=await fetch('/api/research?key='+encodeURIComponent(key));if(!response.ok)throw new Error('Unable to read research source');
   const d=await response.json();if(researchKey!==key)return;
   const meta='<h2>'+esc(d.label||key)+'</h2><p>'+tag(d.status)+' <span class="fine">Source '+when(d.source_ts)+' · Retrieved '+when(d.received)+'</span></p>';
   const rows=(d.items||[]).filter(r=>!r.symbol||lastState.scanner.watchlist.includes(r.symbol));
-  let content=rows.length?rows.slice(0,100).map(r=>'<details data-key="research-'+esc(key+'-'+(r.symbol||''))+'"><summary>'+esc(r.symbol||'Market observation')+' · '+when(r.source_ts)+'</summary>'+table(['Field','Reported value'],Object.entries(r.data).map(([k,v])=>[esc(k.replaceAll('_',' ')),'<span class="research-value">'+esc(readable(v))+'</span>']))+'</details>').join(''):d.data?'<pre>'+esc(JSON.stringify(d.data,null,2))+'</pre>':empty('Waiting for this source','The coverage table shows its collector status.');
+  let content=rows.length?rows.slice(0,100).map(r=>{const entries=Object.entries(r.data||{});const shown=entries.slice(0,100);return '<details data-key="research-'+esc(key+'-'+(r.symbol||''))+'"><summary>'+esc(r.symbol||'Market observation')+' · '+when(r.source_ts)+'</summary>'+table(['Field','Reported value'],shown.map(([k,v])=>[esc(k.replaceAll('_',' ')),'<span class="research-value">'+esc(readable(v))+'</span>']))+(entries.length>shown.length?'<p class="fine">'+(entries.length-shown.length)+' more fields available via the API.</p>':'')+'</details>';}).join(''):d.data?'<pre>'+esc(JSON.stringify(d.data,null,2))+'</pre>':empty('Waiting for this source','The coverage table shows its collector status.');
   $('#research-detail').innerHTML=meta+content+'<p class="fine">Vendor-reported information. A missing source timestamp cannot establish a current trading condition. Up to 100 matching rows shown.</p>';
  }catch(error){$('#research-detail').textContent=error.message;}
+ finally{researchLoading=false;}
 }
 let mapData=null,mapRequested='',mapLoaded=0,mapPending=false;
 async function loadStrikeMap(symbol){
@@ -336,6 +339,9 @@ $('#secondary-period-reset').onclick=()=>{
  if(lastState)renderSecondary(lastState.secondary);
 };
 poll();
+{const conn=$('#connection');
+ if(conn){conn.classList.add('clickable');conn.title='Open Feed health';
+  conn.addEventListener('click',()=>{selectTab('compass');const t=$('#health-table');if(t)t.scrollIntoView({block:'start'});});}}
 
 function renderSetupStudy(d){
  if(!d)return;

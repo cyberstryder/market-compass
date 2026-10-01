@@ -23,7 +23,7 @@ def changed(r,i,**p):
  ('O:QQQ260923P00500000','setup_study',{},'options_0dte'),
  ('O:QQQ261002C00500000','option_ideas',{},'options_ideas'),
  ('O:QQQ261002C00500000','swing_ideas',{},'swing'),
- ('O:QQQ280121C00500000','swing_ideas',{},'options_leaps'),
+ ('O:QQQ280121C00500000','swing_ideas',{},'swing'),
  ('O:QQQ261002C00500000','smoothers',{},'smoothers'),
 ])
 def test_categories(db,symbol,source,payload,expected):

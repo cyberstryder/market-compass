@@ -52,7 +52,6 @@ FEEDS = (
         ('bullish-pullback', 'Bullish pullbacks'), ('momentum', 'Momentum'),
         ('volatility-squeeze', 'Volatility compression'), ('small-cap', 'Small-cap candidates'),
         ('volatility-surge', 'Volatility expansion'), ('gamma-scan', 'Gamma candidates'),
-        ('csp-wheel', 'Cash-secured-put candidates'), ('leaps', 'Long-dated candidates'),
         ('leveraged', 'Leveraged ETF candidates'), ('daily-cuts', 'Combined screener shortlist')))
 
 

@@ -13,9 +13,9 @@ NOW = datetime(2026,9,21,19,tzinfo=timezone.utc).timestamp()
 
 @pytest.mark.parametrize('question,lo,hi,side', [
     ('what do you see for QQQ puts today till close for 0DTE',0,0,'put'),
-    ('QQQ LEAPS calls',365,1095,'call'), ('SPY 45 DTE puts',45,45,'put'),
-    ('QQQ 7-60 DTE options',7,60,None), ('QQQ 6 month calls',173,187,'call'),
-    ('QQQ puts expiring 2026-09-25',4,4,'put'), ('QQQ options',0,1095,None)])
+    ('QQQ LEAPS calls',0,21,'call'), ('SPY 14 DTE puts',14,14,'put'),
+    ('QQQ 7-21 DTE options',7,21,None), ('QQQ 2 week calls',7,21,'call'),
+    ('QQQ puts expiring 2026-09-25',4,4,'put'), ('QQQ options',0,21,None)])
 def test_horizon(question,lo,hi,side):
     r=request(question,NOW)
     assert (r['min_dte'],r['max_dte'],r['side'])==(lo,hi,side)
@@ -26,6 +26,7 @@ def test_invalid_and_exchange_day():
     assert request('QQQ 2026-02-30 puts',NOW)['status']=='invalid_expiry'
     assert request('QQQ 2026-09-20 puts',NOW)['status']=='invalid_expiry'
     assert request('QQQ 2000 DTE calls',NOW)['status']=='invalid_expiry'
+    assert request('QQQ 45 DTE calls',NOW)['status']=='invalid_expiry'
     late=datetime(2026,9,22,1,tzinfo=timezone.utc).timestamp()
     assert request('QQQ 0DTE puts',late)['expiry_start']=='2026-09-21'
 
@@ -56,7 +57,7 @@ def test_lookup_uses_requested_expirations_and_does_not_change_strategy_config(m
         return [row(expiry=lo)],False
     monkeypatch.setattr(Collectors,'alpaca_chain',fetch)
     for question,expected in [('QQQ 0DTE puts',('2026-09-21','2026-09-21')),
-                              ('QQQ LEAPS puts',('2027-09-21','2029-09-20'))]:
+                              ('QQQ LEAPS puts',('2026-09-21','2026-10-12'))]:
         req=request(question,NOW)
         result=asyncio.run(research(cfg,['QQQ'],req,{},NOW))
         assert calls[-1]==('QQQ',*expected,4)
@@ -147,7 +148,7 @@ def test_web_without_credentials_receives_collector_option_evidence(tmp_path,mon
             if task.done(): break
         try:
             result=await asyncio.wait_for(task,2)
-            assert result['symbols']['QQQ']['candidates'][0]['expiry']=='2027-09-21'
+            assert result['symbols']['QQQ']['candidates'][0]['expiry']=='2026-09-21'
             assert result['symbols']['QQQ']['source']=='alpaca'
             with db.tx() as c: assert not db.prefix(c,'ask-options:')
         finally: await worker.close()
@@ -164,22 +165,16 @@ def test_queue_timeout_cleans_request_and_preserves_research_scope(tmp_path):
     with db.tx() as c: assert not db.prefix(c,'ask-options:')
 
 
-def test_calendar_day_range_and_combined_horizons(monkeypatch):
+def test_calendar_day_range_capped_at_21_dte(monkeypatch):
     now=datetime(2026,9,23,19,tzinfo=timezone.utc).timestamp()
-    req=request('Read-only QQQ LEAPS calls, 365–900 calendar days to expiration as of 2026-09-23',now)
-    assert (req['min_dte'],req['max_dte'],req['expiry_end'])==(365,900,'2029-03-11')
-    combined=request('QQQ 0DTE puts and QQQ LEAPS calls, 365–900 calendar days',now)
-    assert combined['status']=='multiple'
+    req=request('Read-only QQQ calls, 7–14 calendar days to expiration as of 2026-09-23',now)
+    assert (req['min_dte'],req['max_dte'],req['expiry_end'])==(7,14,'2026-10-07')
     calls=[]
     async def fetch(self,symbol,lo,hi,page_limit):
         calls.append((lo,hi))
-        return [row(expiry=lo,side='put' if lo=='2026-09-23' else 'call',ts=now)],True
+        return [row(expiry=lo,side='call',ts=now)],True
     monkeypatch.setattr(Collectors,'alpaca_chain',fetch)
-    result=asyncio.run(research(Config(local=True,alpaca_key='fake',alpaca_secret='fake'),['QQQ'],combined,{},now))
-    assert calls==[('2026-09-23','2026-09-23'),('2027-09-23','2029-03-11')]
-    from compass.assistant_progress import evidence_summary
-    cards=evidence_summary(json.dumps({'market_context':{'question_scope':{'symbols':['QQQ']},'option_research':result}}))['cards']
-    options=[c for c in cards if c['label']=='Requested options']
-    assert len(options)==2
-    assert [next(v['value'] for v in c['values'] if v['label']=='Side') for c in options]==['put','call']
-    assert request('QQQ 0DTE puts LEAPS calls',now)['status']=='ambiguous_horizon'
+    result=asyncio.run(research(Config(local=True,alpaca_key='fake',alpaca_secret='fake'),['QQQ'],req,{},now))
+    assert calls==[('2026-09-30','2026-10-07')]
+    assert result['symbols']['QQQ']['candidates'][0]['expiry']=='2026-09-30'
+    assert request('Read-only QQQ calls, 30–90 calendar days to expiration',now)['status']=='invalid_expiry'

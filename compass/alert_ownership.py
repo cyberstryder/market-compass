@@ -9,7 +9,7 @@ from .alert_format import OPTION, FUTURE, CT
 VERSION = 'option-alert-ownership-v1'
 LABELS = {'spy_morning':'SPY 0DTE', 'options_0dte':'OPTIONS 0DTE',
           'options_ideas':'OPTIONS INTRADAY', 'swing':'OPTIONS SWING',
-          'options_leaps':'OPTIONS LEAPS', 'smoothers':'SMOOTHERS'}
+          'smoothers':'SMOOTHERS'}
 ENTRY = {'option_idea_new','swing_idea_new','option_setup_new','native_option_entry','entered','open'}
 EXIT = {'option_idea_closed','swing_idea_closed','setup_result','native_option_exit','closed'}
 
@@ -34,7 +34,6 @@ def classification(row, o):
     horizon=p.get('holding_horizon') or ('swing' if p.get('track')=='swing' or row.get('source') in ('swing_ideas','smoothers') else 'intraday')
     if dte==0:horizon='intraday';category='spy_morning' if o['underlying']=='SPY' else 'options_0dte'
     elif p.get('project')=='smoothers' or row.get('source')=='smoothers':category='smoothers';horizon='swing'
-    elif horizon=='leaps' or (horizon=='swing' and dte>=365):category='options_leaps';horizon='leaps'
     elif horizon=='swing':category='swing'
     else:category='options_ideas'
     return category,horizon

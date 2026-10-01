@@ -10,7 +10,7 @@ from .market import number
 from .providers import Collectors
 
 POLICY = (
-    'Ask Compass supports research from 0DTE through LEAPS, independently of automated strategies. '
+    'Ask Compass supports research from 0DTE through 21 DTE, independently of automated strategies. '
     'Answer the requested direction and horizon first using supplied underlying and option evidence. '
     'Give conditional bullish/bearish scenarios and invalidation using recorded levels where available. '
     'Strategy min/max DTE, zero_dte max_entries=0, and a missing simulated fill are not research prohibitions. '
@@ -42,16 +42,10 @@ POLICY = (
 def request(question, now):
     q = question.lower().replace('‑', '-').replace('—', '-').replace('–', '-')
     shorthand = re.findall(r'(?<![\w./])([0-9]+(?:\.[0-9]{1,3})?)\s*([cp])\b', q)
-    if not shorthand and not re.search(r'\b(options?|puts?|calls?|leaps?|\d+\s*dte)\b', q):
+    if not shorthand and not re.search(r'\b(options?|puts?|calls?|\d+\s*dte)\b', q):
         return None
-    if re.search(r'\b(?:0\s*dte|same[- ]day)\b', q) and re.search(r'\bleaps?\b', q):
-        clauses = re.split(r'\s+(?:and|versus|vs\.?)\s+|[;\n]', question, flags=re.I)
-        requests = [request(part, now) for part in clauses if len(clauses)>1 if re.search(r'0\s*dte|same[- ]day|leaps?', part, re.I)]
-        if len(requests) >= 2 and all(r and r.get('status') == 'requested' for r in requests):
-            return dict(status='multiple', requests=requests[:3])
-        return dict(status='ambiguous_horizon', note='Multiple expiration horizons were requested but cannot be assigned safely; separate the horizons.')
     today = datetime.fromtimestamp(now, ZoneInfo('America/New_York')).date()
-    lo, hi, basis = 0, 1095, 'No expiry specified; sample listed expirations from today through three years.'
+    lo, hi, basis = 0, 21, 'No expiry specified; sample listed expirations from today through 21 calendar days.'
     dates = re.findall(r'\b\d{4}-\d{2}-\d{2}\b', q)
     slash_dates = re.findall(r'\b(\d{1,2})/(\d{1,2})/(\d{4}|\d{2})\b', q)
     try:
@@ -79,10 +73,8 @@ def request(question, now):
     elif duration:
         n, unit = duration.groups(); days = int(n)*({'d':1,'w':7,'m':30,'y':365}[unit[0]])
         lo, hi = max(0, days-7), days+7; basis = 'Approximate stated horizon, plus/minus seven calendar days.'
-    elif re.search(r'\bleaps?\b', q):
-        lo, hi = 365, 1095; basis = 'LEAPS research window: one to three years; listed availability varies.'
-    if lo < 0 or hi < lo or hi > 1095:
-        return dict(status='invalid_expiry', note='Requested expiration must be between today and 1095 calendar days.')
+    if lo < 0 or hi < lo or hi > 21:
+        return dict(status='invalid_expiry', note='Requested expiration must be between today and 21 calendar days.')
     side = 'put' if re.search(r'\bputs?\b',q) else 'call' if re.search(r'\bcalls?\b',q) else None
     if shorthand:
         if len(set(shorthand)) != 1 or (side and side != {'p':'put','c':'call'}[shorthand[0][1]]):
@@ -109,7 +101,7 @@ def sample(rows, req, spot, now, source):
         if req.get('strike') is not None and number(o.get('strike')) != req['strike']:
             continue
         eligible.append(o)
-    # Round-robin expirations prevents the first expiry from crowding out LEAPS.
+    # Round-robin expirations prevents the first expiry from crowding out farther expirations.
     groups = {}
     for o in eligible: groups.setdefault(o['expiry'], []).append(o)
     expiries = sorted(groups)
@@ -133,11 +125,6 @@ def sample(rows, req, spot, now, source):
 
 
 async def research(cfg, scope, req, quotes, now, db=None):
-    if req['status'] == 'multiple':
-        results = []
-        for item in req['requests']:
-            results.append(await research(cfg, scope, item, quotes, now, db=db))
-        return dict(request=req, requests=results, execution='Read-only research; no orders.')
     result = dict(request=req, symbols={}, execution='Read-only research; no simulated or broker orders.')
     if req['status'] != 'requested': return result
     source = 'massive' if cfg.massive else 'alpaca' if cfg.alpaca_key and cfg.alpaca_secret else None
@@ -227,11 +214,8 @@ async def collect_requests(collector):
 def record_evidence(db, result, now):
     """Keep small daily verification records, never user prompts or credentials."""
     from .market import day
-    if result.get('requests'):
-        for item in result['requests']: record_evidence(db, item, now)
-        return
     req=result.get('request',{})
-    bucket='0dte' if req.get('min_dte')==req.get('max_dte')==0 else 'leaps' if req.get('min_dte',0)>=365 else 'other'
+    bucket='0dte' if req.get('min_dte')==req.get('max_dte')==0 else 'other'
     symbols=result.get('symbols') or {'request':{'status':result.get('status','unavailable')}}
     with db.tx() as c:
         for symbol,item in symbols.items():

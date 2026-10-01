@@ -286,9 +286,14 @@ def create_app(cfg=None):
             # every tick; prefer it over this service's own config so the
             # dashboard banner reflects what is actually paper trading.
             eng_policy=db.get(c,"operating_policy",{}) or {}
-            live_policy=(eng_policy if isinstance(eng_policy,dict)
-                         and "paper_entries_enabled" in eng_policy
-                         and now-eng_policy.get("at",0)<300 else policy(cfg))
+            if (isinstance(eng_policy,dict) and "paper_entries_enabled" in eng_policy
+                    and now-eng_policy.get("at",0)<300):
+                live_policy=eng_policy
+            else:
+                # Engine policy missing or stale: this service cannot know the
+                # live paper state, so mark it and let the UI withhold the
+                # paused claim rather than asserting it.
+                live_policy=policy(cfg); live_policy["stale"]=True
             data={"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","operating_policy":live_policy,"markets":markets,
                 "storage":storage_snapshot(db,c,now),"health":health,"workers":workers,"quotes":watch,
                 "scanner":scanner_snapshot(db,c,cfg,now),
@@ -854,10 +859,8 @@ def create_app(cfg=None):
                     context['swing_technical_context'][symbol]=history
             from .assistant_options import record_evidence
             await asyncio.to_thread(record_evidence,db,context['option_research'],time.time())
-        from .assistant_horizon import restrict, missing_history_answer
-        context=restrict(context)
         from .assistant_contract import assessment
-        guarded_answer=assessment(body.question,context) or missing_history_answer(context)
+        guarded_answer=assessment(body.question,context)
         if guarded_answer is not None:
             assistant_input,context_size=build_input(body.question,context)
             notify({'type':'context',**evidence_summary(assistant_input)})
