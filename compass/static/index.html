@@ -64,7 +64,10 @@
 <section id="sec-morning-brief" class="acc-section"><button class="acc-head" data-section="morning-brief"><span class="acc-title">Morning Brief</span><span class="acc-chn">#morning-brief</span><span class="chev">▾</span></button><div class="acc-body">
 <section id="overview" class="tab legacy"><div id="stats" class="stats"></div>
 <article class="panel"><div class="panel-head"><h2>Day trading board</h2><span class="muted" id="board-state"></span></div><div id="day-board"></div>
-<p class="fine">Built 08:30 CT, refreshed 09:00 CT, frozen at the open. Six-component catalyst score: earnings, economic, mover, flow, sector, radar. Watchlist only — the A+ alert gate is specified but not wired, so the board never alerts on its own.</p></article>
+<!-- DORMANT 2026-10-01: Day board cut — vendor research feeds (earnings, economic calendar, sector dashboard) not populated, board scored all zeros 09-30/10-01. To revive: fix feeds, set DAY_TRADING_BOARD_ENABLED=true, uncomment this panel.
+<p class="fine">Built 08:30 CT, refreshed 09:00 CT, frozen at the open. Six-component catalyst score: earnings, economic, mover, flow, sector, radar. Watchlist only — the A+ alert gate is specified but not wired, so the board never alerts on its own.</p>
+-->
+<p class="fine">Day trading board is dormant — its research feeds are not populated by the vendor. See config.py for revival steps.</p></article>
 <div class="columns">
 <article class="panel wide"><div class="panel-head"><h2>Watchlist & levels</h2><span class="muted">Latest observations</span></div><div id="watch"></div>
 <p class="fine">Futures use a 17:00–17:15 CT Globex range, then a new 08:30–08:45 CT regular-session range. Explicit contract IDs keep rolled prices separate.</p></article>
@@ -250,7 +253,8 @@
 <p class="fine">One stream: 0DTE setups (with Discord delivery status), Flash Agentic triggers (with Compass evidence), and the latest scanner signals. Auto-refreshes every minute while open. Nothing here places trades.</p></section>
 <section id="scanners" class="tab legacy">
 <div class="banner">Evidence scanners rebuilt from TraderMatrix site views. Evidence only — no alerts, no auto-admission, no trades. Nothing here is a trading signal until prospective measurement says otherwise.</div>
-<article class="panel"><div class="panel-head"><h2>Apex magnets</h2><span class="muted" id="apex-asof"></span><label>Within <select id="apex-within"><option value="0.005">0.5%</option><option value="0.01">1%</option><option value="0.02" selected>2%</option><option value="0.05">5%</option><option value="1">All</option></select></label></div><div id="apex-rows"></div><h3>Signal transitions</h3><div id="apex-signals"></div><h3>Session outcomes</h3><div id="apex-outcomes"></div>
+<article class="panel"><div class="panel-head"><h2>Apex magnets</h2><span class="muted" id="apex-asof"></span><label>Within <select id="apex-within"><option value="0.005">0.5%</option><option value="0.01">1%</option><option value="0.02" selected>2%</option><option value="0.05">5%</option><option value="1">All</option></select></label></div><div id="apex-rows"></div><h3>Signal transitions</h3><div id="apex-signals"></div><h3>Session outcomes</h3><div id="apex-outcomes"></div><h3>Hit rates (14d)</h3><div id="apex-hitrats"></div>
+<p class="fine">Hit rates describe past signals only — they do not change signals, alerts, or thresholds. broke_through hit = price broke; tested_holding hit = pin/reject (held); approaching hit = level tested.</p>
 <p class="fine">Vendor magnet levels joined with minute bars. Magnet drift history is not yet joined, so drift always reports current.</p></article>
 <article class="panel"><div class="panel-head"><h2>Tape confirmed</h2><span class="muted" id="tape-asof"></span></div><div id="tape-scorecard"></div><h3>Recent confirmed trials</h3><div id="tape-recent"></div>
 <p class="fine">Setup trials joined with ±15 minute same-direction flow (≥$250k premium, print score ≥85). Confirmed means the flow arrived before the trial was invalidated.</p></article>

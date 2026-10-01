@@ -397,6 +397,12 @@ def create_app(cfg=None):
         with db.tx() as c:
             return display(db,c,time.time())
 
+    @app.get('/api/apex-magnets/hit-rates')
+    def get_apex_hit_rates(lookback_days:int=Query(14,ge=1,le=90)):
+        from .apex_magnet import hit_rates
+        with db.tx() as c:
+            return hit_rates(db,c,time.time(),lookback_days=lookback_days)
+
     @app.get('/api/tape-confirmed')
     def get_tape_confirmed():
         from .tape_confirmed import display

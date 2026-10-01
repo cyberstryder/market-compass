@@ -62,7 +62,9 @@ def test_seeded_supports_long(db):
     # Magnet at 605 sits between spot 600 and target 612.
     assert '605.00' in (out['pillars']['apex']['note'] or '')
     assert out['spot'] == 600.0
-    assert out['evidence_score'] == 2
+    # gap + breakout support (+1 each), apex 'info' (rows present) adds +0.25.
+    assert out['evidence_score'] == 2.25
+    assert out['pillars']['apex']['alignment'] == 'info'
 
 
 def test_contradicts_short(db):
@@ -206,3 +208,48 @@ def test_ict_pillar_counts_in_score(db):
     # 5 equity pillars no_data (not counted) + ict supports (+1, counted)
     assert out['evidence_score'] == 1
     assert out['pillars_counted'] == 1
+
+
+def test_info_scores_quarter_not_zero(db):
+    """'info' pillars contribute +0.25, separating real-but-unconfirmed
+    evidence from true no-data (0)."""
+    with db.tx() as c:
+        seed(db, c)  # apex rows present -> 'info'; gap/breakout -> 'supports'
+        out = pc.check(db, c, NOW, 'spy', 'long', 600.0, 612.0, 'sal')
+    assert out['pillars']['apex']['alignment'] == 'info'
+    # 2 supports (+2) + 1 info (+0.25); no_data pillars add nothing.
+    assert out['evidence_score'] == 2.25
+    # 'info' is not a voting pillar: pillars_counted excludes it.
+    assert out['pillars_counted'] == 2
+
+
+def test_info_vs_no_data_separation(db):
+    """Two checks differing only by info-vs-no_data must score differently."""
+    with db.tx() as c:
+        # No seeds at all: every pillar no_data -> score 0.
+        out_empty = pc.check(db, c, NOW, 'SPY', 'long', 600.0, 610.0, 'sal')
+    assert out_empty['evidence_score'] == 0
+    with db.tx() as c:
+        # Only apex rows (info), nothing else.
+        db.put(c, 'apex_magnet:latest', {
+            'at': NOW, 'radius': 200, 'tolerance': 0.0015, 'excluded': {},
+            'rows': {'SPY': {'symbol': 'SPY', 'spot': 600.0, 'magnet': 605.0,
+                             'distance_pct': 0.008, 'signal': 'approaching'}}})
+        out_info = pc.check(db, c, NOW, 'SPY', 'long', 600.0, 610.0, 'sal')
+    assert out_info['pillars']['apex']['alignment'] == 'info'
+    assert out_info['evidence_score'] == 0.25
+    assert out_info['evidence_score'] > out_empty['evidence_score']
+
+
+def test_scoring_weights_unchanged(db):
+    """supports=+1, contradicts=-1, neutral=0, no_data=0 are unchanged."""
+    with db.tx() as c:
+        seed(db, c)
+        out_long = pc.check(db, c, NOW, 'spy', 'long', 600.0, 612.0, 'sal')
+        out_short = pc.check(db, c, NOW, 'SPY', 'short', 600.0, 590.0, 'x')
+    # long: 2 supports + 1 info = 2.25
+    assert out_long['evidence_score'] == 2.25
+    # short: 2 contradicts (-2) + 1 info (+0.25) = -1.75
+    assert out_short['pillars']['gap']['alignment'] == 'contradicts'
+    assert out_short['pillars']['breakout']['alignment'] == 'contradicts'
+    assert out_short['evidence_score'] == -1.75

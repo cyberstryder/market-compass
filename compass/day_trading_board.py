@@ -1,5 +1,13 @@
 """Day Trading Board: the morning watchlist generator.
 
+DORMANT as of 2026-10-01 — cut from engine tick and dashboard nav because the
+research feeds it depends on (research:earnings, research:economic_calendar,
+research:sector_dashboard) are not populated by the vendor. The board scored
+all zeros on 09-30 and 10-01; a permanently-zero board is worse than no board.
+Module and tests retained in tree. To revive: fix the vendor research feeds,
+set DAY_TRADING_BOARD_ENABLED=true, restore the dashboard panel (index.html
+DORMANT marker).
+
 Built at 08:30 CT, refreshed at 09:00 CT, frozen after the open. A ranked,
 transparent checklist of the names with the most going on today — catalysts,
 movers, flow, sector tailwind, and names already on our radar.

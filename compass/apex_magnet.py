@@ -285,3 +285,60 @@ def display(db, c, now, limit=200):
             'signals': [{'symbol': s['symbol'], 'ts': s['ts'], **s['payload']} for s in signals],
             'outcomes': [{'symbol': s['symbol'], 'ts': s['ts'], **s['payload']} for s in outcomes],
             'note': 'Research evidence only. No auto-admission, no alerts, no trades.'}
+
+
+# Hit-rate definitions per signal state (2026-10-01). These are descriptive,
+# not predictive claims: they report what happened after past signals.
+# - broke_through: signal claims price broke the magnet. Hit = 'break'.
+# - tested_holding: signal claims price tested and held. Hit = 'pin' or 'reject'
+#   (price interacted with the level but did not break through it).
+# - approaching: signal claims price is near a magnet. Hit = price tested the
+#   level at all ('pin', 'break', or 'reject'; i.e. not 'no_test').
+# Outcomes of 'unknown' or 'no_test' are excluded from hit-rate denominators;
+# they are reported separately so the rate is honest about coverage.
+_HIT_OUTCOMES = {
+    'broke_through': ('break',),
+    'tested_holding': ('pin', 'reject'),
+    'approaching': ('pin', 'break', 'reject'),
+}
+_TESTED_OUTCOMES = ('pin', 'break', 'reject')
+
+
+def hit_rates(db, c, now, lookback_days=14):
+    """Read-only hit rates per signal state over the lookback window.
+
+    Returns per-state: total signals, outcomes recorded, outcome breakdown,
+    and hit rate (None when no tested outcomes exist). Evidence only —
+    does not change signals, alerts, or thresholds.
+    """
+    cutoff = now - lookback_days * 86400
+    signals = [s for s in db.recent(c, 'apex_magnet_signal', limit=5000)
+               if (s.get('ts') or 0) >= cutoff]
+    outcomes = [o for o in db.recent(c, 'apex_magnet_outcome', limit=5000)
+                if (o.get('ts') or 0) >= cutoff]
+    states = ('approaching', 'tested_holding', 'broke_through')
+    result = {}
+    for state in states:
+        state_signals = [s for s in signals
+                         if (s.get('payload') or {}).get('signal') == state]
+        state_outcomes = [o for o in outcomes
+                          if (o.get('payload') or {}).get('signal') == state]
+        breakdown = {}
+        for o in state_outcomes:
+            oc = (o.get('payload') or {}).get('outcome', 'unknown')
+            breakdown[oc] = breakdown.get(oc, 0) + 1
+        tested = sum(breakdown.get(oc, 0) for oc in _TESTED_OUTCOMES)
+        hits = sum(breakdown.get(oc, 0) for oc in _HIT_OUTCOMES[state])
+        result[state] = {
+            'signals': len(state_signals),
+            'outcomes_recorded': len(state_outcomes),
+            'breakdown': breakdown,
+            'tested': tested,
+            'hits': hits,
+            'hit_rate': (hits / tested) if tested else None,
+            'hit_definition': 'outcome in %s' % (list(_HIT_OUTCOMES[state]),),
+        }
+    return {'asof': now, 'lookback_days': lookback_days,
+            'states': result,
+            'note': 'Research evidence only. Hit rates describe past signals; '
+                    'they do not change signals, alerts, or thresholds.'}

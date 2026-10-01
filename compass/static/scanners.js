@@ -17,6 +17,18 @@
   $('#apex-signals').innerHTML=sig.length?table(['Time','Symbol','Detail'],sig.map(s=>[when(s.ts),esc(s.symbol),detail(s,['symbol','ts'])])):empty('No signal transitions','No magnet touches or breaks recorded recently.');
   const out=(r.outcomes||[]).slice(0,20);
   $('#apex-outcomes').innerHTML=out.length?table(['Time','Symbol','Detail'],out.map(s=>[when(s.ts),esc(s.symbol),detail(s,['symbol','ts'])])):empty('No session outcomes yet','Outcomes are recorded as sessions close.');
+  // Hit rates: separate fetch, evidence-only.
+  get('/api/apex-magnets/hit-rates').then(hr=>{
+    const states=hr.states||{};
+    const order=['broke_through','tested_holding','approaching'];
+    const rows=order.filter(k=>states[k]).map(k=>{
+      const s=states[k];
+      const bd=s.breakdown||{};
+      const bdStr=Object.entries(bd).map(([oc,n])=>oc+': '+n).join(', ')||'—';
+      return [esc(k),num(s.signals,0),num(s.outcomes_recorded,0),num(s.tested,0),pct1(s.hit_rate),esc(bdStr)];
+    });
+    $('#apex-hitrats').innerHTML=rows.length?table(['Signal','Signals','Outcomes','Tested','Hit rate','Breakdown'],rows)+'<p class="fine">Lookback '+num(hr.lookback_days,0)+' days · as of '+when(hr.asof)+'.</p>':empty('No hit-rate data','Not enough signal history yet.');
+  }).catch(e=>{$('#apex-hitrats').innerHTML=empty('Hit rates unavailable','Could not load /api/apex-magnets/hit-rates.');});
  }
 
  function renderTape(r){

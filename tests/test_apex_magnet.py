@@ -230,3 +230,72 @@ def test_scan_session_rollover_writes_outcome(db):
         assert len(outcomes) == 1
         assert outcomes[0]['payload']['session'] == prev_day
         assert outcomes[0]['payload']['outcome'] == 'reject'
+
+
+# --- hit_rates ---
+
+def _seed_signal_outcome(db, c, symbol, signal, outcome, ts):
+    db.append(c, 'apex_magnet_signal', 'apex_magnet', symbol, ts,
+              {'session': '2026-09-25', 'signal': signal, 'magnet': 100.0},
+              key='apexmag:%s:sig:%s:%d' % (symbol, signal, ts))
+    db.append(c, 'apex_magnet_outcome', 'apex_magnet', symbol, ts,
+              {'session': '2026-09-25', 'signal': signal, 'magnet': 100.0,
+               'outcome': outcome, 'tests': 2},
+              key='apexmag:%s:out:%s:%d' % (symbol, signal, ts))
+
+
+def test_hit_rates_per_state(db):
+    with db.tx() as c:
+        base = NOW - 86400
+        # broke_through: 2 break (hits), 1 pin (miss)
+        _seed_signal_outcome(db, c, 'SPY', 'broke_through', 'break', base)
+        _seed_signal_outcome(db, c, 'SPY', 'broke_through', 'break', base + 1)
+        _seed_signal_outcome(db, c, 'QQQ', 'broke_through', 'pin', base + 2)
+        # tested_holding: 1 pin (hit), 1 reject (hit), 1 break (miss)
+        _seed_signal_outcome(db, c, 'SPY', 'tested_holding', 'pin', base + 3)
+        _seed_signal_outcome(db, c, 'SPY', 'tested_holding', 'reject', base + 4)
+        _seed_signal_outcome(db, c, 'SPY', 'tested_holding', 'break', base + 5)
+        # approaching: 1 pin (hit = tested), 1 no_test (excluded)
+        _seed_signal_outcome(db, c, 'SPY', 'approaching', 'pin', base + 6)
+        _seed_signal_outcome(db, c, 'SPY', 'approaching', 'no_test', base + 7)
+        out = am.hit_rates(db, c, NOW, lookback_days=14)
+    bt = out['states']['broke_through']
+    assert bt['signals'] == 3
+    assert bt['outcomes_recorded'] == 3
+    assert bt['breakdown'] == {'break': 2, 'pin': 1}
+    assert bt['tested'] == 3
+    assert bt['hits'] == 2
+    assert bt['hit_rate'] == pytest.approx(2 / 3)
+
+    th = out['states']['tested_holding']
+    assert th['signals'] == 3
+    assert th['hits'] == 2  # pin + reject
+    assert th['hit_rate'] == pytest.approx(2 / 3)
+
+    ap = out['states']['approaching']
+    assert ap['signals'] == 2
+    assert ap['outcomes_recorded'] == 2
+    assert ap['tested'] == 1  # no_test excluded
+    assert ap['hits'] == 1
+    assert ap['hit_rate'] == pytest.approx(1.0)
+
+
+def test_hit_rates_empty_when_no_history(db):
+    with db.tx() as c:
+        out = am.hit_rates(db, c, NOW, lookback_days=14)
+    for state in ('approaching', 'tested_holding', 'broke_through'):
+        s = out['states'][state]
+        assert s['signals'] == 0
+        assert s['outcomes_recorded'] == 0
+        assert s['hit_rate'] is None
+
+
+def test_hit_rates_respects_lookback(db):
+    with db.tx() as c:
+        _seed_signal_outcome(db, c, 'SPY', 'broke_through', 'break', NOW - 86400)
+        _seed_signal_outcome(db, c, 'SPY', 'broke_through', 'break', NOW - 30 * 86400)
+        out = am.hit_rates(db, c, NOW, lookback_days=14)
+    bt = out['states']['broke_through']
+    # Only the recent one is inside the 14-day window.
+    assert bt['signals'] == 1
+    assert bt['outcomes_recorded'] == 1

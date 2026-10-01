@@ -77,7 +77,13 @@ class Config:
     gap_min_gap: float = field(default_factory=lambda: float(env("GAP_MIN_GAP","0.015")))
     gap_large_caps: str = field(default_factory=lambda: env("GAP_LARGE_CAP_SYMBOLS",""))
     breakouts: bool = field(default_factory=lambda: env("BREAKOUTS_ENABLED","true")=="true")
-    day_trading_board: bool = field(default_factory=lambda: env("DAY_TRADING_BOARD_ENABLED","true")=="true")
+    # DORMANT 2026-10-01: Day board cut because its research feeds
+    # (research:earnings, research:economic_calendar, research:sector_dashboard)
+    # are not populated by the vendor — board scored all zeros 09-30/10-01.
+    # To revive: fix the vendor feeds (or point them at a working source),
+    # set DAY_TRADING_BOARD_ENABLED=true, and restore the dashboard panel
+    # (see index.html DORMANT marker). Module + tests retained in tree.
+    day_trading_board: bool = field(default_factory=lambda: env("DAY_TRADING_BOARD_ENABLED","false")=="true")
     option_ideas: bool = field(default_factory=lambda: env("OPTION_IDEAS_ENABLED","true")=="true")
     ideas_alerts: bool = field(default_factory=lambda: env("OPTION_IDEAS_ALERTS","true")=="true")
     ideas_min_dte: int = field(default_factory=lambda: int(env("OPTION_IDEAS_MIN_DTE","1")))

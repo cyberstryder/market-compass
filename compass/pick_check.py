@@ -336,7 +336,10 @@ def check(db, c, now, ticker, direction, entry=None, target=None, source='',
             db, c, cfg, now, symbol, direction, spot or entry, target, pillars)
         if spot is None and bf_spot:
             spot = bf_spot
-    for_code = {'supports': 1, 'neutral': 0, 'info': 0, 'no_data': 0, 'contradicts': -1}
+    # Fractional evidence scoring (2026-10-01): 'info' contributes +0.25 so
+    # real-but-unconfirmed evidence (institutional flow, GEX data) separates
+    # from true no-data. 'supports' stays +1, 'contradicts' stays -1.
+    for_code = {'supports': 1, 'neutral': 0, 'info': 0.25, 'no_data': 0, 'contradicts': -1}
     score = sum(for_code[p['alignment']] for p in pillars.values())
     counted = sum(1 for p in pillars.values() if p['alignment'] not in ('no_data', 'info'))
 
