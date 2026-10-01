@@ -12,10 +12,11 @@ sessions + max favorable/adverse excursion) feed the weekly outcome table.
   - Bull/bear traps: a 20-session range break that closes back INSIDE the
     range within 3 sessions. The failed breakout traps momentum chasers;
     the fade direction is flagged with the opposite range edge as target.
-    Backtested 62% directional win rate; best expressed as credit spreads
-    held to expiration (long premium bleeds on IV crush).
+    Structure: credit-spread candidate (14-21 DTE). Paper trading (no alerts)
+    via trap_paper when TRAP_PAPER_ENABLED is set.
 """
 from .market import number, session, day
+from . import trap_paper
 
 VOLUME_RATIO = 1.5
 VOLUME_LOOKBACK = 20
@@ -347,6 +348,39 @@ def scan(db, c, cfg, now):
                 event['evaluated_at'] = now
                 db.put(c, 'breakout:' + event['id'], event)
             _update_marks(db, c, event, bars)
+        # --- trap paper spreads: enter on T+1 close for fresh traps ---
+        if trap_paper.paper_enabled(cfg):
+            for key, event in db.prefix(c, 'breakout:').items():
+                if not isinstance(event, dict) or event.get('symbol') != symbol:
+                    continue
+                if event.get('kind') not in ('bull_trap', 'bear_trap'):
+                    continue
+                if event.get('status') != 'fresh':
+                    continue
+                if event.get('sessions_since_break', 0) < 1:
+                    continue
+                if event.get('paper_entered'):
+                    continue
+                entry_price = number(bars[-1]['c']) if bars else None
+                if not entry_price:
+                    continue
+                res = trap_paper.submit(
+                    db, c, cfg, now,
+                    {**event, 'entry_day': today},
+                    entry_price, bars)
+                if res.get('submitted'):
+                    event['paper_entered'] = res['trade_id']
+                    event['evaluated_at'] = now
+                    db.put(c, 'breakout:' + event['id'], event)
+    # --- expire-settle open trap spreads ---
+    if trap_paper.paper_enabled(cfg):
+        by_day = {}
+        def close_for(sym, day_str):
+            if sym not in by_day:
+                by_day[sym] = {b['day']: b for b in daily_bars(db, c, sym, limit=400)}
+            b = by_day.get(sym, {}).get(day_str)
+            return number(b['c']) if b else None
+        trap_paper.settle(db, c, cfg, now, today, close_for)
     db.put(c, 'breakouts:scanned_day', today)
     return {'ran': True, 'new_events': new_events, 'forming': forming}
 

@@ -85,6 +85,7 @@ class Config:
     gap_min_gap: float = field(default_factory=lambda: float(env("GAP_MIN_GAP","0.015")))
     gap_large_caps: str = field(default_factory=lambda: env("GAP_LARGE_CAP_SYMBOLS",""))
     breakouts: bool = field(default_factory=lambda: env("BREAKOUTS_ENABLED","true")=="true")
+    trap_paper: bool = field(default_factory=lambda: env("TRAP_PAPER_ENABLED","false")=="true")
     # REVIVED 2026-10-01: Day board rebuilt on alternative feeds —
     # sector performance from sector ETF daily bars (SECTOR_ETF_SYMBOLS,
     # quotes/bars only), a static 2026 economic calendar, and an FMP
