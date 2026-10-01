@@ -1,12 +1,11 @@
 """Day Trading Board: the morning watchlist generator.
 
-DORMANT as of 2026-10-01 — cut from engine tick and dashboard nav because the
-research feeds it depends on (research:earnings, research:economic_calendar,
-research:sector_dashboard) are not populated by the vendor. The board scored
-all zeros on 09-30 and 10-01; a permanently-zero board is worse than no board.
-Module and tests retained in tree. To revive: fix the vendor research feeds,
-set DAY_TRADING_BOARD_ENABLED=true, restore the dashboard panel (index.html
-DORMANT marker).
+REVIVED 2026-10-01 — rebuilt on alternative feeds after the vendor research
+keys (research:earnings, research:economic_calendar, research:sector_dashboard)
+proved permanently empty (board scored all zeros 09-30/10-01). New sources:
+sector performance from sector-ETF daily bars (day_board_feeds.py, zero new
+dependencies), a static 2026 economic calendar, and an FMP earnings feed
+(stubbed until FMP_API_KEY is set — the board degrades gracefully without it).
 
 Built at 08:30 CT, refreshed at 09:00 CT, frozen after the open. A ranked,
 transparent checklist of the names with the most going on today — catalysts,
@@ -191,11 +190,17 @@ def scan(db, c, cfg, now):
     t_build, t_refresh = sess_open - 3600, sess_open - 1800
     key = 'board:' + today
     board = db.get(c, key)
+    # Alternative feeds (day_board_feeds.py): sector rotation from sector-ETF
+    # daily bars, static 2026 economic calendar, FMP earnings (stubbed without
+    # FMP_API_KEY). Flow rows still come from the matrix unusual-activity feed.
+    # The dead vendor research keys are no longer read.
+    from .day_board_feeds import build_ctx as _day_board_feeds_ctx
+    feed_ctx = _day_board_feeds_ctx(db, c)
     ctx = {'flow_rows': (db.get(c, 'matrix:unusual_activity', {}) or {}).get('rows') or [],
-           'sector_dashboard': db.get(c, 'research:sector_dashboard', {}),
-           'sector_map': db.get(c, 'research:extra_sector_map', {}),
-           'earnings': db.get(c, 'research:earnings', {}),
-           'economic_calendar': db.get(c, 'research:economic_calendar', {})}
+           'sector_dashboard': feed_ctx['sector_dashboard'],
+           'sector_map': feed_ctx['sector_map'],
+           'earnings': feed_ctx['earnings'],
+           'economic_calendar': feed_ctx['economic_calendar']}
     action = None
     if board is None and now >= t_build:
         board = build_board(db, c, cfg, now, ctx)

@@ -127,5 +127,9 @@ def test_display(morning):
     with db.tx() as c:
         dtb.scan(db, c, Cfg(), T_BUILD + 60)
         out = dtb.display(db, c, now)
-    assert out['board'][0]['total'] == 6 and out['frozen'] is False
+    # New feeds (2026-10-01 revival): the dead vendor research keys the
+    # fixture seeds are ignored. SPY scores mover + flow + radar = 3;
+    # earnings (FMP stub), economic (no 2026-09-25 event), and sector
+    # (index ETFs have no sector mapping) are 0.
+    assert out['board'][0]['total'] == 3 and out['frozen'] is False
     assert 'not wired' in out['note']

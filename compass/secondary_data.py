@@ -10,6 +10,15 @@ from .secondary import current, daily_context, pending, technical_context, techn
 from .universe import connected_symbols, data_symbols, symbols
 
 
+# Collection project gates for plan().
+# "dayboard" is the day trading board's sector-ETF feed: DAILY BARS ONLY.
+# Dayboard-only symbols must never enter minute-bar collection (the sector
+# feed needs daily closes, not intraday bars), and they are kept out of
+# every scanner/trading universe via universe.data_symbols (collection only).
+DAILY_COLLECTION_PROJECTS = frozenset({"smoothers", "swing", "discovery", "dayboard"})
+DAYBOARD_ONLY_PROJECTS = frozenset({"dayboard"})
+
+
 def coverage(db, c, cfg, now, refreshed=()):
     projects = {}
     for project, symbol in c.execute(select(records.c.project, records.c.symbol).where(
@@ -26,6 +35,12 @@ def coverage(db, c, cfg, now, refreshed=()):
     from .discovery import requested
     discovery=set(requested(db,c,cfg,now)) if cfg.discovery else set()
     universe.update(discovery)
+    # Sector ETFs for the day board's sector feed: daily bars only. The
+    # "dayboard" project gates daily collection in plan(); these symbols
+    # never enter quotes priority, minute collection, or any scanner.
+    for etf in getattr(cfg, 'sector_etfs', ()):
+        universe.add(etf)
+        projects.setdefault(etf, set()).add("dayboard")
     for symbol in sorted(universe):
         if cfg.swing_ideas and symbol in cfg.watch_symbols: projects.setdefault(symbol,set()).add("swing")
         if symbol in discovery: projects.setdefault(symbol,set()).add("discovery")
@@ -83,8 +98,8 @@ def plan(collector, now):
         jobs = {}
         for kind, wait in (("daily", 300), ("minute", 60)):
             needed = [r["symbol"] for r in state.get("rows", []) if r["collection_enabled"]
-                and not r[kind + "_ready"] and (kind != "daily" or bool({"smoothers","swing","discovery"}&set(r["projects"])))
-                and (kind != "minute" or is_open(now))]
+                and not r[kind + "_ready"] and (kind != "daily" or bool(DAILY_COLLECTION_PROJECTS & set(r["projects"])))
+                and (kind != "minute" or (is_open(now) and set(r["projects"]) - DAYBOARD_ONLY_PROJECTS))]
             if kind == "minute":
                 needed += [s for s in priority if not technical_ready(technical_context(db, c, s, now), now)]
             needed = sorted(set(needed), key=lambda s: (s not in priority, attempts.get(kind + ":" + s, 0), s))

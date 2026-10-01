@@ -64,10 +64,7 @@
 <section id="sec-morning-brief" class="acc-section"><button class="acc-head" data-section="morning-brief"><span class="acc-title">Morning Brief</span><span class="acc-chn">#morning-brief</span><span class="chev">▾</span></button><div class="acc-body">
 <section id="overview" class="tab legacy"><div id="stats" class="stats"></div>
 <article class="panel"><div class="panel-head"><h2>Day trading board</h2><span class="muted" id="board-state"></span></div><div id="day-board"></div>
-<!-- DORMANT 2026-10-01: Day board cut — vendor research feeds (earnings, economic calendar, sector dashboard) not populated, board scored all zeros 09-30/10-01. To revive: fix feeds, set DAY_TRADING_BOARD_ENABLED=true, uncomment this panel.
-<p class="fine">Built 08:30 CT, refreshed 09:00 CT, frozen at the open. Six-component catalyst score: earnings, economic, mover, flow, sector, radar. Watchlist only — the A+ alert gate is specified but not wired, so the board never alerts on its own.</p>
--->
-<p class="fine">Day trading board is dormant — its research feeds are not populated by the vendor. See config.py for revival steps.</p></article>
+<p class="fine">Built 08:30 CT, refreshed 09:00 CT, frozen at the open. Six-component catalyst score: earnings, economic, mover, flow, sector, radar. Sector read comes from sector-ETF bars; earnings needs FMP_API_KEY. Watchlist only — the A+ alert gate is specified but not wired, so the board never alerts on its own.</p></article>
 <div class="columns">
 <article class="panel wide"><div class="panel-head"><h2>Watchlist & levels</h2><span class="muted">Latest observations</span></div><div id="watch"></div>
 <p class="fine">Futures use a 17:00–17:15 CT Globex range, then a new 08:30–08:45 CT regular-session range. Explicit contract IDs keep rolled prices separate.</p></article>

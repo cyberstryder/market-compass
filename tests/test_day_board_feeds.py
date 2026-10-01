@@ -90,3 +90,27 @@ def test_symbol_sector_map_covers_watchlist():
     etf_sectors = set(feeds.ETF_SECTOR.values())
     for sector in feeds.SYMBOL_SECTOR.values():
         assert sector in etf_sectors, sector
+
+
+def test_sector_etfs_are_collection_only():
+    """The 11 sector ETFs feed the board's sector rotation read and nothing
+    else: they must never enter the scanner/trading universes (cfg.stocks,
+    cfg.watch_symbols)."""
+    from compass.config import Config
+    cfg = Config(local=True)
+    assert len(cfg.sector_etfs) == 11
+    assert set(cfg.sector_etfs) == set(feeds.SECTOR_ETFS)
+    assert not (set(cfg.sector_etfs) & set(cfg.stocks)), "ETF leaked into trading universe"
+    assert not (set(cfg.sector_etfs) & set(cfg.watch_symbols)), "ETF leaked into watchlist"
+
+
+def test_dayboard_project_gates_daily_only():
+    """The dayboard collection project admits daily-bar collection but a
+    dayboard-only symbol is excluded from minute-bar collection."""
+    from compass import secondary_data
+    assert "dayboard" in secondary_data.DAILY_COLLECTION_PROJECTS
+    # dayboard-only -> excluded from minute jobs
+    assert not ({"dayboard"} - secondary_data.DAYBOARD_ONLY_PROJECTS)
+    # dayboard + another project -> still eligible for minute jobs
+    assert {"dayboard", "swing"} - secondary_data.DAYBOARD_ONLY_PROJECTS
+    assert {"dayboard", "smoothers"} - secondary_data.DAYBOARD_ONLY_PROJECTS

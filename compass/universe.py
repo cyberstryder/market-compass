@@ -45,11 +45,16 @@ def connected_symbols(db, c, now, morning_enabled=True):
 
 
 def data_symbols(db, c, cfg, now):
-    """Expand collection only; connected projects do not change scanner entries."""
+    """Expand collection only; connected projects do not change scanner entries.
+
+    cfg.sector_etfs are included for quotes/bars collection ONLY (the day
+    board's sector feed). They are deliberately kept out of every scanner
+    and trading path, which all iterate cfg.stocks / cfg.watch_symbols.
+    """
     from .tm_study import requested_symbols,symbol_for
     from .swing_study import requested_symbols as swing_symbols
     from .discovery import requested
-    base=list(symbols((*cfg.watch_symbols,*requested(db,c,cfg,now),*connected_symbols(db,c,now,cfg.morning_enabled))))
+    base=list(symbols((*cfg.watch_symbols,*requested(db,c,cfg,now),*connected_symbols(db,c,now,cfg.morning_enabled),*getattr(cfg,'sector_etfs',()))))
     from sqlalchemy import select
     from .store import spy_options
     if c.execute(select(spy_options.c.id).where(spy_options.c.status.in_(('pending','open'))).limit(1)).first():base.append('SPY')

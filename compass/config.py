@@ -14,6 +14,14 @@ class Config:
     secret: str = field(default_factory=lambda: env("SESSION_SECRET"))
     local: bool = field(default_factory=lambda: env("COMPASS_LOCAL")=="true")
     stocks: tuple = field(default_factory=lambda: tuple(env("STOCK_SYMBOLS","SPY,QQQ,IWM,NVDA,AAPL").split(",")))
+    # Sector ETFs for the day trading board's sector feed — QUOTES/BARS ONLY.
+    # These must never enter the trading/scan universe: no option chains, no
+    # 0DTE scanning, no paper trading. They exist solely so the sector
+    # rotation feed (day_board_feeds.sector_dashboard_from_closes) has daily
+    # bars. Wired into data collection via universe.data_symbols + the
+    # "dayboard" project in secondary_data.coverage, deliberately separate
+    # from cfg.stocks which drives every scanner and trading path.
+    sector_etfs: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("SECTOR_ETF_SYMBOLS","XLK,XLF,XLE,XLV,XLY,XLP,XLI,XLB,XLU,XLRE,XLC").split(",") if s.strip()))
     futures: tuple = field(default_factory=lambda: tuple(env("FUTURES_SYMBOLS","MES.c.0,MNQ.c.0").split(",")))
     extra_futures: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("EXTRA_FUTURES_SYMBOLS","MGC.v.0,GC.v.0,SIL.v.0,SI.v.0,MCL.v.0,CL.v.0,YM.v.0,MYM.v.0").split(",") if s.strip()))
     alpaca_key: str = field(default_factory=lambda: env("APCA_API_KEY_ID"))
@@ -77,13 +85,12 @@ class Config:
     gap_min_gap: float = field(default_factory=lambda: float(env("GAP_MIN_GAP","0.015")))
     gap_large_caps: str = field(default_factory=lambda: env("GAP_LARGE_CAP_SYMBOLS",""))
     breakouts: bool = field(default_factory=lambda: env("BREAKOUTS_ENABLED","true")=="true")
-    # DORMANT 2026-10-01: Day board cut because its research feeds
-    # (research:earnings, research:economic_calendar, research:sector_dashboard)
-    # are not populated by the vendor — board scored all zeros 09-30/10-01.
-    # To revive: fix the vendor feeds (or point them at a working source),
-    # set DAY_TRADING_BOARD_ENABLED=true, and restore the dashboard panel
-    # (see index.html DORMANT marker). Module + tests retained in tree.
-    day_trading_board: bool = field(default_factory=lambda: env("DAY_TRADING_BOARD_ENABLED","false")=="true")
+    # REVIVED 2026-10-01: Day board rebuilt on alternative feeds —
+    # sector performance from sector ETF daily bars (SECTOR_ETF_SYMBOLS,
+    # quotes/bars only), a static 2026 economic calendar, and an FMP
+    # earnings feed (stubbed until FMP_API_KEY is set). The dead vendor
+    # research keys are no longer used. See day_board_feeds.py.
+    day_trading_board: bool = field(default_factory=lambda: env("DAY_TRADING_BOARD_ENABLED","true")=="true")
     option_ideas: bool = field(default_factory=lambda: env("OPTION_IDEAS_ENABLED","true")=="true")
     ideas_alerts: bool = field(default_factory=lambda: env("OPTION_IDEAS_ALERTS","true")=="true")
     ideas_min_dte: int = field(default_factory=lambda: int(env("OPTION_IDEAS_MIN_DTE","1")))

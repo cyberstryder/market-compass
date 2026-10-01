@@ -176,7 +176,7 @@ def test_connected_coverage_collects_bkng_without_expanding_scanner_entries(db):
     cfg = Config(local=True, stocks=('SPY',), watchlist=('SPY',))
     with db.tx() as c:
         ingest(db, c, 'smoothers', {**source(), 'symbol': 'BKNG'}, NOW)
-        assert data_symbols(db, c, cfg, NOW) == ('SPY', 'BKNG')
+        assert data_symbols(db, c, cfg, NOW) == ('SPY', 'BKNG', *cfg.sector_etfs)
         assert connected_symbols(db, c, NOW) == ('BKNG',)
         assert cfg.watch_symbols == ('SPY',)
     daily_rows(db)
@@ -336,7 +336,7 @@ def test_retired_morning_stops_extra_collection_but_retains_records(db):
         ingest(db,c,'morning',{**source(),'symbol':'BKNG'},NOW)
         ingest(db,c,'smoothers',{**source(),'symbol':'SHOP'},NOW)
         assert connected_symbols(db,c,NOW)==('BKNG','SHOP')
-        assert data_symbols(db,c,cfg,NOW)==('SPY','SHOP')
+        assert data_symbols(db,c,cfg,NOW)==('SPY','SHOP',*cfg.sector_etfs)
         covered={r['symbol'] for r in coverage(db,c,cfg,NOW)['rows']}
         assert 'SHOP' in covered and 'BKNG' not in covered
         assert c.execute(select(func.count()).select_from(records)).scalar_one()==2
