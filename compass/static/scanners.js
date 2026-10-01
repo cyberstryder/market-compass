@@ -78,7 +78,7 @@
   finally{boardBusy=false;}
  }
 
- document.querySelector('[data-section="intraday"]').addEventListener('click',loadScanners);
+ document.querySelector('[data-section="intraday"]')?.addEventListener('click',loadScanners);
  document.querySelector('[data-section="morning-brief"]').addEventListener('click',loadBoard);
  document.querySelector('#apex-within').addEventListener('change',()=>{if(apexCache)renderApex(apexCache);});
  window.addEventListener('hashchange',()=>{if(location.hash==='#intraday')loadScanners();if(location.hash==='#morning-brief')loadBoard();});

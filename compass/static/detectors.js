@@ -70,7 +70,7 @@ async function loadMagnetPush(){
 
 function refresh(section){
   if(section==='futures'){loadDetector('#ict-detector-select','#ict-detector-body','#ict-detector-asof');loadDetector('#yt-method-select','#yt-method-body','#yt-method-asof');loadAttribution();}
-  if(section==='intraday'){loadMagnetPush();}
+  if(section==='intraday'||section==='compass'){loadMagnetPush();}
 }
 window.__detectorsRefresh=refresh;
 const ictSel=$('#ict-detector-select');if(ictSel)ictSel.onchange=()=>loadDetector('#ict-detector-select','#ict-detector-body','#ict-detector-asof');
