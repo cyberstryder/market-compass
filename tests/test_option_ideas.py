@@ -246,8 +246,10 @@ def test_dashboard_api_is_private_and_includes_options_ideas(db,cfg):
     cfg.password='fixture-password-16-chars';cfg.secret='fixture-session-secret'
     with TestClient(create_app(cfg)) as client:
         assert client.get('/api/state').status_code==401
+        assert client.get('/api/state/studies').status_code==401
         client.post('/login',json={'password':cfg.password})
-        state=client.get('/api/state').json()
+        assert 'option_ideas' not in client.get('/api/state').json()
+        state=client.get('/api/state/studies').json()
         assert state['option_ideas']['enabled']
         assert 'Options ideas' in client.get('/').text
 

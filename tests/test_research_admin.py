@@ -139,7 +139,8 @@ def test_admin_api_requires_login_and_only_reads_saved_evidence(tmp_path):
         assert report['flow_research']['all_record_outcomes'] is None
         assert stored_counts() == before
         assert cfg.password not in response.text and cfg.secret not in response.text
-        assert client.get('/api/state').json()['research_admin']['version'] == report['version']
+        assert client.get('/api/state').json().get('research_admin') is None
+        assert client.get('/api/state/studies').json()['research_admin']['version'] == report['version']
         assert client.get('/static/research-admin.js').status_code == 200
 
 

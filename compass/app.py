@@ -246,7 +246,12 @@ def create_app(cfg=None):
     @app.get("/",response_class=HTMLResponse)
     def dashboard(): return (root/"static"/"index.html").read_text()
 
-    def snapshot(*, assistant=False):
+    # The dashboard snapshot is split into two tiers to keep the 3-second
+    # poll small enough to parse and render without blocking the main thread.
+    # Fast tier (/api/state): header, quotes, positions, live status.
+    # Slow tier (/api/state/studies): study reports, matrices, full lists.
+    # Shapes are identical to the old monolith; the frontend merges them.
+    def snapshot_fast():
         now=time.time()
         markets={"equities":is_open(now),"futures":is_open(now,True)}
         with db.tx() as c:
@@ -262,22 +267,6 @@ def create_app(cfg=None):
             health=decorate_health(health,workers,markets,now)
             checks=quote_checks(collected_symbols,configured(cfg),{k[6:]:q for k,q in quotes.items()},
                 db.recent(c,"mapping",limit=100),markets,now,active_selection(db,c,cfg,now))
-            matrix={k:{field:value for field,value in v.items() if field!="data"} for k,v in db.prefix(c,"matrix:").items()}
-            now=time.time()
-            for item in matrix.values():
-                if 'strikes' in item:
-                    item['strikes']=[{k:v for k,v in row.items() if not k.endswith('_cells')} for row in item['strikes']]
-                stamp=item.get("source_ts")
-                item["source_asof"]=clock(stamp)
-                item["fetched_at"]=clock(item.get("received"))
-                item["source_age"]=round(now-stamp,1) if stamp is not None else None
-                from .vendor_freshness import confirmation, context_check
-                item['confirmation']=confirmation(item,now)
-                item['context']=context_check(item,now)
-                item["freshness"]=item['confirmation']['status']
-                if 'recovery' in item:
-                    from .flow_recovery import freshness as flow_freshness
-                    item['flow_freshness']=flow_freshness(item,now)
             from .paper_risk import snapshot as paper_risk_snapshot
             from .operating_mode import policy, paper_message
             positions=list(db.prefix(c,"position:").values())
@@ -294,8 +283,40 @@ def create_app(cfg=None):
                 # live paper state, so mark it and let the UI withhold the
                 # paused claim rather than asserting it.
                 live_policy=policy(cfg); live_policy["stale"]=True
-            data={"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","operating_policy":live_policy,"markets":markets,
-                "storage":storage_snapshot(db,c,now),"health":health,"workers":workers,"quotes":watch,
+            return {"asof":now,"asof_ct":clock(now),"mode":"SIMULATED","operating_policy":live_policy,"markets":markets,
+                "health":health,"workers":workers,"quotes":watch,
+                "quote_checks":checks,"delivery":outbox_status(db,c,now),
+                "futures":{"session":futures_session(now),"selected":active_selection(db,c,cfg,now),
+                    "contracts":list(db.prefix(c,"contract:").values()),
+                    "history":sorted(db.prefix(c,"recovery:futures:").values(),key=lambda p:p.get("at",0),reverse=True)[:3]},
+                "positions":positions,"trades":trades,
+                "alerts":[{**row,"presentation":alert_identity(row,now)} for row in db.recent(c,"alert",limit=10) if cfg.paper_trading or not paper_message(row)],
+                "flow":db.recent(c,"flow",limit=10),
+                "risk":{"paper_portfolios":paper_risk_snapshot(db,c,cfg,now),
+                    "legacy_combined":db.prefix(c,"risk:")},"ai_configured":bool(cfg.openai),
+                "limits":{"scope":"Each paper portfolio separately (paper-portfolios-v2)","risk_per_trade":cfg.risk,"max_positions":3,"max_entries":cfg.max_entries}}
+
+    def snapshot_slow(*, assistant=False):
+        now=time.time()
+        with db.tx() as c:
+            from .operating_mode import paper_message
+            matrix={k:{field:value for field,value in v.items() if field!="data"} for k,v in db.prefix(c,"matrix:").items()}
+            now=time.time()
+            for item in matrix.values():
+                if 'strikes' in item:
+                    item['strikes']=[{k:v for k,v in row.items() if not k.endswith('_cells')} for row in item['strikes']]
+                stamp=item.get("source_ts")
+                item["source_asof"]=clock(stamp)
+                item["fetched_at"]=clock(item.get("received"))
+                item["source_age"]=round(now-stamp,1) if stamp is not None else None
+                from .vendor_freshness import confirmation, context_check
+                item['confirmation']=confirmation(item,now)
+                item['context']=context_check(item,now)
+                item["freshness"]=item['confirmation']['status']
+                if 'recovery' in item:
+                    from .flow_recovery import freshness as flow_freshness
+                    item['flow_freshness']=flow_freshness(item,now)
+            data={"storage":storage_snapshot(db,c,now),
                 "scanner":scanner_snapshot(db,c,cfg,now),
                 "projects":projects_snapshot(db,c,cfg,now),
                 "obsidian":obsidian_snapshot(db,c,now),
@@ -308,39 +329,45 @@ def create_app(cfg=None):
                 "setup_study":study_snapshot(db,c,cfg,now),
                 "option_ideas":ideas_snapshot(db,c,cfg,now),
                 "swing_ideas":swing_snapshot(db,c,cfg,now),
-                "quote_checks":checks,"delivery":outbox_status(db,c,now),
-                "futures":{"session":futures_session(now),"selected":active_selection(db,c,cfg,now),
-                    "contracts":list(db.prefix(c,"contract:").values()),
-                    "history":sorted(db.prefix(c,"recovery:futures:").values(),key=lambda p:p.get("at",0),reverse=True)[:3]},
                 "greek_diagnostics":{k[7:]:v for k,v in db.prefix(c,"greeks:").items()},
                 "levels":{k[7:]:v for k,v in db.prefix(c,"levels:").items()},
                 "exposure":{k[9:]:v for k,v in db.prefix(c,"exposure:").items()},
-                "positions":positions,"trades":trades,"alerts":[{**row,"presentation":alert_identity(row,now)} for row in db.recent(c,"alert",limit=60) if cfg.paper_trading or not paper_message(row)],
+                "alerts":[{**row,"presentation":alert_identity(row,now)} for row in db.recent(c,"alert",limit=60) if cfg.paper_trading or not paper_message(row)],
                 "flow":db.recent(c,"flow",limit=60),"matrix":matrix,
-                "risk":{"paper_portfolios":paper_risk_snapshot(db,c,cfg,now),
-                    "legacy_combined":db.prefix(c,"risk:")},"ai_configured":bool(cfg.openai),
-                "limits":{"scope":"Each paper portfolio separately (paper-portfolios-v2)","risk_per_trade":cfg.risk,"max_positions":3,"max_entries":cfg.max_entries},
                 "notes":["Quotes are sampled up to 4 Hz; minute-bar decisions, not tick-perfect execution.",
                     "GEX/VEX are OI-based proxies. Open interest is daily; dealer inventory is unobserved.",
                     "TraderMatrix matrix fields are normalized from paid responses; flow rows follow the official schema and await open-session verification.",
                     "Large prints cover selected contracts; not a full-market unusual-flow feed.",
                     "Scanner alerts join completed-bar structure, observed exposure levels and fresh vendor flow. No profitability claim.",
                     "No execution adapter, broker order route, partial exits or runners."]}
+            from .research_admin import snapshot as research_admin_snapshot
             if not assistant:
-                from .research_admin import snapshot as research_admin_snapshot
-                data['research_admin']=research_admin_snapshot(db,c,cfg,data)
+                data['research_admin']=research_admin_snapshot(db,c,cfg,{"asof":now})
             return data
+
+    def snapshot(*, assistant=False):
+        # Full snapshot for the assistant endpoint and other server-side
+        # consumers: merge both tiers, preferring the slow tier's full
+        # alert/flow lists over the fast tier's recent slices.
+        slow=snapshot_slow(assistant=assistant)
+        fast=snapshot_fast()
+        data={**slow,**fast,"alerts":slow["alerts"],"flow":slow["flow"]}
+        return data
 
     from .snapshot_cache import SnapshotCache
     dashboard_cache = SnapshotCache()
+    studies_cache = SnapshotCache(ttl=300)
 
     @app.get("/api/state")
-    def get_state(): return dashboard_cache.get(snapshot)
+    def get_state(): return dashboard_cache.get(snapshot_fast)
+
+    @app.get("/api/state/studies")
+    def get_state_studies(): return studies_cache.get(snapshot_slow)
 
     @app.get('/api/research-admin')
     def get_research_admin(download:bool=False):
         headers={'Content-Disposition':'attachment; filename="compass-research-status.json"'} if download else None
-        return JSONResponse(snapshot()['research_admin'],headers=headers)
+        return JSONResponse(snapshot_slow()['research_admin'],headers=headers)
 
     @app.get("/api/setup-study")
     def get_setup_study():

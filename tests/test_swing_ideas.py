@@ -395,7 +395,10 @@ def test_swing_state_is_owner_only(db,cfg):
     app=create_app(cfg)
     with TestClient(app) as client:
         assert client.get('/api/state').status_code==401
+        assert client.get('/api/state/studies').status_code==401
         assert client.post('/login',json={'password':cfg.password}).status_code==200
         result=client.get('/api/state')
-        assert result.status_code==200 and result.json()['swing_ideas']['max_hold_sessions']==10
+        assert result.status_code==200 and 'swing_ideas' not in result.json()
+        studies=client.get('/api/state/studies')
+        assert studies.status_code==200 and studies.json()['swing_ideas']['max_hold_sessions']==10
         assert 'swing-ideas' in client.get('/').text
