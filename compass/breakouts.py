@@ -271,6 +271,7 @@ def scan(db, c, cfg, now):
                          'range_high': trap['range_high'],
                          'range_low': trap['range_low'],
                          'close': trap['trap_close'],
+                         'structure': 'credit spread (14-21 DTE, hold to expiration)',
                          'confirmation': 'n/a', 'status': 'fresh',
                          'sessions_since_break': 0, 'marks': {},
                          'evaluated_at': now}
