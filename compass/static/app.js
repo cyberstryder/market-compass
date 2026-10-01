@@ -25,7 +25,7 @@ function selectTab(key){
  if(location.hash!=='#'+key)history.replaceState(null,'','#'+key);
  if(window.__detectorsRefresh)window.__detectorsRefresh(key);
  if(key==='futures'&&lastState)renderSetupStudy(lastState.setup_study);
- if(key==='compass'&&lastState){renderTMStudy(lastState.tm_study);renderSwingStudy(lastState.swing_study);}
+ if(key==='compass'&&lastState)renderSlow(lastState);
  if(key==='0dte'&&lastState)renderSPYStudy(lastState.spy_study);
  if(key==='summary'&&window.__renderSummary)window.__renderSummary();
  if(key==='daily'&&window.__renderDaily)window.__renderDaily();
@@ -78,13 +78,7 @@ function renderObsidian(d){
  $('#obsidian-ideas').innerHTML=d.ideas.length?table(['Contract','Added / first received','Baseline observation','Latest bid / modeled change','Coverage'],d.ideas.map(r=>{const m=r.measurements;return [esc(r.contract),when(r.source_ts)+'<br>'+when(r.received),tag(m.anchor_status)+'<br>'+num(m.anchor_ask)+'<br>Delay '+age(m.anchor_delay_seconds),num(m.latest_bid)+' / '+(m.liquidation_pct==null?'—':num(m.liquidation_pct)+'%')+'<br>'+when(m.last_observed_at),num(m.samples,0)+' samples · '+(m.anchor_status!=='observed'?'Entry unavailable':m.path_complete?'Sampled path continuous':'Path has gaps')];})):empty('Waiting for watchlist ideas','The feed must be connected before events can appear.');
  $('#obsidian-events').innerHTML=table(['Event / contract','Source time','Provider-reported change','Association'],d.events.map(r=>[esc(r.payload.type)+' #'+num(r.vendor_id,0)+'<br>'+esc(r.payload.contract),when(r.payload.source_ts),r.payload.vendor_percentage==null?'—':num(r.payload.vendor_percentage)+'%',esc(r.association)]))+'<p class="fine">Repeated additions for the same contract can make update ownership ambiguous. Reported returns are never used as measured fills or profits.</p>';
 }
-function render(d){
- renderResearchAdmin(d.research_admin);
- renderTMStudy(d.tm_study);
- renderSwingStudy(d.swing_study);
- renderSPYStudy(d.spy_study);
- renderObsidian(d.obsidian);
- const openDetails=new Set([...document.querySelectorAll('details[open][data-key]')].map(e=>e.dataset.key));
+function renderFast(d){
  lastState=d;
  $('#market').textContent=d.markets.equities?'EQUITY SESSION OPEN':d.markets.futures?'FUTURES SESSION OPEN':'MARKETS CLOSED';
  $('#clock').textContent=when(d.asof);
@@ -101,6 +95,17 @@ function render(d){
  $('#stats').innerHTML=stats.map(x=>'<div class="stat"><div class="label">'+esc(x[0])+'</div><div class="value">'+esc(x[1])+'</div><div class="fine">'+esc(x[2])+'</div></div>').join('');
  $('#watch').innerHTML=populated?table(['Symbol','Bid / Ask','Age','OR high / low','Prior high / low'],Object.entries(d.quotes).map(([s,q])=>{const l=(d.levels||{})[s]||{};return [esc(s),num(q.bid)+' / '+num(q.ask),esc(num(q.age,1)+'s'),l.or_complete?num(l.or_high)+' / '+num(l.or_low):'Warming up',l.prior_complete?num(l.prior_high)+' / '+num(l.prior_low):'Incomplete history'];})):empty('Waiting for first observations',d.markets.futures||d.markets.equities?'Check Feed health for active contracts and source readiness.':'The next open session will provide live quotes. Feed health shows connection and history checks.');
  $('#journal').innerHTML=d.alerts.length?d.alerts.slice(0,7).map(a=>{const p=a.presentation||{};return '<div class="journal-item"><strong>'+esc(p.title||a.symbol)+'</strong><p>'+esc(p.mode||'SIMULATED')+' · '+esc(p.horizon||'')+'</p><p>'+esc(a.payload.exit_reason||a.payload.reason||p.setup||a.payload.strategy)+'</p><span class="time">'+esc(p.origin||'Compass')+' · #'+a.id+' · '+when(a.ts)+'</span></div>';}).join(''):empty('No decisions recorded yet','Signals, entries, exits and data-related skips will appear here.');
+ $('#workers').textContent=Object.entries(d.workers).map(([k,v])=>k.replace('worker:','')+': '+when(v.at)).join(' · ');
+ if(window.__renderTerminal)window.__renderTerminal(d);
+}
+function renderSlow(d){
+ if(!d)return;
+ renderResearchAdmin(d.research_admin);
+ renderTMStudy(d.tm_study);
+ renderSwingStudy(d.swing_study);
+ renderSPYStudy(d.spy_study);
+ renderObsidian(d.obsidian);
+ const openDetails=new Set([...document.querySelectorAll('details[open][data-key]')].map(e=>e.dataset.key));
  const ex=Object.entries(d.exposure||{}).slice(0,6);
  $('#exposures').innerHTML=ex.length?'<div class="exposure-grid">'+ex.map(([s,e])=>'<article class="panel"><div class="panel-head"><h2>'+esc(s)+'</h2>'+tag(e.status)+'</div><p>GEX '+compact(e.gex)+' · local vanna proxy '+compact(e.vex)+'</p><p class="fine">'+esc(e.source)+' · '+num((e.coverage??0)*100,1)+'% GEX input coverage · '+num(e.usable_gex,0)+' / '+num(e.contracts,0)+' contracts</p><p class="fine">Missing/invalid OI '+num(e.missing_oi,0)+' · gamma '+num(e.missing_gamma,0)+' · contract metadata '+num(e.invalid_contract,0)+' (counts may overlap)</p><p class="fine">Chain checked '+when(e.asof)+' · underlying source '+when(e.spot_asof)+'</p><p class="fine">'+esc(e.reason)+'</p><details data-key="local-'+esc(s)+'"><summary>Strike exposure & methodology</summary><p class="fine">'+esc(e.sign_model)+'. '+esc(e.gex_units)+'; '+esc(e.vex_units)+'. Vanna input coverage '+num((e.vex_coverage??0)*100,1)+'%. OI dates: '+esc((e.oi_dates||[]).join(', ')||'provider date unavailable')+'</p>'+table(['Strike','GEX','Vanna proxy'],(e.strikes||[]).slice(0,200).map(r=>[num(r.strike),compact(r.gex),compact(r.vex)]))+'</details></article>').join('')+'</div>':empty('Exposure is waiting for input','A fresh underlying price, chain, Greeks and open interest are required.');
  const coreMatrices=['matrix:SPY','matrix:QQQ','matrix:IWM'];
@@ -158,20 +163,18 @@ function render(d){
  $('#future-readiness').innerHTML='<p>Trading day '+esc(fh.day)+' · '+tag(fh.is_open?'open':'closed')+' · risk resets at 17:00 CT</p><p class="fine">Session '+when(fh.open)+' → '+when(fh.close)+'<br>Last new entry '+when(fh.entry_end)+' · flatten '+when(fh.flatten_at)+'</p>'+table(['Root','Data contract','TradingView contract','Resolved ID'],f.selected.map(t=>{const r=f.contracts.find(r=>r.raw_symbol===t.raw_symbol);return [esc(t.root),esc(t.raw_symbol),esc(t.chart_symbol||t.raw_symbol),r?esc(r.instrument_id):'Awaiting mapping'];}))+'<p class="fine">ES/NQ families use the CME customary quarterly roll. Dow, metals and energy use the provider’s prior-day volume leader. Compare the explicit dated contract; continuous chart settings may differ.</p>'+f.history.map(h=>'<p>'+tag(h.status)+' '+esc(h.detail)+(h.estimated_usd!==undefined?' · reserved download cost $'+num(h.estimated_usd,6):'')+'</p>').join('');
  $('#greek-diagnostics').innerHTML=Object.entries(d.greek_diagnostics||{}).map(([symbol,g])=>'<article class="panel"><div class="panel-head"><h3>'+esc(symbol)+'</h3><span>'+num(g.target_near_atm.gamma_usable,0)+' / '+num(g.target_near_atm.contracts,0)+' near-money '+esc(g.target_expiry)+' gamma inputs</span></div><p>'+esc(g.finding)+'</p><p class="fine">Classification reference '+num(g.reference)+' from '+when(g.reference_ts)+' · pagination '+(g.complete_pagination?'complete':'incomplete')+'</p><details data-key="greeks-'+esc(symbol)+'"><summary>By expiry, side and moneyness · missing-field samples</summary>'+table(['Expiry','Side','Moneyness','Usable gamma / contracts','Absent / null / invalid'],g.groups.map(r=>[esc(r.expiry),esc(r.type),esc(r.moneyness),num(r.gamma_usable,0)+' / '+num(r.contracts,0),num(r.gamma_absent,0)+' / '+num(r.gamma_null,0)+' / '+num(r.gamma_invalid,0)]))+table(['Missing contract','Gamma field','Returned Greek fields','OI','IV','Quote source'],g.missing_samples.map(r=>[esc(r.symbol),esc(r.gamma_field),(r.greek_fields||[]).map(esc).join(', ')||'None',num(r.oi,0),num(r.iv),when(r.quote_ts)]))+'<p class="fine">'+esc(g.note)+'</p></details></article>').join('')||empty('Waiting for a chain refresh','Diagnostics retain the provider’s raw Greek-field presence.');
  if(testEvent&&delivery.last_test_confirmation?.event_id===testEvent){$('#test-result').textContent='Test event #'+testEvent+' confirmed. Discord message '+delivery.last_test_confirmation.message_id;testEvent=null;}
- $('#workers').textContent=Object.entries(d.workers).map(([k,v])=>k.replace('worker:','')+': '+when(v.at)).join(' · ');
  if(first&&!d.ai_configured){$('#answer').textContent='Add OPENAI_API_KEY in Railway to enable grounded answers. The live dashboard and scanners work independently.';}
  first=false;
  document.querySelectorAll('details[data-key]').forEach(e=>{e.open=openDetails.has(e.dataset.key);});
- if(window.__renderTerminal)window.__renderTerminal(d);
 if(window.__applyPanels)window.__applyPanels();
 }
 async function poll(){
- try{const r=await fetch('/api/state');if(r.status===401){location.href='/login';return;}if(!r.ok)throw new Error('Unable to read shared state');fastState=await r.json();render(mergedState());}
+ try{const r=await fetch('/api/state');if(r.status===401){location.href='/login';return;}if(!r.ok)throw new Error('Unable to read shared state');fastState=await r.json();renderFast(mergedState());}
  catch(e){$('#connection').textContent='Connection interrupted. Displayed observations are not being refreshed. '+e.message;}
  finally{setTimeout(poll,3000);}
 }
 async function pollStudies(){
- try{const r=await fetch('/api/state/studies');if(r.status===401){location.href='/login';return;}if(r.ok){slowState=await r.json();if(fastState)render(mergedState());}}
+ try{const r=await fetch('/api/state/studies');if(r.status===401){location.href='/login';return;}if(r.ok){slowState=await r.json();if(fastState){const d=mergedState();renderFast(d);renderSlow(d);}}}
  catch(e){/* slow tier retries on its own cadence; the fast tier keeps the page alive */}
  finally{setTimeout(pollStudies,300000);}
 }
