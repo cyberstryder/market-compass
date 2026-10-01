@@ -83,12 +83,13 @@ def test_empty_day_weekend_default_future_date_and_verification(report_db):
 
 def test_ask_evidence_preserves_horizon_and_reports_stale_quotes(db):
     from compass.assistant_options import record_evidence, request
+    # LEAPS is not supported; 'QQQ LEAPS calls' is treated as a standard 0-21 DTE call request.
     result=dict(request=request('QQQ LEAPS calls',NOW),symbols={'QQQ':dict(status='available',source='massive',candidates=[dict(expiry='2028-01-21',quote_status='stale')])})
     record_evidence(db,result,NOW)
     with db.tx() as c:
         saved=db.prefix(c,'ask-evidence:2026-09-21:')
         row=next(iter(saved.values()))
-        assert row['horizon']=='leaps' and row['fresh_quotes']==0 and row['candidate_count']==1
+        assert row['horizon']=='other' and row['fresh_quotes']==0 and row['candidate_count']==1
         assert row['returned_expirations']==['2028-01-21']
 
 
