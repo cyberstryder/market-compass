@@ -44,12 +44,12 @@ function renderPositions(d){
   if(!open.length){setHTML('#term-positions','<div class="empty"><strong>Flat</strong>No open positions.</div>');return;}
   const rows=open.map(p=>{
     const u=Number(p.unrealized)||0;
-    return '<tr><td>'+esc(p.symbol)+'</td><td>'+sideTag(p.side)+'</td><td class="num">'+esc(p.qty)+'</td>'+
+    return '<tr><td>'+esc(p.symbol)+'</td><td>'+esc(p.strategy||'—')+'</td><td>'+sideTag(p.side)+'</td><td class="num">'+esc(p.qty)+'</td>'+
       '<td class="num">'+num(p.entry)+'</td><td class="num">'+num(p.stop)+'</td><td class="num">'+num(p.target)+'</td>'+
       '<td class="num '+pnlClass(u)+'">'+money(u)+'</td>'+
       '<td class="mono">'+esc(chicagoTime(p.entered_at))+'</td></tr>';
   }).join('');
-  setHTML('#term-positions','<table><thead><tr><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Stop</th><th class="num">Target</th><th class="num">Unreal</th><th>Entered</th></tr></thead><tbody>'+rows+'</tbody></table>');
+  setHTML('#term-positions','<table><thead><tr><th>Symbol</th><th>Strategy</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Stop</th><th class="num">Target</th><th class="num">Unreal</th><th>Entered</th></tr></thead><tbody>'+rows+'</tbody></table>');
 }
 
 function renderToday(d){
@@ -58,12 +58,12 @@ function renderToday(d){
   if(!closed.length){setHTML('#term-today','<div class="empty"><strong>Nothing closed yet</strong>Trades closed today will appear here.</div>');return;}
   const rows=closed.map(p=>{
     const r=Number(p.pnl)||0;
-    return '<tr><td>'+esc(p.symbol)+'</td><td>'+sideTag(p.side)+'</td><td class="num">'+esc(p.qty)+'</td>'+
+    return '<tr><td>'+esc(p.symbol)+'</td><td>'+esc(p.strategy||'—')+'</td><td>'+sideTag(p.side)+'</td><td class="num">'+esc(p.qty)+'</td>'+
       '<td class="num">'+num(p.entry)+'</td><td class="num">'+num(p.exit)+'</td>'+
       '<td class="num '+pnlClass(r)+'">'+money(r)+'</td>'+
       '<td class="mono">'+esc(chicagoTime(p.exited_at||p.closed_at||p.entered_at))+'</td></tr>';
   }).join('');
-  setHTML('#term-today','<table><thead><tr><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">Realized</th><th>Exited</th></tr></thead><tbody>'+rows+'</tbody></table>');
+  setHTML('#term-today','<table><thead><tr><th>Symbol</th><th>Strategy</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">Realized</th><th>Exited</th></tr></thead><tbody>'+rows+'</tbody></table>');
 }
 
 function renderWatchlist(d){
