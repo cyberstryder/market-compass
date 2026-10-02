@@ -272,7 +272,14 @@ def create_app(cfg=None):
                 db.recent(c,"mapping",limit=100),markets,now,active_selection(db,c,cfg,now))
             from .paper_risk import snapshot as paper_risk_snapshot
             from .operating_mode import policy, paper_message
-            positions=list(db.prefix(c,"position:").values())
+            all_positions=list(db.prefix(c,"position:").values())
+            # The fast tier polls every 3s: ship open positions plus recent
+            # history only. Nothing renders the full lifetime list (the
+            # terminal blotter reads `trades`), and unbounded growth here
+            # was inflating every poll.
+            cutoff=now-7*86400
+            positions=[p for p in all_positions
+                       if p.get("status")=="open" or p.get("entered_at",0)>=cutoff]
             trades=sorted(db.prefix(c,"trade:").values(),key=lambda p:p.get("entered_at",0),reverse=True)[:100]
             # The engine writes its live operating policy to the shared DB on
             # every tick; prefer it over this service's own config so the
@@ -738,6 +745,15 @@ def create_app(cfg=None):
                 project_records.c.project==project,project_records.c.source_id==id)).mappings().first()
         if row is None: raise HTTPException(404,"Source record not found")
         return {"project":project,"record":row['payload'],"context":row['context']}
+
+    @app.get('/api/research/feeds')
+    def get_research_feeds():
+        # Lightweight catalog for the Research tab dropdown. The full feeds
+        # list also ships in the studies tier, but that payload is large
+        # enough to stall first paint; this lets the tab populate instantly.
+        from .research import catalog
+        with db.tx() as c:
+            return catalog(db,c,cfg,time.time())
 
     @app.get('/api/research')
     def get_research(key:str):

@@ -26,6 +26,7 @@ function selectTab(key){
  if(window.__detectorsRefresh)window.__detectorsRefresh(key);
  if(key==='futures'&&lastState)renderSetupStudy(lastState.setup_study);
  if(key==='compass'&&lastState)renderSlow(lastState);
+ if(key==='research')loadResearchFeeds();
  if(key==='0dte'&&lastState)renderSPYStudy(lastState.spy_study);
  if(key==='summary'&&window.__renderSummary)window.__renderSummary();
  if(key==='daily'&&window.__renderDaily)window.__renderDaily();
@@ -192,12 +193,19 @@ function renderScanner(scanner){
  $('#scanner-focus').innerHTML=scanner.focus.length?table(['Symbol','Reason','Requested'],scanner.focus.map(f=>[esc(f.symbol),esc(f.reason),when(f.at)])):empty('No additional symbols prioritized','Core index coverage continues while the full watchlist is scanned.');
  $('#scanner-coverage').innerHTML=table(['Research feed','State','Source age','Retrieved','Target cadence','Cache / live eligibility'],scanner.feeds.map(f=>[esc(f.label),tag(f.status),f.source_age!=null?age(f.source_age):(f.item_clocks||[]).some(r=>r.source_ts!=null)?'<details data-key="clocks-'+esc(f.key)+'"><summary>Per-item clocks</summary>'+table(['Symbol','State','Source time','Age'],f.item_clocks.map(r=>[esc(r.symbol||'Unspecified'),tag(r.status),when(r.source_ts),age(r.source_age)]))+'</details>':age(null),when(f.received),age(f.target_interval),esc((f.cached===true?'Cached':f.cached===false?'Not cached':'Cache unknown')+' · '+(f.usage==='context_only'?'Context only':f.eligible_for_live_confirmation?'Clocks current; price confirmation required':'Not current confirmation'))]))+'<p class="fine">Target cadence is a scheduling goal. Provider caching, quotas, and failures can delay a refresh. Unknown source times are not treated as current. Mixed feeds retain each item’s clock.</p>';
 }
-let researchKey='',researchLoaded=0,researchLoading=false;
+let researchKey='',researchLoaded=0,researchLoading=false,researchFeedsLoading=false;
 function updateResearchChoices(feeds){
  if(!feeds)return;
  const select=$('#research-source');
  if(!select.options.length){select.innerHTML=feeds.map(f=>'<option value="'+esc(f.key)+'">'+esc(f.label)+'</option>').join('');}
  if($('#research').classList.contains('active')&&Date.now()-researchLoaded>15000)loadResearch();
+}
+async function loadResearchFeeds(){
+ if(researchFeedsLoading||$('#research-source').options.length)return;
+ researchFeedsLoading=true;
+ try{const r=await fetch('/api/research/feeds');if(r.ok)updateResearchChoices(await r.json());}
+ catch(e){}
+ finally{researchFeedsLoading=false;}
 }
 function readable(value){
  if(value===null||value===undefined)return '—';
@@ -352,6 +360,7 @@ $('#secondary-period-reset').onclick=()=>{
 };
 pollStudies();
 poll();
+loadResearchFeeds();
 {const conn=$('#connection');
  if(conn){conn.classList.add('clickable');conn.title='Open Feed health';
   conn.addEventListener('click',()=>{selectTab('compass');const t=$('#health-table');if(t)t.scrollIntoView({block:'start'});});}}
