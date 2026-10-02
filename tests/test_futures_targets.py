@@ -33,10 +33,10 @@ def make_collector(tmp_path, monkeypatch):
 def test_alias_position_symbol_resolves_to_raw_lead(tmp_path, monkeypatch):
     db, collector = make_collector(tmp_path, monkeypatch)
     with db.tx() as c:
-        db.put(c, 'position:ict:trendline_liquidity:MES.c.0',
+        db.put(c, 'position:ict:turtle_soup:MES.c.0',
                {'status': 'open', 'asset': 'future', 'symbol': 'MES.c.0',
                 'entered_at': NOW})
-        db.put(c, 'position:ict:trendline_liquidity:MNQ.c.0',
+        db.put(c, 'position:ict:turtle_soup:MNQ.c.0',
                {'status': 'open', 'asset': 'future', 'symbol': 'MNQ.c.0',
                 'entered_at': NOW})
     _, symbols = collector.future_targets()
@@ -50,7 +50,7 @@ def test_alias_position_symbol_resolves_to_raw_lead(tmp_path, monkeypatch):
 def test_dated_position_symbol_passes_through(tmp_path, monkeypatch):
     db, collector = make_collector(tmp_path, monkeypatch)
     with db.tx() as c:
-        db.put(c, 'position:ict:trendline_liquidity:MES.c.0',
+        db.put(c, 'position:ict:turtle_soup:MES.c.0',
                {'status': 'open', 'asset': 'future', 'symbol': 'MESZ6@42001581',
                 'entered_at': NOW})
     _, symbols = collector.future_targets()
@@ -61,10 +61,10 @@ def test_dated_position_symbol_passes_through(tmp_path, monkeypatch):
 def test_closed_and_non_index_positions_ignored(tmp_path, monkeypatch):
     db, collector = make_collector(tmp_path, monkeypatch)
     with db.tx() as c:
-        db.put(c, 'position:ict:trendline_liquidity:MES.c.0',
+        db.put(c, 'position:ict:turtle_soup:MES.c.0',
                {'status': 'closed', 'asset': 'future', 'symbol': 'MES.c.0',
                 'entered_at': NOW})
-        db.put(c, 'position:ict:trendline_liquidity:SIL.v.0',
+        db.put(c, 'position:ict:turtle_soup:SIL.v.0',
                {'status': 'open', 'asset': 'future', 'symbol': 'SIL.v.0',
                 'entered_at': NOW})
     _, symbols = collector.future_targets()

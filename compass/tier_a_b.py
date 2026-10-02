@@ -36,7 +36,6 @@ DETECTOR_SOURCES = (
     ('ict_htf_levels:latest', 'htf_levels', 'levels'),
     ('ict_aoi_zones:latest', 'aoi', 'zones'),
     ('ict_continuation:latest', 'continuation', 'rows'),
-    ('ict_trendline_liquidity:latest', 'trendline', 'rows'),
 )
 
 

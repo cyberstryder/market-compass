@@ -479,12 +479,6 @@ def create_app(cfg=None):
         with db.tx() as c:
             return display(db,c,time.time())
 
-    @app.get('/api/ict-trendline-liquidity')
-    def get_ict_trendline_liquidity():
-        from .trendline_liquidity import display
-        with db.tx() as c:
-            return display(db,c,time.time())
-
     @app.get('/api/ict-tier-a-b')
     def get_ict_tier_a_b():
         from .tier_a_b import display

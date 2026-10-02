@@ -21,8 +21,6 @@ ICT_DETECTORS = (
     ('smt_divergence', 'ict_smt_divergence:latest', 'SMT Divergence'),
     ('aoi_zones', 'ict_aoi_zones:latest', 'AOI Zones'),
     ('continuation', 'ict_continuation:latest', 'Continuation'),
-    ('trendline_liquidity', 'ict_trendline_liquidity:latest',
-     'Trendline Liquidity'),
     ('morning_drive', 'morning_drive:latest', 'Morning-Drive Fade'),
     ('icc', 'icc:latest', 'ICC'),
     ('rumers_box', 'rumers_box:latest', 'Rumers Box'),

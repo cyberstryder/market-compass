@@ -50,8 +50,8 @@ def test_three_concepts_form_tier_a(db):
              [sig_row('turtle_soup', ts=NOW)])
         seed(db, c, 'ict_continuation:latest', SYM,
              [sig_row('continuation', ts=NOW - 100, shift='fresh')])
-        seed(db, c, 'ict_trendline_liquidity:latest', SYM,
-             [sig_row('trendline', ts=NOW - 200)])
+        seed(db, c, 'ict_smt_divergence:latest', SYM,
+             [sig_row('smt_divergence', ts=NOW - 200)])
         out = tb.scan(db, c, Cfg(), NOW)
     assert out == {'ran': True, 'tier_a': 1, 'tier_b': 0, 'unranked': 0,
                    'n_groups': 1}
@@ -59,7 +59,7 @@ def test_three_concepts_form_tier_a(db):
         latest = db.get(c, 'ict_tier_a_b:latest')
         tier = latest['tiers']['A'][0]
         assert tier['tier'] == 'A' and tier['n_concepts'] == 3
-        assert tier['concepts'] == ['continuation', 'trendline', 'turtle_soup']
+        assert tier['concepts'] == ['continuation', 'smt_divergence', 'turtle_soup']
         assert tier['shift'] == 'fresh'  # copied from the continuation row
         assert tier['entry'] == pytest.approx(100.0)
         assert tier['stop'] == pytest.approx(99.0)   # conservative extreme
@@ -73,8 +73,8 @@ def test_three_concepts_form_tier_a(db):
 def test_two_concepts_form_tier_b(db):
     with db.tx() as c:
         seed(db, c, 'ict_turtle_soup:latest', SYM, [sig_row('turtle_soup', ts=NOW)])
-        seed(db, c, 'ict_trendline_liquidity:latest', SYM,
-             [sig_row('trendline', ts=NOW - 300)])
+        seed(db, c, 'ict_smt_divergence:latest', SYM,
+             [sig_row('smt_divergence', ts=NOW - 300)])
         out = tb.scan(db, c, Cfg(), NOW)
     assert out['tier_b'] == 1 and out['tier_a'] == 0
     with db.tx() as c:

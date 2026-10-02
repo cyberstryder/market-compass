@@ -464,9 +464,6 @@ class Engine:
             if self.cfg.ict_continuation:
                 from .continuation import scan as ict_continuation_scan
                 ict_summaries['continuation'] = ict_continuation_scan(self.db,c,self.cfg,now)
-            if self.cfg.ict_trendline_liquidity:
-                from .trendline_liquidity import scan as ict_trendline_liquidity_scan
-                ict_summaries['trendline_liquidity'] = ict_trendline_liquidity_scan(self.db,c,self.cfg,now)
             if self.cfg.ict_tier_a_b:
                 from .tier_a_b import scan as ict_tier_a_b_scan
                 ict_summaries['tier_a_b'] = ict_tier_a_b_scan(self.db,c,self.cfg,now)
@@ -519,7 +516,7 @@ class Engine:
             self.db.health('day_trading_board','running','board %s, %d symbols' % (
                 board_summary.get('action') or 'steady', board_summary['symbols']))
         for _ict_name in ('session_liquidity','htf_levels','turtle_soup','smt_divergence',
-                          'aoi_zones','continuation','trendline_liquidity','tier_a_b',
+                          'aoi_zones','continuation','tier_a_b',
                           'golden_zone','bos_fvg','bos_gz_vwap',
                           'morning_drive','icc','rumers_box'):
             _s = ict_summaries.get(_ict_name)
