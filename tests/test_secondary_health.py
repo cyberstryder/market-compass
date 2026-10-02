@@ -42,7 +42,7 @@ def test_secondary_stopped_task_and_intentionally_disabled_task_are_distinct():
 def test_recovery_and_audit_health_use_collector_and_detect_stopped_tasks():
     now=1800000000
     items=[dict(name=name,status=status,checked_at=now,detail='fixture')
-           for name,status in [('stock_recovery','idle'),('obsidian_history','complete')]]
+           for name,status in [('stock_recovery','idle'),('option_recovery','complete')]]
     web={'worker:web':{'at':now}}
     assert all(h['status']=='stale' for h in decorate_health(items,web,{},now))
     workers={**web,'worker:collector':{'at':now}}

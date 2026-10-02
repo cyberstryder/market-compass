@@ -91,7 +91,6 @@ class Collectors:
 
     def tasks(self):
         c=self.cfg
-        from .obsidian_history import collect as history_obsidian
         from .provider_coverage import collect as provider_coverage
         from .obsidian import poll as poll_obsidian
         from .extra_futures import tasks as extra_tasks
@@ -102,7 +101,6 @@ class Collectors:
             self.supervise("assistant_options",True,lambda:collect_requests(self),1),
             self.supervise("spy_daily_readiness",bool(c.spy_morning_brief and c.alpaca_key and c.alpaca_secret),lambda:collect_spy_daily(self),60),
             self.supervise("index_reference",bool(c.spy_morning_brief),lambda:collect_index_reference(self),60),
-            self.supervise("obsidian_history",True,lambda:history_obsidian(self),3),
             self.supervise("obsidian",bool(c.obsidian_url),lambda:poll_obsidian(self),5),
             self.supervise("alpaca_stocks",bool(c.alpaca_key and c.alpaca_secret),self.stocks),
             self.supervise("alpaca_history",bool(c.alpaca_key and c.alpaca_secret),self.stock_history),

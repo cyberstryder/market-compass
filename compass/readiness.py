@@ -6,7 +6,7 @@ from .market import fresh, CT
 STREAMS = {"alpaca_stocks": "equities", "databento_futures": "futures", "option_stream": "equities"}
 COLLECTORS = set(STREAMS) | {"alpaca_history", "futures_history", "option_chain", "tradermatrix", "tradermatrix_flow",
     "project_morning", "project_smoothers", "research", "secondary_data", "provider_coverage",
-    "stock_recovery", "option_recovery", "obsidian", "obsidian_history"}
+    "stock_recovery", "option_recovery", "obsidian"}
 
 
 def clock(value):
@@ -45,10 +45,10 @@ def decorate_health(items, workers, markets, now):
                 h.update(status="waiting", detail="Session open; no source event observed yet. " + h["detail"])
             elif h["age"] > 20 or h["age"] < -1:
                 h.update(status="stale", detail="Session open; source events are not current. " + h["detail"])
-        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine", "setup_reports", "secondary", "secondary_data", "storage", "stock_recovery", "option_recovery", "obsidian", "obsidian_history"}:
+        elif h["name"] in {"option_chain", "tradermatrix", "tradermatrix_flow", "alpaca_history", "futures_history", "engine", "setup_reports", "secondary", "secondary_data", "storage", "stock_recovery", "option_recovery", "obsidian"}:
             limit = {"alpaca_history": 90,"futures_history":3900, "option_chain": 300, "tradermatrix": 180,"tradermatrix_flow":180, "engine": 20, "setup_reports": 90,
                 "secondary": 20, "secondary_data": 45, "storage": 900,
-                "stock_recovery": 30, "option_recovery": 60, "obsidian": 30, "obsidian_history": 90}[h["name"]]
+                "stock_recovery": 30, "option_recovery": 60, "obsidian": 30}[h["name"]]
             if h["check_age"] > limit:
                 h.update(status="stale", detail="Worker is alive but this task has stopped reporting. " + h["detail"])
             elif h['name'] == 'tradermatrix_flow':

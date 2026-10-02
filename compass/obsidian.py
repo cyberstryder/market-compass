@@ -168,14 +168,13 @@ async def run(db,cfg):
 
 
 def snapshot(db,c,now):
-    from .obsidian_history import snapshot as history_snapshot
     rows=c.execute(select(ideas).order_by(ideas.c.source_ts.desc()).limit(100)).mappings().all()
     recent=c.execute(select(feed_events.c.vendor_id,feed_events.c.payload,feed_events.c.association,feed_events.c.idea_id)
         .order_by(feed_events.c.received.desc(),feed_events.c.vendor_id.desc()).limit(100)).mappings().all()
     status=db.get(c,'obsidian:status',{})
     health=db.get(c,'health:obsidian',{})
     if health.get('status') in ('error','not_configured'): status={**status,'status':health['status']}
-    return dict(history=history_snapshot(db,c),status=status,tracking=db.get(c,'obsidian:tracking',{}),
+    return dict(status=status,tracking=db.get(c,'obsidian:tracking',{}),
         total_events=c.execute(select(func.count()).select_from(feed_events)).scalar_one(),
         total_ideas=c.execute(select(func.count()).select_from(ideas)).scalar_one(),
         ideas=[{k:r[k] for k in ('id','symbol','contract','expiry','source_ts','received','data','measurements')} for r in rows],

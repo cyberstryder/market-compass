@@ -141,7 +141,6 @@ class Config:
     # names without daily expirations (e.g. MU) are covered too. Positions still
     # flatten 5 minutes before the close (OPTION_FLATTEN_MIN) regardless of expiry.
     option_0dte_max_dte: int = field(default_factory=lambda: int(env("OPTION_0DTE_MAX_DTE","7")))
-    obsidian_history: bool = field(default_factory=lambda: env("OBSIDIAN_HISTORY_AUDIT_ENABLED","false")=="true")
     obsidian_url: str = field(default_factory=lambda: env("OBSIDIAN_FEED_URL"), repr=False)
     morning_enabled: bool = field(default_factory=lambda: env("MORNING_ORB_ENABLED","true")=="true")
     orb_setups: bool = field(default_factory=lambda: env("ORB_SETUPS_ENABLED","true")=="true")
