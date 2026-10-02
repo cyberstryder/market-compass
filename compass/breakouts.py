@@ -372,15 +372,21 @@ def scan(db, c, cfg, now):
                     event['paper_entered'] = res['trade_id']
                     event['evaluated_at'] = now
                     db.put(c, 'breakout:' + event['id'], event)
-    # --- expire-settle open trap spreads ---
+    # --- expire-settle open trap spreads + daily MTM snapshots ---
     if trap_paper.paper_enabled(cfg):
         by_day = {}
+        bars_by_sym = {}
         def close_for(sym, day_str):
             if sym not in by_day:
                 by_day[sym] = {b['day']: b for b in daily_bars(db, c, sym, limit=400)}
             b = by_day.get(sym, {}).get(day_str)
             return number(b['c']) if b else None
+        def bars_for(sym):
+            if sym not in bars_by_sym:
+                bars_by_sym[sym] = daily_bars(db, c, sym, limit=60)
+            return bars_by_sym[sym]
         trap_paper.settle(db, c, cfg, now, today, close_for)
+        trap_paper.mark_open(db, c, cfg, now, today, close_for, bars_for)
     db.put(c, 'breakouts:scanned_day', today)
     return {'ran': True, 'new_events': new_events, 'forming': forming}
 

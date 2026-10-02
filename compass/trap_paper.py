@@ -10,6 +10,11 @@ Spread spec: 5% wide, short leg at-the-money, 14-21 DTE (Friday nearest 17
 DTE), 1 contract, held to expiration. P&L settles at expiration from the
 underlying close (intrinsic value) — no stop/target management.
 
+Early-exit study: every daily scan records a mark-to-market snapshot of each
+open spread (chain mids when available, Black-Scholes fallback). The snapshot
+trail lets exit_study() compare hold-to-expiration against early-exit rules
+(50%/25% of max profit, 7 DTE, 50% of max loss) once trades close.
+
 Entry timing: the trap is detected after the close on trap day. The paper
 spread is entered on the first scan where the trap's sessions_since_break >= 1,
 using that session's close as the entry underlying price.
@@ -135,6 +140,72 @@ def _intrinsic_value(spread, underlying_close):
     if spread['spread_kind'] == 'bull_put':
         return max(0.0, min(width, spread['short_strike'] - underlying_close))
     return max(0.0, min(width, underlying_close - spread['short_strike']))
+
+
+def _mark_spread(db, c, spread, S, dte, bars_for):
+    """Current cost to buy back the spread. Returns (mark, source) or (None, None).
+
+    Prefers stored chain mids for the spread's exact strikes/expiry; falls
+    back to Black-Scholes with the entry IV (or a fresh realized-vol estimate).
+    """
+    chain_mark = _credit_from_chain(
+        db, c, spread['symbol'], spread['spread_kind'],
+        spread['short_strike'], spread['long_strike'],
+        spread['expiry'], S)
+    if chain_mark is not None:
+        return chain_mark, 'chain'
+    try:
+        T = max(dte, 1) / 365.0
+        iv = spread.get('model_iv') or _estimate_iv(bars_for(spread['symbol']) or [])
+        otype = 'CALL' if spread['spread_kind'] == 'bear_call' else 'PUT'
+        short_p = bs_price(S, spread['short_strike'], T, iv, otype)
+        long_p = bs_price(S, spread['long_strike'], T, iv, otype)
+        return max(0.0, short_p - long_p), 'bs_model'
+    except Exception:
+        return None, None
+
+
+def mark_open(db, c, cfg, now, today, close_for, bars_for):
+    """Daily mark-to-market snapshot for every open trap spread.
+
+    today: 'YYYY-MM-DD'. close_for(symbol, day_str) -> close or None.
+    bars_for(symbol) -> daily bars (for the IV fallback).
+    Writes one paper_decision row per open spread ('mtm:<trade_id>:<day>').
+    Returns the snapshot list. Never raises.
+    """
+    snaps = []
+    for key, p in list(db.prefix(c, 'trap_spread:').items()):
+        if not isinstance(p, dict) or p.get('status') != 'open':
+            continue
+        try:
+            S = close_for(p['symbol'], today)
+            if not S:
+                continue
+            dte = (date.fromisoformat(p['expiry']) - date.fromisoformat(today)).days
+            if dte < 0:
+                continue  # settle() owns expired spreads
+            mark, src = _mark_spread(db, c, p, S, dte, bars_for)
+            if mark is None:
+                continue
+            qty = p.get('qty', 1)
+            unreal = (p['credit'] - mark) * 100 * qty - FEE_PER_SPREAD
+            max_profit = p['credit'] * 100 * qty - FEE_PER_SPREAD
+            snap = {
+                'trade_id': p['id'], 'strategy': STRATEGY_TAG,
+                'symbol': p['symbol'], 'day': today,
+                'underlying': round(S, 2), 'dte_remaining': dte,
+                'mark': round(mark, 2),
+                'unrealized_pnl': round(unreal, 2),
+                'max_profit': round(max_profit, 2),
+                'max_loss': p.get('max_loss'),
+                'price_source': src,
+            }
+            db.append(c, 'paper_decision', 'trap_paper', p['symbol'], now,
+                      {**snap, 'status': 'mtm'}, 'mtm:%s:%s' % (p['id'], today))
+            snaps.append(snap)
+        except Exception:
+            continue
+    return snaps
 
 
 def open_count(db, c):
@@ -299,4 +370,99 @@ def attribution(db, c):
             out['losses'] += 1
     out['realized'] = round(out['realized'], 2)
     out['total_credit'] = round(out['total_credit'], 2)
+    return out
+
+
+def _mtm_trail(db, c):
+    """All MTM snapshots grouped by trade_id, each trail sorted by day."""
+    from sqlalchemy import select
+    from .store import events
+    rows = c.execute(
+        select(events.c.key, events.c.payload)
+        .where(events.c.kind == 'paper_decision',
+               events.c.source == 'trap_paper',
+               events.c.key.like('mtm:%'))).all()
+    trails = {}
+    for key, payload in rows:
+        if not isinstance(payload, dict):
+            continue
+        tid = payload.get('trade_id')
+        if not tid:
+            continue
+        trails.setdefault(tid, []).append(payload)
+    for tid in trails:
+        trails[tid].sort(key=lambda s: s.get('day', ''))
+    return trails
+
+
+def exit_study(db, c):
+    """Hold-to-expiration vs early-exit rules, replayed over MTM trails.
+
+    Rules (first snapshot satisfying the condition wins):
+      hold_to_expiry: actual settled P&L (baseline, needs no MTM data)
+      take_50: unrealized >= 50% of max profit
+      take_25: unrealized >= 25% of max profit
+      exit_7dte: <= 7 DTE remaining (dodge expiration gamma)
+      stop_50: unrealized <= -50% of max loss
+    Returns per-rule {trades, wins, win_rate, avg_pnl, total_pnl} and
+    baseline_only (closed trades with no MTM history). Early-exit rules cover
+    only trades with an MTM trail; a rule that never triggers on a trail
+    falls back to the settled outcome (i.e. the position was held).
+    Read-only.
+    """
+    trails = _mtm_trail(db, c)
+    rules = ['hold_to_expiry', 'take_50', 'take_25', 'exit_7dte', 'stop_50']
+    agg = {r: {'trades': 0, 'wins': 0, 'total_pnl': 0.0} for r in rules}
+    baseline_only = 0
+
+    def record(rule, pnl):
+        a = agg[rule]
+        a['trades'] += 1
+        a['total_pnl'] += pnl
+        if pnl > 0:
+            a['wins'] += 1
+
+    for key, trade in db.prefix(c, 'trade:trap-').items():
+        if not isinstance(trade, dict) or trade.get('status') != 'closed':
+            continue
+        tid = trade.get('id')
+        settled = number(trade.get('pnl')) or 0.0
+        record('hold_to_expiry', settled)
+        snaps = trails.get(tid) or []
+        if not snaps:
+            baseline_only += 1
+            continue
+        # Simulate each early-exit rule over the snapshot trail.
+        exits = {}
+        for s in snaps:
+            unreal = number(s.get('unrealized_pnl')) or 0.0
+            max_profit = number(s.get('max_profit')) or 0.0
+            max_loss = number(s.get('max_loss')) or 0.0
+            dte = s.get('dte_remaining')
+            if 'take_50' not in exits and max_profit > 0 \
+                    and unreal >= 0.5 * max_profit:
+                exits['take_50'] = unreal
+            if 'take_25' not in exits and max_profit > 0 \
+                    and unreal >= 0.25 * max_profit:
+                exits['take_25'] = unreal
+            if 'exit_7dte' not in exits and dte is not None and dte <= 7:
+                exits['exit_7dte'] = unreal
+            if 'stop_50' not in exits and max_loss > 0 \
+                    and unreal <= -0.5 * max_loss:
+                exits['stop_50'] = unreal
+        # A rule that never triggers falls back to the settled outcome.
+        for r in ('take_50', 'take_25', 'exit_7dte', 'stop_50'):
+            record(r, exits.get(r, settled))
+
+    out = {}
+    for r, a in agg.items():
+        n = a['trades']
+        out[r] = {
+            'trades': n,
+            'wins': a['wins'],
+            'win_rate': round(a['wins'] / n, 3) if n else 0.0,
+            'avg_pnl': round(a['total_pnl'] / n, 2) if n else 0.0,
+            'total_pnl': round(a['total_pnl'], 2),
+        }
+    out['baseline_only'] = baseline_only
     return out
