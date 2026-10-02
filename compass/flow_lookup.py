@@ -31,6 +31,9 @@ def main():
     if not url:
         print("DATABASE_URL not set", file=sys.stderr)
         return 2
+    # Container ships psycopg (v3), not psycopg2 — same rewrite as gamma_magnet_study.py
+    url = url.replace("postgres://", "postgresql+psycopg://", 1).replace(
+        "postgresql://", "postgresql+psycopg://", 1)
     engine = create_engine(url, connect_args={"connect_timeout": 10})
 
     symbols = [s.upper() for s in args.symbols]
