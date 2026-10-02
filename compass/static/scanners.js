@@ -72,16 +72,24 @@
   if(rev.length)$('#day-board').innerHTML+='<h3>Weekly reviews</h3>'+table(['Day','Names','Board hit rate','Off-board alert fraction'],rev.map(v=>[esc(v.day),num(v.names,0),pct1(v.board_hit_rate),pct1(v.off_board_alert_fraction)]));
  }
 
+ function renderPulse(r){
+  $('#pulse-asof').textContent='Evaluated '+when(r.asof)+(r.last_scan?' · scan '+when(r.last_scan):'');
+  const rows=(r.pulses||[]).slice(0,25);
+  const tops=p=>(p.top_prints||[]).slice(0,3).map(t=>esc(t.option_type||'?')+' '+esc(t.strike)+' '+esc(t.expiry)+' $'+num((t.premium||0)/1000,0)+'k').join(' · ');
+  $('#pulse-rows').innerHTML=rows.length?table(['Time','Symbol','Dir','Premium $M','Prints','Max score','Top prints'],rows.map(p=>[when(p.ts),esc(p.symbol),p.direction==='bullish'?'<span class="tag good">bullish</span>':'<span class="tag bad">bearish</span>',num((p.directional_premium||0)/1e6,2),num(p.print_count,0),num(p.max_score,0),tops(p)])):empty('No pulses','No concentrated directional flow in the window.');
+ }
+
  async function get(url){const resp=await fetch(url);if(!resp.ok)throw new Error('HTTP '+resp.status);return resp.json();}
 
  async function loadScanners(){
   if(busy)return;busy=true;
   try{
-   const [apex,tape,gap,brk]=await Promise.allSettled([get('/api/apex-magnets'),get('/api/tape-confirmed'),get('/api/gap-continuation'),get('/api/breakouts')]);
+   const [apex,tape,gap,brk,pulse]=await Promise.allSettled([get('/api/apex-magnets'),get('/api/tape-confirmed'),get('/api/gap-continuation'),get('/api/breakouts'),get('/api/flow-pulse')]);
    if(apex.status==='fulfilled')renderApex(apex.value);else $('#apex-rows').innerHTML=empty('Apex magnets unavailable','Could not load /api/apex-magnets.');
    if(tape.status==='fulfilled')renderTape(tape.value);else $('#tape-scorecard').innerHTML=empty('Tape confirmed unavailable','Could not load /api/tape-confirmed.');
    if(gap.status==='fulfilled')renderGap(gap.value);else $('#gap-board').innerHTML=empty('Gap continuation unavailable','Could not load /api/gap-continuation.');
    if(brk.status==='fulfilled')renderBreak(brk.value);else $('#break-forming').innerHTML=empty('Breakouts unavailable','Could not load /api/breakouts.');
+   if(pulse.status==='fulfilled')renderPulse(pulse.value);else $('#pulse-rows').innerHTML=empty('Flow pulse unavailable','Could not load /api/flow-pulse.');
   }finally{busy=false;}
  }
 

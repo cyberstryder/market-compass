@@ -54,6 +54,13 @@ class Config:
     magnet_push_enabled: bool = field(default_factory=lambda: env("MAGNET_PUSH_ENABLED","false")=="true")
     magnet_push_signals: tuple = field(default_factory=lambda: tuple(
         s.strip() for s in env("MAGNET_PUSH_SIGNALS","broke_through").split(",") if s.strip()))
+    flow_pulse: bool = field(default_factory=lambda: env("FLOW_PULSE_ENABLED","true")=="true")
+    flow_pulse_min_premium: float = field(default_factory=lambda: float(env("FLOW_PULSE_MIN_PREMIUM","1000000")))
+    flow_pulse_min_score: float = field(default_factory=lambda: float(env("FLOW_PULSE_MIN_SCORE","90")))
+    flow_pulse_min_ratio: float = field(default_factory=lambda: float(env("FLOW_PULSE_MIN_RATIO","2.0")))
+    flow_pulse_max_dte: float = field(default_factory=lambda: float(env("FLOW_PULSE_MAX_DTE","45")))
+    flow_pulse_push_enabled: bool = field(default_factory=lambda: env("FLOW_PULSE_PUSH_ENABLED","false")=="true")
+    flow_pulse_webhook: str = field(default_factory=lambda: env("DISCORD_FLOW_PULSE_WEBHOOK_URL",""))
     tape_confirmed: bool = field(default_factory=lambda: env("TAPE_CONFIRMED_ENABLED","true")=="true")
     # ICT futures concept detectors (Phase 1: evidence-only, all default OFF).
     ict_session_liquidity: bool = field(default_factory=lambda: env("ICT_SESSION_LIQUIDITY_ENABLED","false")=="true")

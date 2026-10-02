@@ -1,0 +1,211 @@
+import time
+from datetime import datetime, timedelta, timezone
+import pytest
+from compass.store import Store
+from compass import flow_pulse as fp
+
+NOW = 1_790_000_000.0
+
+
+def _live_expiry(days_out=7):
+    return (datetime.now(timezone.utc) + timedelta(days=days_out)).strftime('%m/%d/%y')
+
+
+@pytest.fixture
+def db(tmp_path):
+    db = Store('sqlite:///' + str(tmp_path / 'pulse.db'))
+    db.initialize()
+    yield db
+    db.engine.dispose()
+
+
+class Cfg:
+    flow_pulse = True
+    watch_symbols = ('HOOD', 'COIN', 'SPY')
+    flow_pulse_min_premium = 1000000
+    flow_pulse_min_score = 90
+    flow_pulse_min_ratio = 2.0
+    flow_pulse_max_dte = 45
+    flow_pulse_push_enabled = False
+    flow_pulse_webhook = ''
+
+
+def prow(symbol='HOOD', ts=NOW - 300, option_type='call', sentiment='bullish',
+         premium=1700000, score=98, strike=114.0, expiry='10/02/26',
+         vendor_id='v1'):
+    return {'payload': {'symbol': symbol, 'source_ts': ts,
+                        'option_type': option_type, 'sentiment': sentiment,
+                        'premium': premium, 'score': score, 'strike': strike,
+                        'expiry': expiry},
+            'source_ts': ts, 'first_seen': ts, 'last_seen': ts,
+            'vendor_id': vendor_id, 'day': '2026-09-30'}
+
+
+# --- direction ---
+
+def test_bullish_call_is_bullish():
+    assert fp._direction('call', 'bullish') == 'bullish'
+
+
+def test_bearish_call_is_bearish():
+    # The sentiment-blind flaw in tape_confirmed counted this as long flow.
+    assert fp._direction('call', 'bearish') == 'bearish'
+
+
+def test_bearish_put_is_bullish():
+    assert fp._direction('put', 'bearish') == 'bullish'
+
+
+def test_bullish_put_is_bearish():
+    assert fp._direction('put', 'bullish') == 'bearish'
+
+
+def test_unknown_sentiment_ignored():
+    assert fp._direction('call', 'neutral') is None
+    assert fp._direction('call', None) is None
+    assert fp._direction(None, 'bullish') is None
+
+
+# --- dte ---
+
+def test_dte_parses_vendor_format():
+    # 2026-10-01 12:00 UTC vs expiry 2026-10-02 16:00 UTC -> ~1.17 days
+    dte = fp._dte('10/02/26', 1790856000.0)
+    assert dte is not None and 1.0 < dte < 2.0
+
+
+def test_dte_rejects_garbage():
+    assert fp._dte('n/a', NOW) is None
+    assert fp._dte(None, NOW) is None
+
+
+# --- detect_pulses ---
+
+def test_fires_on_motivating_example():
+    pulses = fp.detect_pulses([prow()], NOW, Cfg(), Cfg.watch_symbols)
+    assert len(pulses) == 1
+    p = pulses[0]
+    assert p['symbol'] == 'HOOD' and p['direction'] == 'bullish'
+    assert p['directional_premium'] == 1700000
+    assert p['max_score'] == 98 and p['print_count'] == 1
+
+
+def test_no_fire_below_premium():
+    pulses = fp.detect_pulses([prow(premium=500000)], NOW, Cfg(), Cfg.watch_symbols)
+    assert pulses == []
+
+
+def test_no_fire_below_score():
+    pulses = fp.detect_pulses([prow(score=85)], NOW, Cfg(), Cfg.watch_symbols)
+    assert pulses == []
+
+
+def test_mixed_flow_veto():
+    rows = [prow(premium=1200000, sentiment='bullish'),
+            prow(premium=800000, sentiment='bearish', vendor_id='v2')]
+    pulses = fp.detect_pulses(rows, NOW, Cfg(), Cfg.watch_symbols)
+    assert pulses == []  # 1.2M < 2x 0.8M
+
+
+def test_directional_majority_fires():
+    rows = [prow(premium=2000000, sentiment='bullish'),
+            prow(premium=800000, sentiment='bearish', vendor_id='v2')]
+    pulses = fp.detect_pulses(rows, NOW, Cfg(), Cfg.watch_symbols)
+    assert len(pulses) == 1 and pulses[0]['direction'] == 'bullish'
+
+
+def test_leaps_dated_prints_excluded():
+    pulses = fp.detect_pulses([prow(expiry='01/15/28')], NOW, Cfg(), Cfg.watch_symbols)
+    assert pulses == []
+
+
+def test_expired_prints_excluded():
+    pulses = fp.detect_pulses([prow(expiry='01/02/26')], NOW, Cfg(), Cfg.watch_symbols)
+    assert pulses == []
+
+
+def test_stale_prints_outside_window_ignored():
+    pulses = fp.detect_pulses([prow(ts=NOW - 4000)], NOW, Cfg(), Cfg.watch_symbols)
+    assert pulses == []
+
+
+def test_outside_universe_ignored():
+    pulses = fp.detect_pulses([prow(symbol='GME')], NOW, Cfg(), Cfg.watch_symbols)
+    assert pulses == []
+
+
+def test_bearish_direction_aggregation():
+    rows = [prow(symbol='COIN', sentiment='bearish', premium=1500000, score=91)]
+    pulses = fp.detect_pulses(rows, NOW, Cfg(), Cfg.watch_symbols)
+    assert len(pulses) == 1 and pulses[0]['direction'] == 'bearish'
+
+
+def test_sorted_by_premium_desc():
+    rows = [prow(symbol='HOOD', premium=1200000, score=91),
+            prow(symbol='COIN', premium=2600000, score=92, vendor_id='v2')]
+    pulses = fp.detect_pulses(rows, NOW, Cfg(), Cfg.watch_symbols)
+    assert [p['symbol'] for p in pulses] == ['COIN', 'HOOD']
+
+
+# --- scan persistence ---
+
+def _insert_flow(db, rows):
+    from compass.store import flow_records
+    with db.tx() as c:
+        for r in rows:
+            c.execute(db.insert(flow_records).values(
+                day=r['day'], vendor_id=r['vendor_id'],
+                source_ts=r['source_ts'], payload=r['payload'],
+                first_seen=r['first_seen'], last_seen=r['last_seen']))
+
+
+def test_scan_persists_and_dedupes_per_day(db):
+    from compass.market import day as _day
+    now = time.time()
+    rows = [prow(ts=now - 300, expiry=_live_expiry())]
+    # rewrite timestamps to "now" so the scan sees them
+    for r in rows:
+        r['payload']['source_ts'] = now - 300
+        r['source_ts'] = now - 300
+        r['day'] = _day(now)
+    _insert_flow(db, rows)
+    with db.tx() as c:
+        out1 = fp.scan(db, c, Cfg(), now)
+    assert out1['ran'] and out1['fired'] == 1
+    with db.tx() as c:
+        out2 = fp.scan(db, c, Cfg(), now + 61)  # past throttle
+    assert out2['ran'] and out2['fired'] == 0  # same day+symbol+direction: no refire
+
+
+def test_scan_disabled(db):
+    class Off(Cfg):
+        flow_pulse = False
+    with db.tx() as c:
+        out = fp.scan(db, c, Off(), time.time())
+    assert out == {'ran': False, 'reason': 'disabled'}
+
+
+def test_display_returns_pulses(db):
+    now = time.time()
+    rows = [prow(ts=now - 300, expiry=_live_expiry())]
+    for r in rows:
+        r['payload']['source_ts'] = now - 300
+        r['source_ts'] = now - 300
+        from compass.market import day as _day
+        r['day'] = _day(now)
+    _insert_flow(db, rows)
+    with db.tx() as c:
+        fp.scan(db, c, Cfg(), now)
+    with db.tx() as c:
+        d = fp.display(db, c, now)
+    assert d['version'] == fp.VERSION
+    assert len(d['pulses']) == 1
+    assert d['pulses'][0]['symbol'] == 'HOOD'
+
+
+def test_format_message_under_limit():
+    pulses = fp.detect_pulses([prow()], NOW, Cfg(), Cfg.watch_symbols)
+    msg = fp.format_message(pulses[0])
+    assert len(msg['content']) < 2000
+    assert 'HOOD' in msg['content'] and 'BULLISH' in msg['content']
+    assert msg['allowed_mentions'] == {'parse': []}

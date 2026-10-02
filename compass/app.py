@@ -103,6 +103,9 @@ def create_app(cfg=None):
             if cfg.magnet_push_enabled:
                 from .magnet_push import run as run_magnet_push
                 tasks.append(asyncio.create_task(run_magnet_push(db,cfg)))
+            if cfg.flow_pulse_push_enabled:
+                from .flow_pulse import run as run_flow_pulse_push
+                tasks.append(asyncio.create_task(run_flow_pulse_push(db,cfg)))
             if cfg.morning_enabled and cfg.morning_token:
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"intake")))
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"samples")))
@@ -412,6 +415,12 @@ def create_app(cfg=None):
     @app.get('/api/tape-confirmed')
     def get_tape_confirmed():
         from .tape_confirmed import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
+    @app.get('/api/flow-pulse')
+    def get_flow_pulse():
+        from .flow_pulse import display
         with db.tx() as c:
             return display(db,c,time.time())
 

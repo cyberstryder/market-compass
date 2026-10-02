@@ -426,6 +426,10 @@ class Engine:
             if self.cfg.tape_confirmed:
                 from .tape_confirmed import scan as tape_confirmed_scan
                 tape_summary = tape_confirmed_scan(self.db,c,self.cfg,now)
+            pulse_summary = None
+            if self.cfg.flow_pulse:
+                from .flow_pulse import scan as flow_pulse_scan
+                pulse_summary = flow_pulse_scan(self.db,c,self.cfg,now)
             gap_summary = None
             if self.cfg.gap_continuation:
                 from .gap_continuation import scan as gap_continuation_scan
