@@ -45,7 +45,7 @@ def main():
 
     lo = min(day_bounds(d)[0] for d in days)
     hi = max(day_bounds(d)[1] for d in days)
-    syms = tuple(symbols)
+    syms = list(symbols)
 
     with engine.connect() as c:
         print("== discovery_trials_v1 (flow-based discovery cohorts) ==")
