@@ -145,6 +145,7 @@ def main():
     coverage = {}
     with engine.connect() as c:
         for sym in symbols:
+            st = time.time()
             cov = {"days": 0, "with_snapshot": 0, "valid_magnet": 0}
             for day in days:
                 # skip weekends (CDT weekday; holidays skip naturally via no data)
@@ -189,6 +190,11 @@ def main():
                     "bars": rng["n"],
                 })
             coverage[sym] = cov
+            # Progress to stderr (stdout stays the single JSON line). Keeps
+            # interactive shells alive during long silent query stretches.
+            print("%s: %d days, %d snapshots, %d valid magnets (%.1fs)" % (
+                sym, cov["days"], cov["with_snapshot"], cov["valid_magnet"],
+                time.time() - st), file=sys.stderr, flush=True)
     engine.dispose()
 
     def agg(rs):
