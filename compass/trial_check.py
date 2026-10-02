@@ -17,12 +17,23 @@ def day_bounds(day):
     return d.timestamp(), d.timestamp() + 86400
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    days = ["2026-09-30", "2026-10-01"]
-    for a in sys.argv[1:]:
-        if a.startswith("--days"):
-            days = a.split("=", 1)[1].split(",") if "=" in a else sys.argv[sys.argv.index(a)+1].split(",")
-    symbols = [s.upper() for s in args] or ["HOOD", "COIN"]
+    symbols, days = [], ["2026-09-30", "2026-10-01"]
+    argv = sys.argv[1:]
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--days" and i + 1 < len(argv):
+            days = argv[i + 1].split(",")
+            i += 2
+        elif a.startswith("--days="):
+            days = a.split("=", 1)[1].split(",")
+            i += 1
+        elif a.startswith("--"):
+            i += 1
+        else:
+            symbols.append(a)
+            i += 1
+    symbols = [s.upper() for s in symbols] or ["HOOD", "COIN"]
 
     url = os.environ.get("DATABASE_URL")
     if not url:
@@ -44,7 +55,7 @@ def main():
                    payload->>'side' AS side, payload->>'kind' AS kind,
                    payload->>'score' AS score
             FROM discovery_trials_v1
-            WHERE symbol IN :syms AND created >= :lo AND created < :hi
+            WHERE symbol = ANY(:syms) AND created >= :lo AND created < :hi
             ORDER BY created"""),
             {"syms": syms, "lo": lo, "hi": hi}).mappings().all()
         print(f"rows: {len(rows)}")
@@ -57,7 +68,7 @@ def main():
                    to_timestamp(started) AT TIME ZONE 'America/Chicago' AS ct,
                    payload->>'strategy' AS strategy
             FROM setup_trials_v1
-            WHERE symbol IN :syms AND started >= :lo AND started < :hi
+            WHERE symbol = ANY(:syms) AND started >= :lo AND started < :hi
             ORDER BY started"""),
             {"syms": syms, "lo": lo, "hi": hi}).mappings().all()
         print(f"rows: {len(rows)}")
@@ -68,7 +79,7 @@ def main():
         rows = c.execute(text("""
             SELECT symbol, day, direction, tm_score, compass_score, status, origin
             FROM tm_flow_study_v1
-            WHERE symbol IN :syms AND day = ANY(:days)
+            WHERE symbol = ANY(:syms) AND day = ANY(:days)
             ORDER BY day, tm_score DESC NULLS LAST"""),
             {"syms": syms, "days": days}).mappings().all()
         print(f"rows: {len(rows)}")
@@ -82,7 +93,7 @@ def main():
                    to_timestamp((value->>'evaluated_at')::float) AT TIME ZONE 'America/Chicago' AS ct
             FROM state
             WHERE key LIKE 'tape_confirm:%'
-              AND (value->>'symbol') IN :syms
+              AND (value->>'symbol') = ANY(:syms)
               AND (value->>'evaluated_at')::float >= :lo
               AND (value->>'evaluated_at')::float < :hi
             ORDER BY max_score DESC NULLS LAST"""),
