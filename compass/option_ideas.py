@@ -330,9 +330,11 @@ class OptionIdeas:
 
 
 def snapshot(db, c, cfg, now):
+    from datetime import datetime, timezone
     recent = c.execute(select(ideas.c.payload).order_by(ideas.c.created.desc()).limit(100)).scalars().all()
-    counts = dict(c.execute(select(ideas.c.status,func.count()).where(ideas.c.created>=now-30*86400)
+    cutoff_ts = datetime.fromisoformat(cfg.dashboard_cutoff).replace(tzinfo=timezone.utc).timestamp()
+    counts = dict(c.execute(select(ideas.c.status,func.count()).where(ideas.c.created>=max(now-30*86400, cutoff_ts))
                            .group_by(ideas.c.status)).all())
     return dict(enabled=cfg.option_ideas,worker=db.get(c,'option_ideas:worker'),records=recent,counts=counts,
-        min_dte=cfg.ideas_min_dte,max_dte=cfg.ideas_max_dte,target_dte=cfg.ideas_target_dte,
-        basis='Last 100 ideas; status counts over 30 days. Independent one-contract intraday observations, not account returns.')
+        min_dte=cfg.ideas_min_dte,max_dte=cfg.ideas_max_dte,target_dte=cfg.ideas_target_dte,cutoff_day=cfg.dashboard_cutoff,
+        basis='Last 100 ideas; status counts since %s. Independent one-contract intraday observations, not account returns.' % cfg.dashboard_cutoff)

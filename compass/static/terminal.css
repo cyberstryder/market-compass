@@ -118,3 +118,15 @@ article.panel.collapsed > :not(.panel-head):not(h2):not(h3){display:none}
 #term-positions table,#term-today table,#term-watchlist table{font-size:12.5px}
 #term-positions td,#term-today td,#term-watchlist td{padding:9px 12px 9px 0}
 #term-positions th,#term-today th,#term-watchlist th{padding-bottom:8px}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:14px}
+.cal-dow{text-align:center;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);padding:6px 0}
+.cal-day{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px;min-height:86px;font-size:11px}
+.cal-day.cal-pad{background:transparent;border:0}
+.cal-day.cal-today{border-color:var(--up)}
+.cal-day.cal-empty{opacity:.55}
+.cal-num{font-weight:700;color:var(--muted);margin-bottom:4px}
+.cal-pnl{font-weight:700;font-size:13px;margin-bottom:4px}
+.cal-pnl.good,.stat .value.good{color:var(--up)}
+.cal-pnl.bad,.stat .value.bad{color:var(--down)}
+.cal-break div{display:flex;justify-content:space-between;gap:4px;color:var(--muted);font-size:10px}
+.cal-break .good{color:var(--up)}.cal-break .bad{color:var(--down)}

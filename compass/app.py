@@ -373,6 +373,12 @@ def create_app(cfg=None):
     def get_setup_study():
         with db.tx() as c: return study_snapshot(db,c,cfg,time.time())
 
+    @app.get("/api/calendar")
+    def get_calendar(month: str = None):
+        from .calendar_pnl import month_calendar
+        with db.tx() as c:
+            return month_calendar(db, c, month, cfg.dashboard_cutoff)
+
     @app.get('/api/session-gaps')
     def get_session_gaps(asset:str=Query('future',pattern=r'^(future|option)$'),
             scope:str=Query('cash',pattern=r'^(cash|full)$'),

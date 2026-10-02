@@ -86,6 +86,10 @@ class Config:
     gap_large_caps: str = field(default_factory=lambda: env("GAP_LARGE_CAP_SYMBOLS",""))
     breakouts: bool = field(default_factory=lambda: env("BREAKOUTS_ENABLED","true")=="true")
     trap_paper: bool = field(default_factory=lambda: env("TRAP_PAPER_ENABLED","false")=="true")
+    # Dashboard display cutoff: stats and the P/L calendar ignore records
+    # created before this day (options-only regime began 2026-09-30).
+    # Display-only; nothing is deleted.
+    dashboard_cutoff: str = field(default_factory=lambda: env("DASHBOARD_CUTOFF_DAY","2026-09-30"))
     # REVIVED 2026-10-01: Day board rebuilt on alternative feeds —
     # sector performance from sector ETF daily bars (SECTOR_ETF_SYMBOLS,
     # quotes/bars only), a static 2026 economic calendar, and an FMP
