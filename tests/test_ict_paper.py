@@ -185,3 +185,80 @@ def test_exits_log_no_alerts_only_paper_decisions(db, cfg):
         alerts = db.recent(c, 'alert', limit=10)
     assert decisions, 'expected paper_decision rows'
     assert alerts == []
+
+
+# --- prop-firm session rules: flat at end of day, never held overnight ---
+
+def _friday_close():
+    # Friday 2026-10-02 16:05 CT = 21:05 UTC, after the 15:45 CT flatten
+    return datetime(2026, 10, 2, 21, 5, tzinfo=timezone.utc).timestamp()
+
+
+def test_flatten_fires_with_stale_quotes(db, cfg):
+    # The core bug: quotes go stale after the close, and the old exits loop
+    # skipped the position entirely, leaving it open over the weekend.
+    e = open_position(db, cfg)
+    with db.tx() as c:
+        p = db.get(c, POS)
+        assert p['status'] == 'open'
+        flat = p['flatten_at']
+    # No fresh quote written at all; exits run well past flatten_at.
+    with db.tx() as c:
+        e.exits(c, flat + 3600)
+    with db.tx() as c:
+        p = db.get(c, POS)
+    assert p['status'] == 'closed'
+    assert p['exit_reason'] == 'session_flatten'
+
+
+def test_no_entry_when_market_closed(db, cfg):
+    e = Engine(db, cfg)
+    closed = datetime(2026, 10, 3, 1, 0, tzinfo=timezone.utc).timestamp()  # Fri 20:00 CT
+    with db.tx() as c:
+        r = ict_paper.submit(db, c, cfg, closed, 'golden_zone', SYM, sig())
+    assert not r['submitted'] and r['reason'] == 'market_closed'
+
+
+def test_no_entry_past_flatten(db, cfg):
+    e = Engine(db, cfg)
+    # Friday 15:50 CT is inside the session but past the 15:45 flatten.
+    late = datetime(2026, 10, 2, 20, 50, tzinfo=timezone.utc).timestamp()
+    with db.tx() as c:
+        r = ict_paper.submit(db, c, cfg, late, 'golden_zone', SYM, sig())
+    assert not r['submitted'] and r['reason'] == 'past_flatten'
+
+
+def test_closed_market_flattens_overnight_position(db, cfg):
+    # A position entered Friday evening (assigned by session rollover to
+    # Monday's session, flatten_at in the future) must still be flattened
+    # while the market is closed over the weekend: prop firms never hold
+    # between sessions.
+    e = Engine(db, cfg)
+    fri_eve = datetime(2026, 10, 2, 23, 44, tzinfo=timezone.utc).timestamp()  # Fri 18:44 CT
+    with db.tx() as c:
+        r = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', SYM, sig())
+        assert r['submitted'], r
+        p = db.get(c, POS)
+        # Simulate the rollover assigning a future flatten_at.
+        p['flatten_at'] = fri_eve + 86400
+        db.put(c, POS, p)
+        db.put(c, 'trade:' + p['id'], p)
+    sat = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc).timestamp()  # Sat 07:00 CT
+    with db.tx() as c:
+        e.exits(c, sat)
+    with db.tx() as c:
+        p = db.get(c, POS)
+    assert p['status'] == 'closed'
+    assert p['exit_reason'] == 'session_flatten'
+
+
+def test_intraday_halt_does_not_flatten(db, cfg):
+    # The 15:15-15:30 CT daily halt is not a close; positions survive it.
+    e = open_position(db, cfg)
+    halt = datetime(2026, 9, 28, 20, 20, tzinfo=timezone.utc).timestamp()  # Mon 15:20 CT
+    with db.tx() as c:
+        db.put(c, 'quote:' + SYM, quote(halt, 101.0, 101.01))
+        e.exits(c, halt)
+    with db.tx() as c:
+        p = db.get(c, POS)
+    assert p['status'] == 'open'

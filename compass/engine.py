@@ -204,6 +204,34 @@ class Engine:
             q=self.db.get(c,"quote:"+p["symbol"])
             if self.clock:
                 now=self.clock()
+            hours=session(day(now))
+            deadline=p.get("flatten_at",hours[1]-self.cfg.option_flatten_min*60 if hours else None)
+            # Prop-firm rule: flat at end of trading day, never held between
+            # sessions or over the weekend. Time-based; fires even when quotes
+            # have gone stale (e.g. after the close). Exit at the last mark.
+            # Also flattens any open futures position while the market is
+            # closed (outside the intraday halt), so a missed deadline can
+            # never carry a position into the next session.
+            flatten_due = p.get("track")!="swing" and deadline and now>=deadline
+            if not flatten_due and p.get("asset")=="future":
+                s=futures_session(now,p["symbol"])
+                if not s["is_open"] and not (s["halt_start"]<=now<s["halt_end"]):
+                    flatten_due=True
+            if flatten_due:
+                price=p.get("mark",p["entry"])
+                long=p["side"]=="long"
+                pnl=(price-p["entry"])*(1 if long else -1)*p["qty"]*p["multiplier"]-2*p["fee"]*p["qty"]
+                p.update(status="closed",exit=price,exited_at=now,exit_reason="session_flatten",
+                         pnl=pnl,unrealized=pnl,mark=price)
+                risk=paper_risk.account(self.db,c,now,p["asset"],persist=True)
+                risk["realized"]+=p["pnl"]
+                self.db.put(c,paper_risk.key(now,p["asset"]),risk)
+                p.update(exit_risk_policy=paper_risk.VERSION,exit_risk_day=risk_day(now),
+                         exit_paper_portfolio=paper_risk.portfolio(p["asset"]))
+                self.alert(c,p["symbol"],p,"exit:"+p["id"])
+                self.db.put(c,key,p)
+                self.db.put(c,"trade:"+p["id"],p)
+                continue
             if not fresh(q,now) or q['ts']>now or q["ts"]<=p["last_quote_ts"]:
                 if now-p.get("last_quote_ts",now)>15:
                     self.alert(c,p["symbol"],{**alert_context(p),"status":"management_blocked","trade_id":p["id"],
@@ -241,9 +269,6 @@ class Engine:
                     reason="target_detected_in_bar"
                     price=max(price,p["target"]) if long else min(price,p["target"])
                     break
-            hours=session(day(now))
-            deadline=p.get("flatten_at",hours[1]-self.cfg.option_flatten_min*60 if hours else None)
-            if p.get("track")!="swing" and deadline and now>=deadline: reason=reason or "session_flatten"
             if p.get('fill_version')==FILL_VERSION and reason and reason not in ('stop_detected_in_bar','target_detected_in_bar'):
                 price=exit_price(p,q,reason)
             p["last_quote_ts"]=q["ts"]

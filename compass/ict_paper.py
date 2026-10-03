@@ -76,6 +76,15 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
         return {'submitted': False, 'reason': 'unknown_detector'}
     if not paper_enabled(cfg, detector):
         return {'submitted': False, 'reason': 'paper_disabled'}
+    # Prop-firm rule: no entries when the market is closed, and no entries
+    # past the session flatten time (the position would have to flatten
+    # immediately). Nothing is held between sessions or over the weekend.
+    sess = futures_session(now, symbol)
+    if not sess['is_open']:
+        return {'submitted': False, 'reason': 'market_closed'}
+    flat = flatten_at if flatten_at is not None else sess['flatten_at']
+    if now >= flat:
+        return {'submitted': False, 'reason': 'past_flatten'}
     side = sig.get('direction')
     entry = number(sig.get('entry'))
     stop = number(sig.get('stop'))
@@ -119,8 +128,7 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
         'fill_model': FILL_DESCRIPTION, 'fill_version': FILL_VERSION,
         'risk_day': risk_day(now), 'risk_policy': paper_risk.VERSION,
         'paper_portfolio': paper_risk.portfolio('future'),
-        'flatten_at': flatten_at if flatten_at is not None
-        else futures_session(now)['flatten_at'],
+        'flatten_at': flat,
         'signal_rr': number(sig.get('rr')),
         'signal_level': sig.get('level_kind'),
         'source': 'ict_paper',
