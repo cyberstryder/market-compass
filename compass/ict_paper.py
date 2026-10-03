@@ -35,6 +35,7 @@ STRATEGY_TAGS = {
     'morning_drive': 'yt-morning-drive',
     'icc': 'yt-icc',
     'rumers_box': 'yt-rumers-box',
+    'aoi_fade': 'ict-aoi-fade',
 }
 
 # detector -> config attr carrying its own enabled flag
@@ -49,6 +50,7 @@ DETECTOR_FLAGS = {
     'morning_drive': 'ict_morning_drive',
     'icc': 'ict_icc',
     'rumers_box': 'ict_rumers_box',
+    'aoi_fade': 'ict_aoi_fade',
 }
 
 

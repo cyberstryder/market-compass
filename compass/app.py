@@ -480,6 +480,12 @@ def create_app(cfg=None):
         with db.tx() as c:
             return display(db,c,time.time())
 
+    @app.get('/api/ict-aoi-fade')
+    def get_ict_aoi_fade():
+        from .aoi_fade import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
     @app.get('/api/ict-continuation')
     def get_ict_continuation():
         from .continuation import display

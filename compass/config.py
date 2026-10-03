@@ -68,6 +68,7 @@ class Config:
     ict_turtle_soup: bool = field(default_factory=lambda: env("ICT_TURTLE_SOUP_ENABLED","false")=="true")
     ict_smt_divergence: bool = field(default_factory=lambda: env("ICT_SMT_DIVERGENCE_ENABLED","false")=="true")
     ict_aoi_zones: bool = field(default_factory=lambda: env("ICT_AOI_ZONES_ENABLED","false")=="true")
+    ict_aoi_fade: bool = field(default_factory=lambda: env("ICT_AOI_FADE_ENABLED","false")=="true")
     ict_continuation: bool = field(default_factory=lambda: env("ICT_CONTINUATION_ENABLED","false")=="true")
     ict_tier_a_b: bool = field(default_factory=lambda: env("ICT_TIER_A_B_ENABLED","false")=="true")
     ict_golden_zone: bool = field(default_factory=lambda: env("ICT_GOLDEN_ZONE_ENABLED","false")=="true")

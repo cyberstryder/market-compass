@@ -486,6 +486,9 @@ class Engine:
             if self.cfg.ict_aoi_zones:
                 from .aoi_zones import scan as ict_aoi_zones_scan
                 ict_summaries['aoi_zones'] = ict_aoi_zones_scan(self.db,c,self.cfg,now)
+            if self.cfg.ict_aoi_fade:
+                from .aoi_fade import scan as ict_aoi_fade_scan
+                ict_summaries['aoi_fade'] = ict_aoi_fade_scan(self.db,c,self.cfg,now)
             if self.cfg.ict_continuation:
                 from .continuation import scan as ict_continuation_scan
                 ict_summaries['continuation'] = ict_continuation_scan(self.db,c,self.cfg,now)
@@ -541,7 +544,7 @@ class Engine:
             self.db.health('day_trading_board','running','board %s, %d symbols' % (
                 board_summary.get('action') or 'steady', board_summary['symbols']))
         for _ict_name in ('session_liquidity','htf_levels','turtle_soup','smt_divergence',
-                          'aoi_zones','continuation','tier_a_b',
+                          'aoi_zones','aoi_fade','continuation','tier_a_b',
                           'golden_zone','bos_fvg','bos_gz_vwap',
                           'morning_drive','icc','rumers_box'):
             _s = ict_summaries.get(_ict_name)
