@@ -201,7 +201,7 @@ def test_scan_second_run_same_day_held(db):
 
 def test_scan_disabled(db):
     with db.tx() as c:
-        res = md.scan(db, c, _cfg(ict_morning_drive=False), 1_700_000_000)
+        res = md.scan(db, c, _cfg(ict_morning_drive=False), 1_699_992_000)
         assert res == {'ran': False, 'reason': 'disabled'}
 
 
@@ -228,17 +228,17 @@ def test_scan_healthy_drive_excluded(db):
 
 def _sig():
     return {'direction': 'short', 'entry': 106.0, 'stop': 110.0,
-            'target': 98.0, 'signal_ts': 1_700_000_000, 'rr': 2.0}
+            'target': 98.0, 'signal_ts': 1_699_992_000, 'rr': 2.0}
 
 
 def test_paper_dual_gate(db):
     with db.tx() as c:
         # both flags off -> held
-        r = ict_paper.submit(db, c, _cfg(ict_morning_drive=False), 1_700_000_000,
+        r = ict_paper.submit(db, c, _cfg(ict_morning_drive=False), 1_699_992_000,
                              'morning_drive', SYM, _sig())
         assert r == {'submitted': False, 'reason': 'paper_disabled'}
         # detector flag on but paper flag off -> still held
-        r = ict_paper.submit(db, c, _cfg(), 1_700_000_000,
+        r = ict_paper.submit(db, c, _cfg(), 1_699_992_000,
                              'morning_drive', SYM, _sig())
         assert r['reason'] == 'paper_disabled'
 
@@ -246,10 +246,10 @@ def test_paper_dual_gate(db):
 def test_paper_submit_time_stop(db):
     with db.tx() as c:
         cfg = _cfg(ict_futures_paper=True)
-        r = ict_paper.submit(db, c, cfg, 1_700_000_000, 'morning_drive', SYM,
-                             _sig(), flatten_at=1_700_010_000)
+        r = ict_paper.submit(db, c, cfg, 1_699_992_000, 'morning_drive', SYM,
+                             _sig(), flatten_at=1_700_002_000)
         assert r['submitted'] is True
         trade = db.get(c, 'trade:' + r['trade_id'])
-        assert trade['flatten_at'] == 1_700_010_000
+        assert trade['flatten_at'] == 1_700_002_000
         assert trade['strategy'] == 'yt-morning-drive'
         assert 'track' not in trade

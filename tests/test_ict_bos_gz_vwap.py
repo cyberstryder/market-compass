@@ -6,7 +6,7 @@ from compass.store import Store
 from compass import bos_gz_vwap as bgv
 from compass.ict_common import atr
 
-OPEN = 1_700_000_000
+OPEN = 1_699_992_000
 SYM = 'NQ.c.0'
 NOW = OPEN + 15 * 60
 

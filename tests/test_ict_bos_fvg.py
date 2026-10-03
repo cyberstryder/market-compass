@@ -6,7 +6,7 @@ from compass.store import Store
 from compass import bos_fvg as bf
 from compass.ict_common import atr, detect_fvgs, fvg_mitigated
 
-OPEN = 1_700_000_000
+OPEN = 1_699_992_000
 SYM = 'NQ.c.0'
 NOW = OPEN + 15 * 60
 

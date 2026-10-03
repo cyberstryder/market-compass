@@ -6,7 +6,7 @@ from compass.store import Store
 from compass import golden_zone as gz
 from compass import ict_paper
 
-OPEN = 1_700_000_000
+OPEN = 1_699_992_000
 SYM = 'NQ.c.0'
 NOW = OPEN + 16 * 60
 

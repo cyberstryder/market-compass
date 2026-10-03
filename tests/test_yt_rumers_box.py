@@ -291,7 +291,7 @@ def test_scan_signal_and_dedupe(db):
 
 def test_scan_disabled(db):
     with db.tx() as c:
-        res = rb.scan(db, c, _cfg(ict_rumers_box=False), 1_700_000_000)
+        res = rb.scan(db, c, _cfg(ict_rumers_box=False), 1_699_992_000)
         assert res == {'ran': False, 'reason': 'disabled'}
 
 
@@ -318,15 +318,15 @@ def test_scan_no_setup_excluded(db):
 
 def _sig():
     return {'direction': 'long', 'entry': 102.0, 'stop': 100.5,
-            'target': 105.0, 'signal_ts': 1_700_000_000, 'rr': 2.0}
+            'target': 105.0, 'signal_ts': 1_699_992_000, 'rr': 2.0}
 
 
 def test_paper_dual_gate(db):
     with db.tx() as c:
-        r = ict_paper.submit(db, c, _cfg(ict_rumers_box=False), 1_700_000_000,
+        r = ict_paper.submit(db, c, _cfg(ict_rumers_box=False), 1_699_992_000,
                              'rumers_box', SYM, _sig())
         assert r == {'submitted': False, 'reason': 'paper_disabled'}
-        r = ict_paper.submit(db, c, _cfg(), 1_700_000_000,
+        r = ict_paper.submit(db, c, _cfg(), 1_699_992_000,
                              'rumers_box', SYM, _sig())
         assert r['reason'] == 'paper_disabled'
 
@@ -334,7 +334,7 @@ def test_paper_dual_gate(db):
 def test_paper_submit_tag(db):
     with db.tx() as c:
         cfg = _cfg(ict_futures_paper=True)
-        r = ict_paper.submit(db, c, cfg, 1_700_000_000,
+        r = ict_paper.submit(db, c, cfg, 1_699_992_000,
                              'rumers_box', SYM, _sig())
         assert r['submitted'] is True
         trade = db.get(c, 'trade:' + r['trade_id'])
