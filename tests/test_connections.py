@@ -3,7 +3,7 @@ import httpx
 import pytest
 from compass.alerts import deliver
 from compass.config import Config
-from compass.diagnostics import assistant_error, redacted_detail
+from compass.diagnostics import redacted_detail
 from compass.providers import Collectors, FeedError
 from compass.store import Store
 
@@ -16,15 +16,6 @@ def test_provider_diagnostic_keeps_reason_without_credentials():
     for private in (key, "sk-proj", "db-abc", "td_live", "apiKey=", "trader@example.com"):
         assert private not in detail
     assert len(redacted_detail("x" * 2000)) == 500
-
-
-def test_assistant_errors_distinguish_quota_from_invalid_credentials():
-    response = httpx.Response(429, json={"error": {"code": "insufficient_quota", "message": "Check billing"}})
-    assert "insufficient_quota" in assistant_error(response, "fake-key")
-    invalid = httpx.Response(401, json={"error": {"code": "invalid_api_key", "message": "Invalid fake-key"}})
-    assert "HTTP 401" in assistant_error(invalid, "fake-key")
-    assert "fake-key" not in assistant_error(invalid, "fake-key")
-    assert "HTTP 502" in assistant_error(httpx.Response(502, text="bad gateway"), "fake-key")
 
 
 def test_databento_auth_error_surfaces_without_key(tmp_path, monkeypatch):

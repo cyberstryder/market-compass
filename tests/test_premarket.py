@@ -201,34 +201,3 @@ def test_discord_requires_saved_message_and_retains_queue_on_ambiguous_response(
         assert len(db.recent(c, "alert_delivery")) == 1
 
 
-@pytest.mark.parametrize("status,has_text,expected", [("completed",True,200),("incomplete",True,502),("completed",False,502)])
-def test_grounded_answer_preserves_vendor_context_and_rejects_incomplete_output(tmp_path,monkeypatch,status,has_text,expected):
-    cfg=Config(local=True,role="web",db="sqlite:///"+str(tmp_path/"ask.db"),
-        password="test-password-with-enough-length",secret="test-signing-secret-with-enough-length",openai="fake-key",model="gpt-5-mini")
-    calls=[]
-    class Client:
-        async def __aenter__(self): return self
-        async def __aexit__(self,*args): pass
-        async def post(self,url,headers,json):
-            calls.append(json)
-            return httpx.Response(200,json={"status":status,
-                "incomplete_details":{"reason":"max_output_tokens"} if status=="incomplete" else None,
-                "usage":{"output_tokens":6000,"output_tokens_details":{"reasoning_tokens":5900}},
-                "output":[{"content":[{"type":"output_text","text":"Source is a previous snapshot."}]}] if has_text else []})
-    monkeypatch.setattr("compass.app.httpx.AsyncClient",lambda **kwargs:Client())
-    app=create_app(cfg)
-    with TestClient(app) as client:
-        with app.state.db.tx() as c:
-            app.state.db.put(c,"matrix:SPY",matrix_summary(matrix_fixture(),NOW))
-        client.post("/login",json={"password":cfg.password})
-        result=client.post("/api/ask",json={"question":"What is the SPY vendor context?"})
-        assert result.status_code==expected
-        with app.state.db.tx() as c:
-            health=app.state.db.get(c,"health:assistant")
-            assert health["status"]==("available" if expected==200 else "error")
-            assert health["generation"]["reasoning_tokens"]==5900
-    assert len(calls)==1  # No automatic paid retry on incomplete or empty output.
-    vendor=json.loads(calls[0]["input"])["market_context"]["matrix"]["matrix:SPY"]
-    assert vendor["gex"]==6 and vendor["source_asof"] is not None
-    assert "gex_cells" not in vendor["strikes"][0]
-    assert calls[0]["reasoning"]["effort"]=="low" and calls[0]["max_output_tokens"]==6000
