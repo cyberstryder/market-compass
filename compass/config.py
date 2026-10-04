@@ -30,8 +30,6 @@ class Config:
     databento: str = field(default_factory=lambda: env("DATABENTO_API_KEY"))
     massive: str = field(default_factory=lambda: env("MASSIVE_API_KEY"))
     matrix: str = field(default_factory=lambda: env("TRADERMATRIX_API_KEY"))
-    openai: str = field(default_factory=lambda: env("OPENAI_API_KEY"))
-    model: str = field(default_factory=lambda: env("OPENAI_MODEL","gpt-5-mini"))
     discord: str = field(default_factory=lambda: env("DISCORD_WEBHOOK_URL"))
     discord_routes: dict = field(default_factory=lambda: {
         key: env('DISCORD_' + key.upper() + '_WEBHOOK_URL')

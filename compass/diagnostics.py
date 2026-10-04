@@ -23,13 +23,3 @@ def redacted_detail(value, secrets=(), limit=500):
     return " ".join(message.split())[:limit]
 
 
-def assistant_error(response, key):
-    try:
-        error = response.json().get("error", {})
-    except (ValueError, AttributeError):
-        error = {}
-    if not isinstance(error, dict):
-        error = {}
-    code = error.get("code") or error.get("type") or "request_rejected"
-    detail = error.get("message") or "Verify API credentials, permissions, model access and billing."
-    return redacted_detail(f"OpenAI HTTP {response.status_code} ({code}): {detail}", (key,))
