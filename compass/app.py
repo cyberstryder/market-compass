@@ -440,6 +440,12 @@ def create_app(cfg=None):
         with db.tx() as c:
             return display(db,c,time.time())
 
+    @app.get('/api/option-stream-parity')
+    def get_option_stream_parity():
+        # Massive vs Alpaca side-by-side comparison for the migration.
+        from .alpaca_option_stream import compare_sources
+        return compare_sources(db)
+
     @app.get('/api/squeeze')
     def get_squeeze():
         # Evidence-only volatility squeeze states.

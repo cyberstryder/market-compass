@@ -32,7 +32,8 @@ class OptionBuffer:
                 return
             self.sources[symbol] = stamp
             value=(symbol,dict(ts=stamp,bid=item['bp'],ask=item['ap'],
-                bid_size=item.get('bs',0),ask_size=item.get('as',0),socket_read_at=now,collection_version=COLLECTION_VERSION),True)
+                bid_size=item.get('bs',0),ask_size=item.get('as',0),socket_read_at=now,collection_version=COLLECTION_VERSION,
+                src=item.get('src','massive')),True)
             if monotonic-self.last_sample.get(symbol, float('-inf')) < 1:
                 self.pending[symbol]=value
                 return

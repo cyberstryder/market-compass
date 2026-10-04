@@ -110,6 +110,7 @@ class Collectors:
             *[self.supervise("option_chain_"+lane,bool(c.massive or (c.alpaca_key and c.alpaca_secret)),
                 lambda lane=lane:self.chains(lane),2) for lane in ('indices','focus','background')],
             self.supervise("option_stream",bool(c.massive),self.options),
+            self.supervise("alpaca_option_stream",bool(c.alpaca_key and c.alpaca_secret and c.alpaca_option_stream),self.alpaca_options),
             self.supervise("option_recovery",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.option_recovery),
             self.supervise("option_subscriptions",bool(c.massive),self.refresh_option_subscriptions,2),
             self.supervise("tradermatrix",bool(c.matrix),self.matrix,2),
@@ -646,7 +647,8 @@ class Collectors:
                     continue
                 o={"symbol":ticker,"underlying":symbol,"expiry":d["expiration_date"],"strike":float(d["strike_price"]),
                     "type":d["type"],"multiplier":number(d.get("size")),"oi":number(d.get("open_interest")),
-                    "oi_date":d.get("open_interest_date"),"gamma":g.get("gamma"),"delta":g.get("delta"),"iv":x.get("impliedVolatility")}
+                    "oi_date":d.get("open_interest_date"),"gamma":g.get("gamma"),"delta":g.get("delta"),
+                    "theta":g.get("theta"),"vega":g.get("vega"),"iv":x.get("impliedVolatility")}
                 out.append(o)
                 o["quote"]={"ts":ts(q.get("t")),"bid":q.get("bp"),"ask":q.get("ap"),
                     "bid_size":q.get("bs",0),"ask_size":q.get("as",0)}
@@ -669,6 +671,14 @@ class Collectors:
         finally:
             await asyncio.to_thread(feed.close)
 
+    async def alpaca_options(self):
+        feed = FeedLoop("alpaca_options")
+        task = asyncio.run_coroutine_threadsafe(self.alpaca_option_connection(), feed.loop)
+        try:
+            await asyncio.wrap_future(task)
+        finally:
+            await asyncio.to_thread(feed.close)
+
     async def option_connection(self):
         while not self.option_symbols:
             await asyncio.to_thread(self.db.health,"option_stream","waiting","Waiting for verified chain to select contracts")
@@ -683,7 +693,24 @@ class Collectors:
             except OptionStreamError as error:
                 raise FeedError(str(error)) from None
 
-    def option_trade(self,symbol,t,x):
+    async def alpaca_option_connection(self):
+        """Parallel Alpaca OPRA stream for the Massive-migration parity run.
+
+        Gated by ALPACA_OPTION_STREAM_ENABLED (default off). Feeds the same
+        downstream with source-tagged rows; Massive remains the primary until
+        the comparison proves parity.
+        """
+        while not self.option_symbols:
+            await asyncio.to_thread(self.db.health,"alpaca_option_stream","waiting","Waiting for verified chain to select contracts")
+            await asyncio.sleep(5)
+        await asyncio.to_thread(self.db.health,"alpaca_option_stream","connecting","Opening Alpaca OPRA stream")
+        from .alpaca_option_stream import consume as alpaca_consume, ALPACA_OPRA_WS
+        from .option_stream import OptionStreamError
+        async with websockets.connect(ALPACA_OPRA_WS,max_queue=8192,ping_interval=20) as ws:
+            try:
+                await alpaca_consume(ws,self)
+            except OptionStreamError as error:
+                raise FeedError(str(error)) from None
         self.option_trade_batch([(symbol,t,x)])
 
     def subscription_batch(self,items):
@@ -695,11 +722,12 @@ class Collectors:
     def option_trade_batch(self,items):
         with self.db.tx() as c:
             for symbol,t,x in items:
+                src=x.get('src','massive') if isinstance(x,dict) else 'massive'
                 key=identity("option_trade",symbol,t,x.get("i"),x.get("q"),x)
-                added=self.db.append(c,"option_trade","massive",symbol,t,x,key)
+                added=self.db.append(c,"option_trade",src,symbol,t,x,key)
                 premium=float(x.get("p",0))*float(x.get("s",0))*100
                 if added and premium>=100000:
-                    self.db.append(c,"flow","massive",symbol,t,{"premium":premium,"size":x.get("s"),"price":x.get("p"),
+                    self.db.append(c,"flow",src,symbol,t,{"premium":premium,"size":x.get("s"),"price":x.get("p"),
                         "classification":"Large print; opening/closing and intent unknown","scope":"Selected contracts only","raw":x},"flow:"+key)
 
     async def matrix_request(self,path,label):
