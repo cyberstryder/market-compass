@@ -55,7 +55,16 @@ def entry(p):
         *contract_fields(p),field('Option Reference Premium',dollar(p.get('entry_premium'))),
         field('DTE at Entry',f'{dte} days' if dte is not None else 'Unavailable'),
         field('Est return',pct(p.get('est_return_pct'),0)),
-        field('Quality Tier',f"{p.get('quality_tier','WATCH')} • Featured #{p.get('featured_rank') or 0:02d} • Overall #{p.get('quality_rank') or 0:02d} • Score {p.get('quality_score') or 0:.1f}/100",False),
+        field('Quality Tier',f"{p.get('quality_tier','WATCH')} • Featured #{p.get('featured_rank') or 0:02d} • Overall #{p.get('quality_rank') or 0:02d} • Score {p.get('quality_score') or 0:.1f}/100",False)]
+    # Historical conviction data (5w) — added 2026-10-03
+    hist=p.get('historical_stats') or {}
+    if hist.get('total',0)>0:
+        fields.append(field('Historical Edge (5w)',
+            f"Win rate: {hist.get('win_rate',0):.0f}% ({hist.get('wins',0)}/{hist.get('total',0)}) • "
+            f"Avg return: {hist.get('avg_return_pct',0):+.1f}% • "
+            f"Avg premium: ${hist.get('avg_premium',0):.2f}",False))
+        fields.append(field('Avg Days to Target',f"{hist.get('avg_days_to_target',0):.1f} days",True))
+    fields+=[
         field('Target / ATR',f"{p['target_atr_mult']:.3f}" if number(p.get('target_atr_mult')) is not None else 'Unavailable'),
         field('ATR component',f"{p.get('quality_atr_score') or 0:.1f}/100"),
         field('Reliability',f"{p.get('quality_reliability_score') or 0:.1f}/100"),

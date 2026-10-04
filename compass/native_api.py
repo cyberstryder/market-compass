@@ -90,6 +90,19 @@ def install(app,db):
     def get_config():
         with db.tx() as c:return native_config.snapshot(db,c)
 
+    @app.get('/api/native/smoothers/history')
+    def get_smoothers_history(week:str=Query('',max_length=10),limit:int=Query(100,ge=1,le=500),
+            ticker:str=Query('',max_length=50,pattern=r'^[A-Za-z0-9_:!.\-]*$')):
+        # Lightweight per-week smoothers pull: returns only the smoothers rows,
+        # not the full report (which bundles ~11MB of morning option samples).
+        # Built 2026-10-01 for historical time-to-target analysis.
+        try:
+            with db.tx() as c:
+                result=native_reports.smoothers(db,c,time.time(),limit,week,ticker.upper())
+        except ValueError as e:raise HTTPException(422,str(e)) from None
+        return JSONResponse({'week':week or 'current','at':time.time(),'rows':result['rows'],
+                             'truncated':result.get('truncated',False)})
+
     @app.post('/api/native/smoothers/config')
     def set_config(change:ConfigChange):
         if (change.configs is None)==(change.restore_revision is None):raise HTTPException(422,'Provide configurations or a revision to restore')

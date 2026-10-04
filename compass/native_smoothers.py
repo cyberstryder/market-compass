@@ -8,6 +8,14 @@ import time
 import uuid
 import httpx
 import pandas as pd
+# Tickers dropped 2026-10-03: consistent money losers (<=40% WR, negative avg return over 5w)
+DROPPED_TICKERS={'COST','WMT','BA','MSFT','TSLA','LLY','AMZN','QCOM','HOOD'}
+# Best 10 by avg return % (5w): get individual detailed alerts, rest get compact format
+# META added 2026-10-03 per Josh (fast 0.3d, 100% WR, benefits from 3 DTE)
+BEST_10={'AMD','XLE','IWM','GOOGL','NFLX','COP','MCD','MAR','WFC','PLTR','META'}
+# DTE overrides: 14 DTE for slow movers, 2-3 DTE for fast hitters with short expiries available
+DTE_14={'SMCI','UBER'}  # 2.5-3.0d avg to target, need more time
+DTE_SHORT={'IWM':2,'META':3,'GOOGL':3}  # IWM has dailies, META/GOOGL have Mon/Wed/Fri
 from sqlalchemy import Table,Column,String,Float,JSON,select,func
 from .store import meta,identity
 from .native_smoothers_data import Data,ET
@@ -172,7 +180,7 @@ def schedule(db,data,now):
         if not config.get('configs') or (config.get('owner')!='compass' and now-config.get('received_at',0)>7200):return
         state['config']=config;state['started']=now;state['state']='running';state['message_version']=messages.VERSION
         with db.tx() as c:db.put(c,key,state)
-    configs=[r for r in state['config']['configs'] if r['enabled']]
+    configs=[r for r in state['config']['configs'] if r['enabled'] and r['ticker'] not in DROPPED_TICKERS]
     if state['index']<len(configs):
         config=configs[state['index']]
         try:
@@ -184,7 +192,15 @@ def schedule(db,data,now):
             signal=make_signal(config,bars,daily,first,now,monday.isoformat())
             if signal:
                 try:
-                    contract=data.contract(config['ticker'],monday+timedelta(days=4),signal['direction'],signal['entry_price'])
+                    # DTE selection: 14 DTE for slow movers, 2-3 DTE for fast hitters, else standard Friday (4d)
+                    ticker=config['ticker']
+                    if ticker in DTE_14:
+                        expiry_date=monday+timedelta(days=11)  # Next Friday (14 DTE)
+                    elif ticker in DTE_SHORT:
+                        expiry_date=monday+timedelta(days=DTE_SHORT[ticker])  # 2-3 DTE
+                    else:
+                        expiry_date=monday+timedelta(days=4)  # Standard Friday (5-7 DTE)
+                    contract=data.contract(ticker,expiry_date,signal['direction'],signal['entry_price'])
                     q=data.quote(contract) if contract else None
                     signal.update(contract=contract,quote=q)
                     if q and q.get('status') in ('available','wide_spread'):
@@ -198,6 +214,12 @@ def schedule(db,data,now):
                     backtest_wr=config.get('backtest_wr'),entry_premium=signal['entry_premium'],est_return_pct=signal['est_return_pct']))
                 signal['stats_at_entry']=stats;signal['config_revision']=state['config']['revision']
                 signal['message_version']=messages.VERSION
+                # Attach historical conviction stats for alert display
+                try:
+                    from .smoothers_history import get_ticker_stats
+                    signal['historical_stats']=get_ticker_stats(db, config['ticker'], monday.isoformat(), state['config'].get('owned_since', float('inf')))
+                except Exception:
+                    signal['historical_stats']={}
                 with db.tx() as c:
                     signal['rolling_at_entry']=rolling_record(db,c,config['ticker'],monday.isoformat(),state['config'].get('owned_since',float('inf')))
                     save(db,c,signal)
@@ -219,7 +241,16 @@ def schedule(db,data,now):
         ranked=rank_signals(signals)
         for p in ranked:
             save(db,c,p)
-            if p['is_featured']:queue_signal(db,c,p,'entry',messages.entry(p),now,p['model_entry_time'])
+            # Best 10 get individual detailed alerts; rest go in compact format
+            if p['ticker'] in BEST_10:
+                queue_signal(db,c,p,'entry',messages.entry(p),now,p['model_entry_time'])
+        # Compact format for non-Best-10 (split for Discord 2000-char limit)
+        compact=[p for p in ranked if p['ticker'] not in BEST_10 and p.get('is_featured')]
+        for i in range(0, len(compact), 30):
+            batch=compact[i:i+30]
+            lines=[f"{p['ticker']} {p['direction']} ${p['entry_price']:.2f}→${p['target_price']:.2f} Q{p.get('quality_score',0):.1f}" for p in batch]
+            msg=f"SMOOTHERS | SIGNALS ({i//30+1}/{(len(compact)+29)//30}) | {monday.isoformat()}\n" + " | ".join(lines)
+            queue(db,c,'smoothers',f"{monday.isoformat()}:compact:{i//30}",{'content':msg},now,event_time=first['open']+3600,cohort_time=first['open']+3600)
         previews=messages.roster(ranked,monday.isoformat(),now,len(state['errors']))
         for i,payload in enumerate(previews):
             event_key=monday.isoformat()+':summary'+(':'+str(i+1) if i else '')
