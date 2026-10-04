@@ -21,7 +21,7 @@ HEAVY_KEYS = ['scanner', 'projects', 'obsidian', 'forward_acceptance',
 # Keys that must stay in the fast 3s tier.
 FAST_KEYS = ['asof', 'markets', 'health', 'quotes', 'trades', 'positions',
              'operating_policy', 'delivery', 'futures', 'risk', 'limits',
-             'ai_configured', 'quote_checks']
+             'quote_checks']
 
 
 def _seed(app, now):

@@ -28,7 +28,7 @@ PUT='O:SPY261016P00100000'
 @pytest.fixture
 def cfg():
     return Config(local=True,stocks=('SPY',),futures=(),extra_futures=(),massive='fixture',
-        alpaca_key='',alpaca_secret='',databento='',matrix='',openai='',discord='',scanner_paper=False)
+        alpaca_key='',alpaca_secret='',databento='',matrix='',,discord='',scanner_paper=False)
 
 
 def quote(t=NOW,bid=100,ask=100.02):

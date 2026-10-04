@@ -25,7 +25,7 @@ def db(tmp_path):
 def cfg(tmp_path):
     return Config(paper_trading=True,stock_paper_trades=True,db="sqlite:///"+str(tmp_path/"web.db"),local=True,role="web",
         password="test-password-for-tests-only",secret="test-signing-secret-for-tests-only",
-        stocks=("SPY",),futures=(),alpaca_key="",alpaca_secret="",massive="",databento="",matrix="",discord="",openai="")
+        stocks=("SPY",),futures=(),alpaca_key="",alpaca_secret="",massive="",databento="",matrix="",discord="")
 
 def quote(now=NOW,bid=102.10,ask=102.11):
     return {"ts":now,"bid":bid,"ask":ask,"bid_size":100,"ask_size":100,"source":"fixture"}

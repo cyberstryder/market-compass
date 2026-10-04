@@ -19,7 +19,7 @@ NOW=datetime(2026,9,14,9,46,tzinfo=CT).timestamp()
 @pytest.fixture
 def cfg():
     return Config(local=True,stocks=('SPY',),futures=('MES.c.0',),extra_futures=(),databento='',
-                  alpaca_key='',alpaca_secret='',matrix='',massive='',discord='',openai='')
+                  alpaca_key='',alpaca_secret='',matrix='',massive='',discord='',)
 
 @pytest.fixture
 def db(tmp_path):

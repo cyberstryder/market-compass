@@ -26,7 +26,7 @@ def cfg(tmp_path, **kw):
     return Config(paper_trading=True, db="sqlite:///" + str(tmp_path / "web.db"),
                   local=True, role="web", password="x" * 16,
                   stocks=("SPY",), futures=(), alpaca_key="", alpaca_secret="",
-                  massive="", databento="", matrix="", discord="", openai="", **kw)
+                  massive="", databento="", matrix="", discord="",  **kw)
 
 
 def quote(now=NOW, bid=102.10, ask=102.11):

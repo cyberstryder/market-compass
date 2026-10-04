@@ -115,7 +115,7 @@ def test_admin_api_requires_login_and_only_reads_saved_evidence(tmp_path):
     cfg = Config(db='sqlite:///'+str(tmp_path/'web.db'), local=True, role='web',
         password='test-password-for-tests-only', secret='test-signing-secret-for-tests-only',
         stocks=('SPY',), futures=(), alpaca_key='', alpaca_secret='', massive='',
-        databento='', matrix='', discord='', openai='')
+        databento='', matrix='', discord='',)
     app = create_app(cfg)
     with TestClient(app) as client:
         assert client.get('/api/research-admin').status_code == 401
