@@ -441,6 +441,13 @@ def create_app(cfg=None):
         with db.tx() as c:
             return display(db,c,time.time())
 
+    @app.get('/api/darkpool')
+    def get_darkpool():
+        # Evidence-only dark pool flow via MCP.
+        from .darkpool import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
     @app.get('/api/gap-continuation')
     def get_gap_continuation():
         from .gap_continuation import display

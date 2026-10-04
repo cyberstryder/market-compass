@@ -158,6 +158,16 @@ def scan(db, c, cfg, now):
         return {'ran': False, 'reason': 'throttled'}
     rows = _flow_rows(c, now)
     pulses = detect_pulses(rows, now, cfg, getattr(cfg, 'watch_symbols', ()))
+    # Dark pool confirmation: same-direction institutional block activity.
+    # Evidence only — context on the pulse, never a standalone trigger.
+    if getattr(cfg, 'darkpool', True):
+        try:
+            from .darkpool import confirmation_for
+            for pulse in pulses:
+                pulse['darkpool'] = confirmation_for(
+                    pulse['symbol'], pulse['direction'], db, c, now)
+        except Exception:
+            pass
     today = day(now)
     fired, pushed = [], []
     for pulse in pulses:
@@ -213,6 +223,13 @@ def format_message(payload):
         lines.append('%s %s %s $%.0fk (score %.0f)' % (
             t.get('option_type') or '?', t.get('strike'), t.get('expiry'),
             (t.get('premium') or 0) / 1000, t.get('score') or 0))
+    dp = payload.get('darkpool') or {}
+    if dp.get('confirmed'):
+        lines.append('Dark pool: %s$%.1fM %s block%s' % (
+            'SAME-DIRECTION ' if dp.get('strong') else '',
+            (dp.get('notional') or 0) / 1e6,
+            dp.get('print_count') or 0,
+            's' if (dp.get('print_count') or 0) != 1 else ''))
     content = '\n'.join(lines)
     return {'content': content[:1900], 'username': 'Market Compass',
             'allowed_mentions': {'parse': []}}

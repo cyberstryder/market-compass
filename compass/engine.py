@@ -469,6 +469,10 @@ class Engine:
             if self.cfg.flow_pulse:
                 from .flow_pulse import scan as flow_pulse_scan
                 pulse_summary = flow_pulse_scan(self.db,c,self.cfg,now)
+            darkpool_summary = None
+            if self.cfg.darkpool:
+                from .darkpool import scan as darkpool_scan
+                darkpool_summary = darkpool_scan(self.db,c,self.cfg,now)
             squeeze_summary = None
             if self.cfg.squeeze:
                 from .squeeze import scan as squeeze_scan
