@@ -95,6 +95,82 @@ def format_message(payload):
             'allowed_mentions': {'parse': []}}
 
 
+def maybe_queue_exit(db, c, cfg, trade):
+    """Queue a Discord alert for a closed ICT paper trade.
+    
+    Returns the outbox row id, or None if push is disabled.
+    """
+    if not bool(getattr(cfg, 'ict_push_enabled', False)):
+        return None
+    
+    reason = trade.get('exit_reason', 'unknown')
+    pnl = trade.get('pnl', 0)
+    
+    # Map exit reasons to display
+    if 'target' in reason:
+        emoji, result = '🎯', 'TARGET HIT'
+    elif 'stop' in reason:
+        emoji, result = '🛑', 'STOPPED OUT'
+    elif 'flatten' in reason:
+        emoji, result = '⏰', 'FLATTENED'
+    else:
+        emoji, result = '📊', reason.upper()
+    
+    pnl_str = '+$%.2f' % pnl if pnl >= 0 else '-$%.2f' % abs(pnl)
+    
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    ct = ZoneInfo('America/Chicago')
+    exit_time = datetime.fromtimestamp(trade.get('exited_at', time.time()), ct)
+    time_str = exit_time.strftime('%a %H:%M CT')
+    
+    row_id = identity('ict-push-v1', 'exit', trade.get('id', ''), int(time.time()))
+    payload = {
+        'type': 'exit',
+        'detector': trade.get('detector', 'unknown'),
+        'strategy': trade.get('strategy', ''),
+        'symbol': trade.get('symbol', '?'),
+        'side': trade.get('side', '?').upper(),
+        'entry': trade.get('entry', 0),
+        'exit': trade.get('exit', 0),
+        'pnl': pnl,
+        'pnl_str': pnl_str,
+        'result': result,
+        'emoji': emoji,
+        'time_str': time_str,
+        'at': time.time(),
+    }
+    c.execute(db.insert(outbox).values(
+        id=row_id, status='pending', created=time.time(), payload=payload,
+        delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
+    return row_id
+
+
+def format_exit_message(payload):
+    """Discord-safe alert for an ICT paper exit."""
+    lines = [
+        '%s **ICT %s** %s %s — %s' % (
+            payload.get('emoji', '📊'),
+            payload.get('detector', 'unknown').replace('_', ' ').title(),
+            payload.get('side', '?'),
+            payload.get('symbol', '?'),
+            payload.get('result', '?'),
+        ),
+        'Entry `%.2f` → Exit `%.2f`' % (
+            payload.get('entry', 0),
+            payload.get('exit', 0),
+        ),
+        'P&L **%s** · %s' % (
+            payload.get('pnl_str', '$0.00'),
+            payload.get('time_str', ''),
+        ),
+        '_Paper trade — watch only_',
+    ]
+    content = '\n'.join(lines)
+    return {'content': content[:1900], 'username': 'ICT Signals',
+            'allowed_mentions': {'parse': []}}
+
+
 def deliver_one(db, client, url, now=None, max_attempts=MAX_ATTEMPTS):
     """Attempt one pending row. Returns True if a row was attempted."""
     if not re.fullmatch(WEBHOOK_RE, url or ''):
@@ -115,7 +191,8 @@ def deliver_one(db, client, url, now=None, max_attempts=MAX_ATTEMPTS):
     
     status = 'failed'
     try:
-        resp = client.post(url, params={'wait': 'true'}, json=format_message(job['payload']))
+        formatter = format_exit_message if job['payload'].get('type') == 'exit' else format_message
+        resp = client.post(url, params={'wait': 'true'}, json=formatter(job['payload']))
         if 200 <= resp.status_code < 300:
             status = 'delivered'
         elif resp.status_code == 429:

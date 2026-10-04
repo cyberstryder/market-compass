@@ -231,6 +231,13 @@ class Engine:
                 self.alert(c,p["symbol"],p,"exit:"+p["id"])
                 self.db.put(c,key,p)
                 self.db.put(c,"trade:"+p["id"],p)
+                # ICT exit alert
+                if p["id"].startswith("ict-"):
+                    try:
+                        from . import ict_push
+                        ict_push.maybe_queue_exit(self.db, c, self.cfg, p)
+                    except Exception:
+                        pass
                 continue
             if not fresh(q,now) or q['ts']>now or q["ts"]<=p["last_quote_ts"]:
                 if now-p.get("last_quote_ts",now)>15:
@@ -284,6 +291,13 @@ class Engine:
                 self.alert(c,p["symbol"],p,"exit:"+p["id"])
             self.db.put(c,key,p)
             self.db.put(c,"trade:"+p["id"],p)
+            # ICT exit alert (target/stop)
+            if p.get("status") == "closed" and p["id"].startswith("ict-"):
+                try:
+                    from . import ict_push
+                    ict_push.maybe_queue_exit(self.db, c, self.cfg, p)
+                except Exception:
+                    pass
 
     def options(self,c,signal,now,quiet=False,diagnostics=None,research_only=False):
         research_only = research_only or not self.cfg.paper_trading
