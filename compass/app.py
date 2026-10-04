@@ -466,6 +466,11 @@ def create_app(cfg=None):
             board = db.get(c, "day_board:" + today, {}) or {}
             aplas = [s for s in (board.get("setups") or []) if s.get("grade") == "A+"]
             sess = futures_session(now)
+            # Recent alerts for the deck tile.
+            alert_rows = db.recent(c, "alert", limit=5)
+            alerts = [{"ts": a.get("ts"), "kind": (a.get("payload") or {}).get("kind"),
+                       "text": (a.get("payload") or {}).get("text") or (a.get("payload") or {}).get("title")}
+                      for a in alert_rows]
             return {"asof": now,
                     "flow_pulse": (fp.get("pulses") or [])[:3],
                     "darkpool": {"print_count": dp.get("print_count", 0),
@@ -480,7 +485,8 @@ def create_app(cfg=None):
                     "squeeze": sq.get("states") or {},
                     "futures_session": {"is_open": sess.get("is_open"),
                                          "entry_open": sess.get("entry_open"),
-                                         "day": sess.get("day")}}
+                                         "day": sess.get("day")},
+                    "alerts": alerts}
 
     @app.get('/api/darkpool')
     def get_darkpool():

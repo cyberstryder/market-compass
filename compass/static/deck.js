@@ -59,6 +59,14 @@ function renderDeck(d,state){
     '<div class="fine">'+esc(fs.day||'—')+'</div>',
     '#futures','Detectors →'));
   // --- Row 2: signals ---
+  const alerts=(d&&d.alerts)||[];
+  const latestAlert=alerts[0];
+  tiles.push(tile('alerts','Latest alerts',
+    latestAlert?'<div class="deck-big">'+alerts.length+'</div>'+
+        '<div class="fine">'+esc(latestAlert.text||latestAlert.kind||'alert')+'</div>'+
+        '<div class="fine">'+esc(chicagoTime(latestAlert.ts))+'</div>'
+      :'<div class="deck-big muted">—</div><div class="fine">No alerts yet</div>',
+    '#compass','Alert feed →'));
   const pulses=(d&&d.flow_pulse)||[];
   const fp=pulses[0];
   tiles.push(tile('pulse','Flow pulse',
