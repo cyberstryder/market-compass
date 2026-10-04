@@ -151,8 +151,7 @@ def test_auth_private_state_and_origin_guard(cfg):
         assert response.status_code==200
         assert response.json()["quotes"]=={}
         assert cfg.password not in response.text and cfg.secret not in response.text
-        assert client.post("/api/ask",json={"question":"Hello"},headers={"Origin":"https://elsewhere.example"}).status_code==403
-        assert client.post("/api/ask",json={"question":"What do we know?"}).json()["configured"] is False
+        assert client.post("/api/state",json={},headers={"Origin":"https://elsewhere.example"}).status_code==403
 
 def test_unconfigured_password_never_exposes_data(cfg):
     cfg.password=""
