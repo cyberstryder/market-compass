@@ -440,12 +440,47 @@ def create_app(cfg=None):
         from .alpaca_option_stream import compare_sources
         return compare_sources(db)
 
-    @app.get('/api/squeeze')
-    def get_squeeze():
-        # Evidence-only volatility squeeze states.
-        from .squeeze import display
+    @app.get('/api/deck')
+    def get_deck():
+        # Command deck: one aggregated at-a-glance payload for the tile grid.
+        # Each tile shows its key metric; details stay in the full sections.
+        from . import darkpool, iv_rank, flow_pulse, squeeze, apex_magnet
+        from .futures import futures_session
+        now = time.time()
         with db.tx() as c:
-            return display(db,c,time.time())
+            dp = darkpool.display(db, c, now)
+            iv = iv_rank.display(db, c, now)
+            fp = flow_pulse.display(db, c, now, days=1)
+            sq = squeeze.display(db, c, now, days=1)
+            ax = apex_magnet.display(db, c, now)
+            # Gamma walls for the index ETFs.
+            gamma = {}
+            for sym in ("SPY", "QQQ"):
+                g = db.get(c, "gamma_levels:" + sym) or {}
+                if g.get("levels"):
+                    gamma[sym] = g["levels"]
+            # Day board A+ setups for today (Chicago date).
+            import datetime
+            today = datetime.datetime.fromtimestamp(
+                now, datetime.timezone(datetime.timedelta(hours=-5))).strftime("%Y-%m-%d")
+            board = db.get(c, "day_board:" + today, {}) or {}
+            aplas = [s for s in (board.get("setups") or []) if s.get("grade") == "A+"]
+            sess = futures_session(now)
+            return {"asof": now,
+                    "flow_pulse": (fp.get("pulses") or [])[:3],
+                    "darkpool": {"print_count": dp.get("print_count", 0),
+                                 "symbols": (dp.get("symbols") or [])[:5],
+                                 "status": dp.get("status")},
+                    "iv_rank": {s: v for s, v in (iv.get("ranks") or {}).items()
+                                if s in ("SPY", "QQQ", "IWM")},
+                    "gamma": gamma,
+                    "day_board_aplus": [{"symbol": s.get("symbol"), "score": s.get("score")}
+                                        for s in aplas[:5]],
+                    "apex": (ax.get("signals") or [])[:5],
+                    "squeeze": sq.get("states") or {},
+                    "futures_session": {"is_open": sess.get("is_open"),
+                                         "entry_open": sess.get("entry_open"),
+                                         "day": sess.get("day")}}
 
     @app.get('/api/darkpool')
     def get_darkpool():

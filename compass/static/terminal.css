@@ -130,3 +130,19 @@ article.panel.collapsed > :not(.panel-head):not(h2):not(h3){display:none}
 .cal-pnl.bad,.stat .value.bad{color:var(--down)}
 .cal-break div{display:flex;justify-content:space-between;gap:4px;color:var(--muted);font-size:10px}
 .cal-break .good{color:var(--up)}.cal-break .bad{color:var(--down)}
+
+/* Command deck: at-a-glance tile grid. */
+.deck-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+.deck-tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;min-height:132px}
+.deck-tile .eyebrow{margin-bottom:8px}
+.deck-body{flex:1}
+.deck-big{font-size:30px;font-weight:700;letter-spacing:-.8px;line-height:1.15;font-variant-numeric:tabular-nums}
+.deck-big.muted{color:var(--muted)}
+.deck-row{display:flex;align-items:baseline;gap:10px;padding:5px 0;font-size:13px}
+.deck-row strong{font-size:16px;font-variant-numeric:tabular-nums}
+.deck-link{margin-top:10px;font-size:12px;color:var(--up);font-weight:600}
+.deck-link:hover{text-decoration:underline}
+.t-up{color:var(--up)}
+.t-down{color:var(--down)}
+@media(max-width:1150px){.deck-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:700px){.deck-grid{grid-template-columns:1fr}.deck-big{font-size:26px}}
