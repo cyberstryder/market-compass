@@ -30,6 +30,7 @@ class Config:
     databento: str = field(default_factory=lambda: env("DATABENTO_API_KEY"))
     massive: str = field(default_factory=lambda: env("MASSIVE_API_KEY"))
     matrix: str = field(default_factory=lambda: env("TRADERMATRIX_API_KEY"))
+    fmp_key: str = field(default_factory=lambda: env("FMP_API_KEY",""))
     discord: str = field(default_factory=lambda: env("DISCORD_WEBHOOK_URL"))
     discord_routes: dict = field(default_factory=lambda: {
         key: env('DISCORD_' + key.upper() + '_WEBHOOK_URL')
@@ -64,6 +65,7 @@ class Config:
     alpaca_option_stream: bool = field(default_factory=lambda: env("ALPACA_OPTION_STREAM_ENABLED","false")=="true")
     flow_pulse_webhook: str = field(default_factory=lambda: env("DISCORD_FLOW_PULSE_WEBHOOK_URL",""))
     ict_push_enabled: bool = field(default_factory=lambda: env("ICT_PUSH_ENABLED","false")=="true")
+    ict_push_webhook: str = field(default_factory=lambda: env("DISCORD_ICT_WEBHOOK_URL",""))
     tape_confirmed: bool = field(default_factory=lambda: env("TAPE_CONFIRMED_ENABLED","true")=="true")
     gap_push_enabled: bool = field(default_factory=lambda: env("GAP_PUSH_ENABLED","true")=="true")
     day_board_push_enabled: bool = field(default_factory=lambda: env("DAY_BOARD_PUSH_ENABLED","true")=="true")

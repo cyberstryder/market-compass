@@ -198,7 +198,7 @@ def scan(db, c, cfg, now):
     # FMP_API_KEY). Flow rows still come from the matrix unusual-activity feed.
     # The dead vendor research keys are no longer read.
     from .day_board_feeds import build_ctx as _day_board_feeds_ctx
-    feed_ctx = _day_board_feeds_ctx(db, c)
+    feed_ctx = _day_board_feeds_ctx(db, c, cfg)
     ctx = {'flow_rows': (db.get(c, 'matrix:unusual_activity', {}) or {}).get('rows') or [],
            'sector_dashboard': feed_ctx['sector_dashboard'],
            'sector_map': feed_ctx['sector_map'],

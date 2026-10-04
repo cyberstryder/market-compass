@@ -143,14 +143,13 @@ def static_economic_calendar():
     return {'items': ECONOMIC_CALENDAR_2026, 'source': 'static_2026'}
 
 
-def earnings_feed():
+def earnings_feed(api_key=""):
     """Earnings calendar feed.
 
     STUBBED: needs a Financial Modeling Prep API key (free tier).
     Set FMP_API_KEY to enable; returns {'items': [...]} with
     symbol/date/timing rows when configured.
     """
-    api_key = os.environ.get('FMP_API_KEY')
     if not api_key:
         return {'items': [], 'source': 'stub',
                 'note': 'Set FMP_API_KEY (free tier at '
@@ -178,7 +177,7 @@ def earnings_feed():
     return {'items': items, 'source': 'fmp'}
 
 
-def build_ctx(db, c):
+def build_ctx(db, c, cfg=None):
     """Build the board context from alternative feeds (prototype)."""
     from .day_trading_board import _today_str  # noqa
     import time
@@ -204,7 +203,7 @@ def build_ctx(db, c):
         'flow_rows': [],
         'sector_dashboard': sector_dashboard_from_closes(etf_closes, spy_closes),
         'sector_map': dict(SYMBOL_SECTOR),
-        'earnings': earnings_feed(),
+        'earnings': earnings_feed(getattr(cfg, 'fmp_key', '') if cfg else ''),
         'economic_calendar': static_economic_calendar(),
         '_prototype': True,
         '_etf_coverage': {e: len(v) for e, v in etf_closes.items()},

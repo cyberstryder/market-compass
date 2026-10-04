@@ -220,13 +220,11 @@ def deliver_one(db, client, url, now=None, max_attempts=MAX_ATTEMPTS):
 
 async def run(db, cfg):
     """Drainer loop: POST pending ICT alerts to Discord."""
-    import os
-    url = os.getenv('DISCORD_ICT_WEBHOOK_URL', '')
     with httpx.Client(timeout=10, follow_redirects=False) as client:
         while True:
             try:
                 if bool(getattr(cfg, 'ict_push_enabled', False)):
-                    await asyncio.to_thread(deliver_one, db, client, url)
+                    await asyncio.to_thread(deliver_one, db, client, cfg.ict_push_webhook)
             except Exception as e:
                 db.health('ict_push', 'error', type(e).__name__)
             await asyncio.sleep(1)
