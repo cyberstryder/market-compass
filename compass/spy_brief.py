@@ -159,6 +159,7 @@ def gamma_context(db, c, now, spot):
         'local_asof': chain.get('asof'), 'local_expiries': chosen, 'zero_dte_gex': today_proxy.get('gex'),
         'zero_dte_coverage': today_proxy.get('coverage'), 'discrepancies': disagreements,
         'dealer_levels': db.get(c, 'gamma_levels:SPY', {}),
+        'squeeze': (db.get(c, 'squeeze:latest', {}).get('states') or {}).get('SPY', {}),
         'interpretation': 'Positioning context only. Call-positive/put-negative proxy is not measured dealer inventory; gamma sign alone does not select a trade.'}
 
 
@@ -394,6 +395,13 @@ def delivery_payload(row, now):
     if dl.get('status') == 'ok' and dl.get('levels'):
         from .gamma_levels import describe
         lines.append('Dealer levels: ' + describe(dl))
+    sq = g.get('squeeze') or {}
+    if sq.get('state') in ('squeezed', 'fired'):
+        label = ('SQUEEZE FIRING ' + (sq.get('direction') or '').upper()
+                 if sq['state'] == 'fired'
+                 else 'Squeeze building')
+        lines.append(f"{label}: {sq.get('squeeze_bars', 0)} bars coiled" +
+                     (" · watch-only" if sq.get('watch_only') else ""))
     for i, r in enumerate(g['ranked']):
         lines.append(f"#{i+1} SPY {r['price']:.2f} · score {r['score']:g} · GEX {billions(r.get('net_gex'))} · OI {money(r.get('oi'))}")
     if not g['ranked']:
