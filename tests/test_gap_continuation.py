@@ -138,7 +138,7 @@ def test_scan_full_session_qualifies(db):
                {'rows': [{'symbol': 'SPY', 'source_ts': SESS_OPEN + 600,
                           'option_type': 'call', 'premium': 300000, 'score': 90}]})
         result = gc.scan(db, c, Cfg(), SESS_CLOSE - 3600)
-    assert result == {'ran': True, 'symbols': 1, 'qualified': 1}
+    assert result == {'ran': True, 'symbols': 1, 'qualified': 1, 'pushed': []}
     with db.tx() as c:
         state = db.get(c, 'gap_cont:SPY:' + DAY)
         assert state['stage'] == 'done' and state['hold'] == 'confirmed'

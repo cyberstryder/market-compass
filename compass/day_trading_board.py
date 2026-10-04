@@ -220,6 +220,11 @@ def scan(db, c, cfg, now):
         action = 'frozen'
     if board is not None and action:
         db.put(c, key, board)
+        # Alerts live by default: push A+ setups on build/refresh.
+        try:
+            _maybe_queue_push(db, c, cfg, today, now, board, action)
+        except Exception:
+            pass
     review_action = None
     if board is not None and board.get('frozen') and now >= hours[1]:
         review = evening_review(db, c, cfg, now)
@@ -294,5 +299,131 @@ def display(db, c, now, days=7):
             'frozen': board.get('frozen'), 'frozen_at': board.get('frozen_at'),
             'built_at': board.get('built_at'),
             'weekly_reviews': table,
-            'note': 'Watchlist only — no entries, no direction calls, no alerts. '
-                    'The A+ alert gate is specified but not wired.'}
+            'note': 'Watchlist only — no entries, no direction calls, no trades. '
+                    'A+ setups (5+/6) push to #morning-brief on build/refresh.'}
+
+
+# --- Push A+ board on build/refresh (alerts live by default; kill fast if noisy) ---
+import asyncio as _asyncio
+import re as _re
+import time as _time
+from sqlalchemy import select as _select
+from .store import day_board_push_outbox as _outbox, identity as _identity
+
+_BOARD_WEBHOOK_RE = r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+'
+_BOARD_MAX_ATTEMPTS = 10
+A_PLUS_MIN_SCORE = 5  # of 6 components
+
+
+def _a_plus_rows(board):
+    rows = (board or {}).get('rows') or []
+    return [r for r in rows if (r.get('total') or 0) >= A_PLUS_MIN_SCORE]
+
+
+def _maybe_queue_push(db, c, cfg, today, now, board, action):
+    """Write one outbox row per board build/refresh with A+ setups."""
+    if not getattr(cfg, 'day_board_push_enabled', True):
+        return False
+    webhook = (getattr(cfg, 'discord_routes', {}) or {}).get('spy_morning', '')
+    if not _re.fullmatch(_BOARD_WEBHOOK_RE, webhook or ''):
+        return False
+    a_plus = _a_plus_rows(board)
+    if not a_plus:
+        return False
+    row_id = _identity('day-board-push-v1', today, action)
+    payload = {'kind': 'day_board_aplus', 'session': today, 'action': action,
+               'setups': [{'symbol': r.get('symbol'), 'total': r.get('total'),
+                            'day_pct': r.get('day_pct'),
+                            'components': {k: v.get('score') for k, v in
+                                           (r.get('components') or {}).items()}}
+                          for r in a_plus],
+               'at': now}
+    c.execute(db.insert(_outbox).values(
+        id=row_id, status='pending', created=now, payload=payload,
+        delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
+    return True
+
+
+def format_message(payload):
+    """Discord-safe message for the A+ board. No mentions, <2000 chars."""
+    lines = ['**Day board A+** (%s, %s)' % (payload.get('session'),
+                                            payload.get('action'))]
+    for s in (payload.get('setups') or [])[:8]:
+        comps = s.get('components') or {}
+        on = [k for k, v in comps.items() if v]
+        lines.append('**%s** %d/6 %+.2f%% [%s]' % (
+            s.get('symbol'), s.get('total') or 0,
+            (s.get('day_pct') or 0) * 100, ','.join(on)))
+    content = '\n'.join(lines)
+    return {'content': content[:1900], 'username': 'Market Compass',
+            'allowed_mentions': {'parse': []}}
+
+
+def deliver_one(db, client, url, now=None, max_attempts=_BOARD_MAX_ATTEMPTS):
+    """Attempt one pending row. Returns True if a row was attempted."""
+    if not _re.fullmatch(_BOARD_WEBHOOK_RE, url or ''):
+        return False
+    now = _time.time() if now is None else now
+    with db.tx() as c:
+        candidates = c.execute(_select(_outbox)
+            .where(_outbox.c.status.in_(['pending', 'sending']))
+            .order_by(_outbox.c.created).limit(20)).mappings().all()
+        job = None
+        for row in candidates:
+            d = dict(row['delivery'])
+            if row['status'] == 'sending' and d.get('lease_until', 0) > now:
+                continue
+            job = dict(row)
+            break
+        if job is None:
+            return False
+        d = dict(job['delivery'])
+        d.update(attempts=d.get('attempts', 0) + 1, lease_until=now + 120)
+        c.execute(_outbox.update().where(_outbox.c.id == job['id'])
+                  .values(status='sending', delivery=d))
+    message_id, error, status = None, None, 'pending'
+    try:
+        response = client.post(url, json=format_message(job['payload']))
+        if response.status_code in (200, 201, 204):
+            status = 'delivered'
+            try:
+                message_id = response.json().get('id')
+            except Exception:
+                pass
+        elif response.status_code == 429:
+            retry_after = response.headers.get('retry-after')
+            try:
+                delay = float(retry_after)
+            except (TypeError, ValueError):
+                delay = 5
+            status, error = 'pending', 'rate_limited'
+            job['delivery']['next_attempt'] = now + delay
+        elif response.status_code >= 500:
+            status, error = 'pending', 'server_error'
+            job['delivery']['next_attempt'] = now + 30
+        else:
+            status, error = 'failed', 'http_%d' % response.status_code
+    except Exception:
+        error = 'network_outcome_unknown'
+    if job['delivery']['attempts'] >= max_attempts and status == 'pending':
+        status, error = 'failed', 'retry_budget_exhausted'
+    with db.tx() as c:
+        d = dict(job['delivery'])
+        d.update(error=error, message_id=message_id, finished_at=now, lease_until=0)
+        c.execute(_outbox.update().where(_outbox.c.id == job['id'])
+                  .values(status=status, delivery=d))
+    return True
+
+
+async def run(db, cfg):
+    """Drainer: 1s poll, 429 backoff, retry budget. Rows accumulate if down."""
+    import httpx
+    url = (getattr(cfg, 'discord_routes', {}) or {}).get('spy_morning', '')
+    with httpx.Client(timeout=10, follow_redirects=False) as client:
+        while True:
+            try:
+                if getattr(cfg, 'day_board_push_enabled', True):
+                    deliver_one(db, client, url)
+            except Exception:
+                db.health('day_board_push', 'error', 'drainer exception')
+            await _asyncio.sleep(1)

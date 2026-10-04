@@ -109,6 +109,12 @@ def create_app(cfg=None):
             if cfg.ict_push_enabled:
                 from .ict_push import run as run_ict_push
                 tasks.append(asyncio.create_task(run_ict_push(db,cfg)))
+            if cfg.gap_push_enabled:
+                from .gap_continuation import run as run_gap_push
+                tasks.append(asyncio.create_task(run_gap_push(db,cfg)))
+            if cfg.day_board_push_enabled:
+                from .day_trading_board import run as run_day_board_push
+                tasks.append(asyncio.create_task(run_day_board_push(db,cfg)))
             if cfg.morning_enabled and cfg.morning_token:
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"intake")))
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"samples")))

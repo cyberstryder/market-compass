@@ -132,4 +132,4 @@ def test_display(morning):
     # earnings (FMP stub), economic (no 2026-09-25 event), and sector
     # (index ETFs have no sector mapping) are 0.
     assert out['board'][0]['total'] == 3 and out['frozen'] is False
-    assert 'not wired' in out['note']
+    assert 'push to #morning-brief' in out['note']

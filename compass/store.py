@@ -51,6 +51,16 @@ ict_push_outbox=Table('ict_push_outbox_v1',meta,
     Column('created',Float,nullable=False),Column('payload',JSON,nullable=False),
     Column('delivery',JSON,nullable=False))
 Index('ict_push_pending',ict_push_outbox.c.status,ict_push_outbox.c.created)
+gap_push_outbox=Table('gap_push_outbox_v1',meta,
+    Column('id',String(64),primary_key=True),Column('status',String(24),nullable=False),
+    Column('created',Float,nullable=False),Column('payload',JSON,nullable=False),
+    Column('delivery',JSON,nullable=False))
+Index('gap_push_pending',gap_push_outbox.c.status,gap_push_outbox.c.created)
+day_board_push_outbox=Table('day_board_push_outbox_v1',meta,
+    Column('id',String(64),primary_key=True),Column('status',String(24),nullable=False),
+    Column('created',Float,nullable=False),Column('payload',JSON,nullable=False),
+    Column('delivery',JSON,nullable=False))
+Index('day_board_push_pending',day_board_push_outbox.c.status,day_board_push_outbox.c.created)
 smoothers_daily=Table('smoothers_daily_comparison_v1',meta,
     Column('id',String(64),primary_key=True),Column('day',String(10),nullable=False),
     Column('family',String(32),nullable=False),Column('symbol',String(16),nullable=False),

@@ -8,9 +8,9 @@ Pipeline per symbol per session:
   5. pillars: price (the hold, mandatory) + dealer + flow + sector
   6. qualified = hold + >=2 of 3 supportive, dealer opposition vetoes
 
-Evidence only: no alerts, no admission, no trades. Forward marks (15/30/60
+Qualified gaps push to #intraday on confirmation. Forward marks (15/30/60
 minutes and session close from hold-confirm time) feed the weekly outcome
-table that decides whether any cell ever graduates.
+table. No auto-admission, no trades.
 """
 from .market import number, session, day, CT
 from .apex_magnet import _sector_for
@@ -292,9 +292,11 @@ def scan(db, c, cfg, now):
            'apex': {k[5:]: v for k, v in db.prefix(c, 'apex:').items()}}
     states = [s for s in (_advance(db, c, symbol, now, cfg, ctx) for symbol in cfg.stocks)
               if s is not None]
+    pushed = queue_push_for_qualified(db, c, cfg, now)
     db.put(c, 'gap_continuation:scanned_at', now)
     return {'ran': True, 'symbols': len(states),
-            'qualified': sum(1 for s in states if s.get('qualified'))}
+            'qualified': sum(1 for s in states if s.get('qualified')),
+            'pushed': pushed}
 
 
 def display(db, c, now, days=7):
@@ -332,3 +334,137 @@ def display(db, c, now, days=7):
              'mean_return': v['sum_ret'] / v['n']} for k, v in sorted(table.items())]
     return {'asof': now, 'board': board, 'weekly_outcomes': rows,
             'note': 'Research evidence only. No auto-admission, no alerts, no trades.'}
+
+
+# --- Push on qualified gap (alerts live by default; kill fast if noisy) ---
+import asyncio
+import re
+import time as _time
+from sqlalchemy import select as _select
+from .store import gap_push_outbox as _outbox, identity as _identity
+
+_GAP_WEBHOOK_RE = r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+'
+_GAP_MAX_ATTEMPTS = 10
+
+
+def _maybe_queue_push(db, c, cfg, symbol, today, now, state):
+    """Write one outbox row per newly qualified gap. Alerts live by default."""
+    if not getattr(cfg, 'gap_push_enabled', True):
+        return False
+    webhook = (getattr(cfg, 'discord_routes', {}) or {}).get('intraday', '')
+    if not re.fullmatch(_GAP_WEBHOOK_RE, webhook or ''):
+        return False
+    row_id = _identity('gap-push-v1', today, symbol, state.get('break_direction'))
+    payload = {'kind': 'gap_qualified', 'symbol': symbol,
+               'direction': state.get('break_direction'), 'session': today,
+               'gap_pct': state.get('gap_pct'),
+               'break_level': state.get('break_level'),
+               'pillars': {k: v.get('status') for k, v in
+                           (state.get('pillars') or {}).items()},
+               'at': now}
+    c.execute(db.insert(_outbox).values(
+        id=row_id, status='pending', created=now, payload=payload,
+        delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
+    return True
+
+
+def queue_push_for_qualified(db, c, cfg, now):
+    """Called from scan(): push any newly qualified gaps. Returns symbols pushed."""
+    pushed = []
+    today = day(now)
+    for symbol in getattr(cfg, 'stocks', ()):
+        key = 'gap_cont:%s:%s' % (symbol, today)
+        state = db.get(c, key) or {}
+        if not state.get('qualified'):
+            continue
+        if db.get(c, 'gap_push_sent:%s:%s' % (symbol, today)):
+            continue
+        if _maybe_queue_push(db, c, cfg, symbol, today, now, state):
+            db.put(c, 'gap_push_sent:%s:%s' % (symbol, today), now)
+            pushed.append(symbol)
+    return pushed
+
+
+def format_message(payload):
+    """Discord-safe message for one qualified gap. No mentions, <2000 chars."""
+    direction = 'LONG' if payload.get('direction') == 'up' else 'SHORT'
+    pillars = payload.get('pillars') or {}
+    supportive = [k for k, v in pillars.items() if v == 'supportive']
+    lines = [
+        '**%s** gap continuation **%s**' % (payload.get('symbol'), direction),
+        'Gap %+.2f%% | OR break held 10min | pillars: %s' % (
+            (payload.get('gap_pct') or 0) * 100, ', '.join(supportive) or 'price'),
+    ]
+    content = '\n'.join(lines)
+    return {'content': content[:1900], 'username': 'Market Compass',
+            'allowed_mentions': {'parse': []}}
+
+
+def deliver_one(db, client, url, now=None, max_attempts=_GAP_MAX_ATTEMPTS):
+    """Attempt one pending row. Returns True if a row was attempted."""
+    if not re.fullmatch(_GAP_WEBHOOK_RE, url or ''):
+        return False
+    now = _time.time() if now is None else now
+    with db.tx() as c:
+        candidates = c.execute(_select(_outbox)
+            .where(_outbox.c.status.in_(['pending', 'sending']))
+            .order_by(_outbox.c.created).limit(20)).mappings().all()
+        job = None
+        for row in candidates:
+            d = dict(row['delivery'])
+            if row['status'] == 'sending' and d.get('lease_until', 0) > now:
+                continue
+            job = dict(row)
+            break
+        if job is None:
+            return False
+        d = dict(job['delivery'])
+        d.update(attempts=d.get('attempts', 0) + 1, lease_until=now + 120)
+        c.execute(_outbox.update().where(_outbox.c.id == job['id'])
+                  .values(status='sending', delivery=d))
+    message_id, error, status = None, None, 'pending'
+    try:
+        response = client.post(url, json=format_message(job['payload']))
+        if response.status_code in (200, 201, 204):
+            status = 'delivered'
+            try:
+                message_id = response.json().get('id')
+            except Exception:
+                pass
+        elif response.status_code == 429:
+            retry_after = response.headers.get('retry-after')
+            try:
+                delay = float(retry_after)
+            except (TypeError, ValueError):
+                delay = 5
+            status, error = 'pending', 'rate_limited'
+            job['delivery']['next_attempt'] = now + delay
+        elif response.status_code >= 500:
+            status, error = 'pending', 'server_error'
+            job['delivery']['next_attempt'] = now + 30
+        else:
+            status, error = 'failed', 'http_%d' % response.status_code
+    except Exception:
+        error = 'network_outcome_unknown'
+    if job['delivery']['attempts'] >= max_attempts and status == 'pending':
+        status, error = 'failed', 'retry_budget_exhausted'
+    with db.tx() as c:
+        d = dict(job['delivery'])
+        d.update(error=error, message_id=message_id, finished_at=now, lease_until=0)
+        c.execute(_outbox.update().where(_outbox.c.id == job['id'])
+                  .values(status=status, delivery=d))
+    return True
+
+
+async def run(db, cfg):
+    """Drainer: 1s poll, 429 backoff, retry budget. Rows accumulate if down."""
+    import httpx
+    url = (getattr(cfg, 'discord_routes', {}) or {}).get('intraday', '')
+    with httpx.Client(timeout=10, follow_redirects=False) as client:
+        while True:
+            try:
+                if getattr(cfg, 'gap_push_enabled', True):
+                    deliver_one(db, client, url)
+            except Exception:
+                db.health('gap_push', 'error', 'drainer exception')
+            await asyncio.sleep(1)
