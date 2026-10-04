@@ -106,6 +106,9 @@ def create_app(cfg=None):
             if cfg.flow_pulse_push_enabled:
                 from .flow_pulse import run as run_flow_pulse_push
                 tasks.append(asyncio.create_task(run_flow_pulse_push(db,cfg)))
+            if cfg.ict_push_enabled:
+                from .ict_push import run as run_ict_push
+                tasks.append(asyncio.create_task(run_ict_push(db,cfg)))
             if cfg.morning_enabled and cfg.morning_token:
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"intake")))
                 tasks.append(asyncio.create_task(run_native_morning(db,cfg,"samples")))

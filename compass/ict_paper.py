@@ -144,6 +144,12 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
     db.put(c, paper_risk.key(now, 'future'), risk)
     db.append(c, 'paper_decision', 'ict_paper', symbol, now,
               {**trade, 'status': 'entered'}, 'entry:' + trade_id)
+    # Queue Discord alert so Josh can see which detectors fire when
+    try:
+        from . import ict_push
+        ict_push.maybe_queue(db, c, cfg, trade)
+    except Exception:
+        pass
     return {'submitted': True, 'reason': 'entered', 'trade_id': trade_id,
             'qty': qty, 'strategy': trade['strategy']}
 
