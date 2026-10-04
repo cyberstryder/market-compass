@@ -469,6 +469,10 @@ class Engine:
             if self.cfg.flow_pulse:
                 from .flow_pulse import scan as flow_pulse_scan
                 pulse_summary = flow_pulse_scan(self.db,c,self.cfg,now)
+            squeeze_summary = None
+            if self.cfg.squeeze:
+                from .squeeze import scan as squeeze_scan
+                squeeze_summary = squeeze_scan(self.db,c,self.cfg,now)
             gap_summary = None
             if self.cfg.gap_continuation:
                 from .gap_continuation import scan as gap_continuation_scan
