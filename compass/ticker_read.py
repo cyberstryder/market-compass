@@ -141,13 +141,16 @@ def _apex_section(display, symbol, spot):
 def _gamma_section(db, c, symbol, spot):
     g = db.get(c, 'gamma_flip:' + symbol, {}) or {}
     flip = number(g.get('flip'))
+    lv = db.get(c, 'gamma_levels:' + symbol, {}) or {}
+    levels = lv.get('levels') if lv.get('status') == 'ok' else None
     if flip is None or spot is None:
         return {'flip': flip, 'regime': None,
-                'distance_pct': None, 'has_data': flip is not None}
+                'distance_pct': None, 'has_data': flip is not None,
+                'levels': levels}
     regime = 'positive' if spot > flip else 'negative' if spot < flip else 'at_flip'
     return {'flip': flip, 'regime': regime,
             'distance_pct': round((spot - flip) / flip, 4),
-            'has_data': True}
+            'has_data': True, 'levels': levels}
 
 
 def _tape_section(display, symbol):

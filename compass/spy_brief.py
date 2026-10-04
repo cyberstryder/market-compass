@@ -158,6 +158,7 @@ def gamma_context(db, c, now, spot):
         'put_call_ratio': abs(puts['gex'] / calls['gex']) if calls.get('gex') else None,
         'local_asof': chain.get('asof'), 'local_expiries': chosen, 'zero_dte_gex': today_proxy.get('gex'),
         'zero_dte_coverage': today_proxy.get('coverage'), 'discrepancies': disagreements,
+        'dealer_levels': db.get(c, 'gamma_levels:SPY', {}),
         'interpretation': 'Positioning context only. Call-positive/put-negative proxy is not measured dealer inventory; gamma sign alone does not select a trade.'}
 
 
@@ -389,6 +390,10 @@ def delivery_payload(row, now):
         lines.insert(0, 'Vendor regime: ' + ('negative gamma' if g['vendor_gex'] < 0 else 'positive gamma' if g['vendor_gex'] > 0 else 'neutral gamma'))
     if ctx['spot'] is not None and g['flip'] is not None:
         lines.append('Spot minus flip: ' + f"{ctx['spot']-g['flip']:+.2f}")
+    dl = g.get('dealer_levels') or {}
+    if dl.get('status') == 'ok' and dl.get('levels'):
+        from .gamma_levels import describe
+        lines.append('Dealer levels: ' + describe(dl))
     for i, r in enumerate(g['ranked']):
         lines.append(f"#{i+1} SPY {r['price']:.2f} · score {r['score']:g} · GEX {billions(r.get('net_gex'))} · OI {money(r.get('oi'))}")
     if not g['ranked']:

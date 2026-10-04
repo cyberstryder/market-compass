@@ -17,6 +17,32 @@ class DeliveryError(Exception):
         self.retry = retry
 
 
+def _gamma_levels_line(db, row):
+    """Gamma dealer levels for 0DTE option alerts; None when unavailable."""
+    import re
+    try:
+        identity = alert_identity(row)
+    except Exception:
+        return None
+    if identity.get('category') != 'options_0dte':
+        return None
+    symbol = row.get('symbol') or ''
+    m = re.match(r'^(?:O:)?([A-Z.]+)\d{6}[CP]\d{8}$', symbol)
+    underlying = m.group(1) if m else symbol.split('@')[0]
+    try:
+        with db.tx() as c:
+            item = db.get(c, 'gamma_levels:' + underlying, {}) or {}
+    except Exception:
+        return None
+    if item.get('status') != 'ok' or not item.get('levels'):
+        return None
+    try:
+        from .gamma_levels import describe
+        return describe(item)
+    except Exception:
+        return None
+
+
 def confirmed_url(webhook):
     url = urlparse(webhook)
     params = [(k, v) for k, v in parse_qsl(url.query, keep_blank_values=True) if k != 'wait']
@@ -79,7 +105,8 @@ async def dispatch(client, db, webhook, row, route=None):
         from .spy_chart import delivery_payload
         body = delivery_payload(row, time.time())
     else:
-        body = {'content': message_for(row),
+        gamma_line = _gamma_levels_line(db, row)
+        body = {'content': message_for(row, gamma_context=gamma_line),
             'username': 'Market Compass · ' + alert_identity(row)['label'].title(),
             'allowed_mentions': {'parse': []}}
     response = await client.post(confirmed_url(webhook), json=body)

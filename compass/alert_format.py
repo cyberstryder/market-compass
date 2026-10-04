@@ -160,7 +160,7 @@ def alert_identity(row, now=None):
             'title': f'{label} | {event} | {display_symbol}' + (f' · {direction}' if direction else '')}
 
 
-def message_for(row, now=None):
+def message_for(row, now=None, gamma_context=None):
     now = time.time() if now is None else now
     p = row['payload']
     if p.get('status') == 'spy_chart_prompt':
@@ -251,6 +251,8 @@ def message_for(row, now=None):
     content = '\n'.join(lines)
     if evidence_lines:
         content += '\nEvidence: ' + '; '.join(evidence_lines[:5])
+    if gamma_context:
+        content += '\nGamma levels: ' + gamma_context
     return content[:1900 - len(footer)] + footer
 
 

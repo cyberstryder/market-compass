@@ -790,6 +790,15 @@ def create_app(cfg=None):
             item=db.get(c,'gamma_flip:'+symbol)
         return item or {'symbol':symbol,'status':'waiting','flip':None}
 
+    @app.get('/api/gamma-levels')
+    def get_gamma_levels(symbol:str):
+        # Evidence-only dealer levels (call wall, put wall, neutral gamma).
+        if symbol not in set(cfg.watch_symbols) | {'NQ','ES'}:
+            raise HTTPException(400,'Unknown symbol')
+        with db.tx() as c:
+            item=db.get(c,'gamma_levels:'+symbol)
+        return item or {'symbol':symbol,'status':'waiting','levels':None}
+
     @app.get('/api/scanner')
     def get_scanner():
         with db.tx() as c:

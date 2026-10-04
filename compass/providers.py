@@ -765,6 +765,13 @@ class Collectors:
                 self.db.put(c,"gamma_flip:"+symbol,{"symbol":symbol,"source":"tradermatrix",
                     "source_ts":result["source_ts"],"received":received,**flip,
                     "evidence_only":"regime context; never an entry trigger"})
+                try:
+                    from .gamma_levels import compute_levels
+                    levels=compute_levels(result.get("strikes") or [],result.get("spot"))
+                except Exception:
+                    levels={"status":"error","levels":None,"reason":"levels computation failed"}
+                self.db.put(c,"gamma_levels:"+symbol,{"symbol":symbol,"source":"tradermatrix",
+                    "source_ts":result["source_ts"],"received":received,**levels})
             log_observation('matrix:'+symbol,result,received)
         now=time.time()
         with self.db.tx() as c:
