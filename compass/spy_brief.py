@@ -105,6 +105,18 @@ def bar_context(db, c, now, phase='preview'):
         'structure': structure, 'recent_closes': closes, 'minute_volume_ratio': rv, **groups}
 
 
+def _fresh_squeeze(latest, now):
+    """SPY squeeze state only if scanned during the current session day.
+
+    Prevents a stale prior-session squeeze (e.g. Friday's fire) from
+    appearing as current in the morning brief.
+    """
+    at = (latest or {}).get('at')
+    if not at or day(at) != day(now):
+        return {}
+    return (latest.get('states') or {}).get('SPY', {})
+
+
 def gamma_context(db, c, now, spot):
     apex = db.get(c, 'apex:SPY', {})
     apex_check = context_check(apex, now)
@@ -159,7 +171,7 @@ def gamma_context(db, c, now, spot):
         'local_asof': chain.get('asof'), 'local_expiries': chosen, 'zero_dte_gex': today_proxy.get('gex'),
         'zero_dte_coverage': today_proxy.get('coverage'), 'discrepancies': disagreements,
         'dealer_levels': db.get(c, 'gamma_levels:SPY', {}),
-        'squeeze': (db.get(c, 'squeeze:latest', {}).get('states') or {}).get('SPY', {}),
+        'squeeze': _fresh_squeeze(db.get(c, 'squeeze:latest', {}), now),
         'interpretation': 'Positioning context only. Call-positive/put-negative proxy is not measured dealer inventory; gamma sign alone does not select a trade.'}
 
 

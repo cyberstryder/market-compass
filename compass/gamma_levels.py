@@ -1,28 +1,31 @@
 """Gamma levels from TraderMatrix signed per-strike net GEX.
 
-MPhinance-style dealer levels: call wall, put wall, neutral gamma, and the
-heaviest concentration strike. Evidence only: regime context for 0DTE, never
-an entry trigger.
+Methodology (aligned with TraderMatrix's documented wall logic, adapted to
+the fields the /gex/{symbol}/matrix endpoint actually returns):
 
-The vendor matrix carries SIGNED net dealer GEX per strike (positive = dealer
-long gamma, negative = dealer short gamma). Call/put walls are inferred from
-the sign extremes:
+The vendor defines walls from OI weighted by proximity and size, but the
+matrix carries no OI field -- only signed net dealer GEX per strike
+(positive = dealer long gamma, negative = dealer short gamma). Walls are
+therefore inferred from sign-appropriate GEX extremes within spot-relative
+regions, with proximity weighting on the concentration:
 
-- call_wall: strike with the largest positive net GEX (dealers longest gamma
-  -> resistance; fades work above the flip, breakouts fail)
-- put_wall: strike with the most negative net GEX (dealers shortest gamma
-  -> support; momentum accelerates below the flip)
-- neutral_gamma: the gamma flip zero-crossing (magnet zone; market makers
-  drag price here when pinned between walls)
-- concentration: strike with the largest |GEX| (heaviest dealer hedging)
+- call_wall: largest positive net GEX among strikes ABOVE spot
+  (dealers longest gamma above -> resistance)
+- put_wall: most negative net GEX among strikes BELOW spot
+  (dealers shortest gamma below -> support)
+- neutral_gamma: the gamma flip zero-crossing (magnet zone)
+- concentration: largest proximity-weighted |GEX|
+  (weight = 1 / (1 + 10 * |strike - spot| / spot); nearer strikes count more)
 
-Sign-convention caveat (same as gamma_flip): if the vendor's per-strike GEX
-is single-signed, the sign convention is unverified and no directional wall
-assignment is made. Concentrations are reported as concentrations, not as
-verified dealer-inventory levels.
+Evidence only: regime context for 0DTE, never an entry trigger.
+
+Caveats: these are GEX-derived inferences, not the vendor's OI-based walls.
+If the vendor's per-strike GEX is single-signed, the sign convention is
+unverified and no directional wall assignment is made.
 """
 
 MIN_STRIKES = 5
+PROXIMITY_K = 10.0
 
 
 def _rows(strikes):
@@ -34,12 +37,20 @@ def _rows(strikes):
     )
 
 
+def _proximity_weight(strike, spot):
+    """1.0 at spot, decaying with distance. 1% away -> ~0.91, 5% -> ~0.67."""
+    if not spot or spot <= 0:
+        return 1.0
+    return 1.0 / (1.0 + PROXIMITY_K * abs(strike - spot) / spot)
+
+
 def compute_levels(strikes, spot=None):
     """Compute dealer gamma levels from matrix strike rows.
 
     strikes: iterable of {"strike": float, "gex": float|None} with SIGNED net
         dealer GEX per strike.
-    spot: underlying price, optional.
+    spot: underlying price. Required for spot-relative walls; without it only
+        the proximity-unweighted concentration is reported.
 
     Returns a dict with call_wall/put_wall/neutral_gamma/concentration,
     regime vs the flip, and methodology caveats.
@@ -51,13 +62,22 @@ def compute_levels(strikes, spot=None):
                 "reason": f"only {n} populated strikes (need {MIN_STRIKES})",
                 "strikes": n}
 
-    positives = [r for r in rows if r["gex"] > 0]
-    negatives = [r for r in rows if r["gex"] < 0]
-    mixed = bool(positives and negatives)
+    above = [r for r in rows if spot and r["strike"] > spot]
+    below = [r for r in rows if spot and r["strike"] < spot]
 
-    call_wall = max(positives, key=lambda r: r["gex"])["strike"] if positives else None
-    put_wall = min(negatives, key=lambda r: r["gex"])["strike"] if negatives else None
-    concentration = max(rows, key=lambda r: abs(r["gex"]))["strike"]
+    positives_above = [r for r in above if r["gex"] > 0]
+    negatives_below = [r for r in below if r["gex"] < 0]
+    mixed = bool(positives_above and negatives_below)
+
+    call_wall = (max(positives_above, key=lambda r: r["gex"])["strike"]
+                 if positives_above else None)
+    put_wall = (min(negatives_below, key=lambda r: r["gex"])["strike"]
+                if negatives_below else None)
+
+    # Proximity-weighted concentration: heaviest dealer hedging nearest spot.
+    def _wscore(r):
+        return abs(r["gex"]) * _proximity_weight(r["strike"], spot)
+    concentration = max(rows, key=_wscore)["strike"]
 
     # Neutral gamma: reuse the flip computation (cumulative net gamma
     # zero-crossing). Imported lazily to keep this module dependency-light.
@@ -80,17 +100,21 @@ def compute_levels(strikes, spot=None):
         "call_wall_gex": next((r["gex"] for r in rows if r["strike"] == call_wall), None),
         "put_wall_gex": next((r["gex"] for r in rows if r["strike"] == put_wall), None),
         "concentration_gex": next((r["gex"] for r in rows if r["strike"] == concentration), None),
+        "concentration_weight": round(_proximity_weight(concentration, spot), 3) if spot else None,
     }
 
     out = {
         "status": "ok",
         "levels": levels,
         "strikes": n,
+        "strikes_above_spot": len(above),
+        "strikes_below_spot": len(below),
         "mixed_signs": mixed,
         "flip_status": flip_status,
-        "method": ("Signed vendor GEX per strike; call/put walls inferred from "
-                   "sign extremes, not a dealer-inventory or direction claim. "
-                   "Concentrations are not verified walls or flip levels."),
+        "method": ("Spot-relative walls from signed vendor GEX: call wall = "
+                   "max positive GEX above spot, put wall = min negative GEX "
+                   "below spot, concentration = proximity-weighted |GEX|. "
+                   "GEX-derived inferences, not the vendor's OI-based walls."),
         "evidence_only": "regime context; never an entry trigger",
     }
     if spot and spot > 0:

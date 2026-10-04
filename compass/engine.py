@@ -473,6 +473,10 @@ class Engine:
             if self.cfg.darkpool:
                 from .darkpool import scan as darkpool_scan
                 darkpool_summary = darkpool_scan(self.db,c,self.cfg,now)
+            iv_rank_summary = None
+            if self.cfg.iv_rank:
+                from .iv_rank import scan as iv_rank_scan
+                iv_rank_summary = iv_rank_scan(self.db,c,self.cfg,now)
             squeeze_summary = None
             if self.cfg.squeeze:
                 from .squeeze import scan as squeeze_scan

@@ -538,3 +538,40 @@ def test_opening_preview_cannot_bypass_a_changed_saved_premarket_range(db):
     assert r['context']['premarket']['high']==760.5
     assert 'recovered premarket range differs from frozen levels' in r['data_blocks']
 
+
+
+def test_fresh_squeeze_same_day():
+    from compass.spy_brief import _fresh_squeeze
+    from compass.market import day
+    now = 1791000000
+    # Pick a mid-day timestamp so -3600 stays on the same day.
+    while True:
+        import datetime
+        dt = datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)
+        if 12 <= dt.hour <= 18:
+            break
+        now += 3600
+    assert day(now - 3600) == day(now)
+    latest = {'at': now - 3600,
+              'states': {'SPY': {'state': 'fired', 'direction': 'bullish'}}}
+    out = _fresh_squeeze(latest, now)
+    assert out.get('state') == 'fired'
+
+
+def test_fresh_squeeze_stale_day():
+    from compass.spy_brief import _fresh_squeeze
+    from compass.market import day
+    now = 1791000000
+    # Find a timestamp on a different day.
+    stale = now - 86400
+    assert day(stale) != day(now)
+    latest = {'at': stale,
+              'states': {'SPY': {'state': 'fired', 'direction': 'bullish'}}}
+    assert _fresh_squeeze(latest, now) == {}
+
+
+def test_fresh_squeeze_missing():
+    from compass.spy_brief import _fresh_squeeze
+    assert _fresh_squeeze({}, 1791000000) == {}
+    assert _fresh_squeeze(None, 1791000000) == {}
+    assert _fresh_squeeze({'states': {}}, 1791000000) == {}

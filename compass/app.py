@@ -460,6 +460,13 @@ def create_app(cfg=None):
         with db.tx() as c:
             return display(db,c,time.time())
 
+    @app.get('/api/iv-rank')
+    def get_iv_rank():
+        # Evidence: IV rank per symbol for premium bias.
+        from .iv_rank import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
     @app.get('/api/gap-continuation')
     def get_gap_continuation():
         from .gap_continuation import display
