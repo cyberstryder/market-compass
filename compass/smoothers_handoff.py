@@ -32,6 +32,7 @@ def snapshot(db,c):
     return {'plan':db.get(c,KEY),'ownership':db.get(c,OWNER,{'owner':'original'}),
         'sender_environment_enabled':os.getenv('NATIVE_PROGRAM_SEND_ENABLED','false').lower()=='true',
         'webhook_configured':bool(re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',os.getenv('NATIVE_SMOOTHERS_DISCORD_WEBHOOK',''))),
+        'webhook_secondary_configured':bool(re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',os.getenv('NATIVE_SMOOTHERS_DISCORD_WEBHOOK_SECONDARY',''))),
         'in_flight':counts.get('sending',0),'unknown_delivery':counts.get('ambiguous',0),
         'basis':'Prepare checks a complete native week. Activation also requires review of original channel messages: the original feed has no Discord receipts. This control does not pause or resume the original app. After rollback, reconcile in-flight/unknown deliveries before resuming it.'}
 

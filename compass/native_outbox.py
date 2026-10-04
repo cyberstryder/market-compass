@@ -95,6 +95,10 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
             if not ownership or ownership['epoch']!=d.get('owner_epoch') or d.get('next_attempt',0)>now:continue
             url=webhooks.get(row['program'],'')
             if not re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',url):continue
+            # Secondary fallback URL (used if primary returns 404/401)
+            secondary_url=webhooks.get(row['program']+'_secondary','')
+            if not re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',secondary_url):
+                secondary_url=''
             if d.get('mirror'):
                 from .alert_ownership import quote_error
                 decision=d.get('publication',{})
@@ -147,15 +151,23 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
             lease=uuid.uuid4().hex
             d.update(attempts=d.get('attempts',0)+1,lease=lease,lease_until=now+30)
             c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='sending',delivery=d))
-            job=dict(row,delivery=d);break
+            job=dict(row,delivery=d,webhook_url=url,webhook_secondary=secondary_url);break
     if job is None:return False
     status='ambiguous';error=None
+    url=job['webhook_url'];secondary_url=job.get('webhook_secondary','')
     try:
         response=client.patch(url+'/messages/'+message_id,json=job['payload']) if message_id else client.post(url,params={'wait':'true'},json=job['payload'])
+        # Fallback to secondary webhook if primary is invalid (404/401)
+        used_secondary=False
+        if response.status_code in (401,404) and secondary_url:
+            url=secondary_url;used_secondary=True
+            response=client.patch(url+'/messages/'+message_id,json=job['payload']) if message_id else client.post(url,params={'wait':'true'},json=job['payload'])
         if 200<=response.status_code<300:
             try:message_id=response.json().get('id',message_id)
             except (ValueError,AttributeError):pass
-            if isinstance(message_id,str) and re.fullmatch(r'[0-9]{1,32}',message_id):status='delivered'
+            if isinstance(message_id,str) and re.fullmatch(r'[0-9]{1,32}',message_id):
+                status='delivered'
+                if used_secondary:error='primary_webhook_failed_used_secondary'
             else:error='missing_discord_receipt'
         elif response.status_code==429:
             status='pending';error='rate_limited'
@@ -198,6 +210,8 @@ async def run(db,cfg):
     hooks=dict(cfg.discord_routes)
     hooks.update({p:os.getenv('NATIVE_'+p.upper()+'_DISCORD_WEBHOOK','') for p in ('morning','smoothers')})
     hooks['smoothers_shared']=os.getenv('NATIVE_SMOOTHERS_SHARED_DISCORD_WEBHOOK','')
+    # Secondary fallback webhooks (tried if primary returns 404/401)
+    hooks.update({p+'_secondary':os.getenv('NATIVE_'+p.upper()+'_DISCORD_WEBHOOK_SECONDARY','') for p in ('morning','smoothers')})
     if not cfg.morning_enabled: hooks["morning"]=""
     with httpx.Client(timeout=10,follow_redirects=False) as client:
         while True:
