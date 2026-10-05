@@ -262,3 +262,21 @@ def test_intraday_halt_does_not_flatten(db, cfg):
     with db.tx() as c:
         p = db.get(c, POS)
     assert p['status'] == 'open'
+
+
+def test_exits_resolves_dated_contract_quote_for_alias(db, cfg):
+    # Production: Databento writes futures quotes under dated-contract keys
+    # (quote:MCLZ25@<iid>) while positions are stored under the alias
+    # (MCL.v.0). exits() must resolve the alias or every open futures
+    # position reports DATA BLOCKED ("No fresh exit quote").
+    e = Engine(db, cfg)
+    with db.tx() as c:
+        r = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', 'MCL.v.0', sig())
+        assert r['submitted'], r
+        db.put(c, 'quote:MCLZ25@999', quote(NOW + 120, 101.0, 101.01))
+        e.exits(c, NOW + 120)
+    with db.tx() as c:
+        p = db.get(c, 'position:ict:golden_zone:MCL.v.0')
+    assert p['status'] == 'open'
+    assert p['last_quote_ts'] == NOW + 120  # dated quote was seen
+    assert p['mark'] == pytest.approx(101.0, abs=0.05)  # fill-adjusted bid

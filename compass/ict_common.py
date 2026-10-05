@@ -20,6 +20,8 @@ CT = ZoneInfo("America/Chicago")
 
 # bar_window:<ROOT><month><yy>@<iid>, e.g. bar_window:MNQZ25@123456
 _DATED_WINDOW = re.compile(r'^bar_window:([A-Z]+)([FGHJKMNQUVXZ]\d{1,4})@(.+)$')
+# quote:<ROOT><month><yy>@<iid>, e.g. quote:MNQZ25@123456
+_DATED_QUOTE = re.compile(r'^quote:([A-Z]+)([FGHJKMNQUVXZ]\d{1,4})@(.+)$')
 
 
 def _bars_from_window(window):
@@ -80,6 +82,40 @@ def resolve_bar_key(db, c, alias):
                  if (m := _DATED_WINDOW.match(key)) and m.group(1) == root]
         return _newest(dated)
     return None
+
+
+def resolve_quote_key(db, c, alias):
+    """Return the db key suffix holding the latest quote for `alias`.
+
+    Prefers an exact `quote:<alias>` hit, else the newest `quote:<alias>@<iid>`
+    key. Futures aliases (`MNQ.c.0`, `MGC.v.0`) additionally resolve to the
+    newest dated-contract quote for their root (`quote:MNQZ25@<iid>`), which is
+    the form the Databento collectors actually write. Returns None when missing.
+
+    Without this, futures paper positions (stored under the alias form) can
+    never find their exit quotes and the engine reports them DATA BLOCKED.
+    """
+    if db.get(c, 'quote:' + alias, None):
+        return alias
+    best, best_ts = None, -1
+    for key in db.prefix(c, 'quote:' + alias + '@'):
+        q = db.get(c, key, None)
+        ts = q.get('ts') if isinstance(q, dict) else None
+        if ts and ts > best_ts:
+            best, best_ts = key[6:], ts
+    if best:
+        return best
+    root = future_root(alias)
+    if root:
+        for key in db.prefix(c, 'quote:' + root):
+            m = _DATED_QUOTE.match(key)
+            if not m or m.group(1) != root:
+                continue
+            q = db.get(c, key, None)
+            ts = q.get('ts') if isinstance(q, dict) else None
+            if ts and ts > best_ts:
+                best, best_ts = key[6:], ts
+    return best
 
 
 def ict_bars(db, c, alias, limit=1800):

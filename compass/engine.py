@@ -202,6 +202,14 @@ class Engine:
         for key,p in self.db.prefix(c,"position:").items():
             if p.get("status")!="open": continue
             q=self.db.get(c,"quote:"+p["symbol"])
+            if q is None and p.get("asset")=="future":
+                # Futures quotes land under dated-contract keys
+                # (quote:MNQZ25@<iid>) while positions are stored under the
+                # alias form (MNQ.c.0). Resolve so exit management sees them.
+                from .ict_common import resolve_quote_key
+                resolved=resolve_quote_key(self.db,c,p["symbol"])
+                if resolved:
+                    q=self.db.get(c,"quote:"+resolved)
             if self.clock:
                 now=self.clock()
             hours=session(day(now))
