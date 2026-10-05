@@ -110,7 +110,7 @@ All deployment source is in a private GitHub repository. Railway can redeploy a 
 
 ## Deployment created on 2026-09-13
 
-- Dashboard: https://dashboard-production-c3a7.up.railway.app
+- Dashboard: https://marketcompass.up.railway.app
 - Repository: https://github.com/cyberstryder/market-compass
 - Railway: https://railway.com/project/4801dbfb-a7a9-411b-abef-696df393f0b1
 - dashboard service: 33e96fc3-e153-4944-a131-b5944c12e902
