@@ -1,11 +1,197 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Market Compass — Results</title>
-<link rel="stylesheet" href="/static/simple-public.css"></head>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:," />
+<title>Market Compass — Trading, in plain English</title>
+<link rel="stylesheet" href="/static/simple-public.css">
+</head>
 <body>
 <div class="wrap">
-<div class="top"><h1>◤ Market Compass — Results</h1><span class="fine">paper trading · read-only · <a href="/detailed" class="detlink">detailed view →</a></span></div>
-<p class="sub">What each tracker follows, in plain English. Paper numbers, not broker fills.</p>
-<div id="body"><div class="empty">Loading…</div></div>
+
+  <header class="intro">
+    <h1>Trading, in <em>plain English.</em></h1>
+    <p>The whole operation boiled down to one page: what each system watches, how it's doing, and where the money went — day by day. No jargon wall, no 40 panels.</p>
+    <span class="live-note"><i></i> Paper results — no real money, no broker fills · <a href="/detailed" class="detlink">detailed view →</a></span>
+  </header>
+
+  <!-- TODAY AT A GLANCE -->
+  <div class="today" aria-label="Summary">
+    <div class="stat"><label id="t0l">Today</label><strong id="t0v">—</strong><span id="t0s"></span></div>
+    <div class="stat"><label>This week</label><strong id="t1v">—</strong><span id="t1s"></span></div>
+    <div class="stat"><label id="t2l">This month</label><strong id="t2v">—</strong><span id="t2s"></span></div>
+    <div class="stat"><label>All-time win rate</label><strong id="t3v">—</strong><span id="t3s"></span></div>
+  </div>
+
+  <!-- WHAT EACH THING DOES -->
+  <section aria-labelledby="trackers-h">
+    <div class="sec-head">
+      <div>
+        <h2 id="trackers-h">What each tracker actually does</h2>
+        <p>Five helpers, each watching one kind of setup. If a card sounds confusing, the one-line version is in bold.</p>
+      </div>
+      <span class="hint">Tap any tracker card to drill into it below ↓</span>
+    </div>
+
+    <div class="trackers">
+      <article class="card pick" data-drill="smoothers" tabindex="0" role="button" aria-pressed="false" aria-label="Drill into Smoothers, ticker by ticker">
+        <div class="card-top">
+          <span class="dot d-smooth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17c4-8 8 2 12-4 2-3 4-4 6-4"/><circle cx="19" cy="9" r="1.6" fill="currentColor"/></svg></span>
+          <div><h3>Smoothers</h3><span class="aka">The patient one</span></div>
+        </div>
+        <p><b>Buys options with a few days to breathe and rides a steady move.</b> Not a same-day gamble — it looks for stocks already moving smoothly in one direction.</p>
+        <dl class="rows">
+          <div><dt>Watches</dt><dd>A shortlist of liquid stocks &amp; ETFs</dd></div>
+          <div><dt>Fires when</dt><dd>Trend + momentum line up for a multi-day hold</dd></div>
+          <div><dt>Then</dt><dd>Real-time alert — 30-min entry window</dd></div>
+        </dl>
+        <span class="cta">Drill down — ticker by ticker ↓</span>
+        <div class="result"><span id="res-smoothers">Loading…</span><span class="pill live">Live</span></div>
+      </article>
+
+      <article class="card pick" data-drill="futures" tabindex="0" role="button" aria-pressed="false" aria-label="Drill into Futures, method by method">
+        <div class="card-top">
+          <span class="dot d-futures"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5M4 15l5-6 4 3 7-8"/><path d="M15 4h5v5"/></svg></span>
+          <div><h3>Futures (Micros)</h3><span class="aka">The prop-firm practice</span></div>
+        </div>
+        <p><b>Trades tiny futures contracts (MNQ, MES, gold, silver) using intraday price patterns.</b> Everything is forced flat by 3:45pm CT — nothing held overnight.</p>
+        <dl class="rows">
+          <div><dt>Watches</dt><dd>Micros only — never full-size contracts</dd></div>
+          <div><dt>Fires when</dt><dd>One of 12 pattern detectors triggers</dd></div>
+          <div><dt>Then</dt><dd>Paper trades first; proof before real money</dd></div>
+        </dl>
+        <span class="cta">Drill down — all 13 methods ↓</span>
+        <div class="result"><span id="res-futures">Loading…</span><span class="pill test">Paper / proving</span></div>
+      </article>
+
+      <article class="card pick" data-drill="zeroDte" tabindex="0" role="button" aria-pressed="false" aria-label="Drill into 0DTE, name by name">
+        <div class="card-top">
+          <span class="dot d-0dte"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+          <div><h3>0DTE Options</h3><span class="aka">The same-day sprint</span></div>
+        </div>
+        <p><b>Options that expire today.</b> Cheap, fast, and unforgiving — SPY plus 14 liquid names (NVDA, AAPL, TSLA, MU…). In and out the same session or it's worthless.</p>
+        <dl class="rows">
+          <div><dt>Watches</dt><dd>SPY + 14 large-cap names, all day</dd></div>
+          <div><dt>Fires when</dt><dd>Intraday breakout / momentum setup appears</dd></div>
+          <div><dt>Then</dt><dd>Scanner alert; you decide, nothing auto-fires</dd></div>
+        </dl>
+        <span class="cta">Drill down — name by name ↓</span>
+        <div class="result"><span id="res-0dte">Loading…</span><span class="pill test">Scanner only</span></div>
+      </article>
+
+      <article class="card pick" data-drill="flowPulse" tabindex="0" role="button" aria-pressed="false" aria-label="Drill into Flow Pulse, by direction">
+        <div class="card-top">
+          <span class="dot d-flow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z" stroke-linejoin="round"/></svg></span>
+          <div><h3>Flow Pulse</h3><span class="aka">Following the big money</span></div>
+        </div>
+        <p><b>Spots when someone drops $1M+ on one directional options bet in 30 minutes.</b> If the bet is lopsided enough (score ≥90, 2× the other side), it flags it and paper-tracks the outcome for 2 weeks.</p>
+        <dl class="rows">
+          <div><dt>Watches</dt><dd>Unusual options flow, all tickers</dd></div>
+          <div><dt>Fires when</dt><dd>≥$1M premium, one direction, ≤45 days out</dd></div>
+          <div><dt>Then</dt><dd>Paper track opens — win or lose, it's logged</dd></div>
+        </dl>
+        <span class="cta">Drill down — by direction ↓</span>
+        <div class="result"><span id="res-flow">Loading…</span><span class="pill test">Paper tracking</span></div>
+      </article>
+
+      <article class="card pick" data-drill="flash" tabindex="0" role="button" aria-pressed="false" aria-label="Drill into Flash Agentic, pattern by pattern">
+        <div class="card-top">
+          <span class="dot d-flash"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>
+          <div><h3>Flash Agentic Watch</h3><span class="aka">The second opinion</span></div>
+        </div>
+        <p><b>A visual scanner (Obsidian Cipher) that surfaces setups only when price actually triggers.</b> We log every setup it flags, stack it against Compass evidence, and score whether the target hit before invalidation.</p>
+        <dl class="rows">
+          <div><dt>Watches</dt><dd>Trigger-based setups, by pattern type</dd></div>
+          <div><dt>Fires when</dt><dd>Price breaks, rejects, or arms at the trigger</dd></div>
+          <div><dt>Then</dt><dd>Logged silently; scored in the daily digest</dd></div>
+        </dl>
+        <span class="cta">Drill down — pattern by pattern ↓</span>
+        <div class="result"><span id="res-flash">Loading…</span><span class="pill test">Evidence only</span></div>
+      </article>
+
+      <article class="card digest-card">
+        <div class="card-top">
+          <span class="dot d-digest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg></span>
+          <div><h3>The Daily Digest</h3><span class="aka">How you hear about all of it</span></div>
+        </div>
+        <p><b>One message at ~4pm CT on weekdays.</b> Every tracker above, summarized: what opened, what closed, what it made or lost, and what's still running.</p>
+        <dl class="rows">
+          <div><dt>Covers</dt><dd>All 5 trackers, grouped by type</dd></div>
+          <div><dt>Includes</dt><dd>Day P&amp;L + running hit rate per pattern</dd></div>
+          <div><dt>Still realtime</dt><dd>Discord alerts stay on — the digest is the tidy summary on top</dd></div>
+        </dl>
+        <div class="result"><span>Next digest <b id="digestNext">Today ~4:00pm CT</b></span><span class="pill live">On</span></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- DRILL-DOWN -->
+  <section aria-labelledby="drill-h" id="drillSection">
+    <div class="sec-head">
+      <div>
+        <h2 id="drill-h">Drill-down</h2>
+        <p id="drillSub"></p>
+      </div>
+      <span class="hint">Same cards, one level deeper</span>
+    </div>
+    <div class="drill-sum" id="drillSum"></div>
+    <div class="trackers" id="drillGrid"></div>
+  </section>
+
+  <!-- SCOREBOARD -->
+  <section aria-labelledby="board-h">
+    <div class="sec-head">
+      <div>
+        <h2 id="board-h">Scoreboard — is each one working?</h2>
+        <p>One row per tracker. "Proving" means it's paper-trading until the record earns real money.</p>
+      </div>
+    </div>
+    <div class="board">
+      <table>
+        <thead><tr>
+          <th>Tracker</th><th class="num">Trades</th><th class="num">Win rate</th><th>Record</th><th class="num">Result</th><th>Status</th>
+        </tr></thead>
+        <tbody id="boardBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- CALENDAR -->
+  <section aria-labelledby="cal-h">
+    <div class="sec-head">
+      <div>
+        <h2 id="cal-h">P&amp;L calendar</h2>
+        <p>Green = made money that day, red = lost. Filter by tracker to see who's carrying (or dragging) the month. Click any day for the breakdown.</p>
+      </div>
+      <span class="hint cal-nav"><button type="button" class="fbtn nav" id="calPrev">‹ Prev</button> <button type="button" class="fbtn nav" id="calNext">Next ›</button></span>
+    </div>
+
+    <div class="cal-shell">
+      <div class="filters" id="filters" role="group" aria-label="Filter calendar by trade type"></div>
+      <div class="cal-summary" id="calSummary"></div>
+      <div class="dow" aria-hidden="true"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div>
+      <div class="grid" id="calGrid"></div>
+      <div class="detail" id="dayDetail" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- HOW TO READ -->
+  <section aria-labelledby="read-h">
+    <div class="sec-head"><div><h2 id="read-h">How to read this page in 30 seconds</h2></div></div>
+    <div class="read-grid">
+      <div class="read"><b>1 · Start at the top</b><p>Today / this week / this month tells you if the whole operation is green or red. Nothing else matters until that's clear.</p></div>
+      <div class="read"><b>2 · Check the scoreboard</b><p>Win rate alone lies — a tracker can win often and still lose money. Net P&amp;L next to win rate is the honest pair. Tap any tracker card or scoreboard row to see it method by method.</p></div>
+      <div class="read"><b>3 · Read the calendar like a diary</b><p>Streaks of red in one color (use the filter) means that tracker is out of sync with the market right now — not that it's broken forever.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    Paper results only — no real money, no broker fills. Numbers update as each tracker logs its activity.
+  </footer>
 </div>
-<script src="/static/simple-public.js"></script></body></html>
+
+<script src="/static/simple-public.js"></script>
+</body>
+</html>

@@ -107,7 +107,9 @@ def test_public_landing_and_detailed_dashboard_routing(tmp_path):
     with TestClient(app) as client:
         # Simple results page is the public default landing page
         r = client.get("/")
-        assert r.status_code == 200 and "Market Compass — Results" in r.text
+        assert r.status_code == 200
+        assert "Market Compass — Trading, in plain English" in r.text
+        assert "What each tracker actually does" in r.text
         assert client.get("/simple").status_code == 200
         # Simple APIs are public
         assert client.get("/api/simple").status_code == 200
