@@ -272,6 +272,9 @@ ICT_SETUP_NAMES = {
     'ict-push-v1': 'ICT Push',
     'ict-smt-divergence': 'SMT Divergence',
     'ict-turtle-soup': 'Turtle Soup',
+    'yt-morning-drive': 'Morning-Drive Fade',
+    'yt-icc': 'ICC',
+    'yt-rumers-box': 'Rumers Box',
 }
 FUTURES_EXIT_REASONS = {
     'stop': 'Stopped out',

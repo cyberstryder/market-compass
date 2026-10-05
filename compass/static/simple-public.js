@@ -130,20 +130,21 @@ function renderCards(){
 var DRILL = {
   smoothers: { title:'Smoothers, ticker by ticker',
     sub:'One card per ticker the Smoothers book has touched. Real paper P&L per name — bought at the ask, sold at the bid, fees in.',
-    pill:'Live', pillCls:'live', hit:false },
+    pill:'Live', pillCls:'live', hit:false, deeper:'View weeks ›' },
   futures: { title:'Futures, method by method',
     sub:'Every pattern detector, scored separately. Paper trades on micro futures — everything forced flat by 3:45pm CT.',
-    pill:'Paper / proving', pillCls:'test', hit:false },
+    pill:'Paper / proving', pillCls:'test', hit:false, deeper:'View trades ›' },
   zeroDte: { title:'0DTE, name by name',
     sub:'The morning SPY plan plus every scanner alert. 0DTE outcomes are not tracked yet — this is the activity log.',
-    pill:'Scanner only', pillCls:'test', hit:false, counts:true },
+    pill:'Scanner only', pillCls:'test', hit:false, counts:true, deeper:'View entries ›' },
   flowPulse: { title:'Flow Pulse, by direction',
     sub:'Split by which way the big money bet. Every pulse that fires opens a two-week paper track — win or lose, it stays on the record.',
-    pill:'Paper tracking', pillCls:'test', hit:false },
+    pill:'Paper tracking', pillCls:'test', hit:false, deeper:'View tracks ›' },
   flash: { title:'Flash Agentic, pattern by pattern',
     sub:'Setups grouped by pattern type, scored like the pick checker: target touched before invalidation wins, over five sessions.',
-    pill:'Evidence only', pillCls:'test', hit:true }
+    pill:'Evidence only', pillCls:'test', hit:true, deeper:'View setups ›' }
 };
+var drillType = null; /* mockup id of the level-2 view being shown */
 
 function tagFor(name, id){
   if(id === 'smoothers') return name.length <= 6 ? name : name.slice(0,6);
@@ -178,16 +179,25 @@ function drillCard(it, id, cfg){
   } else {
     res = '<span>No trades yet</span><span class="pill">Watching</span>';
   }
-  return '<article class="card">'
+  var deep = (st.tracked || 0) > 0 && cfg.deeper
+    ? '<span class="cta">' + esc(cfg.deeper) + '</span>' : '';
+  return '<article class="card' + (deep ? ' deeper' : '') + '"'
+    + (deep ? ' data-detail="' + esc(it.name) + '" tabindex="0" role="button" aria-label="Show ' + esc(cfg.deeper.replace(' ›','')) + ' for ' + esc(it.name) + '"' : '')
+    + '>'
     + '<div class="card-top"><span class="dot tag ' + (DOT_CLASS[id] || 'd-flash') + '">' + esc(tagFor(it.name, id)) + '</span>'
     + '<div><h3>' + esc(it.name) + '</h3></div></div>'
     + '<p>' + esc(it.watches || '') + '</p>'
+    + deep
     + '<div class="result">' + res + '</div></article>';
 }
 
 function selectDrill(id, scroll){
   var cfg = DRILL[id];
   if(!cfg || !SUMMARY) return;
+  drillType = id;
+  var back = document.getElementById('drillBack');
+  back.hidden = true;
+  document.getElementById('drillHintText').textContent = 'Same cards, one level deeper';
   var api = TYPES.filter(function(x){ return x.id === id; })[0].api;
   var block = SUMMARY.types[api];
   document.getElementById('drill-h').textContent = cfg.title;
@@ -217,10 +227,65 @@ function selectDrill(id, scroll){
     cards[i].classList.toggle('selected', on);
     cards[i].setAttribute('aria-pressed', on ? 'true' : 'false');
   }
+  wireDeeper(id);
   if(scroll){
     var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     document.getElementById('drillSection').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block:'start' });
   }
+}
+
+function wireDeeper(id){
+  document.querySelectorAll('#drillGrid .card.deeper').forEach(function(c){
+    var open = function(){ openDetail(id, c.getAttribute('data-detail')); };
+    c.addEventListener('click', open);
+    c.addEventListener('keydown', function(e){
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(); }
+    });
+  });
+}
+
+function detailCard(it, dotCls){
+  var rows = (it.rows || []).map(function(r){
+    return '<div><dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd></div>';
+  }).join('');
+  return '<article class="card">'
+    + '<div class="card-top"><span class="dot tag ' + dotCls + '">' + esc(it.tag || '?') + '</span>'
+    + '<div><h3>' + esc(it.title) + '</h3></div></div>'
+    + (it.sub ? '<p>' + esc(it.sub) + '</p>' : '')
+    + (rows ? '<dl class="rows">' + rows + '</dl>' : '')
+    + '<div class="result"><span class="' + (it.result_cls || '') + '">' + esc(it.result || '') + '</span></div></article>';
+}
+
+async function openDetail(id, itemName){
+  var cfg = DRILL[id];
+  var api = TYPES.filter(function(x){ return x.id === id; })[0].api;
+  document.getElementById('drill-h').textContent = itemName;
+  document.getElementById('drillSub').textContent = 'Loading…';
+  document.getElementById('drillGrid').innerHTML = '';
+  document.getElementById('drillSum').innerHTML = '';
+  try{
+    var res = await fetch('/api/simple/detail?type=' + encodeURIComponent(api) + '&name=' + encodeURIComponent(itemName));
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    var d = await res.json();
+    document.getElementById('drill-h').textContent = d.title || itemName;
+    document.getElementById('drillSub').textContent = d.sub || '';
+    var items = d.items || [];
+    document.getElementById('drillSum').innerHTML =
+      '<span><b>' + items.length + '</b> ' + (items.length === 1 ? 'entry' : 'entries') + '</span>';
+    var dotCls = DOT_CLASS[id] || 'd-flash';
+    document.getElementById('drillGrid').innerHTML = items.length
+      ? items.map(function(it){ return detailCard(it, dotCls); }).join('')
+      : '<p class="muted-note">Nothing logged here yet.</p>';
+    var back = document.getElementById('drillBack');
+    back.hidden = false;
+    back.textContent = '← ' + cfg.title;
+    back.onclick = function(){ selectDrill(id, true); };
+    document.getElementById('drillHintText').textContent = '';
+  }catch(err){
+    document.getElementById('drillSub').textContent = 'Couldn\u2019t load the detail — try again.';
+  }
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.getElementById('drillSection').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block:'start' });
 }
 
 /* ---------------- scoreboard ---------------- */

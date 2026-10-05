@@ -182,7 +182,7 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
@@ -473,6 +473,17 @@ def create_app(cfg=None):
             year, mon = now_c.year, now_c.month
         with db.tx() as c:
             return calendar(db,c,time.time(),year,mon)
+
+    @app.get('/api/simple/detail')
+    def get_simple_detail(type: str = Query(...), name: str = Query(...)):
+        # Level 3: per-ticker weeks, per-method trades, per-direction tracks,
+        # per-pattern setups, per-plan/alert lists. Read-only.
+        from .simple import detail
+        with db.tx() as c:
+            d = detail(db, c, time.time(), type, name)
+        if d is None:
+            raise HTTPException(400, 'unknown detail type')
+        return d
 
     @app.get('/api/option-stream-parity')
     def get_option_stream_parity():

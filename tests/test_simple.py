@@ -58,7 +58,12 @@ def test_smoothers_and_futures_aggregation(db):
     assert sm['drill'][0]['name'] == 'DEMO'
     fu = out['types']['futures']
     assert fu['stats']['pnl'] == -63.0 and fu['stats']['tracked'] == 1
-    assert fu['drill'][0]['name'] == 'AOI Zones'
+    # Full paper-trading roster is always listed, even with zero trades
+    assert len(fu['drill']) == 11
+    aoi = [d for d in fu['drill'] if d['name'] == 'AOI Zones'][0]
+    assert aoi['stats']['tracked'] == 1 and aoi['stats']['pnl'] == -63.0
+    gz = [d for d in fu['drill'] if d['name'] == 'Golden Zone + VWAP'][0]
+    assert gz['stats']['tracked'] == 0
     fp = out['types']['flow_pulse']
     assert fp['stats']['pnl'] == 48.7 and fp['stats']['peak_50_plus'] == 1
     fl = out['types']['flash']
@@ -119,3 +124,117 @@ def test_public_landing_and_detailed_dashboard_routing(tmp_path):
         assert r.status_code in (303, 307)
         client.post("/login", json={"password": "fixture-password-16"})
         assert client.get("/detailed").status_code == 200
+
+
+def _detail_fixtures(db, now):
+    with db.tx() as c:
+        c.execute(db.insert(smoothers_weekly).values(
+            id='d1', week='2026-09-28', ticker='DEMO', status='LOSS',
+            payload=_smoothers_payload(-20.0, now - 7 * 86400)))
+        c.execute(db.insert(smoothers_weekly).values(
+            id='d2', week='2026-10-05', ticker='DEMO', status='WIN',
+            payload=_smoothers_payload(50.0, now)))
+        db.put(c, 'trade:ict-d1', {'id': 'ict-d1', 'symbol': 'MNQ.c.0', 'side': 'long',
+                                   'qty': 2, 'strategy': 'ict-golden-zone', 'entry': 25000.0,
+                                   'exit': 25010.0, 'pnl': 40.0, 'exit_reason': 'target',
+                                   'status': 'closed', 'stop': 24990.0, 'target': 25010.0,
+                                   'entered_at': now - 7200, 'exited_at': now - 3600})
+        db.put(c, 'flow_pulse_track:kd', {'symbol': 'TSLA', 'direction': 'bullish',
+                                          'status': 'closed', 'entry': 3.0, 'exit': 2.0,
+                                          'exited_at': now, 'pnl': -101.3, 'strike': 500,
+                                          'type': 'call', 'expiry': '2026-10-16',
+                                          'peak_return_pct': 55.0, 'fired_at': now - 86400})
+        db.append(c, 'pick_check', 'dashboard', 'MU', now,
+                  {'ticker': 'MU', 'direction': 'long', 'source': 'flash_agentic',
+                   'pattern': 'FLOOR BOUNCE #4', 'at': now, 'entry': 100.0,
+                   'target': 105.0, 'invalidation': 98.0, 'setup_score': 92},
+                  key='pcd1')
+        db.append(c, 'alert', 'spy_brief', 'SPY', now,
+                  {'decision': 'CALL SETUP CONFIRMED',
+                   'plans': {'call': {'stop': 769.21, 'target': 773.51},
+                             'put': {'stop': 771.0, 'target': 767.0}}}, key='sbd1')
+        db.append(c, 'alert', 'scanner', 'NVDA', now,
+                  {'publication': {'category': 'options_0dte', 'event': 'breakout',
+                                   'contract': {'underlying': 'NVDA', 'strike': 285,
+                                                'type': 'call'}}}, key='od1')
+
+
+def test_detail_smoothers_weeks(db):
+    now = NOW
+    _detail_fixtures(db, now)
+    with db.tx() as c:
+        d = simple.detail(db, c, now, 'smoothers', 'DEMO')
+    assert d['title'] == 'DEMO — week by week'
+    assert len(d['items']) == 2
+    assert d['items'][0]['title'].startswith('Week of Oct')
+    assert d['items'][0]['result_cls'] == 'pos'
+    assert d['items'][1]['result_cls'] == 'neg'
+
+
+def test_detail_futures_trades(db):
+    now = NOW
+    _detail_fixtures(db, now)
+    with db.tx() as c:
+        d = simple.detail(db, c, now, 'futures', 'Golden Zone + VWAP')
+    assert len(d['items']) == 1
+    it = d['items'][0]
+    assert it['title'] == 'MNQ long'
+    assert it['result'] == '+$40' and it['result_cls'] == 'pos'
+    assert any(r[0] == 'Exit reason' and r[1] == 'Target hit' for r in it['rows'])
+
+
+def test_detail_flow_tracks(db):
+    now = NOW
+    _detail_fixtures(db, now)
+    with db.tx() as c:
+        d = simple.detail(db, c, now, 'flow_pulse', 'Bullish flow')
+    assert len(d['items']) == 1
+    it = d['items'][0]
+    assert 'TSLA' in it['title']
+    assert it['result_cls'] == 'neg'
+    assert any(r[0] == 'Best excursion' for r in it['rows'])
+
+
+def test_detail_flash_setups(db):
+    now = NOW
+    _detail_fixtures(db, now)
+    with db.tx() as c:
+        d = simple.detail(db, c, now, 'flash', 'FLOOR BOUNCE #4')
+    assert len(d['items']) == 1
+    it = d['items'][0]
+    assert it['title'] == 'MU long'
+    assert any(r[0] == 'Invalidation' for r in it['rows'])
+
+
+def test_detail_0dte_plans_and_alerts(db):
+    now = NOW
+    _detail_fixtures(db, now)
+    with db.tx() as c:
+        plans = simple.detail(db, c, now, '0dte', 'SPY morning plan')
+        alerts = simple.detail(db, c, now, '0dte', '0DTE scanner')
+    assert len(plans['items']) == 1
+    assert 'CALL SETUP CONFIRMED' in plans['items'][0]['title']
+    assert any(r[0] == 'Call stop/target' for r in plans['items'][0]['rows'])
+    assert len(alerts['items']) == 1
+    assert 'NVDA' in alerts['items'][0]['title']
+
+
+def test_detail_unknown_type_returns_none(db):
+    with db.tx() as c:
+        assert simple.detail(db, c, NOW, 'nope', 'x') is None
+        assert simple.detail(db, c, NOW, 'futures', '') is None
+
+
+def test_detail_endpoint_is_public(tmp_path):
+    from compass.app import create_app
+    from compass.config import Config
+    from fastapi.testclient import TestClient
+    cfg = Config(local=True, role="web", db="sqlite:///" + str(tmp_path / "web2.db"),
+                 password="fixture-password-16")
+    app = create_app(cfg)
+    with TestClient(app) as client:
+        r = client.get("/api/simple/detail", params={"type": "futures", "name": "ICC"})
+        assert r.status_code == 200
+        assert r.json()["name"] == "ICC"
+        r = client.get("/api/simple/detail", params={"type": "nope", "name": "x"})
+        assert r.status_code == 400

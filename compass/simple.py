@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 
 from .alert_format import ICT_SETUP_NAMES
+from .ict_paper import STRATEGY_TAGS as ICT_PAPER_TAGS
 from .native_smoothers import weekly as smoothers_weekly
 from .smoothers_scorecard import option_result
 
@@ -134,9 +135,24 @@ def _futures(db, c, now):
             open_count += 1
     all_trades = [t for v in per_method.values() for t in v]
     drill = []
+    # Full paper-trading roster: every detector wired for attribution shows up,
+    # even before its first closed trade — the page answers "what are we testing?"
+    seen = set()
+    for tag in ICT_PAPER_TAGS.values():
+        name = ICT_SETUP_NAMES.get(tag, tag)
+        if tag in seen:
+            continue
+        seen.add(tag)
+        drill.append(_drill(name, "Paper-traded micro futures signals.",
+                            _stats(per_method.get(tag, []))))
+    # Any strategy tag seen in the data but not on the roster (legacy/renamed)
     for method in sorted(per_method):
+        if method in seen:
+            continue
+        seen.add(method)
         name = ICT_SETUP_NAMES.get(method, method)
-        drill.append(_drill(name, "Paper-traded micro futures signals.", _stats(per_method[method])))
+        drill.append(_drill(name, "Paper-traded micro futures signals.",
+                            _stats(per_method[method])))
     stats = _stats(all_trades)
     stats["open"] = open_count
     return (_block(
@@ -286,6 +302,298 @@ def _0dte(db, c, now):
         "The SPY plan every morning; scanner alerts intraday.",
         "Not scored yet — outcomes are not tracked for 0DTE. Counts only.",
         stats, drill), by_day)
+
+
+# ---------------------------------------------------------------- level 3 detail
+#
+# One more level down: per-ticker weekly history, per-method trades,
+# per-direction tracks, per-pattern setups, per-plan/alert lists.
+# Items use the same plain-English card shape as the drill-down.
+
+
+def _m(pnl):
+    if pnl is None:
+        return "—"
+    v = int(round(pnl))
+    if v == 0:
+        return "$0"
+    return "%s$%s" % ("-" if v < 0 else "+", f"{abs(v):,}")
+
+
+def _ts(ts):
+    try:
+        return datetime.fromtimestamp(float(ts), CT).strftime("%b %-d, %-I:%M%p CT")
+    except (TypeError, ValueError, OSError):
+        return "—"
+
+
+def _detail_smoothers(db, c, now, name):
+    rows = list(c.execute(select(
+        smoothers_weekly.c.week, smoothers_weekly.c.status,
+        smoothers_weekly.c.payload)
+        .where(smoothers_weekly.c.ticker == name)
+        .order_by(smoothers_weekly.c.week.desc()).limit(104)).mappings())
+    items = []
+    for r in rows:
+        p = r.get("payload") or {}
+        if not isinstance(p, dict):
+            continue
+        res = option_result(p)
+        pnl = res.get("net_pnl")
+        status = r.get("status") or "?"
+        week = r.get("week") or "?"
+        try:
+            dt = datetime.fromisoformat(week)
+            wl = dt.strftime("%b %d, %Y")
+            tag = dt.strftime("%m/%d")
+        except (ValueError, TypeError):
+            wl, tag = week, "?"
+        direction = (p.get("direction") or "").upper()
+        entry, target = p.get("entry_price"), p.get("target_price")
+        sub = ("%s %s" % (name, direction)).strip()
+        if entry and target:
+            try:
+                sub += " · $%.2f → $%.2f" % (float(entry), float(target))
+            except (TypeError, ValueError):
+                pass
+        orows = [["Status", status]]
+        if pnl is not None:
+            orows.append(["Net P&L", _m(pnl)])
+        orows.append(["Target hit", "Yes" if status == "WIN" else "No"])
+        items.append({
+            "tag": tag, "title": "Week of " + wl, "sub": sub, "rows": orows,
+            "result": _m(pnl) if pnl is not None else "Pending",
+            "result_cls": "pos" if pnl is not None and pnl > 0 else ("neg" if pnl is not None and pnl < 0 else ""),
+        })
+    return {"type": "smoothers", "name": name,
+            "title": "%s — week by week" % name,
+            "sub": "Every weekly signal on %s, newest first." % name,
+            "items": items}
+
+
+def _detail_futures(db, c, now, name):
+    from .alert_format import FUTURES_EXIT_REASONS
+    name_to_tag = {ICT_SETUP_NAMES.get(t, t): t for t in ICT_PAPER_TAGS.values()}
+    tag = name_to_tag.get(name, name)
+    try:
+        trades = db.prefix(c, "trade:ict-")
+    except Exception:
+        trades = {}
+    items = []
+    for t in trades.values():
+        if not isinstance(t, dict) or t.get("strategy") != tag:
+            continue
+        sym = str(t.get("symbol") or "?").split(".")[0]
+        side = str(t.get("side") or "?")
+        entered = _num(t.get("entered_at")) or _num(t.get("decided_at"))
+        exited = _num(t.get("exited_at"))
+        pnl = _num(t.get("pnl"))
+        entry, exit = _num(t.get("entry")), _num(t.get("exit"))
+        status = t.get("status") or "?"
+        if exited:
+            sub = "%s → %s" % (_ts(entered), _ts(exited))
+        else:
+            sub = "Opened %s · still open" % _ts(entered)
+        reason = t.get("exit_reason")
+        orows = [["Entry", "%.2f" % entry if entry is not None else "—"],
+                 ["Exit", "%.2f" % exit if exit is not None else "—"]]
+        if status == "closed" and reason:
+            orows.append(["Exit reason", FUTURES_EXIT_REASONS.get(reason, reason)])
+        elif status != "closed":
+            orows.append(["Stop", "%.2f" % _num(t.get("stop")) if _num(t.get("stop")) is not None else "—"])
+            orows.append(["Target", "%.2f" % _num(t.get("target")) if _num(t.get("target")) is not None else "—"])
+        items.append({
+            "tag": "L" if side == "long" else ("S" if side == "short" else "?"),
+            "title": "%s %s" % (sym, side), "sub": sub, "rows": orows,
+            "_sort": entered or 0,
+            "result": _m(pnl) if pnl is not None else ("Open" if status != "closed" else "—"),
+            "result_cls": "pos" if pnl is not None and pnl > 0 else ("neg" if pnl is not None and pnl < 0 else ""),
+        })
+    items.sort(key=lambda i: i.pop("_sort"), reverse=True)
+    return {"type": "futures", "name": name,
+            "title": "%s — trade by trade" % name,
+            "sub": "Every paper trade this detector has taken, newest first. Micros, flat by 3:45pm CT.",
+            "items": items[:100]}
+
+
+def _detail_flow(db, c, now, name):
+    direction = "bearish" if "bear" in name.lower() else "bullish"
+    try:
+        tracks = db.prefix(c, "flow_pulse_track:")
+    except Exception:
+        tracks = {}
+    items = []
+    for rec in tracks.values():
+        if not isinstance(rec, dict):
+            continue
+        if str(rec.get("direction") or "").lower() != direction:
+            continue
+        sym = rec.get("symbol") or "?"
+        status = rec.get("status") or "?"
+        pnl = _num(rec.get("pnl"))
+        peak = _num(rec.get("peak_return_pct"))
+        fired = _num(rec.get("fired_at"))
+        exited = _num(rec.get("exited_at"))
+        strike, typ, expiry = rec.get("strike"), rec.get("type"), rec.get("expiry")
+        contract = "%s%s%s" % (strike or "?", (typ or "?")[:1].upper(),
+                               (" · " + str(expiry)) if expiry else "")
+        sub = "Fired %s" % _ts(fired)
+        if exited:
+            sub += " · exited %s" % _ts(exited)
+        orows = [["Contract", contract],
+                 ["Entry", "$%.2f" % _num(rec.get("entry")) if _num(rec.get("entry")) is not None else "—"],
+                 ["Status", "Closed" if status == "closed" else "Open"]]
+        if peak is not None:
+            orows.append(["Best excursion", "%+.0f%%" % peak])
+        items.append({
+            "tag": sym[:6], "title": "%s %s" % (sym, direction),
+            "sub": sub, "rows": orows, "_sort": fired or 0,
+            "result": _m(pnl) if pnl is not None else "Open",
+            "result_cls": "pos" if pnl is not None and pnl > 0 else ("neg" if pnl is not None and pnl < 0 else ""),
+        })
+    items.sort(key=lambda i: i.pop("_sort"), reverse=True)
+    return {"type": "flow_pulse", "name": name,
+            "title": "%s — track by track" % name,
+            "sub": "Every two-week paper track opened on %s flow, newest first." % direction,
+            "items": items[:100]}
+
+
+def _detail_flash(db, c, now, name):
+    try:
+        from .pick_scorecard import scorecard
+        sc = scorecard(db, c, now, limit=500)
+        checks = sc.get("checks") or []
+    except Exception:
+        checks = []
+    items = []
+    for ch in checks:
+        if ch.get("source") != "flash_agentic":
+            continue
+        if (ch.get("pattern") or "unknown") != name:
+            continue
+        out = ch.get("outcome") or {}
+        st = out.get("status") or "unknown"
+        olabel = {"win": "Target hit", "loss": "Invalidated",
+                  "open": "Still open"}.get(st, "—")
+        ticker = ch.get("ticker") or "?"
+        direction = ch.get("direction") or "?"
+        at = _num(ch.get("at"))
+        sub = "Logged %s" % _ts(at)
+        if ch.get("setup_score") is not None:
+            sub += " · score %g" % ch["setup_score"]
+        def _f(x):
+            v = _num(x)
+            return "%.2f" % v if v is not None else "—"
+        orows = [["Entry", _f(ch.get("entry"))],
+                 ["Target", _f(ch.get("target"))],
+                 ["Invalidation", _f(ch.get("invalidation"))],
+                 ["Outcome", olabel]]
+        items.append({
+            "tag": ticker[:6], "title": "%s %s" % (ticker, direction),
+            "sub": sub, "rows": orows, "_sort": at or 0,
+            "result": olabel,
+            "result_cls": "pos" if st == "win" else ("neg" if st == "loss" else ""),
+        })
+    items.sort(key=lambda i: i.pop("_sort"), reverse=True)
+    return {"type": "flash", "name": name,
+            "title": "%s — setup by setup" % name,
+            "sub": "Every logged setup of this pattern, newest first. Target before invalidation wins.",
+            "items": items[:100]}
+
+
+def _detail_0dte(db, c, now, name):
+    from .store import events
+    from sqlalchemy import or_
+    p = events.c.payload
+    items = []
+    if name == "SPY morning plan":
+        from .day_digest import _plan_outcome
+        try:
+            rows = c.execute(select(events).where(
+                events.c.kind == "alert",
+                events.c.source == "spy_brief",
+                events.c.ts >= now - 90 * 86400,
+            ).order_by(events.c.ts.desc()).limit(60)).mappings()
+        except Exception:
+            rows = []
+        for r in rows:
+            rep = r.get("payload") or {}
+            if not isinstance(rep, dict):
+                continue
+            ts = _num(r.get("ts")) or 0
+            decision = rep.get("decision") or rep.get("bias") or "published"
+            plans = rep.get("plans") or {}
+            orows = [["Decision", decision]]
+            for side in ("call", "put"):
+                plan = plans.get(side) or {}
+                if plan.get("stop") or plan.get("target"):
+                    orows.append(["%s stop/target" % side.title(),
+                                  "%.2f / %.2f" % (_num(plan.get("stop")) or 0,
+                                                   _num(plan.get("target")) or 0)])
+            outcome = ""
+            if str(decision).endswith("SETUP CONFIRMED"):
+                try:
+                    outcome = _plan_outcome(db, c, rep, decision, ts) or ""
+                except Exception:
+                    outcome = ""
+            if outcome:
+                orows.append(["Outcome", outcome])
+            day = _day(ts) or "?"
+            items.append({
+                "tag": "SPY", "title": "%s — %s" % (day, decision),
+                "sub": "Pre-market plan, %s" % _ts(ts), "rows": orows,
+                "result": outcome or "No confirmed setup",
+                "result_cls": "pos" if "target" in outcome.lower() else ("neg" if "stop" in outcome.lower() else ""),
+            })
+        title = "SPY morning plan — day by day"
+        sub = "Each morning's SPY plan and what happened to it."
+    else:
+        try:
+            rows = c.execute(select(events).where(
+                events.c.kind == "alert",
+                events.c.ts >= now - 90 * 86400,
+                p["publication"]["category"].as_string() == "options_0dte",
+            ).order_by(events.c.ts.desc()).limit(100)).mappings()
+        except Exception:
+            rows = []
+        for r in rows:
+            pub = (r.get("payload") or {}).get("publication") or {}
+            contract = pub.get("contract") or {}
+            ts = _num(r.get("ts")) or 0
+            underlying = contract.get("underlying") or "?"
+            strike = contract.get("strike")
+            typ = contract.get("type") or ""
+            event = pub.get("status") or pub.get("event") or ""
+            title_txt = "%s %s%s" % (underlying,
+                                     ("%g" % _num(strike)) if _num(strike) is not None else "?",
+                                     typ[:1].upper() if typ else "")
+            orows = [["Event", event or "—"], ["Time", _ts(ts)]]
+            items.append({
+                "tag": underlying[:6], "title": title_txt,
+                "sub": _ts(ts), "rows": orows,
+                "result": event or "Alert", "result_cls": "",
+            })
+        title = "0DTE scanner — alert by alert"
+        sub = "Every same-day-expiry scanner alert, newest first."
+    return {"type": "0dte", "name": name, "title": title, "sub": sub, "items": items}
+
+
+def detail(db, c, now, dtype, name):
+    builders = {
+        "smoothers": _detail_smoothers,
+        "futures": _detail_futures,
+        "flow_pulse": _detail_flow,
+        "flash": _detail_flash,
+        "0dte": _detail_0dte,
+    }
+    fn = builders.get(dtype)
+    if not fn or not name:
+        return None
+    try:
+        return fn(db, c, now, str(name)[:80])
+    except Exception:
+        return {"type": dtype, "name": name, "title": str(name),
+                "sub": "", "items": []}
 
 
 # ---------------------------------------------------------------- public
