@@ -182,7 +182,7 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
-        public=path in {"/health","/login","/simple","/api/simple","/api/simple/calendar"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
@@ -258,6 +258,9 @@ def create_app(cfg=None):
         return r
 
     @app.get("/",response_class=HTMLResponse)
+    def simple_home(): return (root/"static"/"simple-public.html").read_text()
+
+    @app.get("/detailed",response_class=HTMLResponse)
     def dashboard(): return (root/"static"/"index.html").read_text()
 
     # The dashboard snapshot is split into two tiers to keep the 3-second
