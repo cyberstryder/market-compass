@@ -221,7 +221,6 @@ def _format_smoothers_exit(p,pub,o):
         line3=f"Underlying ${final:,.2f} at close" if numeric(final) else None
     lines=[title,line2]
     if line3:lines.append(line3)
-    lines.append("Research signal — no broker order")
     return '\n'.join(lines)[:1950]
 
 

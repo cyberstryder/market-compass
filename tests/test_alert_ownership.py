@@ -241,7 +241,7 @@ def test_smoothers_exit_target_hit_compact():
     assert lines[1]=='Target hit · underlying reached $128.80'
     assert lines[2].startswith('Option $2.72/$3.30 @ ')
     assert 'modeled entry $2.01 (+50% ref)' in lines[2]
-    assert lines[3]=='Research signal — no broker order'
+    assert len(lines)==3 and 'Research signal' not in text
     assert 'Trade ID:' not in text and 'Event #' not in text and 'Quote source' not in text
     assert 'Entry deadline' not in text
 
@@ -259,7 +259,7 @@ def test_smoothers_exit_week_close_target_not_hit():
     assert lines[0]=='SMOOTHERS | EXIT | COP 127 CALL · 2026-10-09'
     assert lines[1]=='Week closed · target $128.80 not hit'
     assert lines[2]=='Underlying $124.10 at close'
-    assert lines[3]=='Research signal — no broker order'
+    assert len(lines)==3 and 'Research signal' not in text
     assert 'Trade ID:' not in text
 
 
