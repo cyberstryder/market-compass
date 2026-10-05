@@ -83,3 +83,25 @@ def test_empty_db_returns_empty_blocks(db):
         out = simple.summary(db, c, 1_000_000_000.0)
     assert set(out['types']) == {'smoothers', 'futures', 'flow_pulse', 'flash', '0dte'}
     assert all(t['stats']['tracked'] == 0 for t in out['types'].values())
+
+
+def test_public_landing_and_detailed_dashboard_routing(tmp_path):
+    from compass.app import create_app
+    from compass.config import Config
+    from fastapi.testclient import TestClient
+    cfg = Config(local=True, role="web", db="sqlite:///" + str(tmp_path / "web.db"),
+                 password="fixture-password-16")
+    app = create_app(cfg)
+    with TestClient(app) as client:
+        # Simple results page is the public default landing page
+        r = client.get("/")
+        assert r.status_code == 200 and "Market Compass — Results" in r.text
+        assert client.get("/simple").status_code == 200
+        # Simple APIs are public
+        assert client.get("/api/simple").status_code == 200
+        assert client.get("/api/simple/calendar?month=2026-10").status_code == 200
+        # The detailed workspace still requires auth
+        r = client.get("/detailed", follow_redirects=False)
+        assert r.status_code in (303, 307)
+        client.post("/login", json={"password": "fixture-password-16"})
+        assert client.get("/detailed").status_code == 200

@@ -260,5 +260,5 @@ def test_owner_api_is_read_only_and_html_exposes_every_checkpoint(tmp_path):
                 if tag=='option' and self.selected:self.values.append(attrs.get('value'))
             def handle_endtag(self,tag):
                 if tag=='select':self.selected=False
-        parser=Selects();parser.feed(client.get('/').text)
+        parser=Selects();parser.feed(client.get('/detailed').text)
         assert set(parser.values)==set(HORIZONS) and len(parser.values)==len(HORIZONS)

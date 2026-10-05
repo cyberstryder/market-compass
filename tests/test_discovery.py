@@ -171,6 +171,6 @@ def test_report_route_and_dashboard_are_wired_without_an_alert(db):
         response=client.get('/api/discovery')
         assert response.status_code==200 and response.json()['version']==VERSION
         assert response.json()['total']==0
-        html=client.get('/').text
+        html=client.get('/detailed').text
         assert 'id="discovery"' in html and '/static/discovery.js' in html
         assert client.get('/static/discovery.js').status_code==200

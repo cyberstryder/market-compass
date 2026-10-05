@@ -396,5 +396,5 @@ def test_owner_read_only_api_filters_and_dashboard_controls(tmp_path):
                 if tag=='option' and self.active:self.values.append(attrs['value'])
             def handle_endtag(self,tag):
                 if tag=='select':self.active=False
-        parser=Options();parser.feed(client.get('/').text)
+        parser=Options();parser.feed(client.get('/detailed').text)
         assert set(parser.values)==set(COHORTS) and len(parser.values)==len(COHORTS)

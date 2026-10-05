@@ -349,4 +349,4 @@ def test_review_api_requires_owner_auth_and_dashboard_reports_no_comparison_yet(
         assert data["comparisons"] == [] and not data["originals_changed"]
         assert client.get("/api/secondary/record?id=bad").status_code == 422
         assert client.get("/api/secondary/record?id=" + "a" * 64).status_code == 404
-        assert "Independent reviews" in client.get("/").text
+        assert "Independent reviews" in client.get("/detailed").text

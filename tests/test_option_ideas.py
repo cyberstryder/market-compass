@@ -251,7 +251,7 @@ def test_dashboard_api_is_private_and_includes_options_ideas(db,cfg):
         assert 'option_ideas' not in client.get('/api/state').json()
         state=client.get('/api/state/studies').json()
         assert state['option_ideas']['enabled']
-        assert 'Options ideas' in client.get('/').text
+        assert 'Options ideas' in client.get('/detailed').text
 
 
 def test_entry_diagnostics_distinguish_subscription_gap_without_relaxing_entry(db,cfg):

@@ -401,4 +401,4 @@ def test_swing_state_is_owner_only(db,cfg):
         assert result.status_code==200 and 'swing_ideas' not in result.json()
         studies=client.get('/api/state/studies')
         assert studies.status_code==200 and studies.json()['swing_ideas']['max_hold_sessions']==10
-        assert 'swing-ideas' in client.get('/').text
+        assert 'swing-ideas' in client.get('/detailed').text
