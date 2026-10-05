@@ -32,6 +32,34 @@ def record(stats):
 def field(name,value,inline=True):return dict(name=name,value=str(value),inline=inline)
 
 
+def quote_stamp(value):
+    try:return datetime.fromtimestamp(ts(value),CT).strftime('%H:%M CT')
+    except (TypeError,ValueError,OverflowError):return 'time unavailable'
+
+
+def quote_ok(p):
+    """A roster row may show option pricing only when the publication-batch
+    quote is usable; otherwise any modeled number is stale."""
+    q=p.get('quote') or {}
+    return (q.get('status') in ('available','wide_spread')
+            and number(q.get('bid')) is not None and number(q.get('ask')) is not None)
+
+
+def quote_line(p):
+    """Publication-batch option quote for a roster row, with its timestamp.
+
+    Uses only the batch-refreshed quote from refresh_entry_quotes(); a stale
+    modeled premium is never shown as a price. No fresh quote renders an
+    honest 'unavailable' instead of a stale number."""
+    q=p.get('quote') or {}
+    if quote_ok(p):
+        mid=number(q.get('midpoint'))
+        return (f"Option {dollar(q['bid'])}/{dollar(q['ask'])}"
+                +(f' (mid {dollar(mid)})' if mid is not None else '')
+                +f" @ {quote_stamp(q.get('quote_at_ms'))}")
+    return 'Option quote unavailable'
+
+
 def envelope(p,event,description,fields,color):
     return {'username':'Smoothers','allowed_mentions':{'parse':[]},'embeds':[{
         'title':f"SMOOTHERS | {event} | {p['ticker']} · {p.get('direction','Unavailable')}",
@@ -110,9 +138,12 @@ def roster(signals,week,now,errors=0):
         if not rows:continue
         blocks.append(f'**{tier} ({len(rows)})**')
         for p in rows:
-            prem=number(p.get('entry_premium'));config=p.get('config') or {};c=p.get('contract') or {}
+            config=p.get('config') or {};c=p.get('contract') or {}
+            # Est return is only meaningful against the displayed quote; a
+            # stale modeled return with no usable quote renders Unavailable.
+            ret=p.get('est_return_pct') if quote_ok(p) else None
             blocks.append(f"**{p['ticker']} {p['direction']} · {tier} · "+(f"F{p['featured_rank']:02d}" if p.get('featured_rank') else f"Q{p.get('quality_rank','—')}")+f"**\nStock {dollar(p.get('entry_price'))} → target {dollar(p.get('target_price'))} | Strike {dollar(c.get('strike'))}\n"
-                f"Option cost {dollar(prem*100 if prem is not None else None)} | Est return {pct(p.get('est_return_pct'),0)} | ATR {p.get('target_atr_mult','Unavailable')} | Score {p.get('quality_score','Unavailable')} | Backtest {pct(config['backtest_wr']*100,0) if config.get('backtest_wr') is not None else 'Unavailable'} | Recorded {record(p.get('stats_at_entry'))}")
+                f"{quote_line(p)} | Est return {pct(ret,0)} | ATR {p.get('target_atr_mult','Unavailable')} | Score {p.get('quality_score','Unavailable')} | Backtest {pct(config['backtest_wr']*100,0) if config.get('backtest_wr') is not None else 'Unavailable'} | Recorded {record(p.get('stats_at_entry'))}")
     chunks=[];header=f'**SMOOTHERS | WEEKLY ROSTER | {week}**';current=header
     for block in blocks:
         if len(current)+len(block)+2>1900:chunks.append(current);current=header+' | CONTINUED'

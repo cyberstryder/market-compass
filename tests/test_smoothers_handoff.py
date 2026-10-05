@@ -123,7 +123,14 @@ def test_identical_source_refresh_is_stable_but_quote_changes_require_new_review
         c.execute(records.update().values(updated=now+1))
         p=signals[0];p['quote']['bid']=.94;save(db,c,p)
     enable(monkeypatch)
-    with pytest.raises(RevisionConflict,match='evidence changed'):activate(db,plan['id'],True,True,True,now+1)
+    # The roster renders the publication-batch bid/ask, so a quote change both
+    # alters the evidence and invalidates the queued preview: activation stays
+    # blocked until the data matches the reviewed preview again.
+    with pytest.raises(RevisionConflict,match='[Ee]vidence'):activate(db,plan['id'],True,True,True,now+1)
+    # Restoring the reviewed quote and re-preparing recovers a clean review.
+    with db.tx() as c:
+        p=signals[0];p['quote']['bid']=.95;save(db,c,p)
+        c.execute(records.update().values(updated=now+2))
     plan=prepare(db,'2026-09-14','2026-09-21',now+1)
     assert plan['state']=='prepared',plan['blockers']
     with db.tx() as c:c.execute(records.update().values(updated=now+2))
