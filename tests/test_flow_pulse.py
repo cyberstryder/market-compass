@@ -470,3 +470,48 @@ def test_scan_opens_tracking_for_fired_pulse(db):
     rec = next(iter(tracks.values()))
     assert rec['symbol'] == 'MRK' and rec['direction'] == 'bearish'
     assert rec['status'] == 'open'
+
+
+def test_update_tracking_peaks_records_high_water(db):
+    key = 'flowpulse:2026-10-05:MRK:bearish'
+    with db.tx() as c:
+        pulse = _seed_track_market(db)
+        fp.open_tracking(db, c, pulse, key, NOW)
+        # Mid-hold spike: bid jumps to 5.00, then falls back.
+        db.put(c, 'chain:MRK', {'asof': NOW + 5 * 86400, 'contracts': [
+            _quoted_contract(symbol='O:MRK261030P00140000', strike=140.0,
+                             delta=-0.50, bid=5.00, ask=5.10)]})
+        fp.update_tracking_peaks(db, c, NOW + 5 * 86400)
+        db.put(c, 'chain:MRK', {'asof': NOW + 6 * 86400, 'contracts': [
+            _quoted_contract(symbol='O:MRK261030P00140000', strike=140.0,
+                             delta=-0.50, bid=2.50, ask=2.60)]})
+        fp.update_tracking_peaks(db, c, NOW + 6 * 86400)
+        rec = db.get(c, 'flow_pulse_track:' + key)
+    assert rec['peak_bid'] == 5.00
+    assert rec['status'] == 'open'  # peak never closes the track
+
+
+def test_closed_track_reports_peak_return(db):
+    key = 'flowpulse:2026-10-05:MRK:bearish'
+    with db.tx() as c:
+        pulse = _seed_track_market(db)
+        fp.open_tracking(db, c, pulse, key, NOW)
+        db.put(c, 'chain:MRK', {'asof': NOW + 5 * 86400, 'contracts': [
+            _quoted_contract(symbol='O:MRK261030P00140000', strike=140.0,
+                             delta=-0.50, bid=5.00, ask=5.10)]})
+        fp.update_tracking_peaks(db, c, NOW + 5 * 86400)
+    later = NOW + 15 * 86400
+    with db.tx() as c:
+        # Fades into the close: exit bid 2.50 -> a loss at the horizon.
+        db.put(c, 'chain:MRK', {'asof': later, 'contracts': [
+            _quoted_contract(symbol='O:MRK261030P00140000', strike=140.0,
+                             delta=-0.50, bid=2.50, ask=2.60)]})
+        fp.evaluate_tracking(db, c, TrackCfg(), later)
+        rec = db.get(c, 'flow_pulse_track:' + key)
+        tr = fp.track_record(db, c)
+    assert rec['outcome'] == 'loss'
+    # peak: (5.00-0.01-3.11)*100 - 1.30 = 186.70 -> +60.03% on $311 cost
+    assert rec['peak_pnl'] == 186.70
+    assert rec['peak_return_pct'] == round(100 * 186.70 / 311.0, 2)
+    assert tr['hit_plus_50'] == 1
+    assert tr['avg_peak_return_pct'] == rec['peak_return_pct']

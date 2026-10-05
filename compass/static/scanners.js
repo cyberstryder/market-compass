@@ -76,7 +76,7 @@
   $('#pulse-asof').textContent='Evaluated '+when(r.asof)+(r.last_scan?' · scan '+when(r.last_scan):'');
   const tr=r.track_record||{};
   const trLine=(tr.tracked||0)>0
-    ?'Paper track record: '+tr.tracked+' closed · '+tr.wins+' wins ('+num((tr.win_rate||0)*100,1)+'% ) · avg '+num(tr.avg_return_pct||0,1)+'% · total $'+num(tr.total_pnl||0,2)+(tr.open?' · '+tr.open+' open':'')
+    ?'Paper track record: '+tr.tracked+' closed · '+tr.wins+' wins ('+num((tr.win_rate||0)*100,1)+'% ) · avg '+num(tr.avg_return_pct||0,1)+'% · total $'+num(tr.total_pnl||0,2)+' · avg peak '+num(tr.avg_peak_return_pct||0,1)+'% · '+tr.hit_plus_50+' hit +50% at some point'+(tr.open?' · '+tr.open+' open':'')
     :'Paper track record: no closed tracks yet'+(tr.open?' · '+tr.open+' open':'');
   const rows=(r.pulses||[]).slice(0,25);
   const tops=p=>(p.top_prints||[]).slice(0,3).map(t=>esc(t.option_type||'?')+' '+esc(t.strike)+' '+esc(t.expiry)+' $'+num((t.premium||0)/1000,0)+'k').join(' · ');

@@ -249,6 +249,7 @@ def scan(db, c, cfg, now):
     db.put(c, 'flow_pulse:latest', {'at': now, 'pulses': pulses,
                                     'fired_today': len(fired)})
     try:
+        update_tracking_peaks(db, c, now)
         evaluate_tracking(db, c, cfg, now)
     except Exception:
         pass
@@ -450,9 +451,32 @@ def open_tracking(db, c, pulse, key, now):
         'type': sug.get('type'), 'delta': sug.get('delta'),
         'entry': round(ask + TRACK_SLIPPAGE, 2), 'qty': 1, 'multiplier': 100,
         'horizon_at': now + TRACK_HORIZON, 'status': 'open',
+        # High-water mark: the best exit seen during the hold. Updated on
+        # every scan from the latest chain snapshot, so the scorecard can
+        # show "it was up X% at some point" even when the 2-week close is
+        # flat or red — flow-driven spikes often fade before the horizon.
+        'peak_bid': None, 'peak_at': None,
     }
     db.put(c, 'flow_pulse_track:' + key, rec)
     return key
+
+
+def update_tracking_peaks(db, c, now):
+    """Refresh the high-water mark on open tracks. Cheap: runs every scan."""
+    for tkey, rec in db.prefix(c, 'flow_pulse_track:').items():
+        if not isinstance(rec, dict) or rec.get('status') != 'open':
+            continue
+        try:
+            chain = db.get(c, 'chain:' + rec['symbol']) or {}
+            bid, _ = _chain_quote(chain, rec['contract'])
+            if bid is None or bid <= 0:
+                continue
+            if rec.get('peak_bid') is None or bid > rec['peak_bid']:
+                rec['peak_bid'] = bid
+                rec['peak_at'] = now
+                db.put(c, tkey, rec)
+        except Exception:
+            continue
 
 
 def evaluate_tracking(db, c, cfg, now):
@@ -489,9 +513,18 @@ def evaluate_tracking(db, c, cfg, now):
         gross = (exit_px - rec['entry']) * 100 * qty
         net = round(gross - 2 * TRACK_FEE_SIDE, 2)
         cost = rec['entry'] * 100 * qty
+        # What the trade looked like at its best: peak bid marked the same
+        # way as an exit (bid - slippage, minus round-trip fees).
+        peak_bid = rec.get('peak_bid')
+        peak_pnl = (round((peak_bid - TRACK_SLIPPAGE - rec['entry']) * 100 * qty
+                          - 2 * TRACK_FEE_SIDE, 2)
+                    if peak_bid else None)
         rec.update(status='closed', exit=exit_px, exited_at=now, pnl=net,
                    return_pct=round(100 * net / cost, 2) if cost else None,
-                   outcome='win' if net > 0 else 'loss')
+                   outcome='win' if net > 0 else 'loss',
+                   peak_pnl=peak_pnl,
+                   peak_return_pct=(round(100 * peak_pnl / cost, 2)
+                                    if peak_pnl is not None and cost else None))
         db.put(c, tkey, rec)
         closed += 1
     return {'ran': True, 'open': opened, 'closed': closed}
@@ -505,11 +538,20 @@ def track_record(db, c):
     open_n = sum(1 for r in recs if r.get('status') == 'open')
     wins = [r for r in closed if r.get('outcome') == 'win']
     rets = [r['return_pct'] for r in closed if r.get('return_pct') is not None]
+    peak_rets = [r['peak_return_pct'] for r in closed
+                 if r.get('peak_return_pct') is not None]
+    hit_50 = sum(1 for r in closed
+                 if (r.get('peak_return_pct') or 0) >= 50)
     return {
         'tracked': len(closed), 'open': open_n,
         'wins': len(wins),
         'win_rate': round(len(wins) / len(closed), 3) if closed else None,
         'avg_return_pct': round(sum(rets) / len(rets), 2) if rets else None,
         'total_pnl': round(sum(r.get('pnl', 0) for r in closed), 2),
+        # Path stats: how the trade looked at its best, and how many were
+        # ever up 50%+ even if the 2-week close didn't hold it.
+        'avg_peak_return_pct': (round(sum(peak_rets) / len(peak_rets), 2)
+                                if peak_rets else None),
+        'hit_plus_50': hit_50,
         'note': 'Paper-tracked suggested contracts: 1 contract, 2-week hold, $0.65/side fees.',
     }
