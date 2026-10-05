@@ -74,9 +74,13 @@
 
  function renderPulse(r){
   $('#pulse-asof').textContent='Evaluated '+when(r.asof)+(r.last_scan?' · scan '+when(r.last_scan):'');
+  const tr=r.track_record||{};
+  const trLine=(tr.tracked||0)>0
+    ?'Paper track record: '+tr.tracked+' closed · '+tr.wins+' wins ('+num((tr.win_rate||0)*100,1)+'% ) · avg '+num(tr.avg_return_pct||0,1)+'% · total $'+num(tr.total_pnl||0,2)+(tr.open?' · '+tr.open+' open':'')
+    :'Paper track record: no closed tracks yet'+(tr.open?' · '+tr.open+' open':'');
   const rows=(r.pulses||[]).slice(0,25);
   const tops=p=>(p.top_prints||[]).slice(0,3).map(t=>esc(t.option_type||'?')+' '+esc(t.strike)+' '+esc(t.expiry)+' $'+num((t.premium||0)/1000,0)+'k').join(' · ');
-  $('#pulse-rows').innerHTML=rows.length?table(['Time','Symbol','Dir','Premium $M','Prints','Max score','Top prints'],rows.map(p=>[when(p.ts),esc(p.symbol),p.direction==='bullish'?'<span class="tag good">bullish</span>':'<span class="tag bad">bearish</span>',num((p.directional_premium||0)/1e6,2),num(p.print_count,0),num(p.max_score,0),tops(p)])):empty('No pulses','No concentrated directional flow in the window.');
+  $('#pulse-rows').innerHTML='<p class="fine">'+esc(trLine)+'</p>'+(rows.length?table(['Time','Symbol','Dir','Premium $M','Prints','Max score','Top prints'],rows.map(p=>[when(p.ts),esc(p.symbol),p.direction==='bullish'?'<span class="tag good">bullish</span>':'<span class="tag bad">bearish</span>',num((p.directional_premium||0)/1e6,2),num(p.print_count,0),num(p.max_score,0),tops(p)])):empty('No pulses','No concentrated directional flow in the window.'));
  }
 
  async function get(url){const resp=await fetch(url);if(!resp.ok)throw new Error('HTTP '+resp.status);return resp.json();}

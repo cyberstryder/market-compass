@@ -238,11 +238,20 @@ def scan(db, c, cfg, now):
                            pulse, key=key)
         if is_new:
             fired.append(pulse)
+            if getattr(cfg, 'flow_pulse_track_enabled', True):
+                try:
+                    open_tracking(db, c, pulse, key, now)
+                except Exception:
+                    pass
             if _maybe_queue_push(db, c, cfg, pulse, today, now):
                 pushed.append(pulse['symbol'])
     db.put(c, 'flow_pulse:scanned_at', now)
     db.put(c, 'flow_pulse:latest', {'at': now, 'pulses': pulses,
                                     'fired_today': len(fired)})
+    try:
+        evaluate_tracking(db, c, cfg, now)
+    except Exception:
+        pass
     return {'ran': True, 'pulses': len(pulses), 'fired': len(fired),
             'pushed': pushed}
 
@@ -393,4 +402,114 @@ def display(db, c, now, days=7):
     latest = db.get(c, 'flow_pulse:latest', {})
     return {'asof': now, 'version': VERSION, 'pulses': pulses[:50],
             'last_scan': latest.get('at'),
+            'track_record': track_record(db, c),
             'note': 'Evidence only. No auto-admission, no alerts, no trades.'}
+
+
+# ---------------------------------------------------------------------------
+# Paper tracking: every pulse that fires with a suggested contract is
+# paper-tracked for two weeks so the signal can prove (or disprove) itself.
+# One contract, entry at the suggestion's ask + $0.01, exit at the bid -
+# $0.01, $0.65/side fees — the house paper convention. The exit is purely
+# time-based (no stop/target): the scorecard measures the signal, not an
+# exit strategy. The suggested contract is always a long option (call for
+# bullish pulses, put for bearish), so P&L is long-option P&L.
+# ---------------------------------------------------------------------------
+TRACK_HORIZON = 14 * 86400      # two weeks, calendar days
+TRACK_SLIPPAGE = 0.01
+TRACK_FEE_SIDE = 0.65
+TRACK_EVAL_THROTTLE = 3600
+
+
+def _chain_quote(chain, occ_symbol):
+    for o in chain.get('contracts', []):
+        if str(o.get('symbol')) == occ_symbol:
+            q = o.get('quote') or {}
+            return number(q.get('bid')), number(q.get('ask'))
+    return None, None
+
+
+def open_tracking(db, c, pulse, key, now):
+    """Paper-track one fired pulse. Returns the track key or None."""
+    sug = pulse.get('suggested_contract') or {}
+    occ = sug.get('symbol')
+    if not occ:
+        return None
+    chain = db.get(c, 'chain:' + pulse['symbol']) or {}
+    _, ask = _chain_quote(chain, occ)
+    if ask is None or ask <= 0:
+        return None
+    q = db.get(c, 'quote:' + pulse['symbol']) or {}
+    spot = None
+    if q.get('bid') and q.get('ask'):
+        spot = round((q['bid'] + q['ask']) / 2, 2)
+    rec = {
+        'key': key, 'symbol': pulse['symbol'], 'direction': pulse['direction'],
+        'fired_at': now, 'spot_at_fire': spot,
+        'contract': occ, 'strike': sug.get('strike'), 'expiry': sug.get('expiry'),
+        'type': sug.get('type'), 'delta': sug.get('delta'),
+        'entry': round(ask + TRACK_SLIPPAGE, 2), 'qty': 1, 'multiplier': 100,
+        'horizon_at': now + TRACK_HORIZON, 'status': 'open',
+    }
+    db.put(c, 'flow_pulse_track:' + key, rec)
+    return key
+
+
+def evaluate_tracking(db, c, cfg, now):
+    """Close out tracks past their horizon. Throttled to hourly."""
+    if not getattr(cfg, 'flow_pulse_track_enabled', True):
+        return {'ran': False, 'reason': 'disabled'}
+    if now - db.get(c, 'flow_pulse:track_eval_at', 0) < TRACK_EVAL_THROTTLE:
+        return {'ran': False, 'reason': 'throttled'}
+    db.put(c, 'flow_pulse:track_eval_at', now)
+    opened = closed = 0
+    for tkey, rec in db.prefix(c, 'flow_pulse_track:').items():
+        if not isinstance(rec, dict) or rec.get('status') != 'open':
+            continue
+        opened += 1
+        if now < rec.get('horizon_at', 0):
+            continue
+        chain = db.get(c, 'chain:' + rec['symbol']) or {}
+        bid, _ = _chain_quote(chain, rec['contract'])
+        if bid is None or bid <= 0:
+            # No exit quote yet; retry on the next pass. If the contract
+            # has expired, mark unresolved instead of hanging forever.
+            try:
+                exp = datetime.fromisoformat(rec['expiry']).date()
+                if datetime.fromtimestamp(now, timezone.utc).date() > exp:
+                    rec['status'] = 'unresolved'
+                    rec['note'] = 'no exit quote after expiry'
+                    db.put(c, tkey, rec)
+                    closed += 1
+            except (ValueError, TypeError):
+                pass
+            continue
+        exit_px = round(bid - TRACK_SLIPPAGE, 2)
+        qty = rec.get('qty', 1)
+        gross = (exit_px - rec['entry']) * 100 * qty
+        net = round(gross - 2 * TRACK_FEE_SIDE, 2)
+        cost = rec['entry'] * 100 * qty
+        rec.update(status='closed', exit=exit_px, exited_at=now, pnl=net,
+                   return_pct=round(100 * net / cost, 2) if cost else None,
+                   outcome='win' if net > 0 else 'loss')
+        db.put(c, tkey, rec)
+        closed += 1
+    return {'ran': True, 'open': opened, 'closed': closed}
+
+
+def track_record(db, c):
+    """Aggregate scorecard over closed tracks."""
+    recs = [r for r in db.prefix(c, 'flow_pulse_track:').values()
+            if isinstance(r, dict)]
+    closed = [r for r in recs if r.get('status') == 'closed']
+    open_n = sum(1 for r in recs if r.get('status') == 'open')
+    wins = [r for r in closed if r.get('outcome') == 'win']
+    rets = [r['return_pct'] for r in closed if r.get('return_pct') is not None]
+    return {
+        'tracked': len(closed), 'open': open_n,
+        'wins': len(wins),
+        'win_rate': round(len(wins) / len(closed), 3) if closed else None,
+        'avg_return_pct': round(sum(rets) / len(rets), 2) if rets else None,
+        'total_pnl': round(sum(r.get('pnl', 0) for r in closed), 2),
+        'note': 'Paper-tracked suggested contracts: 1 contract, 2-week hold, $0.65/side fees.',
+    }

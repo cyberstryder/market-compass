@@ -323,3 +323,150 @@ def test_suggest_contract_uses_live_spot_for_strike(db):
             _chain_contract(symbol='O:MRK261030P00140000', strike=140.0, delta=-0.50)]})
         got = fp.suggest_contract(db, c, Cfg(), _pulse(), NOW)
     assert got is not None and got['strike'] == 140.0
+
+
+# --- paper tracking ---
+
+class TrackCfg(Cfg):
+    flow_pulse_track_enabled = True
+    watch_symbols = ('HOOD', 'COIN', 'SPY', 'MRK')
+
+
+def _quoted_contract(bid=2.90, ask=3.10, **kw):
+    c = _chain_contract(**kw)
+    c['quote'] = {'ts': NOW, 'bid': bid, 'ask': ask}
+    return c
+
+
+def _seed_track_market(db, bid=2.90, ask=3.10, spot_bid=139.90, spot_ask=140.10,
+                       now=NOW):
+    with db.tx() as c:
+        db.put(c, 'quote:MRK', {'ts': now, 'bid': spot_bid, 'ask': spot_ask})
+        db.put(c, 'chain:MRK', {'asof': now, 'contracts': [
+            _quoted_contract(symbol='O:MRK261030P00140000', strike=140.0,
+                             delta=-0.50, bid=bid, ask=ask)]})
+        pulse = _pulse()
+        pulse['suggested_contract'] = fp.suggest_contract(db, c, TrackCfg(), pulse, now)
+        return pulse
+
+
+def test_open_tracking_records_entry(db):
+    key = 'flowpulse:2026-10-05:MRK:bearish'
+    with db.tx() as c:
+        pulse = _seed_track_market(db)
+        got = fp.open_tracking(db, c, pulse, key, NOW)
+    assert got == key
+    with db.tx() as c:
+        rec = db.get(c, 'flow_pulse_track:' + key)
+    assert rec['status'] == 'open'
+    assert rec['contract'] == 'O:MRK261030P00140000'
+    assert rec['entry'] == 3.11            # ask 3.10 + $0.01 slippage
+    assert rec['horizon_at'] == NOW + 14 * 86400
+    assert rec['spot_at_fire'] == 140.0
+
+
+def test_open_tracking_skips_without_suggestion(db):
+    with db.tx() as c:
+        got = fp.open_tracking(db, c, _pulse(), 'flowpulse:x', NOW)
+    assert got is None
+    with db.tx() as c:
+        assert db.prefix(c, 'flow_pulse_track:') == {}
+
+
+def test_open_tracking_skips_without_entry_quote(db):
+    # Chain has the contract but no quote -> no track (can't price entry).
+    with db.tx() as c:
+        db.put(c, 'quote:MRK', {'ts': NOW, 'bid': 139.90, 'ask': 140.10})
+        db.put(c, 'chain:MRK', {'asof': NOW, 'contracts': [
+            _chain_contract(symbol='O:MRK261030P00140000', strike=140.0, delta=-0.50)]})
+        pulse = _pulse()
+        pulse['suggested_contract'] = fp.suggest_contract(db, c, TrackCfg(), pulse, NOW)
+        assert fp.open_tracking(db, c, pulse, 'flowpulse:x', NOW) is None
+
+
+def test_evaluate_tracking_ignores_before_horizon(db):
+    key = 'flowpulse:2026-10-05:MRK:bearish'
+    with db.tx() as c:
+        pulse = _seed_track_market(db)
+        fp.open_tracking(db, c, pulse, key, NOW)
+    with db.tx() as c:
+        res = fp.evaluate_tracking(db, c, TrackCfg(), NOW + 86400)
+    assert res['ran'] and res['closed'] == 0
+    with db.tx() as c:
+        assert db.get(c, 'flow_pulse_track:' + key)['status'] == 'open'
+
+
+def test_evaluate_tracking_closes_win_at_horizon(db):
+    key = 'flowpulse:2026-10-05:MRK:bearish'
+    with db.tx() as c:
+        pulse = _seed_track_market(db)
+        fp.open_tracking(db, c, pulse, key, NOW)
+    later = NOW + 15 * 86400
+    with db.tx() as c:
+        db.put(c, 'chain:MRK', {'asof': later, 'contracts': [
+            _quoted_contract(symbol='O:MRK261030P00140000', strike=140.0,
+                             delta=-0.50, bid=3.50, ask=3.60)]})
+        res = fp.evaluate_tracking(db, c, TrackCfg(), later)
+    assert res['ran'] and res['closed'] == 1
+    with db.tx() as c:
+        rec = db.get(c, 'flow_pulse_track:' + key)
+    assert rec['status'] == 'closed'
+    assert rec['outcome'] == 'win'
+    # exit 3.50-0.01=3.49, entry 3.11: (3.49-3.11)*100 - 2*0.65 = 36.70
+    assert rec['pnl'] == 36.70
+    assert rec['return_pct'] == round(100 * 36.70 / 311.0, 2)
+
+
+def test_track_record_aggregates(db):
+    with db.tx() as c:
+        pulse = _seed_track_market(db)
+        fp.open_tracking(db, c, pulse, 'flowpulse:2026-10-05:MRK:bearish', NOW)
+        # Second track opens a week later so it is still open at `later`.
+        fp.open_tracking(db, c, pulse, 'flowpulse:2026-10-12:MRK:bearish',
+                         NOW + 7 * 86400)
+    later = NOW + 15 * 86400
+    with db.tx() as c:
+        # Win for the first track; the second is still before its horizon.
+        db.put(c, 'chain:MRK', {'asof': later, 'contracts': [
+            _quoted_contract(symbol='O:MRK261030P00140000', strike=140.0,
+                             delta=-0.50, bid=3.50, ask=3.60)]})
+        res = fp.evaluate_tracking(db, c, TrackCfg(), later)
+        assert res['closed'] == 1
+    much_later = NOW + 22 * 86400  # past the second track's horizon
+    with db.tx() as c:
+        db.put(c, 'chain:MRK', {'asof': much_later, 'contracts': [
+            _quoted_contract(symbol='O:MRK261030P00140000', strike=140.0,
+                             delta=-0.50, bid=2.00, ask=2.10)]})
+        db.put(c, 'flow_pulse:track_eval_at', 0)  # reset throttle
+        res = fp.evaluate_tracking(db, c, TrackCfg(), much_later)
+        assert res['closed'] == 1
+        tr = fp.track_record(db, c)
+    assert tr['tracked'] == 2
+    assert tr['wins'] == 1
+    assert tr['win_rate'] == 0.5
+    assert tr['total_pnl'] == round(36.70 + ((1.99 - 3.11) * 100 - 1.30), 2)
+
+
+def test_scan_opens_tracking_for_fired_pulse(db):
+    from compass.market import day as _day
+    now = time.time()
+    rows = [prow(symbol='MRK', option_type='put', sentiment='bullish',
+                 ts=now - 300, expiry=_live_expiry(25), strike=140.0)]
+    for r in rows:
+        r['payload']['source_ts'] = now - 300
+        r['source_ts'] = now - 300
+        r['day'] = _day(now)
+    _insert_flow(db, rows)
+    with db.tx() as c:
+        db.put(c, 'quote:MRK', {'ts': now, 'bid': 139.90, 'ask': 140.10})
+        db.put(c, 'chain:MRK', {'asof': now, 'contracts': [
+            _quoted_contract(symbol='O:MRK261030P00140000', strike=140.0,
+                             delta=-0.50)]})
+        out = fp.scan(db, c, TrackCfg(), now)
+    assert out['ran'] and out['fired'] == 1
+    with db.tx() as c:
+        tracks = db.prefix(c, 'flow_pulse_track:')
+    assert len(tracks) == 1
+    rec = next(iter(tracks.values()))
+    assert rec['symbol'] == 'MRK' and rec['direction'] == 'bearish'
+    assert rec['status'] == 'open'

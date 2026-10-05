@@ -62,6 +62,7 @@ class Config:
     flow_pulse_min_ratio: float = field(default_factory=lambda: float(env("FLOW_PULSE_MIN_RATIO","2.0")))
     flow_pulse_max_dte: float = field(default_factory=lambda: float(env("FLOW_PULSE_MAX_DTE","45")))
     flow_pulse_push_enabled: bool = field(default_factory=lambda: env("FLOW_PULSE_PUSH_ENABLED","false")=="true")
+    flow_pulse_track_enabled: bool = field(default_factory=lambda: env("FLOW_PULSE_TRACK_ENABLED","true")=="true")
     alpaca_option_stream: bool = field(default_factory=lambda: env("ALPACA_OPTION_STREAM_ENABLED","false")=="true")
     flow_pulse_webhook: str = field(default_factory=lambda: env("DISCORD_FLOW_PULSE_WEBHOOK_URL",""))
     ict_push_enabled: bool = field(default_factory=lambda: env("ICT_PUSH_ENABLED","false")=="true")
