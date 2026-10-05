@@ -209,3 +209,99 @@ def test_format_message_under_limit():
     assert len(msg['content']) < 2000
     assert 'HOOD' in msg['content'] and 'BULLISH' in msg['content']
     assert msg['allowed_mentions'] == {'parse': []}
+
+
+# --- suggested contract ---
+
+def _chain_contract(symbol='O:MRK261030P00145000', underlying='MRK', expiry='2026-10-30',
+                   strike=145.0, otype='put', delta=-0.35, oi=500, volume=200):
+    return {'symbol': symbol, 'underlying': underlying, 'expiry': expiry,
+            'strike': strike, 'type': otype, 'multiplier': 100,
+            'oi': oi, 'volume': volume, 'delta': delta}
+
+
+def _pulse(symbol='MRK', direction='bearish', expiry='10/30/26'):
+    return {'symbol': symbol, 'direction': direction,
+            'top_prints': [{'strike': 147.0, 'expiry': expiry, 'premium': 1149000,
+                            'option_type': 'call', 'sentiment': 'bearish', 'score': 92},
+                           {'strike': 152.5, 'expiry': expiry, 'premium': 586000,
+                            'option_type': 'call', 'sentiment': 'bearish', 'score': 82}]}
+
+
+def _seed_market(db, contracts, bid=144.90, ask=145.10):
+    with db.tx() as c:
+        db.put(c, 'quote:MRK', {'ts': NOW, 'bid': bid, 'ask': ask})
+        db.put(c, 'chain:MRK', {'asof': NOW, 'contracts': contracts})
+        return fp.suggest_contract(db, c, Cfg(), _pulse(), NOW)
+
+
+def test_suggest_contract_picks_put_for_bearish(db):
+    got = _seed_market(db, [_chain_contract(),
+                            _chain_contract(symbol='O:MRK261030C00145000', otype='call', delta=0.35)])
+    assert got is not None
+    assert got['type'] == 'put'
+    assert got['strike'] == 145.0
+    assert got['expiry'] == '2026-10-30'
+
+
+def test_suggest_contract_picks_call_for_bullish(db):
+    with db.tx() as c:
+        db.put(c, 'quote:MRK', {'ts': NOW, 'bid': 144.90, 'ask': 145.10})
+        db.put(c, 'chain:MRK', {'asof': NOW, 'contracts': [
+            _chain_contract(),
+            _chain_contract(symbol='O:MRK261030C00145000', otype='call', delta=0.35)]})
+        pulse = _pulse(direction='bullish')
+        got = fp.suggest_contract(db, c, Cfg(), pulse, NOW)
+    assert got is not None and got['type'] == 'call'
+
+
+def test_suggest_contract_matches_prints_expiry(db):
+    # Two expiries listed; the prints' expiry (10/30) wins over 11/20.
+    with db.tx() as c:
+        db.put(c, 'quote:MRK', {'ts': NOW, 'bid': 144.90, 'ask': 145.10})
+        db.put(c, 'chain:MRK', {'asof': NOW, 'contracts': [
+            _chain_contract(),
+            _chain_contract(symbol='O:MRK261120P00145000', expiry='2026-11-20')]})
+        got = fp.suggest_contract(db, c, Cfg(), _pulse(), NOW)
+    assert got is not None and got['expiry'] == '2026-10-30'
+
+
+def test_suggest_contract_none_without_chain(db):
+    with db.tx() as c:
+        db.put(c, 'quote:MRK', {'ts': NOW, 'bid': 144.90, 'ask': 145.10})
+        assert fp.suggest_contract(db, c, Cfg(), _pulse(), NOW) is None
+
+
+def test_suggest_contract_none_without_spot(db):
+    with db.tx() as c:
+        db.put(c, 'chain:MRK', {'asof': NOW, 'contracts': [_chain_contract()]})
+        assert fp.suggest_contract(db, c, Cfg(), _pulse(), NOW) is None
+
+
+def test_suggest_contract_none_when_expiry_unparseable(db):
+    with db.tx() as c:
+        db.put(c, 'quote:MRK', {'ts': NOW, 'bid': 144.90, 'ask': 145.10})
+        db.put(c, 'chain:MRK', {'asof': NOW, 'contracts': [_chain_contract()]})
+        pulse = _pulse(expiry='not-a-date')
+        assert fp.suggest_contract(db, c, Cfg(), pulse, NOW) is None
+
+
+def test_format_message_includes_suggestion():
+    payload = {'symbol': 'MRK', 'direction': 'bearish', 'directional_premium': 1735000,
+               'print_count': 2, 'max_score': 92,
+               'top_prints': [{'option_type': 'CALL', 'strike': 147.0, 'expiry': '10/30/26',
+                               'premium': 1149000, 'score': 92}],
+               'suggested_contract': {'symbol': 'O:MRK261030P00145000', 'underlying': 'MRK',
+                                      'expiry': '2026-10-30', 'strike': 145.0,
+                                      'type': 'put', 'delta': -0.35}}
+    text = fp.format_message(payload)['content']
+    assert 'Suggested: MRK 10/30 145 PUT' in text
+    assert 'research only' in text
+
+
+def test_format_message_omits_suggestion_when_absent():
+    payload = {'symbol': 'MRK', 'direction': 'bearish', 'directional_premium': 1735000,
+               'print_count': 2, 'max_score': 92, 'top_prints': [],
+               'suggested_contract': None}
+    text = fp.format_message(payload)['content']
+    assert 'Suggested:' not in text

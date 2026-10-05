@@ -139,6 +139,60 @@ def detect_pulses(rows, now, cfg, universe):
     return pulses
 
 
+def _prints_target_date(top_prints):
+    """Most common expiry among the top prints, as a date. None if unparseable."""
+    from collections import Counter
+    dates = []
+    for t in top_prints or []:
+        try:
+            dates.append(datetime.strptime(t['expiry'], '%m/%d/%y').date())
+        except (ValueError, TypeError, KeyError):
+            continue
+    if not dates:
+        return None
+    return Counter(dates).most_common(1)[0][0]
+
+
+def suggest_contract(db, c, cfg, pulse, now):
+    """Pick a liquid directional contract expressing the pulse.
+
+    Bearish -> put, bullish -> call, expiry matched to the flow prints'
+    expiry. Returns an eligible_contracts dict or None when there is no
+    fresh chain, no spot quote, or no eligible contract. Never raises:
+    a missing suggestion leaves the alert unchanged.
+    """
+    try:
+        from .option_ideas import eligible_contracts
+    except Exception:
+        return None
+    try:
+        symbol = pulse['symbol']
+        side = 'short' if pulse['direction'] == 'bearish' else 'long'
+        target_date = _prints_target_date(pulse.get('top_prints'))
+        if target_date is None:
+            return None
+        target_dte = (target_date - datetime.fromtimestamp(now, timezone.utc).date()).days
+        if target_dte <= 0:
+            return None
+        q = db.get(c, 'quote:' + symbol) or {}
+        bid, ask = number(q.get('bid')), number(q.get('ask'))
+        if bid is None or ask is None:
+            return None
+        spot = (bid + ask) / 2
+        chain = db.get(c, 'chain:' + symbol) or {}
+        from types import SimpleNamespace
+        pick_cfg = SimpleNamespace(ideas_min_dte=0, ideas_max_dte=90,
+                                   ideas_target_dte=target_dte)
+        candidates = eligible_contracts(chain, symbol, side, spot, now, pick_cfg)
+        if not candidates:
+            return None
+        iso = target_date.isoformat()
+        dated = [o for o in candidates if o.get('expiry') == iso]
+        return (dated or candidates)[0]
+    except Exception:
+        return None
+
+
 def _flow_rows(c, now):
     rows = c.execute(select(flow_records).where(
         flow_records.c.day == day(now),
@@ -158,6 +212,10 @@ def scan(db, c, cfg, now):
         return {'ran': False, 'reason': 'throttled'}
     rows = _flow_rows(c, now)
     pulses = detect_pulses(rows, now, cfg, getattr(cfg, 'watch_symbols', ()))
+    # Suggest a concrete contract per pulse so the alert names what to trade.
+    # Missing chain/spot/eligibility -> None; the alert is unchanged.
+    for pulse in pulses:
+        pulse['suggested_contract'] = suggest_contract(db, c, cfg, pulse, now)
     # Dark pool confirmation: same-direction institutional block activity.
     # Evidence only — context on the pulse, never a standalone trigger.
     if getattr(cfg, 'darkpool', True):
@@ -201,6 +259,7 @@ def _maybe_queue_push(db, c, cfg, pulse, today, now):
                'print_count': pulse['print_count'],
                'max_score': pulse['max_score'],
                'top_prints': pulse['top_prints'],
+               'suggested_contract': pulse.get('suggested_contract'),
                'window_start': pulse['window_start'],
                'window_end': pulse['window_end'], 'at': now}
     c.execute(db.insert(outbox).values(
@@ -230,6 +289,17 @@ def format_message(payload):
             (dp.get('notional') or 0) / 1e6,
             dp.get('print_count') or 0,
             's' if (dp.get('print_count') or 0) != 1 else ''))
+    sug = payload.get('suggested_contract') or {}
+    if sug.get('symbol'):
+        try:
+            exp = datetime.strptime(sug['expiry'], '%Y-%m-%d').strftime('%-m/%-d')
+        except (ValueError, TypeError):
+            exp = sug.get('expiry') or '?'
+        delta = sug.get('delta')
+        dstr = ' Δ %.2f' % abs(delta) if isinstance(delta, (int, float)) else ''
+        lines.append('Suggested: %s %s %g %s%s — research only, pick your fill' % (
+            sug.get('underlying'), exp, sug.get('strike'),
+            str(sug.get('type') or '').upper(), dstr))
     content = '\n'.join(lines)
     return {'content': content[:1900], 'username': 'Market Compass',
             'allowed_mentions': {'parse': []}}
