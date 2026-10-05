@@ -184,7 +184,7 @@ def test_smoothers_entry_compact_format():
     assert lines[0]=='SMOOTHERS | ENTRY | META 745 CALL · 2026-10-07'
     assert lines[1]=='Stock $744.17 → target $751.61 · Est return +53%'
     assert lines[2]=='Option $7.80/$7.95 · Strike $745 · 3 DTE · enter by 09:30 CT'
-    assert lines[3]=='Exit: Underlying target, otherwise Friday close; no premium stop configured — no broker order'
+    assert lines[3]=='Exit: Underlying target, otherwise Friday close; no premium stop configured'
     assert len(lines)==4
     assert 'Trade ID:' not in text and 'Event #' not in text and 'Quote source' not in text
 

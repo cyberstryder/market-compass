@@ -181,7 +181,7 @@ def _format_smoothers_entry(p,pub,o):
     if dte is not None:opt.append(f"{dte} DTE")
     if p.get('expires_at'):opt.append('enter by '+datetime.fromtimestamp(p['expires_at'],CT).strftime('%H:%M CT'))
     lines.append('Option '+' · '.join(opt))
-    lines.append(f"Exit: {p.get('exit_rule') or 'Underlying target, otherwise Friday close'} — no broker order")
+    lines.append(f"Exit: {p.get('exit_rule') or 'Underlying target, otherwise Friday close'}")
     return '\n'.join(lines)[:1950]
 
 
