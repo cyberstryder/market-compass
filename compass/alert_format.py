@@ -177,6 +177,8 @@ def message_for(row, now=None, gamma_context=None):
         return option_idea_message(row, identity, now)
     if p.get('status') == 'secondary_review':
         return secondary_message(row, identity, now)
+    if identity['category'] == 'futures' and p.get('status') in ('entered', 'open', 'closed', 'management_blocked'):
+        return futures_message(row, identity, now)
     lines = [f"**{identity['title']}**", f"{identity['mode']} · {identity['horizon']}"]
     if p.get('status') == 'notification_test':
         lines[0] = '[TEST — NO TRADE] **SYSTEM | DELIVERY CHECK**'
@@ -254,6 +256,81 @@ def message_for(row, now=None, gamma_context=None):
     if gamma_context:
         content += '\nGamma levels: ' + gamma_context
     return content[:1900 - len(footer)] + footer
+
+
+FUTURE_NAMES = {
+    'MNQ': 'micro Nasdaq', 'MES': 'micro S&P 500', 'MGC': 'micro gold',
+    'SIL': 'micro silver', 'MCL': 'micro crude',
+}
+ICT_SETUP_NAMES = {
+    'ict-aoi-zones': 'AOI Zones',
+    'ict-aoi-fade': 'AOI 50/20 Fade',
+    'ict-bos-fvg': 'Break of Structure + Fair Value Gap',
+    'ict-bos-gz-vwap': 'Break of Structure + Golden Zone/VWAP',
+    'ict-continuation': 'Continuation',
+    'ict-golden-zone': 'Golden Zone + VWAP',
+    'ict-push-v1': 'ICT Push',
+    'ict-smt-divergence': 'SMT Divergence',
+    'ict-turtle-soup': 'Turtle Soup',
+}
+FUTURES_EXIT_REASONS = {
+    'stop': 'Stopped out',
+    'target': 'Target hit',
+    'session_flatten': 'Session flatten (15:45 CT)',
+    'underlying_invalidation': 'Underlying invalidated',
+}
+
+
+def futures_message(row, identity, now):
+    """Compact Discord alert for futures paper entries, exits, and no-data holds."""
+    p = row['payload']
+    status = p.get('status', '')
+    m = re.match(r'^([A-Z]{2,4})', identity['symbol'])
+    root = m.group(1) if m else identity['symbol']
+    name = FUTURE_NAMES.get(root, root)
+    sym = f'{root} · {name}' if name != root else root
+    direction = (' · ' + identity['direction']) if identity['direction'] else ''
+    rule = p.get('rule') or str(p.get('strategy', '')).rsplit(':', 1)[-1]
+    setup = ICT_SETUP_NAMES.get(rule) or identity['setup'] or clean(rule).replace('_', ' ')
+    qty = p.get('qty', 1)
+    mode = f"{identity['mode']} · {identity['horizon']}"
+
+    def px(key):
+        return number(p[key]) if p.get(key) is not None else None
+
+    if status == 'management_blocked':
+        lines = [f'**FUTURES | NO DATA | {sym}{direction}**',
+                 'No fresh price — stop and target can\u2019t be checked']
+        detail = ' · '.join(f'{k} {px(k)}' for k in ('entry', 'stop', 'target') if px(k))
+        if detail:
+            lines.append(f'Position: {detail} · {qty} contract' + ('' if qty == 1 else 's'))
+        lines.append('Setup: ' + setup)
+    else:
+        event = 'PAPER ENTRY' if status in ('entered', 'open') else 'PAPER EXIT'
+        lines = [f'**FUTURES | {event} | {sym}{direction}**']
+        if status in ('entered', 'open'):
+            plan = ' · '.join(f'{k} {px(k)}' for k in ('entry', 'stop', 'target') if px(k))
+            if plan:
+                lines.append('Entry ' + plan.removeprefix('entry '))
+            setup_line = 'Setup: ' + setup
+        else:
+            reason = p.get('exit_reason') or p.get('reason') or ''
+            label = FUTURES_EXIT_REASONS.get(reason, clean(reason).replace('_', ' ') or 'Closed')
+            outcome = f'{label} · entry {px("entry")} \u2192 exit {px("exit")}' if px('entry') and px('exit') else label
+            lines.append(outcome)
+            bits = []
+            if p.get('pnl') is not None:
+                pnl = p['pnl']
+                bits.append(f'P&L {"+$" if pnl >= 0 else "-$"}{number(abs(pnl))} (after fees)')
+            if p.get('initial_risk') is not None:
+                bits.append(f'risk was ${number(p["initial_risk"])}')
+            if px('target'):
+                bits.append(f'target {px("target")}')
+            if bits:
+                lines.append(' · '.join(bits))
+        lines.append(f'Setup: {setup} · {qty} contract' + ('' if qty == 1 else 's'))
+    lines.append(mode)
+    return '\n'.join(lines)[:1900]
 
 
 def secondary_message(row, identity, now):

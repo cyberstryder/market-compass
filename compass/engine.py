@@ -250,7 +250,9 @@ class Engine:
             if not fresh(q,now) or q['ts']>now or q["ts"]<=p["last_quote_ts"]:
                 if now-p.get("last_quote_ts",now)>15:
                     self.alert(c,p["symbol"],{**alert_context(p),"status":"management_blocked","trade_id":p["id"],
-                        "reason":"No fresh exit quote; position remains unresolved"},"stale:"+p["id"]+":"+str(int(now//300)))
+                        "reason":"No fresh exit quote; position remains unresolved",
+                        "entry":p.get("entry"),"stop":p.get("stop"),"target":p.get("target"),
+                        "qty":p.get("qty",1)},"stale:"+p["id"]+":"+str(int(now//300)))
                 continue
             price=fill(q,p["side"],p["tick"],False)
             long=p["side"]=="long"
