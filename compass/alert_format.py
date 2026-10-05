@@ -271,6 +271,7 @@ ICT_SETUP_NAMES = {
     'ict-golden-zone': 'Golden Zone + VWAP',
     'ict-push-v1': 'ICT Push',
     'ict-smt-divergence': 'SMT Divergence',
+    'ict-trendline-liquidity': 'Trendline Liquidity',
     'ict-turtle-soup': 'Turtle Soup',
     'yt-morning-drive': 'Morning-Drive Fade',
     'yt-icc': 'ICC',
