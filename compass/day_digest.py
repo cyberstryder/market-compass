@@ -5,7 +5,9 @@ Assembles, for the America/Chicago calendar date:
 - Futures ICT paper trades opened/closed today, realized day P&L, open positions
 - Flow Pulse pulses fired today + running paper track record
 - Flash Agentic setups logged today, grouped by pattern, + running by-pattern hit rates
-- 0DTE: SPY morning plan + options_0dte scanner alerts
+- 0DTE: SPY morning plan (queried by source+day, not a blunt recent() that
+  drops morning rows on high-volume days) with plan outcome vs minute bars
+  (target hit / stopped / open), plus options_0dte scanner alerts
 
 Read-only. A weekday-evening cron delivers this in chat; per-alert chat noise
 stays off. Built 2026-10-05 at Josh's direction: one end-of-day summary per
@@ -19,6 +21,7 @@ from sqlalchemy import select
 
 from .alert_format import FUTURE_NAMES, ICT_SETUP_NAMES
 from .native_outbox import outbox as native_outbox
+from .store import events
 
 CT = ZoneInfo("America/Chicago")
 
@@ -253,23 +256,86 @@ def _flash(db, c, start, now):
 # ---------------------------------------------------------------- 0dte
 
 
-def _spy_0dte(db, c, start):
-    lines = []
+def _plan_outcome(db, c, rep, decision, plan_ts):
+    """Score a confirmed SPY 0DTE plan against minute bars after the plan.
+
+    Returns 'target hit', 'stopped', 'open', or None when the plan lacks
+    levels or no bars are available. First touch wins, scanned chronologically.
+    """
+    side = "call" if decision.startswith("CALL") else "put" if decision.startswith("PUT") else None
+    if not side:
+        return None
+    plan = (rep.get("plans") or {}).get(side) or {}
+    target, stop = _num(plan.get("target")), _num(plan.get("stop"))
+    if target is None or stop is None:
+        return None
     try:
-        rows = db.recent(c, "alert", limit=500, since=start)
+        raw = db.get(c, "bar_window:SPY", []) or []
     except Exception:
-        rows = []
-    for r in rows:
-        if r.get("source") == "spy_brief":
-            rep = r.get("payload") or {}
-            decision = rep.get("decision") or rep.get("bias")
-            lines.append("SPY 0DTE morning plan — %s" % (decision if decision else "published"))
+        return None
+    for r in raw:
+        if len(r) < 6 or r[0] < plan_ts:
+            continue
+        h, l = _num(r[2]), _num(r[3])
+        if h is None or l is None:
+            continue
+        if side == "call":
+            if h >= target:
+                return "target hit"
+            if l <= stop:
+                return "stopped"
+        else:
+            if l <= target:
+                return "target hit"
+            if h >= stop:
+                return "stopped"
+    return "open"
+
+
+def _spy_0dte(db, c, start, date):
+    lines = []
+    p = events.c.payload
+    # Targeted query: the alert stream is high-volume (~100+/hour), so a
+    # blunt recent(limit=500) silently drops morning rows. Filter by source
+    # and session day instead.
+    try:
+        plan_rows = [dict(r) for r in c.execute(
+            select(events).where(
+                events.c.kind == "alert",
+                events.c.source == "spy_brief",
+                p["day"].as_string() == date,
+            ).order_by(events.c.ts.desc())
+        ).mappings()]
+    except Exception:
+        plan_rows = []
+    plan_rows = [r for r in plan_rows
+                 if (r.get("payload") or {}).get("status") != "spy_chart_prompt"]
+    if plan_rows:
+        r = plan_rows[0]
+        rep = r.get("payload") or {}
+        decision = rep.get("decision") or rep.get("bias") or "published"
+        line = "SPY 0DTE morning plan — %s" % decision
+        if decision.endswith("SETUP CONFIRMED"):
+            outcome = _plan_outcome(db, c, rep, decision, r.get("ts") or 0)
+            if outcome:
+                line += " · %s" % outcome
+        lines.append(line)
+    try:
+        orows = [dict(r) for r in c.execute(
+            select(events).where(
+                events.c.kind == "alert",
+                events.c.ts >= start,
+                p["publication"]["category"].as_string() == "options_0dte",
+            ).order_by(events.c.ts.desc()).limit(100)
+        ).mappings()]
+    except Exception:
+        orows = []
+    for r in orows:
         pub = (r.get("payload") or {}).get("publication") or {}
-        if pub.get("category") == "options_0dte":
-            contract = pub.get("contract") or {}
-            lines.append("0DTE alert: %s %s %s · %s" % (
-                contract.get("underlying") or "?", _f(contract.get("strike")),
-                contract.get("type") or "", pub.get("status") or pub.get("event") or ""))
+        contract = pub.get("contract") or {}
+        lines.append("0DTE alert: %s %s %s · %s" % (
+            contract.get("underlying") or "?", _f(contract.get("strike")),
+            contract.get("type") or "", pub.get("status") or pub.get("event") or ""))
     return _section("0dte", "0DTE", lines)
 
 
@@ -286,6 +352,6 @@ def assemble(db, c, now):
             _futures(db, c, start),
             _flow_pulse(db, c, start),
             _flash(db, c, start, now),
-            _spy_0dte(db, c, start),
+            _spy_0dte(db, c, start, date),
         ],
     }

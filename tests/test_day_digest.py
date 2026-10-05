@@ -114,3 +114,59 @@ def test_empty_day_has_no_lines(db):
         out = day_digest.assemble(db, c, 1_000_000_000.0)
     assert out['date']
     assert all(s['lines'] == [] for s in out['sections'])
+
+
+def _brief_payload(day, decision='CALL SETUP CONFIRMED'):
+    return {'day': day, 'decision': decision, 'symbol': 'SPY',
+            'plans': {'call': {'entry_reference': 770.64, 'stop': 769.21, 'target': 773.51},
+                      'put': {'entry_reference': 770.64, 'stop': 771.5, 'target': 768.9}}}
+
+
+def test_0dte_plan_found_despite_alert_volume(db):
+    # Regression: the alert stream is high-volume, so a blunt
+    # recent(limit=500) silently drops the morning brief. The digest must
+    # query spy_brief rows by source+day instead.
+    now = _now_today()
+    day = datetime.fromtimestamp(now, CT).date().isoformat()
+    with db.tx() as c:
+        for i in range(600):
+            db.append(c, 'alert', 'engine', 'MES.c.0', now - i,
+                       {'note': 'filler'}, key='fill-%d' % i)
+        db.append(c, 'alert', 'spy_brief', 'SPY', now - 3600,
+                   _brief_payload(day), key='brief-test')
+        out = day_digest.assemble(db, c, now + 3600)
+    sec = next(s for s in out['sections'] if s['key'] == '0dte')
+    text = "\n".join(sec['lines'])
+    assert 'SPY 0DTE morning plan — CALL SETUP CONFIRMED' in text
+
+
+def test_0dte_plan_outcome_target_hit(db):
+    now = _now_today()
+    day = datetime.fromtimestamp(now, CT).date().isoformat()
+    plan_ts = now - 7200
+    # minute bars after the plan: high touches the 2R target 773.51
+    bars = [[plan_ts + 60 * i, 771.0, 772.0 if i < 5 else 773.60, 770.5, 771.5, 100, None]
+            for i in range(1, 11)]
+    with db.tx() as c:
+        db.append(c, 'alert', 'spy_brief', 'SPY', plan_ts,
+                   _brief_payload(day), key='brief-win')
+        db.put(c, 'bar_window:SPY', bars)
+        out = day_digest.assemble(db, c, now + 3600)
+    sec = next(s for s in out['sections'] if s['key'] == '0dte')
+    assert any('target hit' in l for l in sec['lines'])
+
+
+def test_0dte_plan_outcome_stopped(db):
+    now = _now_today()
+    day = datetime.fromtimestamp(now, CT).date().isoformat()
+    plan_ts = now - 7200
+    # stop 769.21 touched before any bar reaches the target
+    bars = [[plan_ts + 60 * i, 770.0, 771.0, 769.10, 769.5, 100, None]
+            for i in range(1, 11)]
+    with db.tx() as c:
+        db.append(c, 'alert', 'spy_brief', 'SPY', plan_ts,
+                   _brief_payload(day), key='brief-loss')
+        db.put(c, 'bar_window:SPY', bars)
+        out = day_digest.assemble(db, c, now + 3600)
+    sec = next(s for s in out['sections'] if s['key'] == '0dte')
+    assert any('stopped' in l for l in sec['lines'])
