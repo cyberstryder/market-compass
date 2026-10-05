@@ -282,13 +282,17 @@ def _pillar_error(name, err):
 
 
 def check(db, c, now, ticker, direction, entry=None, target=None, source='',
-          cfg=None):
+          cfg=None, pattern=None, setup_score=None, invalidation=None):
     """Evaluate one analyst pick against Compass evidence.
 
     cfg is optional. When provided (and cfg.pick_backfill is not False),
     pillars that report no_data because the underlying data was never
     ingested get one bounded on-demand backfill attempt, then one
     re-evaluation. The backfill can never raise; the check always completes.
+
+    pattern/setup_score/invalidation are setup metadata (used by the Flash
+    Agentic watch): the pattern name, the vendor score, and the setup's
+    invalidation level for invalidation-aware outcome scoring.
     """
     symbol = str(ticker or '').strip().upper()
     if not symbol:
@@ -299,12 +303,16 @@ def check(db, c, now, ticker, direction, entry=None, target=None, source='',
     try:
         entry = float(entry) if entry not in (None, '') else None
         target = float(target) if target not in (None, '') else None
+        invalidation = float(invalidation) if invalidation not in (None, '') else None
+        setup_score = float(setup_score) if setup_score not in (None, '') else None
     except (TypeError, ValueError):
-        raise ValueError('entry and target must be numbers')
+        raise ValueError('entry, target, invalidation and score must be numbers')
     if entry is not None and entry <= 0:
         raise ValueError('entry must be positive')
     if target is not None and target <= 0:
         raise ValueError('target must be positive')
+    if invalidation is not None and invalidation <= 0:
+        raise ValueError('invalidation must be positive')
 
     apex = _safe(apex_magnet.display, db, c, now)
     spot = None
@@ -345,6 +353,8 @@ def check(db, c, now, ticker, direction, entry=None, target=None, source='',
               'source': str(source or '')[:120], 'at': now, 'spot': spot,
               'pillars': pillars, 'evidence_score': score, 'pillars_counted': counted,
               'backfilled': backfilled,
+              'pattern': str(pattern or '')[:80] or None,
+              'setup_score': setup_score, 'invalidation': invalidation,
               'note': 'Research evidence only. No auto-admission, no alerts, no trades.'}
     db.append(c, 'pick_check', 'dashboard', symbol, now, record)
     return record

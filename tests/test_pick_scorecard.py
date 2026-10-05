@@ -157,3 +157,82 @@ def test_scorecard_aggregates_by_source(db):
     assert by['sal']['avg_evidence_score_loss'] == -1.0
     assert len(sc['checks']) == 3
     assert sc['horizon_sessions'] == 5
+
+
+def test_invalidation_first_is_immediate_loss(db):
+    # Invalidation touched on day 2 while the horizon is incomplete:
+    # the setup failed, so it resolves as a loss right away, not 'open'.
+    with db.tx() as c:
+        seed_bars(db, c, 'SPY', [100, 101],
+                  highs=[101, 102], lows=[99.5, 98.0])
+        out = ps.measure_outcome(
+            db, c, check(entry=100.0, target=105.0, invalidation=99.0), NOW)
+    assert out['status'] == 'loss'
+    assert out['invalidation_hit_first'] is True
+    assert out['target_hit'] is False
+
+
+def test_target_before_invalidation_is_win(db):
+    with db.tx() as c:
+        seed_bars(db, c, 'SPY', [100, 101, 102, 103, 104],
+                  highs=[101, 106, 103, 104, 105],
+                  lows=[99.5, 100.0, 101.0, 102.0, 103.0])
+        out = ps.measure_outcome(
+            db, c, check(entry=100.0, target=105.0, invalidation=99.0), NOW)
+    assert out['status'] == 'win'
+    assert out['target_hit'] is True
+    assert out['invalidation_hit_first'] is False
+
+
+def test_same_bar_touch_scores_conservative_loss(db):
+    # One daily bar touches both target and invalidation: order is
+    # unknowable from daily bars, so it scores as invalidation-first.
+    with db.tx() as c:
+        seed_bars(db, c, 'SPY', [100, 101, 102, 103, 104],
+                  highs=[106, 102, 103, 104, 105],
+                  lows=[98.0, 100.0, 101.0, 102.0, 103.0])
+        out = ps.measure_outcome(
+            db, c, check(entry=100.0, target=105.0, invalidation=99.0), NOW)
+    assert out['status'] == 'loss'
+    assert out['invalidation_hit_first'] is True
+
+
+def test_short_invalidation_first_is_loss(db):
+    with db.tx() as c:
+        seed_bars(db, c, 'SPY', [100, 101, 102],
+                  highs=[101, 103, 104], lows=[99, 100, 101])
+        out = ps.measure_outcome(
+            db, c, check(direction='short', entry=100.0, target=95.0,
+                         invalidation=102.0), NOW)
+    assert out['status'] == 'loss'
+    assert out['invalidation_hit_first'] is True
+
+
+def test_no_invalidation_keeps_legacy_behavior(db):
+    # Without an invalidation level, a target touch is a win even if price
+    # later fell hard — the pre-existing rule is unchanged.
+    with db.tx() as c:
+        seed_bars(db, c, 'SPY', [100, 101, 102, 103, 104],
+                  highs=[101, 106, 103, 104, 105],
+                  lows=[90.0, 90.0, 90.0, 90.0, 90.0])
+        out = ps.measure_outcome(db, c, check(entry=100.0, target=105.0), NOW)
+    assert out['status'] == 'win'
+    assert out['target_hit'] is True
+
+
+def test_scorecard_groups_by_pattern(db):
+    with db.tx() as c:
+        seed_bars(db, c, 'AAPL', [332, 333, 334, 335, 336, 337],
+                  highs=[333, 334, 335, 336, 337, 338])
+        seed_bars(db, c, 'NVDA', [237, 237, 237, 237, 237],
+                  highs=[238, 238, 238, 238, 238])
+        _log(db, c, ticker='AAPL', direction='long', entry=332.0, target=335.0,
+             invalidation=330.0, source='flash_agentic', pattern='FLOOR BOUNCE #4')
+        _log(db, c, ticker='NVDA', direction='long', entry=237.0, target=240.0,
+             invalidation=235.0, source='flash_agentic', pattern='FLOOR BOUNCE #4')
+        sc = ps.scorecard(db, c, NOW + 10 * DAY)
+    bp = {(b['source'], b['pattern']): b for b in sc['by_pattern']}
+    fb = bp[('flash_agentic', 'FLOOR BOUNCE #4')]
+    assert fb['checks'] == 2
+    assert (fb['wins'], fb['losses']) == (1, 1)
+    assert fb['hit_rate'] == 0.5

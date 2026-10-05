@@ -253,3 +253,12 @@ def test_scoring_weights_unchanged(db):
     assert out_short['pillars']['gap']['alignment'] == 'contradicts'
     assert out_short['pillars']['breakout']['alignment'] == 'contradicts'
     assert out_short['evidence_score'] == -1.75
+
+
+def test_check_stores_setup_metadata(db):
+    with db.tx() as c:
+        out = pc.check(db, c, NOW, 'AAPL', 'long', 332.48, 335.0, 'flash_agentic',
+                       pattern='FLOOR BOUNCE #4', setup_score=93, invalidation=330.0)
+    assert out['pattern'] == 'FLOOR BOUNCE #4'
+    assert out['setup_score'] == 93
+    assert out['invalidation'] == 330.0

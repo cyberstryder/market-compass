@@ -9,10 +9,14 @@ Outcome rules (per check):
   close after the check. When the entry comes from that first close, the
   entry bar itself is excluded from measurement (you cannot trade a close
   and profit inside the same bar).
-- target_hit: a daily high/low touched the target within the horizon.
-- status: 'win' if the target was hit; 'loss' if the horizon completed
-  without a touch; 'open' if fewer than horizon sessions have printed;
-  'unknown' when there is no usable entry or no bars at all.
+- target_hit: a daily high/low touched the target within the horizon *before*
+  any invalidation touch.
+- status: 'win' if the target was hit cleanly; 'loss' if the horizon completed
+  without a clean touch, or the invalidation level was touched first (a bar
+  touching both on the same session scores conservatively as
+  invalidation-first); 'open' if fewer than horizon sessions have printed and
+  neither level has resolved; 'unknown' when there is no usable entry or no
+  bars at all.
 - Without a target, a completed horizon resolves on the sign of the
   direction-adjusted horizon return; an incomplete horizon stays 'open'.
 - mfe/mae and horizon return are direction-adjusted underlying moves in
@@ -73,19 +77,38 @@ def measure_outcome(db, c, check, now, horizon_sessions=DEFAULT_HORIZON):
     highs = [_num(b.get('payload'), 'h') for b in bars]
     lows = [_num(b.get('payload'), 'l') for b in bars]
     closes = [_num(b.get('payload'), 'c') for b in bars]
-    highs = [h for h in highs if h is not None]
-    lows = [l for l in lows if l is not None]
-    if not highs or not lows or closes[-1] is None:
+    highs_f = [h for h in highs if h is not None]
+    lows_f = [l for l in lows if l is not None]
+    if not highs_f or not lows_f or closes[-1] is None:
         return {'status': 'unknown', 'target_hit': None, 'sessions_measured': n,
                 'horizon_sessions': horizon_sessions, 'mfe_pct': None,
                 'mae_pct': None, 'horizon_return_pct': None, 'entry_used': entry,
                 'entry_source': entry_source,
                 'basis': 'Bars after the check lack high/low/close data.'}
+    highs, lows = highs_f, lows_f
+
+    invalidation = check.get('invalidation')
+    try:
+        invalidation = float(invalidation) if invalidation not in (None, '') else None
+    except (TypeError, ValueError):
+        invalidation = None
 
     target_hit = None
+    inval_hit_first = False
     if target:
-        target_hit = any(h >= target for h in highs) if direction == 'long' \
-            else any(l <= target for l in lows)
+        # First-touch bar indices, chronological. A bar that touches both
+        # target and invalidation can't be ordered from daily bars, so it
+        # scores conservatively as invalidation-first.
+        if direction == 'long':
+            tgt_idx = next((i for i, h in enumerate(highs) if h >= target), None)
+            inv_idx = (next((i for i, l in enumerate(lows) if l <= invalidation), None)
+                       if invalidation else None)
+        else:
+            tgt_idx = next((i for i, l in enumerate(lows) if l <= target), None)
+            inv_idx = (next((i for i, h in enumerate(highs) if h >= invalidation), None)
+                       if invalidation else None)
+        target_hit = tgt_idx is not None
+        inval_hit_first = inv_idx is not None and (tgt_idx is None or inv_idx <= tgt_idx)
 
     if direction == 'long':
         mfe = max(highs) / entry - 1
@@ -96,24 +119,33 @@ def measure_outcome(db, c, check, now, horizon_sessions=DEFAULT_HORIZON):
     horizon_return = (closes[-1] / entry - 1) * sgn
     complete = n >= horizon_sessions
 
-    if target_hit:
+    if target_hit and not inval_hit_first:
         status = 'win'
     elif target:
-        status = 'loss' if complete else 'open'
+        # Invalidation-first resolves immediately as a loss: the setup
+        # failed, no need to wait out the horizon.
+        status = 'loss' if (complete or inval_hit_first) else 'open'
     else:
         status = ('win' if horizon_return > 0 else 'loss') if complete else 'open'
 
-    return {'status': status, 'target_hit': target_hit, 'sessions_measured': n,
+    if target_hit and not inval_hit_first:
+        basis = 'Target hit within %d sessions.' % horizon_sessions
+    elif inval_hit_first:
+        basis = 'Invalidation hit before the target.'
+    elif target:
+        basis = 'No target touch in %d of %d sessions.' % (n, horizon_sessions)
+    else:
+        basis = ('Direction-adjusted underlying move over %d of %d sessions; not option P&L.'
+                 % (n, horizon_sessions))
+
+    return {'status': status, 'target_hit': target_hit and not inval_hit_first,
+            'invalidation_hit_first': inval_hit_first,
+            'sessions_measured': n,
             'horizon_sessions': horizon_sessions,
             'mfe_pct': round(mfe * 100, 2), 'mae_pct': round(mae * 100, 2),
             'horizon_return_pct': round(horizon_return * 100, 2),
             'entry_used': entry, 'entry_source': entry_source,
-            'basis': ('Target hit within %d sessions.' % horizon_sessions
-                      if target_hit else
-                      'No target touch in %d of %d sessions.' % (n, horizon_sessions)
-                      if target else
-                      'Direction-adjusted underlying move over %d of %d sessions; not option P&L.'
-                      % (n, horizon_sessions))}
+            'basis': basis}
 
 
 def _mean(xs):
@@ -128,7 +160,9 @@ def scorecard(db, c, now, limit=100, horizon_sessions=DEFAULT_HORIZON):
         p = row.get('payload') or {}
         check = {'ticker': p.get('ticker'), 'direction': p.get('direction'),
                  'entry': p.get('entry'), 'target': p.get('target'),
+                 'invalidation': p.get('invalidation'),
                  'spot': p.get('spot'), 'source': p.get('source') or 'unknown',
+                 'pattern': p.get('pattern'),
                  'evidence_score': p.get('evidence_score'),
                  'at': p.get('at') or row.get('ts')}
         try:
@@ -164,5 +198,26 @@ def scorecard(db, c, now, limit=100, horizon_sessions=DEFAULT_HORIZON):
             'avg_evidence_score_loss': _mean([c_['evidence_score'] for c_, o in g['resolved']
                                               if o['status'] == 'loss']),
         })
+
+    # Pattern-level slice: which setup patterns are useful and which aren't.
+    # Only checks that carry a pattern (e.g. Flash Agentic cards) contribute.
+    by_pattern = []
+    pgroups = {}
+    for c_, o in [(c_, o) for g in groups.values() for c_, o in g['checks']]:
+        if not c_.get('pattern'):
+            continue
+        pg = pgroups.setdefault((c_['source'], c_['pattern']), [])
+        pg.append((c_, o))
+    for (source, pattern), rows in sorted(pgroups.items()):
+        resolved = [(c_, o) for c_, o in rows if o['status'] in ('win', 'loss')]
+        wins = sum(1 for _, o in resolved if o['status'] == 'win')
+        losses = len(resolved) - wins
+        by_pattern.append({
+            'source': source, 'pattern': pattern,
+            'checks': len(rows), 'wins': wins, 'losses': losses,
+            'open': sum(1 for _, o in rows if o['status'] == 'open'),
+            'hit_rate': round(wins / (wins + losses), 3) if wins + losses else None,
+            'avg_horizon_return_pct': _mean([o['horizon_return_pct'] for _, o in resolved]),
+        })
     return {'asof': now, 'horizon_sessions': horizon_sessions,
-            'by_source': by_source, 'checks': checks}
+            'by_source': by_source, 'by_pattern': by_pattern, 'checks': checks}

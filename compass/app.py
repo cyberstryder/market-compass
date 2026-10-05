@@ -636,13 +636,17 @@ def create_app(cfg=None):
     def auto_pick_check(ticker:str=Query(...,min_length=1,max_length=12),
                         direction:str=Query(...,min_length=1,max_length=10),
                         entry:float|None=None,target:float|None=None,
+                        invalidation:float|None=None,
+                        pattern:str|None=Query(None,max_length=80),
+                        score:float|None=None,
                         source:str=Query('flash_agentic',max_length=120)):
         # GET variant of the pick checker for automation (e.g. the Flash Agentic
         # watch) that can only issue GETs. Same evidence-only check, same logging.
         from .pick_check import check
         try:
             with db.tx() as c:
-                return check(db,c,time.time(),ticker,direction,entry,target,source,cfg)
+                return check(db,c,time.time(),ticker,direction,entry,target,source,cfg,
+                             pattern=pattern,setup_score=score,invalidation=invalidation)
         except ValueError as e:raise HTTPException(400,str(e))
 
     @app.get('/api/pick-check/recent')
