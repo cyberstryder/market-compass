@@ -85,6 +85,18 @@ def test_empty_db_returns_empty_blocks(db):
     assert all(t['stats']['tracked'] == 0 for t in out['types'].values())
 
 
+def test_public_page_has_no_inline_script_or_style():
+    # The app's Content-Security-Policy blocks inline scripts and styles;
+    # the public page must load its JS/CSS from /static instead, or it
+    # renders stuck on "Loading…".
+    import re
+    from pathlib import Path
+    html = (Path(__file__).parent.parent / "compass" / "static" / "simple-public.html").read_text()
+    assert "<style>" not in html
+    assert re.search(r"<script(?![^>]*\bsrc=)", html) is None
+    assert 'style="' not in html
+
+
 def test_public_landing_and_detailed_dashboard_routing(tmp_path):
     from compass.app import create_app
     from compass.config import Config
