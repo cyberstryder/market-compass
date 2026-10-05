@@ -441,6 +441,29 @@ def create_app(cfg=None):
         with db.tx() as c:
             return assemble(db,c,time.time())
 
+    @app.get('/api/simple')
+    def get_simple():
+        # Plain-English scoreboards + drill-downs. Read-only.
+        from .simple import summary
+        with db.tx() as c:
+            return summary(db,c,time.time())
+
+    @app.get('/api/simple/calendar')
+    def get_simple_calendar(request: Request):
+        # P&L / counts per day per type for a month. Read-only.
+        from .simple import calendar
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        month = (request.query_params.get('month') or '').strip()  # YYYY-MM
+        try:
+            year, mon = [int(x) for x in month.split('-')]
+            assert 1 <= mon <= 12
+        except (ValueError, AssertionError):
+            now_c = datetime.fromtimestamp(time.time(), ZoneInfo('America/Chicago'))
+            year, mon = now_c.year, now_c.month
+        with db.tx() as c:
+            return calendar(db,c,time.time(),year,mon)
+
     @app.get('/api/option-stream-parity')
     def get_option_stream_parity():
         # Massive vs Alpaca side-by-side comparison for the migration.

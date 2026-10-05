@@ -8,7 +8,7 @@ const compact=x=>x===null||x===undefined?'—':Intl.NumberFormat('en-US',{notati
 const empty=(title,sub)=>'<div class="empty"><strong>'+esc(title)+'</strong>'+esc(sub)+'</div>';
 const tag=(s)=>'<span class="tag '+(['ready','current','receiving','available','running','connected','delivered','entered','triggered','setup_triggered'].includes(s)?'good':['stale','error','clock_error','not_configured','blocked','missing','partial','source_time_unknown','invalidated','event_stale','poll_stale','vendor_stale','mixed'].includes(s)?'bad':'')+'">'+esc(String(s||'pending').replaceAll('_',' '))+'</span>';
 function table(head,rows){return '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
-const TITLES={'terminal':'Terminal','calendar':'P/L Calendar','daily':'Daily','summary':'Summary','morning-brief':'Morning Brief','0dte':'0DTE','ideas':'Ideas','smoothers':'Smoothers','futures':'Futures','compass':'Compass'};
+const TITLES={'terminal':'Terminal','calendar':'P/L Calendar','simple':'Simple','daily':'Daily','summary':'Summary','morning-brief':'Morning Brief','0dte':'0DTE','ideas':'Ideas','smoothers':'Smoothers','futures':'Futures','compass':'Compass'};
 /* Old per-tab hashes redirect to their new section. */
 const LEGACY={alerts:'compass',overview:'morning-brief',intraday:'compass',scanner:'compass',flow:'compass',exposure:'compass',assistant:'compass',scanners:'compass','option-ideas':'0dte','swing-ideas':'compass',discovery:'compass',obsidian:'compass','pick-check':'ideas','ticker-read':'ideas','setup-study':'futures','tm-study':'compass','swing-study':'compass','spy-study':'0dte',secondary:'compass',trades:'compass','daily-results':'compass',health:'compass',projects:'compass','research-admin':'compass',research:'compass'};
 let lastState=null,fastState=null,slowState=null,first=true,testEvent=null;
@@ -31,6 +31,7 @@ function selectTab(key){
  if(key==='summary'&&window.__renderSummary)window.__renderSummary();
  if(key==='daily'&&window.__renderDaily)window.__renderDaily();
  if(key==='calendar'&&window.__renderCalendar)window.__renderCalendar();
+ if(key==='simple'&&window.__renderSimple)window.__renderSimple();
  const sec=document.getElementById('sec-'+key);if(sec)sec.scrollIntoView({block:'start'});
 }
 function toggleSection(key){

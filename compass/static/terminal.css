@@ -123,6 +123,7 @@ article.panel.collapsed > :not(.panel-head):not(h2):not(h3){display:none}
 .cal-day{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px;min-height:86px;font-size:11px}
 .cal-day.cal-pad{background:transparent;border:0}
 .cal-day.cal-today{border-color:var(--up)}
+.cal-day.cal-sel{border-color:var(--amber);box-shadow:0 0 0 1px var(--amber)}
 .cal-day.cal-empty{opacity:.55}
 .cal-num{font-weight:700;color:var(--muted);margin-bottom:4px}
 .cal-pnl{font-weight:700;font-size:13px;margin-bottom:4px}
