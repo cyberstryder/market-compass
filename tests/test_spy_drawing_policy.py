@@ -66,7 +66,7 @@ def test_routine_checks_send_one_drawing_and_preserve_every_plan(db):
         assert not p['drawing_update']['send'], p['drawing_update']
         rendered=delivery_payload(dict(id=1,payload=p),now)
         assert 'message 1 of 2' not in rendered['content']
-        assert not any(e['title']=='Levels to copy to your charts' for e in rendered['embeds'])
+        assert 'embeds' not in rendered
     with db.tx() as c:
         rows=db.recent(c,'alert',limit=100)
     assert sum(r['payload']['status']=='spy_morning_brief' for r in rows)==5

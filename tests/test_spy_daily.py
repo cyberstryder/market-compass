@@ -108,7 +108,8 @@ def test_recovery_allows_later_breakout_without_rewriting_opening_report(db):
     assert opening['decision']=='WAIT — DATA BLOCKED: prior daily ATR evidence incomplete'
     payload=delivery_payload(dict(id=1,payload=opening),MONDAY)
     assert 'DATA BLOCKED — prior daily ATR' in payload['content']
-    assert 'usable sessions 0/15' in json.dumps(payload)
+    assert 'usable sessions' not in json.dumps(payload)
+    assert 'embeds' not in payload
     assert asyncio.run(collect(collector(db,{'bars':bars(MONDAY)},[]),MONDAY+60))['status']=='ready'
     # Fresh complete minutes for the next scheduled check; no invented past entry.
     later=session('2026-09-21')[0]+1807

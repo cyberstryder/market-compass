@@ -188,9 +188,10 @@ def test_discord_preserves_full_plan_and_expiry_banner(db):
     r = report(db)
     row = {'id': 1, 'ts': NOW, 'payload': r, 'source': 'spy_brief', 'symbol': 'SPY'}
     body = delivery_payload(row, NOW)
-    assert len(body['embeds']) == 4
-    assert sum(len(e.get('title','')) + len(e.get('description','')) + len(e.get('footer',{}).get('text','')) for e in body['embeds']) <= 6000
-    assert all(len(e['description']) <= 4096 for e in body['embeds'])
+    assert 'embeds' not in body
+    assert len(body['content']) <= 2000
+    assert 'Next Apex reaction levels' in body['content']
+    assert 'CALL: trigger close above' in body['content'] or 'PUT: trigger close below' in body['content']
     assert 'DATED PLAN' in delivery_payload(row, OPEN+1025)['content']
     seen = []
     async def send():
@@ -200,7 +201,7 @@ def test_discord_preserves_full_plan_and_expiry_banner(db):
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             await dispatch(client, db, 'https://discord.com/api/webhooks/fake/fake', row)
     asyncio.run(send())
-    assert len(seen[0]['embeds']) == 4 and seen[0]['allowed_mentions'] == {'parse': []}
+    assert 'embeds' not in seen[0] and seen[0]['allowed_mentions'] == {'parse': []}
 
 
 def test_index_fallback_uses_matching_raw_daily_closes_and_daily_cache(db):
@@ -281,7 +282,9 @@ def test_two_messages_are_atomic_deduplicated_and_individually_acknowledged(db):
             await delivery.tick(client, NOW+3)
     asyncio.run(run())
     assert len(sent) == 3
-    assert sum('message 1 of 2' in p['content'] for p in sent) == 1
+    assert sum('message 2 of 2' in p['content'] for p in sent) == 2
+    assert not any('message 1 of 2' in p['content'] for p in sent)
+    assert any('**SPY 0DTE ·' in p['content'] for p in sent)
     with db.tx() as c: assert outbox_status(db, c, NOW+3)['pending'] == 0
 
 
@@ -458,7 +461,8 @@ def test_data_block_keeps_breakout_price_evidence_and_exact_missing_minutes(db):
     with db.tx() as c:
         row=next(r for r in db.recent(c,'alert') if r['payload']['status']=='spy_morning_brief')
     payload=json.dumps(delivery_payload(row,NOW))
-    assert 'close above PM high' in payload and 'entry blocked by data checks' in payload
+    assert 'DATA BLOCKED' in payload and 'CALL: trigger close above' in payload
+    assert 'Inside the range: WAIT' in payload
     # Later data recovery cannot rewrite the report already sent.
     seed_checks(db,OPEN+1807,{30:759})
     with db.tx() as c:
@@ -506,13 +510,16 @@ def test_later_messages_preserve_expiry_bounds_and_separate_tracking(db):
     row={'id':9,'payload':r,'source':'spy_brief','symbol':'SPY','ts':OPEN+1807}
     body=delivery_payload(row,OPEN+1807)
     assert 'LATER CHECK' in body['content']
-    assert 'Later 15m check' in body['embeds'][0]['description']
+    assert 'embeds' not in body
+    assert 'PUT: trigger close below' in body['content']
+    assert 'CALL SETUP CONFIRMED' in body['content']
+    assert 'Inside the range: WAIT' not in body['content']
+    assert len(body['content']) <= 2000
     text=prompt(p,OPEN+1807)
     assert '09:00' in text and 'Confirmation close: 761.00' in text
     assert 'Valid until Sep 16 09:02:05 CT' in text
     assert 'EXPIRED / REFERENCE ONLY' in prompt(p,OPEN+1925)
     assert 'DATED PLAN' in delivery_payload(row,OPEN+1925)['content']
-    assert sum(len(e.get('title',''))+len(e.get('description',''))+len(e.get('footer',{}).get('text','')) for e in body['embeds'])<=6000
     assert len(chart_payload({**row,'payload':p},OPEN+1807)['embeds'][0]['description'])<4096
 
 

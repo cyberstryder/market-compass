@@ -327,128 +327,35 @@ class BriefWorker:
 
 
 def delivery_payload(row, now):
-    """One Discord message with bounded rich cards; no lossy 2,000-character truncation."""
+    """Single compact text message sized for copy-paste into TradingView AI; no embeds."""
     p = row['payload']; ctx = p['context']
     expired = now >= p.get('expires_at', 0)
     heading = 'DATED PLAN — refresh before use' if expired else p['decision']
     if not expired and p.get('data_blocks'):
         heading = 'DATA BLOCKED — ' + '; '.join(p['data_blocks'])
-    drawing = p.get('drawing_update', {'send': True})
-    suffix = ' · message 1 of 2' if drawing['send'] else ''
-    content = '**SPY 0DTE MORNING PLAN · ' + p.get('phase_label', p['phase'].upper()) + suffix + '**\n' + heading
+    content = '**SPY 0DTE · ' + p.get('phase_label', p['phase'].upper()) + '**\n' + heading
     if ctx['status'] == 'closed':
         return {'content': content, 'allowed_mentions': {'parse': []}}
     session_name = 'PREMARKET' if p['generated_at'] < ctx['session_open'] else 'REGULAR SESSION'
     group = ctx['premarket'] if session_name == 'PREMARKET' else ctx['regular']
-    lines = [session_name + ' · ' + stamp(p['generated_at']),
-        'SPY ' + money(ctx['spot']) + ' (' + ctx['spot_basis'] + ', ' + stamp(ctx['spot_ts']) + ')',
+    lines = ['SPY ' + money(ctx['spot']) + ' (' + ctx['spot_basis'] + ') · VWAP ' + money(group['vwap']),
         'Session O/H/L: ' + ' / '.join(money(group[k]) for k in ('open', 'high', 'low')),
-        'VWAP ' + money(group['vwap']) + ' · ' + group['vwap_basis'],
         'Prior H/L/C: ' + ' / '.join(money(ctx['prior'][k]) for k in ('h', 'l', 'c')),
-        ctx['structure'] + '; latest minute volume / prior 20: ' + (f"{ctx['minute_volume_ratio']:.2f}×" if ctx['minute_volume_ratio'] is not None else 'unavailable'),
-        f"Premarket coverage {ctx['premarket']['bars']}/{ctx['premarket_expected_bars']} minutes; " + ('usable' if ctx['premarket_complete'] else 'incomplete') +
-        ' · ' + ctx.get('premarket_coverage_basis', 'minute_clock_coverage'),
-        'First 15m close: ' + money(ctx['first15_close']) + ' · ' + stamp(ctx['first15_asof'])]
-    readiness = ctx.get('daily_readiness', {})
-    if readiness:
-        lines.append('Daily ATR: ' + money(ctx.get('atr14_daily')) +
-            '; usable sessions ' + str(len(readiness['usable_days'])) + '/15')
-        if readiness['missing_or_invalid_days']:
-            lines.append('Missing/invalid daily sessions: ' + ', '.join(readiness['missing_or_invalid_days']))
-    candle = ctx.get('confirmation_candle')
-    if candle:
-        lines.append('This 15m check: ' + stamp(candle['start']) + ' → ' + stamp(candle['end']) +
-                     '; close ' + money(candle['close']) + f"; {candle['bars']}/15 minutes")
-    if p.get('price_condition'):
-        labels={'put_breakout':'close below PM low', 'call_breakout':'close above PM high',
-                'inside_range':'close inside PM range', 'not_observed':'complete price comparison unavailable'}
-        lines.append('Price condition: ' + labels[p['price_condition']] +
-                     ('; entry blocked by data checks' if p.get('data_blocks') else '; see saved decision'))
-    if p.get('confirmation_kind') == 'later':
-        lines.append('Later 15m check · frozen PM range ' + money(ctx['premarket']['low']) +
-                     '–' + money(ctx['premarket']['high']))
-    if ctx.get('premarket_range_unchanged') is False:
-        observed = ctx.get('premarket_observed', {})
-        lines.append('Range check: current observed PM low/high ' + money(observed.get('low')) + '/' + money(observed.get('high')))
-    if p.get('next_check_at'):
-        lines.append('If still waiting, next check ' + stamp(p['next_check_at']))
-    elif p.get('session_complete'):
-        lines.append('Morning checks finished for this session.')
-    if ctx['spot'] is not None and ctx['prior'].get('c'):
-        lines.append('Versus prior close: ' + f"{ctx['spot']-ctx['prior']['c']:+.2f} ({(ctx['spot']/ctx['prior']['c']-1)*100:+.2f}%)")
-    if ctx['spot'] is not None and group.get('vwap') is not None:
-        lines.append('Price bias: ' + ('above VWAP' if ctx['spot'] > group['vwap'] else 'below VWAP' if ctx['spot'] < group['vwap'] else 'at VWAP') + '; entry still needs the candle close.')
+        'Premarket H/L: ' + money(ctx['premarket']['high']) + ' / ' + money(ctx['premarket']['low'])]
     for side, plan in p['plans'].items():
         if plan['status'] == 'unavailable':
             lines.append(side.upper() + ': plan unavailable')
         else:
-            lines.append(side.upper() + ': ' + plan['rule'] + ' ' + money(plan['trigger']) +
-                '; reference ' + money(plan['entry_reference']) + '; stop ' + money(plan['stop']) + '; 2R target ' + money(plan['target']))
+            direction = 'close above' if side == 'call' else 'close below'
+            lines.append(side.upper() + ': trigger ' + direction + ' ' + money(plan['trigger']) +
+                ' · entry ref ' + money(plan['entry_reference']) +
+                ' · stop ' + money(plan['stop']) + ' · 2R target ' + money(plan['target']))
             if plan['level_targets']:
                 lines.append('Next Apex reaction levels: ' + ', '.join(money(v) for v in plan['level_targets']))
-    lines += ['Inside the range: WAIT. A premarket break is not a confirmed entry.',
-              'Stops/targets use SPY prices, not option premiums. Provisional plans re-anchor to the confirmed close.']
-    embeds = [{'title': 'Price structure and conditional entries', 'description': '\n'.join(lines)}]
-    g = p['gamma']; local = g['local']
-    lines = ['Vendor GEX ' + billions(g['vendor_gex']) + ' · ' + g['vendor_status'] + ' · ' + stamp(g['vendor_asof']),
-        'Vendor call/put GEX: ' + billions(g['vendor_call_gex']) + ' / ' + billions(g['vendor_put_gex']),
-        'Vendor flip ' + money(g['flip']) + ' (' + g['flip_source'] + ', ' + stamp(g['flip_asof']) + ')',
-        'Apex ' + g['apex_status'] + ' · ' + stamp(g['apex_asof']),
-        'Compass proxy ' + billions(local.get('gex')) + ' USD delta/1% move; call/put ' + billions(g['local_call_gex']) + ' / ' + billions(g['local_put_gex']),
-        'P/C proxy ' + (f"{g['put_call_ratio']:.2f}" if g['put_call_ratio'] is not None else 'unavailable') +
-        '; coverage ' + (f"{local['coverage']:.1%}" if local.get('coverage') is not None else 'unavailable') + '; chain fetched ' + stamp(g['local_asof']),
-        'Compass expiries: ' + (', '.join(g['local_expiries']) or 'unavailable'),
-        '0DTE-only proxy ' + billions(g['zero_dte_gex']) + '; coverage ' + (f"{g['zero_dte_coverage']:.1%}" if g['zero_dte_coverage'] is not None else 'unavailable')]
-    if g['vendor_gex'] is not None:
-        lines.insert(0, 'Vendor regime: ' + ('negative gamma' if g['vendor_gex'] < 0 else 'positive gamma' if g['vendor_gex'] > 0 else 'neutral gamma'))
-    if ctx['spot'] is not None and g['flip'] is not None:
-        lines.append('Spot minus flip: ' + f"{ctx['spot']-g['flip']:+.2f}")
-    dl = g.get('dealer_levels') or {}
-    if dl.get('status') == 'ok' and dl.get('levels'):
-        from .gamma_levels import describe
-        lines.append('Dealer levels: ' + describe(dl))
-    sq = g.get('squeeze') or {}
-    if sq.get('state') in ('squeezed', 'fired'):
-        label = ('SQUEEZE FIRING ' + (sq.get('direction') or '').upper()
-                 if sq['state'] == 'fired'
-                 else 'Squeeze building')
-        lines.append(f"{label}: {sq.get('squeeze_bars', 0)} bars coiled" +
-                     (" · watch-only" if sq.get('watch_only') else ""))
-    for i, r in enumerate(g['ranked']):
-        lines.append(f"#{i+1} SPY {r['price']:.2f} · score {r['score']:g} · GEX {billions(r.get('net_gex'))} · OI {money(r.get('oi'))}")
-    if not g['ranked']:
-        lines.append('Current Apex rankings unavailable; stale rankings withheld.')
-    if g['local_ranked']:
-        lines.append('Compass largest |GEX|: ' + '; '.join(money(r['strike']) + ' ' + billions(r['gex']) for r in g['local_ranked']))
-    lines += g['discrepancies'] + [g['interpretation'], 'Vendor units/methodology unverified. Individual Greek calculation clocks unavailable.']
-    embeds.append({'title': 'Gamma, ranked levels and source comparison', 'description': '\n'.join(lines)})
-    m = p['mapping']
-    if m['status'] == 'available':
-        lines = ['SPY | estimated SPX | estimated XSP',
-            *[r['label'] + ': ' + ' | '.join(money(r[k]) for k in ('spy', 'spx_estimate', 'xsp_estimate')) for r in p['chart_levels']],
-            'Basis: ' + m['reference_day'] + ' closes; ratio ' + f"{m['ratio']:.6f}" + '; ' + m['source'],
-            'XSP = SPX / 10. Estimates are chart references, not live index prices or option strikes. SPY/index basis can change.']
-    else:
-        lines = ['SPX/XSP estimates unavailable: no matched previous-session reference.',
-                 'SPY levels above remain separately available.']
-    if drawing['send']:
-        embeds.append({'title': 'Levels to copy to your charts', 'description': '\n'.join(lines)})
-    lines = []
-    for side, o in p['options'].items():
-        label = side.upper() + ' ' + money(o.get('strike')) + ' · expiry ' + o['expiry']
-        if o['status'] in ('available', 'wide_spread'):
-            lines.append(label + '\nBid/ask/mid ' + '/'.join(money(o[k]) for k in ('bid', 'ask', 'mid')) +
-                '; spread ' + f"{o['spread_pct']:.1f}%" + (' — TOO WIDE' if o['status'] == 'wide_spread' else '') +
-                '\nSnapshot delta ' + money(o['delta_snapshot']) + '; IV ' + (f"{o['iv_snapshot']:.1%}" if o['iv_snapshot'] is not None else 'unavailable') +
-                '; ask debit + entry fee $' + money(o['max_debit_with_entry_fee']) + '\nQuote ' + stamp(o['quote_ts']))
-        else:
-            lines.append(label + '\nPremium unavailable: ' + o['reason'])
-    lines += ['0DTE watch contracts only. No entry without confirmation and a fresh usable quote. The full premium can be lost.',
-              '15-minute baseline retained; the historical study did not prove an optimal window. No position sizing or broker order.']
-    embeds.append({'title': 'Same-day options', 'description': '\n'.join(lines),
-                   'footer': {'text': p.get('id', VERSION) + ' · Event ' + str(row['id'])}})
-    # Bounded field counts and numbers above keep the payload well below Discord's total embed cap.
-    return {'content': content, 'embeds': embeds, 'allowed_mentions': {'parse': []}, 'username': 'Market Compass · SPY Morning'}
+    if p['decision'] not in CONFIRMED:
+        lines.append('Inside the range: WAIT. A premarket break is not a confirmed entry.')
+    return {'content': content + '\n' + '\n'.join(lines), 'allowed_mentions': {'parse': []},
+            'username': 'Market Compass · SPY Morning'}
 
 
 def main():
