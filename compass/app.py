@@ -434,6 +434,13 @@ def create_app(cfg=None):
         with db.tx() as c:
             return display(db,c,time.time())
 
+    @app.get('/api/day-digest')
+    def get_day_digest():
+        # End-of-day summary, one section per signal type. Read-only.
+        from .day_digest import assemble
+        with db.tx() as c:
+            return assemble(db,c,time.time())
+
     @app.get('/api/option-stream-parity')
     def get_option_stream_parity():
         # Massive vs Alpaca side-by-side comparison for the migration.
