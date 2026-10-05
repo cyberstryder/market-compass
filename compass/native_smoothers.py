@@ -16,6 +16,9 @@ BEST_10={'AMD','XLE','IWM','GOOGL','NFLX','COP','MCD','MAR','WFC','PLTR','META'}
 # DTE overrides: 14 DTE for slow movers, 2-3 DTE for fast hitters with short expiries available
 DTE_14={'SMCI','UBER'}  # 2.5-3.0d avg to target, need more time
 DTE_SHORT={'IWM':2,'META':3,'GOOGL':3}  # IWM has dailies, META/GOOGL have Mon/Wed/Fri
+# Human entry window for the Discord entry alert (was 120s, built for a bot;
+# Josh chose 30 minutes 2026-10-05 so the alert stays actionable while read).
+ENTRY_WINDOW_SECS=1800
 from sqlalchemy import Table,Column,String,Float,JSON,select,func
 from .store import meta,identity
 from .native_smoothers_data import Data,ET
@@ -125,9 +128,11 @@ def queue_signal(db,c,p,event,payload,now,event_time):
     publication=dict(id=p['id'],project='smoothers',contract=p.get('contract'),track='swing',
         status='native_option_entry' if event=='entry' else 'native_option_exit',
         entry=p.get('entry_premium'),underlying_target=p.get('target_price'),
+        entry_price=p.get('entry_price'),target_price=p.get('target_price'),
+        est_return_pct=p.get('est_return_pct'),week=p.get('week'),
         quote=dict(bid=q.get('bid'),ask=q.get('ask'),ts=(q.get('quote_at_ms') or 0)/1000),
         reason='Weekly Smoothers underlying target / unresolved Friday close',
-        exit_reason=event if event!='entry' else None,expires_at=now+120,
+        exit_reason=event if event!='entry' else None,expires_at=now+ENTRY_WINDOW_SECS,
         exit_rule='Underlying target, otherwise Friday close; no premium stop configured',
         outcome='unresolved' if event!='entry' else None)
     return queue(db,c,'smoothers',p['id']+':'+event,payload,now,

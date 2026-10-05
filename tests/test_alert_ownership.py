@@ -4,6 +4,9 @@ import pytest
 from sqlalchemy import select
 from compass.store import Store,discord_jobs
 from compass.alert_ownership import assess,read_trade,report,format_message,quote_error,CT,block_entry
+# Module level so the native outbox table is registered on store.meta before
+# db.initialize() runs (in-function imports registered it too late).
+from compass.native_outbox import queue as native_queue,deliver_one as native_deliver_one,outbox as native_outbox
 
 NOW=datetime(2026,9,23,9,0,tzinfo=CT).timestamp()
 @pytest.fixture
@@ -32,7 +35,11 @@ def test_categories(db,symbol,source,payload,expected):
         assert a['category']==expected
         text=format_message(dict(r,payload=a['payload']))
         assert 'CALL' in text or 'PUT' in text
-        assert 'Observed bid / ask' in text and 'Trade ID:' in text
+        if expected=='smoothers':
+            # Smoothers ENTRY uses the compact human-readable rendering.
+            assert 'Trade ID:' not in text and 'enter by' not in text  # no quote/deadline on this bare row
+        else:
+            assert 'Observed bid / ask' in text and 'Trade ID:' in text
 
 @pytest.mark.parametrize('patch',[
  {'ts':NOW-61},{'ts':NOW+1},{'bid':0},{'bid':2.2},{'ask':4},{'ts':None}, {'ask':float('nan')}
@@ -139,19 +146,76 @@ def test_stale_delivery_never_sends(db):
 
 def test_native_smoothers_uses_same_ledger_and_receipts(db):
     import httpx
-    from compass.native_outbox import queue,deliver_one,outbox
     with db.tx() as c:
         db.put(c,'native:ownership:smoothers',dict(owner='compass',previous_sender_paused=True,accepted_at=NOW-2,epoch='test',effective_from=NOW-1))
         p=dict(id='weekly1',status='native_option_entry',contract={'symbol':'QQQ261002C00500000'},track='swing',quote=dict(bid=2,ask=2.1,ts=NOW))
-        queue(db,c,'smoothers','entry',{'content':'legacy'},NOW,event_time=NOW,cohort_time=NOW,publication=p)
+        native_queue(db,c,'smoothers','entry',{'content':'legacy'},NOW,event_time=NOW,cohort_time=NOW,publication=p)
     sent=[]
     def handler(req):
         sent.append(req.content.decode());return httpx.Response(200,json={'id':'1234'})
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        assert deliver_one(db,client,{'smoothers':'https://discord.com/api/webhooks/123/test'},True,NOW)
-        assert not deliver_one(db,client,{'smoothers':'https://discord.com/api/webhooks/123/test'},True,NOW+1)
-    assert len(sent)==1 and 'SMOOTHERS' in sent[0] and 'Trade ID:' in sent[0]
+        assert native_deliver_one(db,client,{'smoothers':'https://discord.com/api/webhooks/123/test'},True,NOW)
+        assert not native_deliver_one(db,client,{'smoothers':'https://discord.com/api/webhooks/123/test'},True,NOW+1)
+    assert len(sent)==1 and 'SMOOTHERS | ENTRY' in sent[0] and 'Trade ID:' not in sent[0] \
+        and 'Event #' not in sent[0]
     with db.tx() as c:
-        assert c.execute(select(outbox.c.status)).scalar_one()=='delivered'
+        assert c.execute(select(native_outbox.c.status)).scalar_one()=='delivered'
         g=next(x for x in report(db,c,'2026-09-23')['groups'] if x['category']=='smoothers')
         assert g['ideas']==g['delivered_entries']==1
+
+
+def _smoothers_entry_payload(**over):
+    contract=dict(symbol='O:META261007C00745000',underlying='META',expiration='2026-10-07',type='CALL',strike=745)
+    payload=dict(
+        id='sig1',project='smoothers',contract=contract,track='swing',status='native_option_entry',
+        entry=7.88,underlying_target=751.61,entry_price=744.17,target_price=751.61,
+        est_return_pct=53.2,week='2026-10-05',
+        quote=dict(bid=7.80,ask=7.95,ts=NOW),
+        expires_at=NOW+1800,exit_rule='Underlying target, otherwise Friday close; no premium stop configured',
+        publication=dict(trade_id='abc123',category='smoothers',event='ENTRY',contract=contract,horizon='swing'))
+    payload.update(over)
+    return dict(id='native:xyz',source='smoothers',symbol='O:META261007C00745000',ts=NOW,payload=payload)
+
+
+def test_smoothers_entry_compact_format():
+    # 4-line human format: no internal IDs, quote folded into one line.
+    text=format_message(_smoothers_entry_payload())
+    lines=text.split('\n')
+    assert lines[0]=='SMOOTHERS | ENTRY | META 745 CALL · 2026-10-07'
+    assert lines[1]=='Stock $744.17 → target $751.61 · Est return +53%'
+    assert lines[2]=='Option $7.80/$7.95 · Strike $745 · 3 DTE · enter by 09:30 CT'
+    assert lines[3]=='Exit: Underlying target, otherwise Friday close; no premium stop configured — no broker order'
+    assert len(lines)==4
+    assert 'Trade ID:' not in text and 'Event #' not in text and 'Quote source' not in text
+
+
+def test_smoothers_entry_compact_format_no_quote():
+    text=format_message(_smoothers_entry_payload(quote={}))
+    assert 'quote unavailable' in text
+    assert 'Trade ID:' not in text
+
+
+def test_smoothers_entry_compact_format_missing_optionals():
+    # Bare native row (no stock fields, no week, no deadline) still renders cleanly.
+    text=format_message(_smoothers_entry_payload(entry_price=None,target_price=None,
+        est_return_pct=None,week=None,expires_at=None,exit_rule=None))
+    assert 'SMOOTHERS | ENTRY' in text and 'Trade ID:' not in text
+    assert 'enter by' not in text and 'DTE' not in text
+
+
+def test_smoothers_entry_window_is_30_minutes(db):
+    # Josh 2026-10-05: 30-minute human entry window replaces the 120s bot window.
+    from compass.native_smoothers import queue_signal,ENTRY_WINDOW_SECS
+    assert ENTRY_WINDOW_SECS==1800
+    p=dict(id='sig9',contract={'symbol':'O:META261007C00745000','underlying':'META',
+            'expiration':'2026-10-07','type':'CALL','strike':745},
+        entry_premium=7.88,target_price=751.61,entry_price=744.17,est_return_pct=53.2,
+        week='2026-10-05',quote={'bid':7.80,'ask':7.95,'quote_at_ms':NOW*1000},
+        model_entry_time=NOW)
+    with db.tx() as c:
+        queue_signal(db,c,p,'entry',{'content':'x'},NOW,event_time=NOW)
+        from compass.native_outbox import outbox
+        row=c.execute(select(outbox)).mappings().first()
+    pub=row['delivery']['publication_input']
+    assert pub['expires_at']==NOW+1800
+    assert pub['entry_price']==744.17 and pub['week']=='2026-10-05'

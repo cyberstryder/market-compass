@@ -44,7 +44,7 @@ def quote_error(q, now):
     if not all(numeric(q.get(k)) for k in ('bid','ask','ts')):return 'Incomplete option quote'
     # 60s, not 10s: the Discord delivery tick does webhook verifications and sends
     # before it assesses, so a quote that was fresh at selection can legitimately be
-    # tens of seconds old by assess time. The 120s entry expiry remains the hard
+    # tens of seconds old by assess time. The entry expiry remains the hard
     # actionability bound; this gate only rejects genuinely stale data.
     if not 0<=now-q['ts']<=60:return 'Stale or future option quote'
     if not 0<q['bid']<q['ask']:return 'Invalid or locked option quote'
@@ -149,8 +149,47 @@ def assess(db,c,row,now):
     return result('publish',trade_id=trade_id,category=category,event='ENTRY',contract=o,payload={**p,'publication':pub})
 
 
+def _smoothers_dte(o,week):
+    """Inclusive Monday-to-expiry DTE, same convention as smoothers_messages.entry."""
+    try:
+        return (datetime.fromisoformat(o['expiration']).date()-datetime.fromisoformat(week).date()).days+1
+    except (TypeError,ValueError):
+        return None
+
+
+def _format_smoothers_entry(p,pub,o):
+    """Compact human-readable Smoothers entry alert.
+
+    Internal bookkeeping (trade IDs, event IDs, quote-source diagnostics)
+    stays in the database; the Discord message carries only what a human
+    needs to evaluate the entry.
+    """
+    lines=[f"{LABELS['smoothers']} | ENTRY | {o['underlying']} {o['strike']:g} {o['type']} · {o['expiration']}"]
+    stock=[];entry_px=p.get('entry_price');target_px=p.get('target_price') or p.get('underlying_target')
+    if numeric(entry_px) and numeric(target_px):
+        stock.append(f"Stock ${entry_px:,.2f} → target ${target_px:,.2f}")
+    elif numeric(target_px):
+        stock.append(f"Target ${target_px:,.2f}")
+    est=p.get('est_return_pct')
+    if numeric(est):
+        stock.append(f"Est return {est:+.0f}%")
+    if stock:lines.append(' · '.join(stock))
+    q=p.get('last_quote') or p.get('quote') or {}
+    opt=[f"${q['bid']:.2f}/${q['ask']:.2f}" if q and all(numeric(q.get(k)) for k in ('bid','ask')) else 'quote unavailable',
+         f"Strike ${o['strike']:g}"]
+    dte=_smoothers_dte(o,p.get('week'))
+    if dte is not None:opt.append(f"{dte} DTE")
+    if p.get('expires_at'):opt.append('enter by '+datetime.fromtimestamp(p['expires_at'],CT).strftime('%H:%M CT'))
+    lines.append('Option '+' · '.join(opt))
+    lines.append(f"Exit: {p.get('exit_rule') or 'Underlying target, otherwise Friday close'} — no broker order")
+    return '\n'.join(lines)[:1950]
+
+
 def format_message(row):
-    p=row['payload']; pub=p['publication']; o=pub['contract']; q=p.get('last_quote') or p.get('quote') or {}
+    p=row['payload']; pub=p['publication']; o=pub['contract']
+    if pub.get('category')=='smoothers' and pub.get('event')=='ENTRY':
+        return _format_smoothers_entry(p,pub,o)
+    q=p.get('last_quote') or p.get('quote') or {}
     lines=[f"{LABELS[pub['category']]} | {pub['event']} | {o['underlying']} {o['strike']:g} {o['type']} · {o['expiration']}",
            '[RESEARCH SIGNAL] — no broker order',f"Trade ID: {pub['trade_id']}",f"Holding plan: {pub['horizon']}"]
     if q and all(numeric(q.get(k)) for k in ('bid','ask','ts')):
