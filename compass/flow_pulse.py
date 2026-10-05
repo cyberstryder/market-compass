@@ -176,7 +176,11 @@ def suggest_contract(db, c, cfg, pulse, now):
             return None
         q = db.get(c, 'quote:' + symbol) or {}
         bid, ask = number(q.get('bid')), number(q.get('ask'))
+        qts = number(q.get('ts'))
         if bid is None or ask is None:
+            return None
+        if qts is None or qts > now or now - qts > 300:
+            # Never suggest a strike off a stale spot quote.
             return None
         spot = (bid + ask) / 2
         chain = db.get(c, 'chain:' + symbol) or {}

@@ -305,3 +305,21 @@ def test_format_message_omits_suggestion_when_absent():
                'suggested_contract': None}
     text = fp.format_message(payload)['content']
     assert 'Suggested:' not in text
+
+
+def test_suggest_contract_none_when_spot_stale(db):
+    with db.tx() as c:
+        db.put(c, 'quote:MRK', {'ts': NOW - 900, 'bid': 144.90, 'ask': 145.10})
+        db.put(c, 'chain:MRK', {'asof': NOW, 'contracts': [_chain_contract()]})
+        assert fp.suggest_contract(db, c, Cfg(), _pulse(), NOW) is None
+
+
+def test_suggest_contract_uses_live_spot_for_strike(db):
+    # Spot 140 -> 145 put is >3% away and excluded; the ATM 140 put wins.
+    with db.tx() as c:
+        db.put(c, 'quote:MRK', {'ts': NOW, 'bid': 139.90, 'ask': 140.10})
+        db.put(c, 'chain:MRK', {'asof': NOW, 'contracts': [
+            _chain_contract(),
+            _chain_contract(symbol='O:MRK261030P00140000', strike=140.0, delta=-0.50)]})
+        got = fp.suggest_contract(db, c, Cfg(), _pulse(), NOW)
+    assert got is not None and got['strike'] == 140.0
