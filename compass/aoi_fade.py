@@ -71,10 +71,14 @@ SESSION_DEFS = {
 def _bars_from_window(window):
     out = []
     for row in window or []:
-        try:
-            ts, o, h, l, c = row[0], row[1], row[2], row[3], row[4]
-        except (IndexError, TypeError):
-            continue
+        if isinstance(row, dict):
+            # Already-normalized bar dicts (e.g. from ict_bars); read named keys.
+            ts, o, h, l, c = row.get('ts'), row.get('o'), row.get('h'), row.get('l'), row.get('c')
+        else:
+            try:
+                ts, o, h, l, c = row[0], row[1], row[2], row[3], row[4]
+            except (IndexError, TypeError, KeyError):
+                continue
         if None in (ts, o, h, l, c):
             continue
         out.append({'ts': ts, 'o': o, 'h': h, 'l': l, 'c': c})

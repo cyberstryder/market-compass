@@ -255,3 +255,39 @@ def test_scan_no_symbols():
         ict_symbols = ()
 
     assert scan(db, 'c', CfgEmpty(), 1_700_000_000)['reason'] == 'no_symbols'
+
+
+def test_bars_from_window_accepts_normalized_dicts():
+    # Regression: production ict_bars() returns bar dicts, not raw tuples.
+    # _bars_from_window used to do row[0] on them -> KeyError: 0, which
+    # escaped the (IndexError, TypeError) guard and killed the engine tick.
+    from compass.aoi_fade import _bars_from_window
+    dict_rows = [
+        {'ts': 1_700_000_000 + i * 60, 'o': 100.0, 'h': 101.0,
+         'l': 99.0, 'c': 100.5, 'v': 10}
+        for i in range(5)
+    ]
+    bars = _bars_from_window(dict_rows)
+    assert len(bars) == 5
+    assert bars[0] == {'ts': 1_700_000_000, 'o': 100.0, 'h': 101.0,
+                       'l': 99.0, 'c': 100.5}
+    # Raw tuple rows still work.
+    tuple_rows = [(1_700_000_000 + i * 60, 100.0, 101.0, 99.0, 100.5)
+                  for i in range(5)]
+    assert len(_bars_from_window(tuple_rows)) == 5
+
+
+def test_scan_survives_ict_bars_dicts():
+    # End-to-end through the real ict_bars(): raw tuples in the DB become
+    # dicts, which scan() must not choke on (production KeyError: 0).
+    db = _FakeDB()
+    rows = [(1_700_000_000 + i * 60, 100.0 + i * 0.1, 101.0 + i * 0.1,
+             99.0 + i * 0.1, 100.5 + i * 0.1, 10) for i in range(150)]
+    db.store['bar_window:MNQ.c.0'] = rows
+
+    class CfgOn:
+        ict_aoi_fade = True
+        ict_symbols = ('MNQ.c.0',)
+
+    result = scan(db, 'c', CfgOn(), 1_700_000_000 + 150 * 60)
+    assert result['ran'] is True
