@@ -49,6 +49,28 @@ def test_smoothers_entry_and_exit(db):
     assert 'COP 127 CALL' in text and 'Target hit' in text
 
 
+def test_smoothers_prefers_full_publication_input(db):
+    # Sent rows carry a slim decision in delivery['publication'] and the full
+    # signal in delivery['publication_input']; the digest must use the full one.
+    now = _now_today()
+    full = {'contract': {'underlying': 'META', 'strike': 745, 'type': 'CALL',
+                         'expiration': '2026-10-07'},
+            'entry_price': 744.17, 'target_price': 751.61,
+            'quote': {'bid': 7.8, 'ask': 7.95}}
+    slim = {'event': 'ENTRY', 'trade_id': 'abc', 'action': 'publish',
+            'contract': {'underlying': 'META', 'strike': 745, 'type': 'CALL',
+                         'expiration': '2026-10-07'}}
+    with db.tx() as c:
+        c.execute(db.insert(native_outbox).values(
+            id='s3', program='smoothers', event_key='M9:entry', created=now,
+            status='delivered', payload={},
+            delivery={'publication_input': full, 'publication': slim}))
+        out = day_digest.assemble(db, c, now + 3600)
+    sec = next(s for s in out['sections'] if s['key'] == 'smoothers')
+    text = "\n".join(sec['lines'])
+    assert '744.17' in text and '7.8/7.95' in text
+
+
 def test_futures_opened_closed_and_pnl(db):
     now = _now_today()
     closed = {'id': 'ict-1', 'symbol': 'SIL.v.0', 'direction': 'long', 'qty': 1,

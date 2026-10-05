@@ -77,6 +77,7 @@ def _section(key, title, lines):
 
 def _smoothers(db, c, start):
     entries, exits = [], []
+    compact = 0
     try:
         rows = c.execute(
             select(native_outbox)
@@ -88,7 +89,13 @@ def _smoothers(db, c, start):
         return _section("smoothers", "Smoothers", [])
     for r in rows:
         delivery = r.get("delivery") or {}
-        pub = delivery.get("publication") or delivery.get("publication_input") or {}
+        # publication_input is the full signal data; publication is the slim
+        # send-time decision (only trade_id/event). Prefer the full one.
+        pub = delivery.get("publication_input") or delivery.get("publication") or {}
+        ek = str(r.get("event_key") or "")
+        if "compact" in ek:
+            compact += 1
+            continue
         contract = pub.get("contract") or {}
         und = contract.get("underlying")
         if not und:
@@ -114,6 +121,8 @@ def _smoothers(db, c, start):
     if exits:
         lines.append("Exits (%d):" % len(exits))
         lines.extend("  " + e for e in exits)
+    if compact:
+        lines.append("+ %d more in the compact batch" % compact)
     return _section("smoothers", "Smoothers", lines)
 
 
