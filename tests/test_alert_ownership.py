@@ -219,3 +219,52 @@ def test_smoothers_entry_window_is_30_minutes(db):
     pub=row['delivery']['publication_input']
     assert pub['expires_at']==NOW+1800
     assert pub['entry_price']==744.17 and pub['week']=='2026-10-05'
+
+
+def _smoothers_exit_payload(**over):
+    contract=dict(symbol='O:COP261009C00127000',underlying='COP',expiration='2026-10-09',type='CALL',strike=127)
+    payload=dict(
+        id='sig2',project='smoothers',contract=contract,track='swing',status='native_option_exit',
+        entry=2.01,underlying_target=128.80,entry_price=124.50,target_price=128.80,
+        quote=dict(bid=2.72,ask=3.30,ts=NOW),
+        exit_reason='target',signal_status='WIN',exit_underlying=128.80,
+        exit_rule='Underlying target, otherwise Friday close; no premium stop configured',
+        publication=dict(trade_id='def456',category='smoothers',event='EXIT',contract=contract,horizon='swing'))
+    payload.update(over)
+    return dict(id='native:xyz',source='smoothers',symbol='O:COP261009C00127000',ts=NOW,payload=payload)
+
+
+def test_smoothers_exit_target_hit_compact():
+    text=format_message(_smoothers_exit_payload())
+    lines=text.split('\n')
+    assert lines[0]=='SMOOTHERS | EXIT | COP 127 CALL · 2026-10-09'
+    assert lines[1]=='Target hit · underlying reached $128.80'
+    assert lines[2].startswith('Option $2.72/$3.30 @ ')
+    assert 'modeled entry $2.01 (+50% ref)' in lines[2]
+    assert lines[3]=='Research signal — no broker order'
+    assert 'Trade ID:' not in text and 'Event #' not in text and 'Quote source' not in text
+    assert 'Entry deadline' not in text
+
+
+def test_smoothers_exit_target_hit_no_quote():
+    text=format_message(_smoothers_exit_payload(quote={}))
+    assert 'Option quote unavailable' in text
+    assert 'Trade ID:' not in text
+
+
+def test_smoothers_exit_week_close_target_not_hit():
+    text=format_message(_smoothers_exit_payload(exit_reason='close',signal_status='LOSS',
+        exit_underlying=124.10,quote={}))
+    lines=text.split('\n')
+    assert lines[0]=='SMOOTHERS | EXIT | COP 127 CALL · 2026-10-09'
+    assert lines[1]=='Week closed · target $128.80 not hit'
+    assert lines[2]=='Underlying $124.10 at close'
+    assert lines[3]=='Research signal — no broker order'
+    assert 'Trade ID:' not in text
+
+
+def test_smoothers_exit_week_close_unresolved():
+    text=format_message(_smoothers_exit_payload(exit_reason='close',signal_status='UNRESOLVED',
+        exit_underlying=None,quote={}))
+    assert 'Week closed · outcome unresolved (missing observations)' in text
+    assert 'Trade ID:' not in text

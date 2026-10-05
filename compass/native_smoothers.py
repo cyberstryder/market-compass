@@ -130,6 +130,7 @@ def queue_signal(db,c,p,event,payload,now,event_time):
         entry=p.get('entry_premium'),underlying_target=p.get('target_price'),
         entry_price=p.get('entry_price'),target_price=p.get('target_price'),
         est_return_pct=p.get('est_return_pct'),week=p.get('week'),
+        signal_status=p.get('status'),exit_underlying=p.get('exit_underlying'),
         quote=dict(bid=q.get('bid'),ask=q.get('ask'),ts=(q.get('quote_at_ms') or 0)/1000),
         reason='Weekly Smoothers underlying target / unresolved Friday close',
         exit_reason=event if event!='entry' else None,expires_at=now+ENTRY_WINDOW_SECS,

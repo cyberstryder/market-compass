@@ -185,10 +185,52 @@ def _format_smoothers_entry(p,pub,o):
     return '\n'.join(lines)[:1950]
 
 
+def _format_smoothers_exit(p,pub,o):
+    """Compact human-readable Smoothers exit alert.
+
+    Covers underlying-target hits and Friday week-closes. Internal
+    bookkeeping (trade IDs, event IDs, quote-source diagnostics) stays in
+    the database; the Discord message carries only the outcome.
+    """
+    title=f"{LABELS['smoothers']} | EXIT | {o['underlying']} {o['strike']:g} {o['type']} · {o['expiration']}"
+    reason=p.get('exit_reason')
+    tgt=p.get('underlying_target')
+    q=p.get('last_quote') or p.get('quote') or {}
+    bid,ask,ts=q.get('bid'),q.get('ask'),q.get('ts')
+    quote_ok=all(numeric(v) for v in (bid,ask,ts))
+    entry=p.get('entry')
+    if reason=='target':
+        line2=f"Target hit · underlying reached ${tgt:,.2f}" if numeric(tgt) else "Target hit"
+        if quote_ok:
+            stamp=datetime.fromtimestamp(ts,CT).strftime('%H:%M CT')
+            line3=f"Option ${bid:.2f}/${ask:.2f} @ {stamp}"
+            if numeric(entry) and entry>0:
+                ret=((bid+ask)/2/entry-1)*100
+                line3+=f" · modeled entry ${entry:.2f} ({ret:+.0f}% ref)"
+        else:
+            line3="Option quote unavailable"
+    else:
+        status=p.get('signal_status')
+        if status=='UNRESOLVED':
+            line2="Week closed · outcome unresolved (missing observations)"
+        elif numeric(tgt):
+            line2=f"Week closed · target ${tgt:,.2f} not hit"
+        else:
+            line2="Week closed · target not hit"
+        final=p.get('exit_underlying')
+        line3=f"Underlying ${final:,.2f} at close" if numeric(final) else None
+    lines=[title,line2]
+    if line3:lines.append(line3)
+    lines.append("Research signal — no broker order")
+    return '\n'.join(lines)[:1950]
+
+
 def format_message(row):
     p=row['payload']; pub=p['publication']; o=pub['contract']
     if pub.get('category')=='smoothers' and pub.get('event')=='ENTRY':
         return _format_smoothers_entry(p,pub,o)
+    if pub.get('category')=='smoothers' and pub.get('event')=='EXIT':
+        return _format_smoothers_exit(p,pub,o)
     q=p.get('last_quote') or p.get('quote') or {}
     lines=[f"{LABELS[pub['category']]} | {pub['event']} | {o['underlying']} {o['strike']:g} {o['type']} · {o['expiration']}",
            '[RESEARCH SIGNAL] — no broker order',f"Trade ID: {pub['trade_id']}",f"Holding plan: {pub['horizon']}"]
