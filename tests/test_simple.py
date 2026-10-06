@@ -329,6 +329,53 @@ def test_zero_dte_paper_no_duplicates(db):
     assert n == 1  # opened once, never duplicated
 
 
+def test_zero_dte_paper_opens_scanner_alert_trade(db):
+    from compass import zero_dte_paper as zdp
+    from compass.config import Config
+    now = _zdtp_now()
+    cfg = Config()
+    with db.tx() as c:
+        db.append(c, 'alert', 'engine', 'NVDA261005C00285000', now - 600,
+                  {'publication': {'category': 'options_0dte', 'event': 'ENTRY',
+                                   'contract': {'symbol': 'NVDA261005C00285000',
+                                                'underlying': 'NVDA', 'strike': 285,
+                                                'type': 'call', 'expiry': '2026-10-05'}}},
+                  key='zod1')
+        db.put(c, 'quote:NVDA261005C00285000', {'bid': 2.00, 'ask': 2.10, 'ts': now - 20})
+        db.put(c, 'zero_dte_paper:scan_ts', now - 7200)
+        out = zdp.scan(db, c, cfg, now)
+    assert out['opened'] == 1
+    with db.tx() as c:
+        t = db.get(c, 'trade:0dte-scan-zod1')
+    assert t['kind'] == 'scanner' and t['qty'] == 1 and t['status'] == 'open'
+    assert t['entry'] == 2.11
+
+
+def test_zero_dte_paper_scanner_exits_on_half(db):
+    from compass import zero_dte_paper as zdp
+    from compass.config import Config
+    now = _zdtp_now()
+    cfg = Config()
+    with db.tx() as c:
+        db.append(c, 'alert', 'engine', 'NVDA261005C00285000', now - 600,
+                  {'publication': {'category': 'options_0dte', 'event': 'ENTRY',
+                                   'contract': {'symbol': 'NVDA261005C00285000',
+                                                'underlying': 'NVDA', 'strike': 285,
+                                                'type': 'call', 'expiry': '2026-10-05'}}},
+                  key='zod2')
+        db.put(c, 'quote:NVDA261005C00285000', {'bid': 2.00, 'ask': 2.10, 'ts': now - 20})
+        db.put(c, 'zero_dte_paper:scan_ts', now - 7200)
+        zdp.scan(db, c, cfg, now)
+        # premium doubles -> +50% target
+        db.put(c, 'quote:NVDA261005C00285000', {'bid': 3.30, 'ask': 3.40, 'ts': now + 30})
+        out = zdp.scan(db, c, cfg, now + 61)
+    assert out['closed'] == 1
+    with db.tx() as c:
+        t = db.get(c, 'trade:0dte-scan-zod2')
+    assert t['status'] == 'closed' and t['exit_reason'] == 'target hit (+50%)'
+    assert t['pnl'] > 0
+
+
 def test_simple_0dte_aggregates_paper_trades(db):
     now = NOW
     with db.tx() as c:

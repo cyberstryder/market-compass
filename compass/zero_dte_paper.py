@@ -163,23 +163,24 @@ def _open_scanner(db, c, now, flatten_at):
         db.put(c, "zero_dte_paper:scan_ts", max(ts, db.get(c, "zero_dte_paper:scan_ts", 0) or 0))
         pub = (r.get("payload") or {}).get("publication") or {}
         contract = pub.get("contract") or {}
-        underlying = contract.get("underlying")
-        strike, typ = contract.get("strike"), contract.get("type")
-        if not underlying or _num(strike) is None or not typ:
+        symbol = contract.get("symbol")
+        if not symbol:
+            # Fall back to a chain lookup for older publications without it.
+            o = _find_0dte_contract(db, c, contract.get("underlying"),
+                                    contract.get("strike"), contract.get("type"), now)
+            symbol = (o or {}).get("symbol")
+        if not symbol:
             continue
         key = "trade:0dte-scan-%s" % (r.get("key") or int(ts))
         if db.get(c, key):
             continue
-        o = _find_0dte_contract(db, c, underlying, strike, typ, now)
-        if not o:
-            continue
-        q = _fresh_quote(db, c, o["symbol"], now)
+        q = _fresh_quote(db, c, symbol, now)
         if not q:
             continue
         entry = _num(q.get("ask")) + SLIPPAGE
         rec = {
-            "id": key, "kind": "scanner", "symbol": o["symbol"],
-            "underlying": underlying, "side": "long", "qty": 1, "multiplier": 100,
+            "id": key, "kind": "scanner", "symbol": symbol,
+            "underlying": contract.get("underlying"), "side": "long", "qty": 1, "multiplier": 100,
             "entry": round(entry, 2), "entered_at": now,
             "exit_up_pct": 50.0, "exit_down_pct": -50.0,
             "alert_key": r.get("key"), "alert_event": pub.get("status") or pub.get("event"),
