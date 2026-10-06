@@ -112,7 +112,7 @@ def test_stale_exit_leaves_position_unresolved(db,cfg):
     with db.tx() as c:
         db.put(c,"quote:SPY",quote())
         e.enter(c,signal(),NOW)
-        e.exits(c,NOW+20)
+        e.exits(c,NOW+35)
         assert db.get(c,"position:SPY")["status"]=="open"
         assert any(a["payload"]["status"]=="management_blocked" for a in db.recent(c,"alert"))
 
