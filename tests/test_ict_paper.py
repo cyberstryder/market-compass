@@ -280,3 +280,60 @@ def test_exits_resolves_dated_contract_quote_for_alias(db, cfg):
     assert p['status'] == 'open'
     assert p['last_quote_ts'] == NOW + 120  # dated quote was seen
     assert p['mark'] == pytest.approx(101.0, abs=0.05)  # fill-adjusted bid
+
+
+# --- churn guardrails (2026-10-06) ---
+
+def seed_bars(c, db, n=20, lo=99.0, hi=101.0):
+    db.put(c, 'bar_window:' + SYM,
+           [[NOW - (n - i) * 60, 100.0, hi, lo, 100.0, 10] for i in range(n)])
+
+
+def test_stop_too_tight_declined(db, cfg):
+    with db.tx() as c:
+        seed_bars(c, db)  # ATR ~2.0; 0.5x ATR = 1.0
+        r = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', SYM,
+                             sig(entry=100.0, stop=99.5, target=102.0))
+    assert not r['submitted'] and r['reason'] == 'stop_too_tight'
+
+
+def test_stop_ok_accepted(db, cfg):
+    with db.tx() as c:
+        seed_bars(c, db)  # ATR ~2.0; risk 2.0 >= 1.0
+        r = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', SYM, sig())
+    assert r['submitted'], r
+
+
+def test_no_bars_skips_atr_check(db, cfg):
+    # No bar window: guardrail degrades to no-op rather than blocking.
+    with db.tx() as c:
+        r = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', SYM,
+                             sig(entry=100.0, stop=99.9, target=102.0))
+    assert r['submitted'], r
+
+
+def test_cooldown_blocks_immediate_reentry(db, cfg):
+    e = Engine(db, cfg)
+    with db.tx() as c:
+        r = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', SYM, sig())
+        assert r['submitted'], r
+        db.put(c, 'quote:' + SYM, quote(NOW + 60, 97.0, 97.5))  # stop-out
+        e.exits(c, NOW + 60)
+    with db.tx() as c:
+        p = db.get(c, POS)
+        assert p['status'] == 'closed'
+        r = ict_paper.submit(db, c, cfg, NOW + 120, 'golden_zone', SYM, sig())
+    assert not r['submitted'] and r['reason'] == 'cooldown'
+
+
+def test_cooldown_expires(db, cfg):
+    e = Engine(db, cfg)
+    with db.tx() as c:
+        r = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', SYM, sig())
+        assert r['submitted'], r
+        db.put(c, 'quote:' + SYM, quote(NOW + 60, 97.0, 97.5))
+        e.exits(c, NOW + 60)
+    with db.tx() as c:
+        r = ict_paper.submit(db, c, cfg, NOW + 16 * 60, 'golden_zone', SYM,
+                             sig(signal_ts=NOW + 16 * 60 - 30))
+    assert r['submitted'], r

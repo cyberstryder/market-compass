@@ -97,12 +97,38 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
     if not spec:
         return {'submitted': False, 'reason': 'not_a_future'}
     pos_key = 'position:ict:%s:%s' % (detector, symbol)
-    if (db.get(c, pos_key, {}) or {}).get('status') == 'open':
+    prev = db.get(c, pos_key, {}) or {}
+    if prev.get('status') == 'open':
         return {'submitted': False, 'reason': 'existing_position'}
+    # Churn guardrail 1: no re-entry within the cooldown after this
+    # detector+symbol's last exit. Kills the machine-gun re-entry loop
+    # (observed 2026-10-06: same-instrument re-entry 1-4 min after a
+    # stop-out, median hold 3 min on bos_fvg).
+    cooldown_s = (number(getattr(cfg, 'ict_paper_cooldown_min', 15)) or 15) * 60
+    if prev.get('status') == 'closed' and prev.get('exited_at'):
+        if now - prev['exited_at'] < cooldown_s:
+            return {'submitted': False, 'reason': 'cooldown',
+                    'exited_at': prev['exited_at']}
     direction = 1 if side == 'long' else -1
     if (stop - entry) * direction >= 0 or (target - entry) * direction <= 0:
         return {'submitted': False, 'reason': 'levels_inverted'}
     risk_pts = abs(entry - stop)
+    # Churn guardrail 2: minimum stop distance relative to the detector's
+    # own bar volatility. Stops under half the 14-bar ATR are noise-level
+    # (the churners ran 0.25x-ATR stops; the one breakeven method uses 1x).
+    # Skipped when bars are unavailable rather than blocking the trade.
+    min_stop_atr = number(getattr(cfg, 'ict_paper_min_stop_atr', 0.5)) or 0.5
+    atr_v = None
+    try:
+        from .ict_common import ict_bars, atr as _atr
+        _bars = ict_bars(db, c, symbol)
+        if len(_bars) >= 15:
+            atr_v = _atr(_bars)
+    except Exception:
+        atr_v = None
+    if atr_v and risk_pts < min_stop_atr * atr_v:
+        return {'submitted': False, 'reason': 'stop_too_tight',
+                'risk_pts': round(risk_pts, 4), 'atr': round(atr_v, 4)}
     per_unit = risk_pts * spec['multiplier'] + 2 * spec['fee'] + \
         2 * spec['tick'] * spec['multiplier']
     if per_unit <= 0:
