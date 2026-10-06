@@ -71,6 +71,7 @@ class Config:
     tape_confirmed: bool = field(default_factory=lambda: env("TAPE_CONFIRMED_ENABLED","true")=="true")
     gap_push_enabled: bool = field(default_factory=lambda: env("GAP_PUSH_ENABLED","true")=="true")
     day_board_push_enabled: bool = field(default_factory=lambda: env("DAY_BOARD_PUSH_ENABLED","true")=="true")
+    futures_scanner_push_enabled: bool = field(default_factory=lambda: env("FUTURES_SCANNER_PUSH_ENABLED","false")=="true")
     # ICT futures concept detectors (Phase 1: evidence-only, all default OFF).
     ict_session_liquidity: bool = field(default_factory=lambda: env("ICT_SESSION_LIQUIDITY_ENABLED","false")=="true")
     ict_htf_levels: bool = field(default_factory=lambda: env("ICT_HTF_LEVELS_ENABLED","false")=="true")
