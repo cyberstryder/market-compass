@@ -225,18 +225,16 @@ def compare_sources(db, hours=24, now=None):
     out = {}
     with db.tx() as c:
         for source in ("alpaca", "massive"):
-            trades = db.recent(c, "option_trade", limit=50000) or []
+            # Filter by time in SQL to avoid sorting the full history.
+            trades = db.recent(c, "option_trade", limit=50000, since=since) or []
             src_trades = [t for t in trades
-                          if (t.get("ts") or 0) >= since
-                          and ((t.get("payload") or {}).get("src") == source
+                          if ((t.get("payload") or {}).get("src") == source
                                or source == "massive" and
                                (t.get("payload") or {}).get("src") is None)]
             premiums = []
             for t in trades:
                 p = t.get("payload") or {}
                 if (p.get("src") or "massive") != source:
-                    continue
-                if (t.get("ts") or 0) < since:
                     continue
                 try:
                     premiums.append(float(p.get("p", 0)) * float(p.get("s", 0)) * 100)
