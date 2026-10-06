@@ -196,6 +196,9 @@ async def consume(ws, collector, buffer=None):
         await ws.send(json.dumps({"action": "auth",
                                   "key": collector.cfg.alpaca_key,
                                   "secret": collector.cfg.alpaca_secret}))
+        # Wait for the auth confirmation; returning early would trigger
+        # FIRST_COMPLETED and tear down the whole consumer.
+        await authenticated.wait()
 
     workers = [asyncio.create_task(fn())
                for fn in (authenticate, read, subscriptions, health)]

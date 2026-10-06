@@ -709,7 +709,6 @@ class Collectors:
                 await alpaca_consume(ws,self)
             except OptionStreamError as error:
                 raise FeedError(str(error)) from None
-        self.option_trade_batch([(symbol,t,x)])
 
     def subscription_batch(self,items):
         with self.db.tx() as c:
