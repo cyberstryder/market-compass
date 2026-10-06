@@ -508,7 +508,11 @@ def create_app(cfg=None):
     def get_option_stream_parity():
         # Massive vs Alpaca side-by-side comparison for the migration.
         from .alpaca_option_stream import compare_sources
-        return compare_sources(db)
+        try:
+            return compare_sources(db)
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "traceback": traceback.format_exc(limit=5)}
 
     @app.get('/api/deck')
     def get_deck():
