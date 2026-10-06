@@ -500,8 +500,12 @@ def create_app(cfg=None):
         if not isinstance(body, dict) or body.get('confirm') != 'reset-futures-paper':
             raise HTTPException(400, 'body must confirm reset-futures-paper')
         from . import ict_paper
-        with db.tx() as c:
-            counts = ict_paper.reset_paper_book(db, c, time.time())
+        try:
+            with db.tx() as c:
+                counts = ict_paper.reset_paper_book(db, c, time.time())
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "traceback": traceback.format_exc(limit=10)}
         return {'reset': True, **counts}
 
     @app.get('/api/option-stream-parity')
