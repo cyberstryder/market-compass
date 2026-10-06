@@ -247,11 +247,18 @@ class Engine:
                     except Exception:
                         pass
                 continue
-            # Futures feed routinely delivers with 5-8s latency; a 5s cutoff
-            # was rejecting good quotes and starving positions. 10s keeps
-            # stops checkable without trusting truly stale data.
-            if not fresh(q,now,age=10) or q['ts']>now or q["ts"]<=p["last_quote_ts"]:
-                if now-p.get("last_quote_ts",now)>30:
+            # Per-symbol freshness: quote arrival gaps vary by liquidity.
+            # MNQ/MES tick every ~0.5s; SIL/YM can go 2-4s between quotes.
+            # Thresholds set at ~10x normal max gap (freshness) and ~30x (alert).
+            sym_root = p["symbol"].split('.')[0]
+            if sym_root in ('MNQ', 'MES', 'ES', 'NQ'):
+                fresh_age, alert_age = 10, 30
+            elif sym_root in ('SIL', 'SI', 'YM'):
+                fresh_age, alert_age = 20, 60
+            else:  # MGC, MCL, GC, CL, MYM, etc.
+                fresh_age, alert_age = 15, 45
+            if not fresh(q,now,age=fresh_age) or q['ts']>now or q["ts"]<=p["last_quote_ts"]:
+                if now-p.get("last_quote_ts",now)>alert_age:
                     # Diagnose for the alert: is the quote stream missing
                     # entirely, or just stale? Drives very different fixes.
                     if q is None:
