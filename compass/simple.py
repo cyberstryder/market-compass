@@ -82,15 +82,19 @@ def _smoothers(db, c, now):
             continue
         res = option_result(p)
         pnl = res.get("net_pnl")
-        won = pnl is not None and pnl > 0
+        # Public results show only the values we have: signals with real,
+        # measured option P&L. Unmeasurable weeks (missing quotes, unresolved,
+        # still open) are excluded from the public page, not deleted.
+        if pnl is None:
+            continue
+        won = pnl > 0
         per_ticker[r.get("ticker") or "?"].append((won, pnl))
         if r.get("status") == "WIN":
             target_hits += 1
-        if pnl is not None:
-            d = _day(p.get("resolution_time"))
-            if d:
-                by_day[d]["pnl"] += pnl
-                by_day[d]["count"] += 1
+        d = _day(p.get("resolution_time"))
+        if d:
+            by_day[d]["pnl"] += pnl
+            by_day[d]["count"] += 1
     all_trades = [t for v in per_ticker.values() for t in v]
     drill = []
     for ticker in sorted(per_ticker):
@@ -382,23 +386,6 @@ def _ts(ts):
         return "—"
 
 
-def _smoother_pending_reason(status, res):
-    """Plain-English reason a Smoothers week shows no dollar P&L."""
-    reason = res.get('reason') or ''
-    if status == 'OPEN':
-        return 'Still open'
-    if status == 'UNRESOLVED':
-        return 'Unresolved'
-    if ('quote_not_usable' in reason or 'contract_mismatch' in reason
-            or 'quote_time_not_valid' in reason):
-        if status == 'WIN':
-            return 'Target hit — option quote not captured'
-        if status == 'LOSS':
-            return 'Closed — option quote not captured'
-        return 'Option quote not captured'
-    return 'Pending'
-
-
 def _detail_smoothers(db, c, now, name):
     rows = list(c.execute(select(
         smoothers_weekly.c.week, smoothers_weekly.c.status,
@@ -412,6 +399,9 @@ def _detail_smoothers(db, c, now, name):
             continue
         res = option_result(p)
         pnl = res.get("net_pnl")
+        # Public detail shows only weeks with real, measured option P&L.
+        if pnl is None:
+            continue
         status = r.get("status") or "?"
         week = r.get("week") or "?"
         try:
@@ -428,18 +418,16 @@ def _detail_smoothers(db, c, now, name):
                 sub += " · $%.2f → $%.2f" % (float(entry), float(target))
             except (TypeError, ValueError):
                 pass
-        orows = [["Status", status]]
-        if pnl is not None:
-            orows.append(["Net P&L", _m(pnl)])
+        orows = [["Status", status], ["Net P&L", _m(pnl)]]
         orows.append(["Target hit", "Yes" if status == "WIN" else "No"])
         items.append({
             "tag": tag, "title": "Week of " + wl, "sub": sub, "rows": orows,
-            "result": _m(pnl) if pnl is not None else _smoother_pending_reason(status, res),
-            "result_cls": "pos" if pnl is not None and pnl > 0 else ("neg" if pnl is not None and pnl < 0 else ""),
+            "result": _m(pnl),
+            "result_cls": "pos" if pnl > 0 else ("neg" if pnl < 0 else ""),
         })
     return {"type": "smoothers", "name": name,
             "title": "%s — week by week" % name,
-            "sub": "Every weekly signal on %s, newest first." % name,
+            "sub": "Every weekly signal on %s with measured option P&L, newest first." % name,
             "items": items}
 
 

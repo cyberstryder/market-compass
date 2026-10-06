@@ -429,11 +429,28 @@ def test_flow_pulse_drill_includes_pulse_counts(db):
     assert bear['stats']['pulses'] == 1
 
 
-def test_smoother_pending_reason():
-    r = simple._smoother_pending_reason
-    assert r('OPEN', {'reason': 'underlying_signal_unresolved'}) == 'Still open'
-    assert r('UNRESOLVED', {'reason': 'underlying_signal_unresolved'}) == 'Unresolved'
-    assert r('WIN', {'reason': 'exit_quote_not_usable'}) == 'Target hit — option quote not captured'
-    assert r('LOSS', {'reason': 'entry_contract_mismatch'}) == 'Closed — option quote not captured'
-    assert r('WIN', {'reason': 'exit_quote_time_not_valid'}) == 'Target hit — option quote not captured'
-    assert r('?', {'reason': 'weird'}) == 'Pending'
+def test_smoother_filters_unmeasurable(db):
+    # Public page shows only weeks with real, measured option P&L.
+    now = NOW
+    measurable = _smoothers_payload(50.0, now)  # WIN with good quotes
+    no_quotes = dict(_smoothers_payload(50.0, now), exit_quote=None)
+    open_week = dict(_smoothers_payload(50.0, now), status='OPEN')
+    with db.tx() as c:
+        c.execute(db.insert(smoothers_weekly).values(
+            id='s1', week='2026-10-05', ticker='DEMO', status='WIN',
+            payload=measurable))
+        c.execute(db.insert(smoothers_weekly).values(
+            id='s2', week='2026-09-28', ticker='DEMO', status='WIN',
+            payload=no_quotes))
+        c.execute(db.insert(smoothers_weekly).values(
+            id='s3', week='2026-10-12', ticker='DEMO', status='OPEN',
+            payload=open_week))
+        out = simple.summary(db, c, now)
+    sm = out['types']['smoothers']
+    assert sm['stats']['tracked'] == 1
+    assert sm['stats']['measured'] == 1
+    assert sm['stats']['pnl'] == 49.68
+    with db.tx() as c:
+        d = simple.detail(db, c, now, 'smoothers', 'DEMO')
+    assert len(d['items']) == 1
+    assert d['items'][0]['result'] == '+$50'
