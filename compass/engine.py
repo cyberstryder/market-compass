@@ -247,8 +247,11 @@ class Engine:
                     except Exception:
                         pass
                 continue
-            if not fresh(q,now) or q['ts']>now or q["ts"]<=p["last_quote_ts"]:
-                if now-p.get("last_quote_ts",now)>15:
+            # Futures feed routinely delivers with 5-8s latency; a 5s cutoff
+            # was rejecting good quotes and starving positions. 10s keeps
+            # stops checkable without trusting truly stale data.
+            if not fresh(q,now,age=10) or q['ts']>now or q["ts"]<=p["last_quote_ts"]:
+                if now-p.get("last_quote_ts",now)>30:
                     # Diagnose for the alert: is the quote stream missing
                     # entirely, or just stale? Drives very different fixes.
                     if q is None:
@@ -257,7 +260,7 @@ class Engine:
                         quote_state = "quote has no timestamp"
                     else:
                         age = now - q["ts"]
-                        quote_state = "quote %.0fs old" % age if age >= 0 else "quote from the future"
+                        quote_state = "quote %.1fs old" % age if age >= 0 else "quote from the future"
                     # This position flew blind: stops/targets could not be
                     # verified. Mark it so the eventual exit is never counted
                     # as a strategy win or loss.
