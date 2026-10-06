@@ -6,6 +6,7 @@ psycopg[binary]==3.3.5
 databento==0.86.0
 exchange-calendars==4.13.2
 websockets==17.1
+msgpack==1.1.1
 itsdangerous==2.2.0
 pytest==9.1.1
 

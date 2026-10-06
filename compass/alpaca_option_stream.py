@@ -5,8 +5,9 @@ Every translated item carries 'src': 'alpaca' so downstream persistence can
 tag rows by source and the comparison can measure parity.
 
 Alpaca protocol (wss://stream.data.alpaca.markets/v1beta1/opra):
-  auth:      {"action": "auth", "key": "...", "secret": "..."}
-  subscribe: {"action": "subscribe", "trades": [...], "quotes": [...]}
+  NOTE: OPRA requires MessagePack (binary) encoding, NOT JSON text.
+  auth:      {"action": "auth", "key": "...", "secret": "..."} (msgpack)
+  subscribe: {"action": "subscribe", "trades": [...], "quotes": [...]} (msgpack)
   trade:     {"T":"t","S":"SPY251004C00745000","x":"Q","p":1.25,"s":10,
               "t":"2026-10-05T13:30:00.123Z","c":[...],"i":12345}
   quote:     {"T":"q","S":"...","ax":"Q","ap":1.30,"as":5,"bx":"Q","bp":1.20,
@@ -23,6 +24,8 @@ import asyncio
 import json
 import logging
 import time
+
+import msgpack
 
 from .market import ts, number
 from .diagnostics import redacted_detail
@@ -92,7 +95,8 @@ async def consume(ws, collector, buffer=None):
                 continue
             now, mono = time.time(), time.monotonic()
             try:
-                msgs = json.loads(raw)
+                # OPRA uses MessagePack binary, not JSON text.
+                msgs = msgpack.unpackb(raw, raw=False)
             except Exception:
                 continue
             if not isinstance(msgs, list):
@@ -126,8 +130,8 @@ async def consume(ws, collector, buffer=None):
             have_wire = sorted(to_alpaca_symbol(s) for s in subscribed)
             if wire != have_wire:
                 trace.request("subscribe", wanted, time.time())
-                await ws.send(json.dumps({"action": "subscribe",
-                                          "trades": wire, "quotes": wire}))
+                await ws.send(msgpack.packb({"action": "subscribe",
+                                             "trades": wire, "quotes": wire}))
                 trace.sent("subscribe", wanted, time.time())
             subscribed.clear()
             subscribed.update(wanted)
@@ -193,9 +197,9 @@ async def consume(ws, collector, buffer=None):
             await asyncio.sleep(30)
 
     async def authenticate():
-        await ws.send(json.dumps({"action": "auth",
-                                  "key": collector.cfg.alpaca_key,
-                                  "secret": collector.cfg.alpaca_secret}))
+        await ws.send(msgpack.packb({"action": "auth",
+                                     "key": collector.cfg.alpaca_key,
+                                     "secret": collector.cfg.alpaca_secret}))
         # Wait for the auth confirmation; returning early would trigger
         # FIRST_COMPLETED and tear down the whole consumer.
         await authenticated.wait()
