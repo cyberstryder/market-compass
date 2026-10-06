@@ -214,10 +214,11 @@ async def consume(ws, collector, buffer=None):
                 len(buffer.quotes), len(buffer.trades))
 
 
-def compare_sources(db, hours=24, now=None):
-    """Parity check: per-source trade/quote counts and premium over window.
+def compare_sources(db, hours=1, now=None):
+    """Parity check: per-source trade counts over window.
 
     Returns {'alpaca': {...}, 'massive': {...}} for the dashboard or logs.
+    Uses a short window and COUNT-only to stay fast on the large events table.
     """
     import time as _time
     from sqlalchemy import text
@@ -225,13 +226,11 @@ def compare_sources(db, hours=24, now=None):
     since = now - hours * 3600
     out = {}
     with db.tx() as c:
-        # Aggregate in SQL to avoid pulling 50k rows. The payload->>'src'
-        # distinguishes alpaca vs massive (NULL/missing = massive legacy).
+        # COUNT-only, no JSON payload math — just need to know if each
+        # source is producing data.
         rows = c.execute(text("""
             SELECT COALESCE(payload->>'src', 'massive') AS src,
-                   COUNT(*) AS n,
-                   SUM((payload->>'p')::float * (payload->>'s')::float * 100) AS premium,
-                   MAX((payload->>'p')::float * (payload->>'s')::float * 100) AS maxp
+                   COUNT(*) AS n
             FROM events
             WHERE kind = 'option_trade' AND ts >= :since
             GROUP BY 1
@@ -239,7 +238,5 @@ def compare_sources(db, hours=24, now=None):
         by_src = {r["src"]: r for r in rows}
         for source in ("alpaca", "massive"):
             r = by_src.get(source, {})
-            out[source] = {"trades": int(r.get("n") or 0),
-                           "total_premium": round(float(r.get("premium") or 0), 2),
-                           "max_premium": round(float(r.get("maxp") or 0), 2)}
+            out[source] = {"trades": int(r.get("n") or 0)}
     return {"asof": now, "window_hours": hours, "sources": out}
