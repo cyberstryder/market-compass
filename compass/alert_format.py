@@ -305,6 +305,9 @@ def futures_message(row, identity, now):
     if status == 'management_blocked':
         lines = [f'**FUTURES | NO DATA | {sym}{direction}**',
                  'No fresh price — stop and target can\u2019t be checked']
+        qs = p.get('quote_state')
+        if qs:
+            lines.append(f'Feed: {qs}')
         detail = ' · '.join(f'{k} {px(k)}' for k in ('entry', 'stop', 'target') if px(k))
         if detail:
             lines.append(f'Position: {detail} · {qty} contract' + ('' if qty == 1 else 's'))
@@ -320,7 +323,15 @@ def futures_message(row, identity, now):
         else:
             reason = p.get('exit_reason') or p.get('reason') or ''
             label = FUTURES_EXIT_REASONS.get(reason, clean(reason).replace('_', ' ') or 'Closed')
-            outcome = f'{label} · entry {px("entry")} \u2192 exit {px("exit")}' if px('entry') and px('exit') else label
+            if 'stop' in reason:
+                mark = '❌ '
+            elif 'target' in reason:
+                mark = '🎯 '
+            elif 'flatten' in reason:
+                mark = '⏰ '
+            else:
+                mark = ''
+            outcome = f'{mark}{label} · entry {px("entry")} \u2192 exit {px("exit")}' if px('entry') and px('exit') else mark + label
             lines.append(outcome)
             bits = []
             if p.get('pnl') is not None:

@@ -249,8 +249,18 @@ class Engine:
                 continue
             if not fresh(q,now) or q['ts']>now or q["ts"]<=p["last_quote_ts"]:
                 if now-p.get("last_quote_ts",now)>15:
+                    # Diagnose for the alert: is the quote stream missing
+                    # entirely, or just stale? Drives very different fixes.
+                    if q is None:
+                        quote_state = "no quote stream"
+                    elif q.get("ts") is None:
+                        quote_state = "quote has no timestamp"
+                    else:
+                        age = now - q["ts"]
+                        quote_state = "quote %.0fs old" % age if age >= 0 else "quote from the future"
                     self.alert(c,p["symbol"],{**alert_context(p),"status":"management_blocked","trade_id":p["id"],
                         "reason":"No fresh exit quote; position remains unresolved",
+                        "quote_state": quote_state,
                         "entry":p.get("entry"),"stop":p.get("stop"),"target":p.get("target"),
                         "qty":p.get("qty",1)},"stale:"+p["id"]+":"+str(int(now//300)))
                 continue
