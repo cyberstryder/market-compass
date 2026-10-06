@@ -520,6 +520,18 @@ def create_app(cfg=None):
             import traceback
             return {"error": str(e), "traceback": traceback.format_exc(limit=5)}
 
+    @app.get('/api/alpaca-stream-status')
+    def get_alpaca_stream_status():
+        # Diagnostic: what the collector's alpaca_option_stream task is doing.
+        # Reads the health table entry written by supervise()/alpaca_options().
+        try:
+            with db.tx() as c:
+                h = db.get(c, "health:alpaca_option_stream", {})
+            return {"health": h}
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "traceback": traceback.format_exc(limit=5)}
+
     @app.get('/api/deck')
     def get_deck():
         # Command deck: one aggregated at-a-glance payload for the tile grid.
