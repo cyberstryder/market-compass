@@ -220,27 +220,26 @@ def compare_sources(db, hours=24, now=None):
     Returns {'alpaca': {...}, 'massive': {...}} for the dashboard or logs.
     """
     import time as _time
+    from sqlalchemy import text
     now = now or _time.time()
     since = now - hours * 3600
     out = {}
     with db.tx() as c:
+        # Aggregate in SQL to avoid pulling 50k rows. The payload->>'src'
+        # distinguishes alpaca vs massive (NULL/missing = massive legacy).
+        rows = c.execute(text("""
+            SELECT COALESCE(payload->>'src', 'massive') AS src,
+                   COUNT(*) AS n,
+                   SUM((payload->>'p')::float * (payload->>'s')::float * 100) AS premium,
+                   MAX((payload->>'p')::float * (payload->>'s')::float * 100) AS maxp
+            FROM events
+            WHERE kind = 'option_trade' AND ts >= :since
+            GROUP BY 1
+        """), {"since": since}).mappings().all()
+        by_src = {r["src"]: r for r in rows}
         for source in ("alpaca", "massive"):
-            # Filter by time in SQL to avoid sorting the full history.
-            trades = db.recent(c, "option_trade", limit=50000, since=since) or []
-            src_trades = [t for t in trades
-                          if ((t.get("payload") or {}).get("src") == source
-                               or source == "massive" and
-                               (t.get("payload") or {}).get("src") is None)]
-            premiums = []
-            for t in trades:
-                p = t.get("payload") or {}
-                if (p.get("src") or "massive") != source:
-                    continue
-                try:
-                    premiums.append(float(p.get("p", 0)) * float(p.get("s", 0)) * 100)
-                except (TypeError, ValueError):
-                    pass
-            out[source] = {"trades": len(src_trades),
-                           "total_premium": round(sum(premiums), 2),
-                           "max_premium": round(max(premiums, default=0), 2)}
+            r = by_src.get(source, {})
+            out[source] = {"trades": int(r.get("n") or 0),
+                           "total_premium": round(float(r.get("premium") or 0), 2),
+                           "max_premium": round(float(r.get("maxp") or 0), 2)}
     return {"asof": now, "window_hours": hours, "sources": out}
