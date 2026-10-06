@@ -6,7 +6,7 @@ from .market import fresh, session, day
 VERSION = 'observation-recovery-v1'
 # NBIS 2026-10-06: 30s grace was killing good trades on feed blips.
 # 90s covers routine latency without trusting truly dead feeds.
-GRACE = 90
+GRACE = 30
 
 
 def enable(p):
