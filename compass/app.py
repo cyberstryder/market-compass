@@ -65,6 +65,8 @@ def create_app(cfg=None):
     async def lifespan(app):
         cfg.validate()
         logging.getLogger("uvicorn.error").info("Strategy switches: morning_orb=%s orb_setups=%s role=%s",cfg.morning_enabled,cfg.orb_setups,cfg.role)
+        logging.getLogger("uvicorn.error").info("Alpaca config: key_set=%s secret_set=%s option_stream=%s",
+            bool(cfg.alpaca_key), bool(cfg.alpaca_secret), cfg.alpaca_option_stream)
         db.initialize()
         initialize_native_morning(db)
         nonlocal collectors,serializer
