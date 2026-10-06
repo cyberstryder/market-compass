@@ -213,6 +213,7 @@ def reset_paper_book(db, c, now):
     Returns counts of what was removed.
     """
     from . import paper_risk
+    from .futures import risk_day
     counts = {'trades': 0, 'positions': 0, 'ledgers': 0}
     for k in list(db.prefix(c, 'trade:ict-').keys()):
         db.delete(c, k)
@@ -227,7 +228,7 @@ def reset_paper_book(db, c, now):
     # Seed a clean zeroed ledger for today so ledgers() returns saved
     # state instead of attempting a reconstruction.
     db.put(c, paper_risk.key(now, 'future'),
-           dict(realized=0.0, entries=0, day=paper_risk.risk_day(now),
+           dict(realized=0.0, entries=0, day=risk_day(now),
                 portfolio='futures', label='Futures',
                 policy=paper_risk.VERSION, ready=True,
                 initialized_at=now,
