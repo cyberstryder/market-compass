@@ -183,18 +183,6 @@ def test_detail_futures_trades(db):
     assert any(r[0] == 'Exit reason' and r[1] == 'Target hit' for r in it['rows'])
 
 
-def test_detail_flow_tracks(db):
-    now = NOW
-    _detail_fixtures(db, now)
-    with db.tx() as c:
-        d = simple.detail(db, c, now, 'flow_pulse', 'Bullish flow')
-    assert len(d['items']) == 1
-    it = d['items'][0]
-    assert 'TSLA' in it['title']
-    assert it['result_cls'] == 'neg'
-    assert any(r[0] == 'Best excursion' for r in it['rows'])
-
-
 def test_detail_flash_setups(db):
     now = NOW
     _detail_fixtures(db, now)
@@ -392,3 +380,50 @@ def test_simple_0dte_aggregates_paper_trades(db):
     assert zd['stats']['pnl'] == 15.0
     spy = [d for d in zd['drill'] if d['name'] == 'SPY morning plan'][0]
     assert spy['stats']['tracked'] == 2 and spy['stats']['pnl'] == 15.0
+
+
+def test_detail_flow_pulses(db):
+    now = NOW
+    with db.tx() as c:
+        db.append(c, 'flow_pulse', 'flow_pulse', 'MRK', now - 3600,
+                  {'symbol': 'MRK', 'direction': 'bearish',
+                   'directional_premium': 1735771, 'opposing_premium': 200000,
+                   'print_count': 12, 'max_score': 94,
+                   'suggested_contract': {'strike': 95, 'type': 'put', 'expiry': '2026-11-21'},
+                   'first_seen': now - 3600},
+                  key='flowpulse:2026-10-05:MRK:bearish')
+        db.append(c, 'flow_pulse', 'flow_pulse', 'TSLA', now - 1800,
+                  {'symbol': 'TSLA', 'direction': 'bullish',
+                   'directional_premium': 5300000, 'opposing_premium': 100000,
+                   'print_count': 20, 'max_score': 97,
+                   'first_seen': now - 1800},
+                  key='flowpulse:2026-10-05:TSLA:bullish')
+        db.put(c, 'flow_pulse_track:flowpulse:2026-10-05:MRK:bearish',
+               {'key': 'flowpulse:2026-10-05:MRK:bearish', 'symbol': 'MRK',
+                'direction': 'bearish', 'status': 'open', 'fired_at': now - 3600})
+        d = simple.detail(db, c, now, 'flow_pulse', 'Bearish flow')
+    assert d['title'] == 'Bearish flow — pulse by pulse'
+    assert len(d['items']) == 1
+    it = d['items'][0]
+    assert it['title'] == 'MRK bearish'
+    assert '$1.7M' in it['sub']
+    assert any(r[0] == 'Suggested contract' and '95P' in r[1] for r in it['rows'])
+    assert any(r[0] == 'Paper track' and r[1] == 'Track open' for r in it['rows'])
+    with db.tx() as c:
+        d2 = simple.detail(db, c, now, 'flow_pulse', 'Bullish flow')
+    assert len(d2['items']) == 1
+    assert any(r[0] == 'Paper track' and r[1] == 'No track opened' for r in d2['items'][0]['rows'])
+
+
+def test_flow_pulse_drill_includes_pulse_counts(db):
+    now = NOW
+    with db.tx() as c:
+        db.append(c, 'flow_pulse', 'flow_pulse', 'MRK', now,
+                  {'symbol': 'MRK', 'direction': 'bearish',
+                   'directional_premium': 1735771, 'first_seen': now},
+                  key='flowpulse:2026-10-05:MRK:bearish')
+        out = simple.summary(db, c, now)
+    fp = out['types']['flow_pulse']
+    assert fp['stats']['pulses'] == 1
+    bear = [d for d in fp['drill'] if d['name'] == 'Bearish flow'][0]
+    assert bear['stats']['pulses'] == 1

@@ -194,14 +194,27 @@ def _flow_pulse(db, c, now):
             open_count += 1
     all_trades = [t for v in per_dir.values() for t in v]
     drill = []
-    for direction in sorted(per_dir):
+    # Pulses (the signals) per direction, for the examples view.
+    try:
+        prose = db.recent(c, "flow_pulse", limit=200)
+    except Exception:
+        prose = []
+    per_dir_pulses = defaultdict(int)
+    for r in prose:
+        p = r.get("payload") or {}
+        if isinstance(p, dict) and p.get("symbol"):
+            per_dir_pulses[str(p.get("direction") or "?").lower()] += 1
+    for direction in sorted(set(list(per_dir.keys()) + list(per_dir_pulses.keys()))):
+        st = _stats(per_dir.get(direction, []))
+        st["pulses"] = per_dir_pulses.get(direction, 0)
         drill.append(_drill(
             direction.capitalize() + " flow",
             "Big-money option flow betting %s." % ("up" if direction == "bullish" else "down"),
-            _stats(per_dir[direction])))
+            st))
     stats = _stats(all_trades)
     stats["open"] = open_count
     stats["peak_50_plus"] = peak_50
+    stats["pulses"] = sum(per_dir_pulses.values())
     return (_block(
         "flow_pulse", "Flow Pulse",
         "Unusually large directional option flow ($1M+ in 30 minutes).",
@@ -453,44 +466,83 @@ def _detail_futures(db, c, now, name):
 
 
 def _detail_flow(db, c, now, name):
+    """Level 3 for Flow Pulse: the actual pulses (examples), newest first,
+    each annotated with its paper-track status."""
     direction = "bearish" if "bear" in name.lower() else "bullish"
     try:
-        tracks = db.prefix(c, "flow_pulse_track:")
+        rows = db.recent(c, "flow_pulse", limit=200)
     except Exception:
-        tracks = {}
+        rows = []
+    try:
+        track_by_key = {}
+        for t in db.prefix(c, "flow_pulse_track:").values():
+            if isinstance(t, dict) and t.get("key"):
+                track_by_key[t["key"]] = t
+    except Exception:
+        track_by_key = {}
+
+    def _big(n):
+        v = _num(n)
+        if v is None:
+            return "—"
+        if abs(v) >= 1_000_000:
+            return "$%.1fM" % (v / 1_000_000)
+        if abs(v) >= 1_000:
+            return "$%.0fK" % (v / 1_000)
+        return "$%.0f" % v
+
     items = []
-    for rec in tracks.values():
-        if not isinstance(rec, dict):
+    for r in rows:
+        p = r.get("payload") or {}
+        if not isinstance(p, dict):
             continue
-        if str(rec.get("direction") or "").lower() != direction:
+        if str(p.get("direction") or "").lower() != direction:
             continue
-        sym = rec.get("symbol") or "?"
-        status = rec.get("status") or "?"
-        pnl = _num(rec.get("pnl"))
-        peak = _num(rec.get("peak_return_pct"))
-        fired = _num(rec.get("fired_at"))
-        exited = _num(rec.get("exited_at"))
-        strike, typ, expiry = rec.get("strike"), rec.get("type"), rec.get("expiry")
-        contract = "%s%s%s" % (strike or "?", (typ or "?")[:1].upper(),
-                               (" · " + str(expiry)) if expiry else "")
-        sub = "Fired %s" % _ts(fired)
-        if exited:
-            sub += " · exited %s" % _ts(exited)
-        orows = [["Contract", contract],
-                 ["Entry", "$%.2f" % _num(rec.get("entry")) if _num(rec.get("entry")) is not None else "—"],
-                 ["Status", "Closed" if status == "closed" else "Open"]]
-        if peak is not None:
-            orows.append(["Best excursion", "%+.0f%%" % peak])
+        sym = p.get("symbol") or "?"
+        prem = _num(p.get("directional_premium"))
+        opp = _num(p.get("opposing_premium"))
+        score = p.get("max_score")
+        sug = p.get("suggested_contract") or {}
+        fired = _num(p.get("first_seen")) or _num(r.get("ts")) or 0
+        contract_txt = "None — no contract suggested"
+        if isinstance(sug, dict) and sug.get("strike"):
+            contract_txt = "%s%s%s" % (sug.get("strike"),
+                                       str(sug.get("type") or "")[:1].upper(),
+                                       (" · " + str(sug.get("expiry"))) if sug.get("expiry") else "")
+        tr = track_by_key.get(r.get("key") or "") or {}
+        tstatus = tr.get("status")
+        tpnl = _num(tr.get("pnl"))
+        if tstatus == "closed" and tpnl is not None:
+            track_txt = "%s closed" % _m(tpnl)
+            result, result_cls = _m(tpnl), "pos" if tpnl > 0 else ("neg" if tpnl < 0 else "")
+        elif tstatus == "open":
+            track_txt = "Track open"
+            result, result_cls = "Track open", ""
+        else:
+            track_txt = "No track opened"
+            result, result_cls = "No track", ""
+        orows = [["Directional premium", _big(prem)],
+                 ["Opposing premium", _big(opp)],
+                 ["Prints", str(p.get("print_count") or "—")],
+                 ["Suggested contract", contract_txt],
+                 ["Paper track", track_txt]]
+        sub = _ts(fired)
+        if prem:
+            sub += " · %s directional" % _big(prem)
+        if score is not None:
+            try:
+                sub += " · score %g" % float(score)
+            except (TypeError, ValueError):
+                pass
         items.append({
             "tag": sym[:6], "title": "%s %s" % (sym, direction),
-            "sub": sub, "rows": orows, "_sort": fired or 0,
-            "result": _m(pnl) if pnl is not None else "Open",
-            "result_cls": "pos" if pnl is not None and pnl > 0 else ("neg" if pnl is not None and pnl < 0 else ""),
+            "sub": sub, "rows": orows, "_sort": fired,
+            "result": result, "result_cls": result_cls,
         })
     items.sort(key=lambda i: i.pop("_sort"), reverse=True)
     return {"type": "flow_pulse", "name": name,
-            "title": "%s — track by track" % name,
-            "sub": "Every two-week paper track opened on %s flow, newest first." % direction,
+            "title": "%s — pulse by pulse" % name,
+            "sub": "Every big-money pulse caught on the %s side, newest first. Each opens a two-week paper track when a contract can be suggested." % direction,
             "items": items[:100]}
 
 

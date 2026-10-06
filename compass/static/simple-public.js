@@ -143,8 +143,8 @@ var DRILL = {
     sub:'The morning SPY plan plus every scanner alert. Paper trades 1 contract at the ask — exits at the plan target/stop or 2:55pm CT.',
     pill:'Paper / proving', pillCls:'test', hit:false, deeper:'View entries ›' },
   flowPulse: { title:'Flow Pulse, by direction',
-    sub:'Split by which way the big money bet. Every pulse that fires opens a two-week paper track — win or lose, it stays on the record.',
-    pill:'Paper tracking', pillCls:'test', hit:false, deeper:'View tracks ›' },
+    sub:'Split by which way the big money bet. Tap a direction to see the actual pulses — each opens a two-week paper track when a contract can be suggested.',
+    pill:'Paper tracking', pillCls:'test', hit:false, deeper:'View pulses ›' },
   flash: { title:'Flash Agentic, pattern by pattern',
     sub:'Setups grouped by pattern type, scored like the pick checker: target touched before invalidation wins, over five sessions.',
     pill:'Evidence only', pillCls:'test', hit:true, deeper:'View setups ›' }
@@ -177,10 +177,13 @@ function drillCard(it, id, cfg){
     var rate = pct(st.win_rate);
     res = '<span><b class="' + signCls(st.pnl) + '">' + money(st.pnl) + '</b> · ' + num(n) + ' trades · ' + rate + ' wins</span>'
       + '<span class="pill ' + cfg.pillCls + '">' + cfg.pill + '</span>';
+  } else if((st.pulses || 0) > 0){
+    res = '<span><b>' + num(st.pulses) + '</b> pulses · no tracks closed yet</span>'
+      + '<span class="pill ' + cfg.pillCls + '">' + cfg.pill + '</span>';
   } else {
     res = '<span>No trades yet</span><span class="pill">Watching</span>';
   }
-  var deep = (st.tracked || 0) > 0 && cfg.deeper
+  var deep = ((st.tracked || 0) + (st.pulses || 0) > 0) && cfg.deeper
     ? '<span class="cta">' + esc(cfg.deeper) + '</span>' : '';
   return '<article class="card' + (deep ? ' deeper' : '') + '"'
     + (deep ? ' data-detail="' + esc(it.name) + '" tabindex="0" role="button" aria-label="Show ' + esc(cfg.deeper.replace(' ›','')) + ' for ' + esc(it.name) + '"' : '')
@@ -216,6 +219,7 @@ function selectDrill(id, scroll){
            '<b>' + money(st.pnl) + '</b> net'];
     if(st.open) sum.push('<b>' + num(st.open) + '</b> still open');
     if(id === 'zeroDte') sum.push('<b>' + num(st.plans) + '</b> plans · <b>' + num(st.alerts) + '</b> alerts');
+    if(id === 'flowPulse') sum.push('<b>' + num(st.pulses) + '</b> pulses');
   }
   document.getElementById('drillSum').innerHTML = sum.map(function(s){ return '<span>' + s + '</span>'; }).join('');
   var items = (block.drill || []).slice().sort(function(a,b){ return (b.stats.pnl||0) - (a.stats.pnl||0); });
