@@ -258,6 +258,13 @@ class Engine:
                     else:
                         age = now - q["ts"]
                         quote_state = "quote %.0fs old" % age if age >= 0 else "quote from the future"
+                    # This position flew blind: stops/targets could not be
+                    # verified. Mark it so the eventual exit is never counted
+                    # as a strategy win or loss.
+                    if not p.get("data_gap"):
+                        p["data_gap"] = True
+                        p["data_gap_since"] = now
+                        self.db.put(c, key, p)
                     self.alert(c,p["symbol"],{**alert_context(p),"status":"management_blocked","trade_id":p["id"],
                         "reason":"No fresh exit quote; position remains unresolved",
                         "quote_state": quote_state,

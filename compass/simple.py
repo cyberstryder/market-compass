@@ -120,15 +120,22 @@ def _futures(db, c, now):
     except Exception:
         trades = {}
     per_method = defaultdict(list)
+    per_method_gaps = defaultdict(list)
     by_day = defaultdict(lambda: {"pnl": 0.0, "count": 0})
     open_count = 0
     for t in trades.values():
         if not isinstance(t, dict):
             continue
         if t.get("status") == "closed" or _num(t.get("exited_at")):
+            method = t.get("strategy") or "unknown"
+            if t.get("data_gap"):
+                # Flew blind: stops/targets were never verifiably managed,
+                # so this is not a valid test of the method. Excluded from
+                # wins, losses, and P&L; counted separately for transparency.
+                per_method_gaps[method].append(t)
+                continue
             pnl = _num(t.get("pnl"))
             won = pnl is not None and pnl > 0
-            method = t.get("strategy") or "unknown"
             per_method[method].append((won, pnl))
             if pnl is not None:
                 d = _day(t.get("exited_at"))
@@ -142,23 +149,35 @@ def _futures(db, c, now):
     # Full paper-trading roster: every detector wired for attribution shows up,
     # even before its first closed trade — the page answers "what are we testing?"
     seen = set()
+    def with_gaps(tag, trades):
+        st = _stats(trades)
+        gaps = per_method_gaps.get(tag, [])
+        if gaps:
+            st["data_gaps"] = len(gaps)
+            st["data_gap_pnl"] = round(sum(_num(t.get("pnl")) or 0 for t in gaps), 2)
+        return st
     for tag in ICT_PAPER_TAGS.values():
         name = ICT_SETUP_NAMES.get(tag, tag)
         if tag in seen:
             continue
         seen.add(tag)
         drill.append(_drill(name, "Paper-traded micro futures signals.",
-                            _stats(per_method.get(tag, []))))
+                            with_gaps(tag, per_method.get(tag, []))))
     # Any strategy tag seen in the data but not on the roster (legacy/renamed)
-    for method in sorted(per_method):
+    for method in sorted(set(per_method) | set(per_method_gaps)):
         if method in seen:
             continue
         seen.add(method)
         name = ICT_SETUP_NAMES.get(method, method)
         drill.append(_drill(name, "Paper-traded micro futures signals.",
-                            _stats(per_method[method])))
+                            with_gaps(method, per_method.get(method, []))))
     stats = _stats(all_trades)
     stats["open"] = open_count
+    total_gaps = sum(len(v) for v in per_method_gaps.values())
+    if total_gaps:
+        stats["data_gaps"] = total_gaps
+        stats["data_gap_pnl"] = round(sum(
+            _num(t.get("pnl")) or 0 for v in per_method_gaps.values() for t in v), 2)
     return (_block(
         "futures", "Futures Micros",
         "Paper-traded signals on micro futures (MNQ, MES, MGC, SIL, MCL).",
@@ -462,12 +481,15 @@ def _detail_futures(db, c, now, name):
         elif status != "closed":
             orows.append(["Stop", "%.2f" % _num(t.get("stop")) if _num(t.get("stop")) is not None else "—"])
             orows.append(["Target", "%.2f" % _num(t.get("target")) if _num(t.get("target")) is not None else "—"])
+        gap = t.get("data_gap")
+        if gap:
+            orows.append(["Data", "⚠️ flew blind — excluded from wins/losses"])
         items.append({
             "tag": "L" if side == "long" else ("S" if side == "short" else "?"),
             "title": "%s %s" % (sym, side), "sub": sub, "rows": orows,
             "_sort": entered or 0,
-            "result": _m(pnl) if pnl is not None else ("Open" if status != "closed" else "—"),
-            "result_cls": "pos" if pnl is not None and pnl > 0 else ("neg" if pnl is not None and pnl < 0 else ""),
+            "result": ("⚠️ " if gap else "") + (_m(pnl) if pnl is not None else ("Open" if status != "closed" else "—")),
+            "result_cls": "" if gap else ("pos" if pnl is not None and pnl > 0 else ("neg" if pnl is not None and pnl < 0 else "")),
         })
     items.sort(key=lambda i: i.pop("_sort"), reverse=True)
     return {"type": "futures", "name": name,

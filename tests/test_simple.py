@@ -171,6 +171,34 @@ def test_detail_smoothers_weeks(db):
     assert d['items'][1]['result_cls'] == 'neg'
 
 
+def test_futures_data_gap_excluded(db):
+    # Trades that flew blind (no fresh quotes) are not counted as wins/losses.
+    now = NOW
+    with db.tx() as c:
+        db.put(c, 'trade:ict-g1', {'id': 'ict-g1', 'symbol': 'MES.c.0', 'side': 'long',
+                                   'qty': 1, 'strategy': 'ict-aoi-zones', 'entry': 7800.0,
+                                   'exit': 7810.0, 'pnl': 50.0, 'exit_reason': 'session_flatten',
+                                   'status': 'closed', 'data_gap': True,
+                                   'entered_at': now - 7200, 'exited_at': now - 3600})
+        db.put(c, 'trade:ict-g2', {'id': 'ict-g2', 'symbol': 'MES.c.0', 'side': 'long',
+                                   'qty': 1, 'strategy': 'ict-aoi-zones', 'entry': 7800.0,
+                                   'exit': 7810.0, 'pnl': 50.0, 'exit_reason': 'target',
+                                   'status': 'closed',
+                                   'entered_at': now - 7200, 'exited_at': now - 3600})
+        out = simple.summary(db, c, now)
+    fu = out['types']['futures']
+    assert fu['stats']['tracked'] == 1
+    assert fu['stats']['wins'] == 1
+    assert fu['stats']['data_gaps'] == 1
+    assert fu['stats']['data_gap_pnl'] == 50.0
+    with db.tx() as c:
+        d = simple.detail(db, c, now, 'futures', 'AOI Zones')
+    assert len(d['items']) == 2
+    gapped = [i for i in d['items'] if '⚠️' in i['result']]
+    assert len(gapped) == 1
+    assert any(r[0] == 'Data' for r in gapped[0]['rows'])
+
+
 def test_detail_futures_trades(db):
     now = NOW
     _detail_fixtures(db, now)
