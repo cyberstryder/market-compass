@@ -246,6 +246,9 @@ class Store:
         c.execute(q.on_conflict_do_update(index_elements=["key"],
             set_={"value":value,"updated":time.time()}))
 
+    def delete(self,c,key):
+        c.execute(state.delete().where(state.c.key==key))
+
     def get(self,c,key,default=None):
         r=c.execute(select(state.c.value).where(state.c.key==key)).first()
         return r[0] if r else default

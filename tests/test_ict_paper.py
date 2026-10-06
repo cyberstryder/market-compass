@@ -337,3 +337,23 @@ def test_cooldown_expires(db, cfg):
         r = ict_paper.submit(db, c, cfg, NOW + 16 * 60, 'golden_zone', SYM,
                              sig(signal_ts=NOW + 16 * 60 - 30))
     assert r['submitted'], r
+
+
+def test_reset_paper_book(db, cfg):
+    from compass import paper_risk
+    with db.tx() as c:
+        db.put(c, 'trade:ict-bos_fvg-MNQ-c-0-123',
+               {'id': 'x', 'status': 'closed', 'pnl': -10.0, 'strategy': 'ict-bos-fvg'})
+        db.put(c, 'position:ict:bos_fvg:MNQ.c.0', {'status': 'open'})
+        db.put(c, 'paper_risk:v2:2026-09-27:futures', {'realized': -10.0})
+        db.put(c, 'trade:legacy-1', {'status': 'closed'})
+        counts = ict_paper.reset_paper_book(db, c, NOW)
+    assert counts['trades'] == 1 and counts['positions'] == 1
+    assert counts['ledgers'] == 2  # one deleted, one clean seeded
+    with db.tx() as c:
+        assert db.get(c, 'trade:ict-bos_fvg-MNQ-c-0-123') is None
+        assert db.get(c, 'position:ict:bos_fvg:MNQ.c.0') is None
+        assert db.get(c, 'trade:legacy-1') is not None  # untouched
+        assert db.get(c, 'paper_risk:v2:2026-09-27:futures') is None
+        ledger = db.get(c, paper_risk.key(NOW, 'future'))
+        assert ledger['realized'] == 0.0 and ledger['ready'] is True

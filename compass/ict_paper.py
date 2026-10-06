@@ -201,3 +201,37 @@ def attribution(db, c):
         elif pnl < 0:
             row['losses'] += 1
     return out
+
+
+def reset_paper_book(db, c, now):
+    """One-shot destructive reset of the ICT futures paper book.
+
+    Deletes all ICT paper trade records (trade:ict-*) and open paper
+    positions (position:ict:*), and zeroes the futures paper-risk ledger
+    so the next ledgers() call starts clean. Used to start a fresh
+    sample; the paper_decision audit log is intentionally preserved.
+    Returns counts of what was removed.
+    """
+    from . import paper_risk
+    counts = {'trades': 0, 'positions': 0, 'ledgers': 0}
+    for k in list(db.prefix(c, 'trade:ict-').keys()):
+        db.delete(c, k)
+        counts['trades'] += 1
+    for k in list(db.prefix(c, 'position:ict:').keys()):
+        db.delete(c, k)
+        counts['positions'] += 1
+    for k in list(db.prefix(c, 'paper_risk:v2:').keys()):
+        if k.endswith(':futures'):
+            db.delete(c, k)
+            counts['ledgers'] += 1
+    # Seed a clean zeroed ledger for today so ledgers() returns saved
+    # state instead of attempting a reconstruction.
+    db.put(c, paper_risk.key(now, 'future'),
+           dict(realized=0.0, entries=0, day=paper_risk.risk_day(now),
+                portfolio='futures', label='Futures',
+                policy=paper_risk.VERSION, ready=True,
+                initialized_at=now,
+                migration=dict(reset='futures paper book reset for a fresh sample',
+                               reset_at=now)))
+    counts['ledgers'] += 1
+    return counts

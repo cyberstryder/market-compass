@@ -485,6 +485,25 @@ def create_app(cfg=None):
             raise HTTPException(400, 'unknown detail type')
         return d
 
+    @app.post('/api/admin/reset-futures-paper')
+    async def post_reset_futures_paper(request: Request):
+        # One-shot destructive reset of the ICT futures paper book, for
+        # starting a fresh sample. Password-gated by the app guard (this
+        # path is not in the public set) and requires
+        # {"confirm": "reset-futures-paper"} in the JSON body as a second
+        # key. Clears paper trades, open paper positions, and the futures
+        # paper-risk ledger; the paper_decision audit log is preserved.
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict) or body.get('confirm') != 'reset-futures-paper':
+            raise HTTPException(400, 'body must confirm reset-futures-paper')
+        from . import ict_paper
+        with db.tx() as c:
+            counts = ict_paper.reset_paper_book(db, c, time.time())
+        return {'reset': True, **counts}
+
     @app.get('/api/option-stream-parity')
     def get_option_stream_parity():
         # Massive vs Alpaca side-by-side comparison for the migration.
