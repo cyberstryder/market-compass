@@ -256,6 +256,15 @@ class DeliveryWorker:
             'Category routing active; see individual routes for delivery health' if connected else 'No verified alert destination')
 
     async def send(self, client, url, row, route, now):
+        # Skip futures scanner SETUP noise if disabled (Josh: "that's just noise").
+        # This only blocks Discord delivery; the alert is still recorded in the DB.
+        payload = row.get('payload', {})
+        if (route == 'futures' and payload.get('status') == 'setup_triggered'
+                and not self.cfg.futures_scanner_push_enabled):
+            with self.db.tx() as c:
+                c.execute(update(discord_jobs).where(discord_jobs.c.event_id==row['id'])
+                    .values(status='suppressed',confirmation=dict(at=now,reason='Futures scanner pushes disabled')))
+            return
         # Final guard also covers backlog beyond this turn's suppression batch.
         if not self.cfg.paper_trading and paper_message(row):
             with self.db.tx() as c:

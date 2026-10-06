@@ -401,10 +401,7 @@ class Scanner:
                             db.put(c,'pending_options:'+item['id'],{'signal':signal,'created_at':now,'expires_at':item['expires_at'],'status':'waiting'})
                     else:
                         item['paper_status']='paper_trading_off'
-                    # Skip Discord alert for futures scanner setups if disabled (noise reduction).
-                    is_future = engine.specification(symbol)['asset'] == 'future'
-                    if not (is_future and not cfg.futures_scanner_push_enabled):
-                        db.append(c,'alert','scanner',symbol,now,{**item,'status':'setup_triggered'},'setup:'+item['id'])
+                    db.append(c,'alert','scanner',symbol,now,{**item,'status':'setup_triggered'},'setup:'+item['id'])
             current=db.get(c,'opportunity:'+symbol+':'+item['side'],{})
             if not (current.get('status')=='triggered' and now<current.get('expires_at',0) and item['status'] in ('watch','blocked')):
                 db.put(c,'opportunity:'+symbol+':'+item['side'],item)
