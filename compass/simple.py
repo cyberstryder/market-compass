@@ -348,6 +348,7 @@ def _0dte(db, c, now):
     except Exception:
         paper = {}
     per_kind = defaultdict(list)
+    per_rule = defaultdict(list)
     open_count = 0
     for t in paper.values():
         if not isinstance(t, dict):
@@ -356,6 +357,8 @@ def _0dte(db, c, now):
             pnl = _num(t.get("pnl"))
             won = pnl is not None and pnl > 0
             per_kind[t.get("kind") or "?"].append((won, pnl))
+            if t.get("kind") == "spy_plan":
+                per_rule[t.get("target_rule") or "wall"].append((won, pnl))
             if pnl is not None:
                 d = _day(t.get("exited_at"))
                 if d:
@@ -367,9 +370,12 @@ def _0dte(db, c, now):
     stats["open"] = open_count
     stats["plans"] = plans
     stats["alerts"] = alerts
-    drill = [_drill("SPY morning plan",
-                    "The pre-market SPY plan: bias, levels, stop, target. Paper buys 1 contract at the ask on confirmation; exits at the plan target/stop or 2:55pm CT.",
-                    _stats(per_kind.get("spy_plan", []))),
+    drill = [_drill("SPY morning plan (wall target)",
+                    "Paper buys 1 contract at the ask on confirmation; exits at the wall-aware target, stop, or 2:55pm CT. The default since 2026-10-06.",
+                    _stats(per_rule.get("wall", []))),
+             _drill("SPY morning plan (2R target)",
+                    "Same entry, blind 2R target instead. Paper-traded side by side for comparison.",
+                    _stats(per_rule.get("2r", []))),
              _drill("0DTE scanner",
                     "Same-day-expiry setups on the liquid watchlist. Paper buys 1 contract at the ask; exits at +50%/-50% or 2:55pm CT.",
                     _stats(per_kind.get("scanner", [])))]

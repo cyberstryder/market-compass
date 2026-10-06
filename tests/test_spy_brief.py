@@ -81,7 +81,12 @@ def test_confirmed_plan_has_0dte_quotes_and_dated_index_estimates(db):
     assert r['decision'] == 'CALL SETUP CONFIRMED'
     assert r['plans']['call']['entry_reference'] == 761
     assert r['plans']['call']['stop'] == pytest.approx(760.2)
-    assert r['plans']['call']['target'] == pytest.approx(762.6)
+    # Wall-aware default: Apex wall at 762 sits between entry and 2R target,
+    # 1.0 >= 0.5*0.8 risk, so target = 762 - 0.15 buffer.
+    assert r['plans']['call']['target'] == pytest.approx(761.85)
+    assert r['plans']['call']['target_2r'] == pytest.approx(762.6)
+    assert r['plans']['call']['target_rule'] == 'wall'
+    assert r['plans']['call']['wall'] == 762
     assert r['options']['call']['expiry'] == '2026-09-16'
     assert r['options']['call']['max_debit_with_entry_fee'] == pytest.approx(205.65)
     high = r['chart_levels'][0]
@@ -324,13 +329,27 @@ def test_later_confirmation_uses_current_candle_and_stops_after_first_setup(db, 
     assert r['plans'][side]['entry_reference'] == price
     sign = 1 if side == 'call' else -1
     assert r['plans'][side]['stop'] == pytest.approx(price-sign*.8)
-    assert r['plans'][side]['target'] == pytest.approx(price+sign*1.6)
+    assert r['plans'][side]['target_2r'] == pytest.approx(price+sign*1.6)
+    if side == 'call':
+        # Apex wall at 762 between entry 761 and 2R target: wall-aware.
+        assert r['plans'][side]['target'] == pytest.approx(761.85)
+        assert r['plans'][side]['target_rule'] == 'wall'
+    else:
+        # No wall below entry 759 (wall at 759 is at entry, not beyond):
+        # falls back to blind 2R.
+        assert r['plans'][side]['target'] == pytest.approx(price+sign*1.6)
+        assert r['plans'][side]['target_rule'] == '2r'
     assert r['frozen_premarket']['high'] == 760.5
     assert r['frozen_premarket']['low'] == 759.5
     with db.tx() as c:
         rows = db.recent(c, 'alert')
-        assert len(rows) == minute//15+1
-        assert sum(x['payload'].get('decision') in ('CALL SETUP CONFIRMED','PUT SETUP CONFIRMED') for x in rows) == 1
+        # +1 for the opening brief, +1 per followup tick, +1 extra chart update:
+        # the wall-aware target moves materially at confirmation (different
+        # nearest wall vs the conditional entry), so the drawing re-sends.
+        assert len(rows) == minute//15+2
+        # Count brief alerts only; chart companions copy the decision field.
+        briefs = [x for x in rows if not x['key'].endswith(':chart')]
+        assert sum(x['payload'].get('decision') in ('CALL SETUP CONFIRMED','PUT SETUP CONFIRMED') for x in briefs) == 1
         assert not db.prefix(c, 'position:')
         c.execute(leases.update().values(until=0))
     restarted = BriefWorker(db, Config(local=True))
@@ -338,7 +357,7 @@ def test_later_confirmation_uses_current_candle_and_stops_after_first_setup(db, 
     for m in range(minute+15, 61, 15):
         seed_checks(db, OPEN+m*60+7, {m: 758})
         assert restarted.tick(OPEN+m*60+7) is None
-    with db.tx() as c: assert len(db.recent(c,'alert')) == minute//15+1
+    with db.tx() as c: assert len(db.recent(c,'alert')) == minute//15+2
 
 
 def test_opening_confirmation_prevents_every_followup(db):

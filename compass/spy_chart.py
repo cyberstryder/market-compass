@@ -18,7 +18,7 @@ def prompt(report, now):
         'Update or create one Compass group for this date; replace its levels with this snapshot and preserve all my other drawings. Reuse synced drawings across panes; do not duplicate.',
         'Use horizontal rays from the as-of time; do not backdate signals. Label every ray with its name and price.',
         'Keep each name paired with its listed price. If labels overlap, offset only their text with leader lines; never move or merge price levels.',
-        'PM high/low: blue; prior H/L/C: gray; gamma/Apex/GEX: purple; VWAP snapshot: orange dashed; stops: red dashed; targets: green dashed.',
+        'PM high/low: blue; prior H/L/C: gray; VWAP snapshot: orange dashed; stops: red dashed; targets: green dashed.',
         'VWAP here is a static snapshot, not a live VWAP indicator. Premarket levels are provisional before 09:30 ET and frozen afterward.',
         'All SPX/XSP levels are ESTIMATES: include EST in their labels. They are not independently confirmed index signals.',
         'SPY | SPX EST | XSP EST',

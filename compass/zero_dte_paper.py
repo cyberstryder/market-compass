@@ -109,16 +109,27 @@ def _open_spy_plans(db, c, now, flatten_at):
         if not q:
             continue
         entry = _num(q.get("ask")) + SLIPPAGE
-        rec = {
-            "id": key, "kind": "spy_plan", "symbol": symbol, "underlying": "SPY",
-            "side": "long", "qty": 1, "multiplier": 100,
-            "entry": round(entry, 2), "entered_at": now,
-            "target_spy": _num(plan.get("target")), "stop_spy": _num(plan.get("stop")),
-            "decision": decision, "plan_ts": ts,
-            "status": "open", "fee": FEE, "flatten_at": flatten_at,
-        }
-        if _open(db, c, key, rec):
-            opened += 1
+        # Paper-trade both target rules side by side (since 2026-10-06):
+        # the wall-aware default and the blind 2R, same entry, different targets.
+        targets = [("wall", _num(plan.get("target")))]
+        t2r = _num(plan.get("target_2r"))
+        if t2r is not None and plan.get("target_rule") == "wall" and abs(t2r - targets[0][1]) > 0.01:
+            targets.append(("2r", t2r))
+        for rule, tgt in targets:
+            rkey = "%s-%s" % (key, rule) if len(targets) > 1 else key
+            if db.get(c, rkey):
+                continue
+            rec = {
+                "id": rkey, "kind": "spy_plan", "symbol": symbol, "underlying": "SPY",
+                "side": "long", "qty": 1, "multiplier": 100,
+                "entry": round(entry, 2), "entered_at": now,
+                "target_spy": tgt, "stop_spy": _num(plan.get("stop")),
+                "target_rule": rule,
+                "decision": decision, "plan_ts": ts,
+                "status": "open", "fee": FEE, "flatten_at": flatten_at,
+            }
+            if _open(db, c, rkey, rec):
+                opened += 1
     return opened
 
 

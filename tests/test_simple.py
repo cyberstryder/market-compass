@@ -406,8 +406,10 @@ def test_simple_0dte_aggregates_paper_trades(db):
     assert zd['stats']['tracked'] == 2
     assert zd['stats']['wins'] == 1
     assert zd['stats']['pnl'] == 15.0
-    spy = [d for d in zd['drill'] if d['name'] == 'SPY morning plan'][0]
+    spy = [d for d in zd['drill'] if d['name'] == 'SPY morning plan (wall target)'][0]
     assert spy['stats']['tracked'] == 2 and spy['stats']['pnl'] == 15.0
+    spy2r = [d for d in zd['drill'] if d['name'] == 'SPY morning plan (2R target)'][0]
+    assert spy2r['stats']['tracked'] == 0
 
 
 def test_detail_flow_pulses(db):
