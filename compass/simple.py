@@ -349,11 +349,20 @@ def _0dte(db, c, now):
         paper = {}
     per_kind = defaultdict(list)
     per_rule = defaultdict(list)
+    data_gap_count = 0
+    data_gap_pnl = 0.0
     open_count = 0
     for t in paper.values():
         if not isinstance(t, dict):
             continue
         if t.get("status") == "closed" or _num(t.get("exited_at")):
+            if t.get("data_gap"):
+                # Flew blind: not a valid test of the signal. Excluded from
+                # wins/losses, counted separately.
+                data_gap_count += 1
+                if _num(t.get("pnl")) is not None:
+                    data_gap_pnl += _num(t.get("pnl"))
+                continue
             pnl = _num(t.get("pnl"))
             won = pnl is not None and pnl > 0
             per_kind[t.get("kind") or "?"].append((won, pnl))
@@ -370,6 +379,9 @@ def _0dte(db, c, now):
     stats["open"] = open_count
     stats["plans"] = plans
     stats["alerts"] = alerts
+    if data_gap_count:
+        stats["data_gaps"] = data_gap_count
+        stats["data_gap_pnl"] = round(data_gap_pnl, 2)
     drill = [_drill("SPY morning plan (wall target)",
                     "Paper buys 1 contract at the ask on confirmation; exits at the wall-aware target, stop, or 2:55pm CT. The default since 2026-10-06.",
                     _stats(per_rule.get("wall", []))),

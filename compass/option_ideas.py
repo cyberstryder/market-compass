@@ -8,7 +8,10 @@ from .store import meta, identity
 from .market import fresh, number, day, session
 
 VERSION = 'option-ideas-v2'
-MAX_GAP = 15
+MAX_GAP = 90
+# Gaps longer than this with no fresh quotes force the position unresolved;
+# brief blips are tolerated (flagged, not closed) since 0DTE targets are wide.
+MAX_TOLERATED_GAP = 300
 FEE = .65
 SLIPPAGE = .01
 OPTION = re.compile(r'^(?:O:)?([A-Z.]+)(\d{6})([CP])(\d{8})$')
@@ -256,7 +259,15 @@ class OptionIdeas:
             p['gap_detail']={'checked_at':now,'option_last':option_last,
                 'underlying_last':underlying_last,'option_next':(oq or {}).get('ts'),
                 'underlying_next':(uq or {}).get('ts'),'reason':'missing_continuous_paired_quotes'}
-            self.finish(c,p,now,'observation_gap')
+            # Don't kill good trades on brief feed blips (NBIS 2026-10-06).
+            # Flag the gap, hold the position, and wait for fresh quotes.
+            # Only force-unresolved on very long gaps or past the flatten deadline.
+            p['data_gap'] = True
+            gap_secs = max(now-option_last, now-underlying_last)
+            if gap_secs > MAX_TOLERATED_GAP or now >= p['flatten_at']:
+                self.finish(c,p,now,'observation_gap')
+            else:
+                self.save(c,p,now)
             return
         if independent:
             # Receipt continuity belongs to each feed, even when the other is
