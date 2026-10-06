@@ -267,40 +267,76 @@ def _flash(db, c, now):
 
 
 def _0dte(db, c, now):
-    try:
-        rows = db.recent(c, "alert", limit=5000)
-    except Exception:
-        rows = []
+    from .store import events
+    p = events.c.payload
     plans = 0
     alerts = 0
-    by_day = defaultdict(lambda: {"count": 0})
-    for r in rows:
-        p = r.get("payload") or {}
-        pub = p.get("publication") or {}
-        is_plan = r.get("source") == "spy_brief"
-        is_alert = pub.get("category") == "options_0dte"
-        if not (is_plan or is_alert):
-            continue
-        if is_plan:
-            plans += 1
-        else:
-            alerts += 1
+    by_day = defaultdict(lambda: {"pnl": 0.0, "count": 0})
+    # Targeted queries: the alert stream is high-volume (~100+/hour), so a
+    # blunt recent(limit=5000) silently drops morning rows after a few days.
+    try:
+        plan_rows = c.execute(select(events).where(
+            events.c.kind == "alert",
+            events.c.source == "spy_brief",
+            events.c.ts >= now - 90 * 86400,
+        )).mappings()
+    except Exception:
+        plan_rows = []
+    try:
+        alert_rows = c.execute(select(events).where(
+            events.c.kind == "alert",
+            events.c.ts >= now - 90 * 86400,
+            p["publication"]["category"].as_string() == "options_0dte",
+        )).mappings()
+    except Exception:
+        alert_rows = []
+    for r in plan_rows:
+        plans += 1
         d = _day(r.get("ts"))
         if d:
             by_day[d]["count"] += 1
-    stats = {"tracked": plans + alerts, "plans": plans, "alerts": alerts,
-             "wins": 0, "win_rate": None, "pnl": None}
+    for r in alert_rows:
+        alerts += 1
+        d = _day(r.get("ts"))
+        if d:
+            by_day[d]["count"] += 1
+    # Paper trades: 1 contract each, same-session only (see zero_dte_paper.py)
+    try:
+        paper = db.prefix(c, "trade:0dte-")
+    except Exception:
+        paper = {}
+    per_kind = defaultdict(list)
+    open_count = 0
+    for t in paper.values():
+        if not isinstance(t, dict):
+            continue
+        if t.get("status") == "closed" or _num(t.get("exited_at")):
+            pnl = _num(t.get("pnl"))
+            won = pnl is not None and pnl > 0
+            per_kind[t.get("kind") or "?"].append((won, pnl))
+            if pnl is not None:
+                d = _day(t.get("exited_at"))
+                if d:
+                    by_day[d]["pnl"] += pnl
+        else:
+            open_count += 1
+    all_trades = [t for v in per_kind.values() for t in v]
+    stats = _stats(all_trades)
+    stats["open"] = open_count
+    stats["plans"] = plans
+    stats["alerts"] = alerts
     drill = [_drill("SPY morning plan",
-                    "The pre-market SPY plan: bias, levels, stop, target.",
-                    {"tracked": plans, "wins": 0, "win_rate": None, "pnl": None}),
+                    "The pre-market SPY plan: bias, levels, stop, target. Paper buys 1 contract at the ask on confirmation; exits at the plan target/stop or 2:55pm CT.",
+                    _stats(per_kind.get("spy_plan", []))),
              _drill("0DTE scanner",
-                    "Same-day-expiry setups on the liquid watchlist.",
-                    {"tracked": alerts, "wins": 0, "win_rate": None, "pnl": None})]
+                    "Same-day-expiry setups on the liquid watchlist. Paper buys 1 contract at the ask; exits at +50%/-50% or 2:55pm CT.",
+                    _stats(per_kind.get("scanner", [])))]
     return (_block(
         "0dte", "0DTE",
         "Same-day-expiry option plans and scanner alerts.",
         "The SPY plan every morning; scanner alerts intraday.",
-        "Not scored yet — outcomes are not tracked for 0DTE. Counts only.",
+        "Win = the 1-contract paper trade exited above its entry, after fees. "
+        "Same-session only — 0DTE expires at the close, flat by 2:55pm CT.",
         stats, drill), by_day)
 
 

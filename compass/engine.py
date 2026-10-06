@@ -479,6 +479,10 @@ class Engine:
             if self.cfg.flow_pulse:
                 from .flow_pulse import scan as flow_pulse_scan
                 pulse_summary = flow_pulse_scan(self.db,c,self.cfg,now)
+            zero_dte_summary = None
+            if getattr(self.cfg, 'zero_dte_paper', True):
+                from .zero_dte_paper import scan as zero_dte_paper_scan
+                zero_dte_summary = zero_dte_paper_scan(self.db,c,self.cfg,now)
             darkpool_summary = None
             if self.cfg.darkpool:
                 from .darkpool import scan as darkpool_scan

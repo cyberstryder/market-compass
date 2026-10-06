@@ -12,8 +12,8 @@ var TYPES = [
   { id:'flash',     label:'Flash',       api:'flash' }
 ];
 var TYPE_LABEL = { smoothers:'Smoothers', futures:'Futures', zeroDte:'0DTE', flowPulse:'Flow Pulse', flash:'Flash' };
-var DOLLAR = ['smoothers','futures','flowPulse']; /* mockup ids that carry P&L */
-var COUNT  = ['flash','zeroDte'];
+var DOLLAR = ['smoothers','futures','flowPulse','zeroDte']; /* mockup ids that carry P&L */
+var COUNT  = ['flash'];
 
 var activeFilter = 'all';
 var selectedDay = null;
@@ -110,7 +110,12 @@ function renderCards(){
   var sm = T.smoothers.stats, fu = T.futures.stats, zd = T['0dte'].stats, fl2 = T.flow_pulse.stats, fl = T.flash.stats;
   set('smoothers', 'All time <b class="' + signCls(sm.pnl) + '">' + money(sm.pnl) + '</b>');
   set('futures',   'All time <b class="' + signCls(fu.pnl) + '">' + money(fu.pnl) + '</b>');
-  set('0dte',      '<b>' + num(zd.tracked) + '</b> plans &amp; alerts logged');
+  if(zd.tracked > 0){
+    set('0dte', 'All time <b class="' + signCls(zd.pnl) + '">' + money(zd.pnl) + '</b>');
+    document.getElementById('pill-0dte').textContent = 'Paper / proving';
+  } else {
+    set('0dte', '<b>' + num(zd.plans) + '</b> plans · <b>' + num(zd.alerts) + '</b> alerts · paper P&amp;L starts with the next signal');
+  }
   if(fl2.tracked > 0){
     set('flow', 'All time <b class="' + signCls(fl2.pnl) + '">' + money(fl2.pnl) + '</b>');
   } else {
@@ -135,8 +140,8 @@ var DRILL = {
     sub:'Every pattern detector, scored separately. Paper trades on micro futures — everything forced flat by 3:45pm CT.',
     pill:'Paper / proving', pillCls:'test', hit:false, deeper:'View trades ›' },
   zeroDte: { title:'0DTE, name by name',
-    sub:'The morning SPY plan plus every scanner alert. 0DTE outcomes are not tracked yet — this is the activity log.',
-    pill:'Scanner only', pillCls:'test', hit:false, counts:true, deeper:'View entries ›' },
+    sub:'The morning SPY plan plus every scanner alert. Paper trades 1 contract at the ask — exits at the plan target/stop or 2:55pm CT.',
+    pill:'Paper / proving', pillCls:'test', hit:false, deeper:'View entries ›' },
   flowPulse: { title:'Flow Pulse, by direction',
     sub:'Split by which way the big money bet. Every pulse that fires opens a two-week paper track — win or lose, it stays on the record.',
     pill:'Paper tracking', pillCls:'test', hit:false, deeper:'View tracks ›' },
@@ -168,10 +173,6 @@ function drillCard(it, id, cfg){
       res = '<span>No setups yet</span>';
     }
     res += '<span class="pill ' + cfg.pillCls + '">' + cfg.pill + '</span>';
-  } else if(cfg.counts){
-    res = n > 0
-      ? '<span><b>' + num(n) + '</b> logged</span><span class="pill ' + cfg.pillCls + '">' + cfg.pill + '</span>'
-      : '<span>No activity yet</span><span class="pill">Watching</span>';
   } else if(n > 0){
     var rate = pct(st.win_rate);
     res = '<span><b class="' + signCls(st.pnl) + '">' + money(st.pnl) + '</b> · ' + num(n) + ' trades · ' + rate + ' wins</span>'
@@ -209,13 +210,12 @@ function selectDrill(id, scroll){
     sum = ['<b>' + num(n) + '</b> setups logged',
            '<b>' + num(w) + '</b> clean targets' + (r ? ' · ' + pct(st.win_rate) : ''),
            'No dollars attached — evidence only'];
-  } else if(cfg.counts){
-    sum = ['<b>' + num(n) + '</b> logged', 'Outcomes not tracked yet'];
   } else {
     sum = ['<b>' + num(n) + '</b> trades',
            '<b>' + num(w) + '</b> wins · ' + pct(st.win_rate),
            '<b>' + money(st.pnl) + '</b> net'];
     if(st.open) sum.push('<b>' + num(st.open) + '</b> still open');
+    if(id === 'zeroDte') sum.push('<b>' + num(st.plans) + '</b> plans · <b>' + num(st.alerts) + '</b> alerts');
   }
   document.getElementById('drillSum').innerHTML = sum.map(function(s){ return '<span>' + s + '</span>'; }).join('');
   var items = (block.drill || []).slice().sort(function(a,b){ return (b.stats.pnl||0) - (a.stats.pnl||0); });
@@ -292,7 +292,7 @@ async function openDetail(id, itemName){
 var BOARD = [
   { id:'smoothers', api:'smoothers',  status:'Live',           pill:'live' },
   { id:'futures',   api:'futures',    status:'Paper / proving',pill:'test' },
-  { id:'zeroDte',   api:'0dte',       status:'Scanner only',   pill:'test', counts:true },
+  { id:'zeroDte',   api:'0dte',       status:'Paper / proving',pill:'test' },
   { id:'flowPulse', api:'flow_pulse', status:'Paper tracking', pill:'test' },
   { id:'flash',     api:'flash',      status:'Evidence only',  pill:'test', hit:true }
 ];
@@ -316,8 +316,6 @@ function renderBoard(){
       var rr = st.resolved || 0;
       result = rr > 0 ? '<b>' + num(w) + '/' + num(rr) + ' targets · ' + Math.round(100*w/rr) + '%</b>'
                       : '<b>' + num(n) + '</b> logged';
-    } else if(r.counts){
-      result = '<b>' + num(n) + '</b> logged';
     } else {
       result = '<b class="' + signCls(st.pnl) + '">' + money(st.pnl) + '</b>';
     }
@@ -343,7 +341,7 @@ function apiKey(id){ return TYPES.filter(function(x){ return x.id === id; })[0].
 
 function dayTotal(d, filter){
   if(!d) return 0;
-  if(filter === 'flash' || filter === 'zeroDte') return 0;
+  if(filter === 'flash') return 0;
   if(filter === 'all') return DOLLAR.reduce(function(t,id){ var k=apiKey(id); return t + (d[k] ? d[k].pnl||0 : 0); }, 0);
   var k = apiKey(filter);
   return d[k] ? d[k].pnl||0 : 0;
@@ -402,11 +400,6 @@ function renderCalendar(){
     monthDays().forEach(function(k){ fh += dayCount(calDays[k], 'flash'); });
     sumHtml = '<span>' + win + ' · ' + label + ': <b>' + num(fh) + '</b> setups logged</span>'
       + '<span>Scored on target-before-invalidation — no dollars attached</span>';
-  } else if(activeFilter === 'zeroDte'){
-    var zh = 0;
-    monthDays().forEach(function(k){ zh += dayCount(calDays[k], 'zeroDte'); });
-    sumHtml = '<span>' + win + ' · ' + label + ': <b>' + num(zh) + '</b> plans &amp; alerts</span>'
-      + '<span>Outcomes not tracked yet — counts only</span>';
   } else {
     var total = 0, best = null, worst = null, days = 0;
     monthDays().forEach(function(k){
@@ -438,12 +431,11 @@ function dayCell(key, dnum, isLead){
       + '<span class="d">' + dnum + (isToday ? ' · today' : '') + '</span>'
       + '<span class="sub">' + (isWeekend ? 'Market closed' : (isFuture ? '—' : 'No trades logged')) + '</span></button>';
   }
-  var mid = (activeFilter === 'flash' || activeFilter === 'zeroDte')
+  var mid = (activeFilter === 'flash')
     ? '<span class="total">' + num(dayCount(d, activeFilter)) + '</span>'
     : '<span class="total ' + signCls(dayTotal(d, activeFilter)) + '">' + money(dayTotal(d, activeFilter)) + '</span>';
   var sub = (activeFilter === 'all') ? 'all trackers'
     : (activeFilter === 'flash') ? 'Flash setups'
-    : (activeFilter === 'zeroDte') ? 'plans & alerts'
     : TYPE_LABEL[activeFilter] + ' only';
   var dots = '';
   TYPES.forEach(function(t){
@@ -467,7 +459,7 @@ function renderDetail(){
   }
   var total = dayTotal(d, 'all');
   var html = '<h3>' + esc(fmtDayLong(selectedDay)) + ' — <span class="' + signCls(total) + '">' + money(total) + '</span> total</h3>'
-    + '<p>Smoothers, futures, and Flow Pulse are scored in dollars; Flash and 0DTE are scored by counts, not dollars.</p>'
+    + '<p>Smoothers, futures, Flow Pulse, and 0DTE are scored in dollars; Flash is scored by counts, not dollars.</p>'
     + '<div class="detail-grid">';
   DOLLAR.forEach(function(id){
     var k = apiKey(id), rec = d[k] || { pnl:0, count:0 };
@@ -477,11 +469,8 @@ function renderDetail(){
       + '<span>' + (v > 0 ? 'Made money' : (v < 0 ? 'Lost money' : 'No trades / flat')) + '</span></div>';
   });
   var fc = (d.flash && d.flash.count) || 0;
-  var zc = (d['0dte'] && d['0dte'].count) || 0;
   html += '<div class="mini"><label><i class="m-flash"></i>Flash</label>'
     + '<strong>' + num(fc) + ' logged</strong><span>Setups — evidence, not P&amp;L</span></div>';
-  html += '<div class="mini"><label><i class="m-zeroDte"></i>0DTE</label>'
-    + '<strong>' + num(zc) + ' logged</strong><span>Plans &amp; alerts</span></div>';
   html += '</div>';
   el.innerHTML = html;
 }

@@ -238,3 +238,110 @@ def test_detail_endpoint_is_public(tmp_path):
         assert r.json()["name"] == "ICC"
         r = client.get("/api/simple/detail", params={"type": "nope", "name": "x"})
         assert r.status_code == 400
+
+
+def _zdtp_now():
+    # Fixed Monday 10:00am CT — inside the equity session, before any flatten.
+    from datetime import datetime
+    return datetime(2026, 10, 5, 10, 0, tzinfo=CT).timestamp()
+
+
+def _zdtp_fixtures(db, now):
+    """One confirmed SPY plan + fresh quotes + SPY minute bars."""
+    with db.tx() as c:
+        db.append(c, 'alert', 'spy_brief', 'SPY', now - 3600,
+                  {'decision': 'CALL SETUP CONFIRMED',
+                   'plans': {'call': {'stop': 769.0, 'target': 773.0}},
+                   'options': {'call': {'symbol': 'SPY261005C00770000', 'strike': 770}}},
+                  key='zsb1')
+        db.put(c, 'quote:SPY261005C00770000',
+               {'bid': 1.00, 'ask': 1.05, 'ts': now - 30})
+        # SPY minute bars AFTER the plan: touch the target
+        db.put(c, 'bar_window:SPY', [
+            [now - 1800, 0, 771.0, 770.0, 770.5, 100],
+            [now - 900, 0, 773.5, 771.0, 773.0, 100],
+        ])
+
+
+def test_zero_dte_paper_opens_spy_plan_trade(db):
+    from compass import zero_dte_paper as zdp
+    from compass.config import Config
+    now = _zdtp_now()
+    _zdtp_fixtures(db, now)
+    cfg = Config()
+    with db.tx() as c:
+        db.put(c, 'zero_dte_paper:spy_ts', now - 7200)  # running system
+        out = zdp.scan(db, c, cfg, now)
+    assert out['ran'] is True and out['opened'] == 1
+    with db.tx() as c:
+        t = db.get(c, 'trade:0dte-spy-2026-10-05-call')
+    assert t['kind'] == 'spy_plan' and t['qty'] == 1 and t['status'] == 'open'
+    assert t['entry'] == 1.06  # ask + 1c slippage
+
+
+def test_zero_dte_paper_closes_on_spy_target(db):
+    from compass import zero_dte_paper as zdp
+    from compass.config import Config
+    now = _zdtp_now()
+    _zdtp_fixtures(db, now)
+    cfg = Config()
+    with db.tx() as c:
+        db.put(c, 'zero_dte_paper:spy_ts', now - 7200)
+        out1 = zdp.scan(db, c, cfg, now)
+        assert out1['opened'] == 1 and out1['closed'] == 0
+        # a post-entry bar touches the SPY target
+        bars = db.get(c, 'bar_window:SPY', [])
+        bars.append([now + 30, 0, 774.0, 772.0, 773.5, 100])
+        db.put(c, 'bar_window:SPY', bars)
+        out = zdp.scan(db, c, cfg, now + 61)
+    assert out['closed'] == 1
+    with db.tx() as c:
+        t = db.get(c, 'trade:0dte-spy-2026-10-05-call')
+    assert t['status'] == 'closed' and t['exit_reason'] == 'target hit'
+    assert t['pnl'] < 0  # exited at the 1.00 bid below the 1.06 entry
+
+
+def test_zero_dte_paper_no_backfill(db):
+    from compass import zero_dte_paper as zdp
+    from compass.config import Config
+    now = _zdtp_now()
+    _zdtp_fixtures(db, now)
+    cfg = Config()
+    with db.tx() as c:
+        # fresh DB: watermark starts at now, the hour-old plan is ignored
+        out = zdp.scan(db, c, cfg, now)
+    assert out['opened'] == 0
+    with db.tx() as c:
+        assert len(db.prefix(c, 'trade:0dte-')) == 0
+
+
+def test_zero_dte_paper_no_duplicates(db):
+    from compass import zero_dte_paper as zdp
+    from compass.config import Config
+    now = _zdtp_now()
+    _zdtp_fixtures(db, now)
+    cfg = Config()
+    with db.tx() as c:
+        db.put(c, 'zero_dte_paper:spy_ts', now - 7200)
+        zdp.scan(db, c, cfg, now)
+        zdp.scan(db, c, cfg, now + 61)
+        n = len(db.prefix(c, 'trade:0dte-'))
+    assert n == 1  # opened once, never duplicated
+
+
+def test_simple_0dte_aggregates_paper_trades(db):
+    now = NOW
+    with db.tx() as c:
+        db.put(c, 'trade:0dte-spy-2026-10-05-call',
+               {'id': 'x', 'kind': 'spy_plan', 'status': 'closed', 'pnl': 25.0,
+                'exited_at': now})
+        db.put(c, 'trade:0dte-spy-2026-10-04-put',
+               {'id': 'y', 'kind': 'spy_plan', 'status': 'closed', 'pnl': -10.0,
+                'exited_at': now - 86400})
+        out = simple.summary(db, c, now)
+    zd = out['types']['0dte']
+    assert zd['stats']['tracked'] == 2
+    assert zd['stats']['wins'] == 1
+    assert zd['stats']['pnl'] == 15.0
+    spy = [d for d in zd['drill'] if d['name'] == 'SPY morning plan'][0]
+    assert spy['stats']['tracked'] == 2 and spy['stats']['pnl'] == 15.0
