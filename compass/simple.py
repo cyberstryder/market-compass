@@ -382,6 +382,23 @@ def _ts(ts):
         return "—"
 
 
+def _smoother_pending_reason(status, res):
+    """Plain-English reason a Smoothers week shows no dollar P&L."""
+    reason = res.get('reason') or ''
+    if status == 'OPEN':
+        return 'Still open'
+    if status == 'UNRESOLVED':
+        return 'Unresolved'
+    if ('quote_not_usable' in reason or 'contract_mismatch' in reason
+            or 'quote_time_not_valid' in reason):
+        if status == 'WIN':
+            return 'Target hit — option quote not captured'
+        if status == 'LOSS':
+            return 'Closed — option quote not captured'
+        return 'Option quote not captured'
+    return 'Pending'
+
+
 def _detail_smoothers(db, c, now, name):
     rows = list(c.execute(select(
         smoothers_weekly.c.week, smoothers_weekly.c.status,
@@ -417,7 +434,7 @@ def _detail_smoothers(db, c, now, name):
         orows.append(["Target hit", "Yes" if status == "WIN" else "No"])
         items.append({
             "tag": tag, "title": "Week of " + wl, "sub": sub, "rows": orows,
-            "result": _m(pnl) if pnl is not None else "Pending",
+            "result": _m(pnl) if pnl is not None else _smoother_pending_reason(status, res),
             "result_cls": "pos" if pnl is not None and pnl > 0 else ("neg" if pnl is not None and pnl < 0 else ""),
         })
     return {"type": "smoothers", "name": name,

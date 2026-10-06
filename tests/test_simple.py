@@ -427,3 +427,13 @@ def test_flow_pulse_drill_includes_pulse_counts(db):
     assert fp['stats']['pulses'] == 1
     bear = [d for d in fp['drill'] if d['name'] == 'Bearish flow'][0]
     assert bear['stats']['pulses'] == 1
+
+
+def test_smoother_pending_reason():
+    r = simple._smoother_pending_reason
+    assert r('OPEN', {'reason': 'underlying_signal_unresolved'}) == 'Still open'
+    assert r('UNRESOLVED', {'reason': 'underlying_signal_unresolved'}) == 'Unresolved'
+    assert r('WIN', {'reason': 'exit_quote_not_usable'}) == 'Target hit — option quote not captured'
+    assert r('LOSS', {'reason': 'entry_contract_mismatch'}) == 'Closed — option quote not captured'
+    assert r('WIN', {'reason': 'exit_quote_time_not_valid'}) == 'Target hit — option quote not captured'
+    assert r('?', {'reason': 'weird'}) == 'Pending'
