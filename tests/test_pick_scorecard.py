@@ -236,3 +236,69 @@ def test_scorecard_groups_by_pattern(db):
     assert fb['checks'] == 2
     assert (fb['wins'], fb['losses']) == (1, 1)
     assert fb['hit_rate'] == 0.5
+
+
+def test_planned_r_long_short_and_invalid():
+    assert ps.planned_r({'direction': 'long', 'entry': 100.0, 'target': 106.0,
+                         'invalidation': 98.0}) == 3.0
+    assert ps.planned_r({'direction': 'short', 'entry': 100.0, 'target': 94.0,
+                         'invalidation': 102.0}) == 3.0
+    # no edge cases survive
+    assert ps.planned_r({'direction': 'long', 'entry': 100.0, 'target': 106.0,
+                         'invalidation': 100.0}) is None
+    assert ps.planned_r({'direction': 'long', 'entry': 100.0, 'target': 99.0,
+                         'invalidation': 98.0}) is None
+    assert ps.planned_r({'direction': 'long', 'entry': 100.0, 'target': None,
+                         'invalidation': 98.0}) is None
+    # effective entry fallback
+    assert ps.planned_r({'direction': 'long', 'entry': None, 'target': 106.0,
+                         'invalidation': 98.0}, entry_used=100.0) == 3.0
+
+
+def test_realized_r_win_loss_open():
+    assert ps.realized_r({'status': 'win'}, 2.5) == 2.5
+    assert ps.realized_r({'status': 'loss'}, 2.5) == -1.0
+    assert ps.realized_r({'status': 'open'}, 2.5) is None
+    assert ps.realized_r({'status': 'win'}, None) is None
+
+
+def _seed_check(db, c, ts, **kw):
+    db.append(c, 'pick_check', 'test', kw.get('ticker', 'AAA'), ts,
+              {'ticker': kw.get('ticker', 'AAA'),
+               'direction': kw.get('direction', 'long'),
+               'entry': kw.get('entry'), 'target': kw.get('target'),
+               'invalidation': kw.get('invalidation'),
+               'spot': kw.get('spot'), 'source': kw.get('source', 'flash_agentic'),
+               'pattern': kw.get('pattern', 'FLOOR BOUNCE #4'),
+               'evidence_score': 80, 'at': ts},
+              key='r-%s-%s' % (kw.get('ticker', 'AAA'), ts))
+
+
+def test_scorecard_expectancy_r(db):
+    now = NOW + 10 * DAY
+    with db.tx() as c:
+        # AAA long 100 -> target 110 hit (planned 2R: risk 5, reward 10)
+        seed_bars(db, c, 'AAA', [100, 102, 112, 113, 114, 115],
+                  highs=[101, 103, 112, 114, 115, 116],
+                  lows=[99, 101, 102, 103, 104, 105])
+        _seed_check(db, c, NOW, ticker='AAA', entry=100.0, target=110.0,
+                    invalidation=95.0)
+        # BBB long 100 -> invalidation 95 hit first (loss = -1R)
+        seed_bars(db, c, 'BBB', [100, 98, 94, 96, 97, 98],
+                  highs=[101, 99, 96, 97, 98, 99],
+                  lows=[99, 97, 94, 95, 96, 97])
+        _seed_check(db, c, NOW, ticker='BBB', entry=100.0, target=110.0,
+                    invalidation=95.0)
+        sc = ps.scorecard(db, c, now, limit=50)
+    rows = sc['checks']
+    assert len(rows) == 2
+    by_r = {r['ticker']: r for r in rows}
+    assert by_r['AAA']['planned_r'] == 2.0
+    assert by_r['AAA']['realized_r'] == 2.0
+    assert by_r['BBB']['realized_r'] == -1.0
+    pat = [p for p in sc['by_pattern'] if p['pattern'] == 'FLOOR BOUNCE #4'][0]
+    assert pat['expectancy_r'] == 0.5  # (2.0 + -1.0) / 2
+    assert pat['total_r'] == 1.0
+    assert pat['r_count'] == 2
+    src = [s for s in sc['by_source'] if s['source'] == 'flash_agentic'][0]
+    assert src['expectancy_r'] == 0.5

@@ -251,22 +251,28 @@ def _flash(db, c, now):
     except Exception:
         pass
     drill = []
+    total_r, r_n = 0.0, 0
     for pattern in sorted(per_pattern):
         h = hit.get(pattern) or {}
         checks = h.get("checks", 0)
+        if h.get("total_r") is not None:
+            total_r += h["total_r"]
+            r_n += h.get("r_count") or 0
         drill.append(_drill(
             pattern,
             "Flash Agentic chart setups of this pattern type.",
             {"tracked": per_pattern[pattern],
              "wins": h.get("wins", 0),
              "win_rate": h.get("hit_rate"),
-             "resolved": checks}))
+             "resolved": checks,
+             "expectancy_r": h.get("expectancy_r")}))
     total_tracked = sum(per_pattern.values())
     total_wins = sum((hit.get(p) or {}).get("wins", 0) for p in per_pattern)
     total_resolved = sum((hit.get(p) or {}).get("checks", 0) for p in per_pattern)
     stats = {"tracked": total_tracked, "wins": total_wins,
              "win_rate": round(100.0 * total_wins / total_resolved, 1) if total_resolved else None,
-             "resolved": total_resolved, "pnl": None}
+             "resolved": total_resolved, "pnl": None,
+             "expectancy_r": round(total_r / r_n, 2) if r_n else None}
     return (_block(
         "flash", "Flash Agentic",
         "Chart setups from the Obsidian Cipher scanner.",

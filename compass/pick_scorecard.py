@@ -153,6 +153,46 @@ def _mean(xs):
     return round(sum(xs) / len(xs), 2) if xs else None
 
 
+def planned_r(check, entry_used=None):
+    """Planned risk/reward multiple from entry/target/invalidation.
+
+    Long: (target - entry) / (entry - invalidation).
+    Short: (entry - target) / (invalidation - entry).
+    Uses the effective entry (entry_used when the check had none) so the
+    multiple reflects the price the setup could actually have gotten.
+    Returns None when the levels don't define a positive risk and reward.
+    """
+    try:
+        entry = float(entry_used if entry_used is not None else check.get('entry'))
+        target = float(check.get('target'))
+        inv = float(check.get('invalidation'))
+    except (TypeError, ValueError):
+        return None
+    direction = str(check.get('direction') or '').lower()
+    if direction == 'long':
+        risk, reward = entry - inv, target - entry
+    elif direction == 'short':
+        risk, reward = inv - entry, entry - target
+    else:
+        return None
+    if risk <= 0 or reward <= 0:
+        return None
+    return round(reward / risk, 2)
+
+
+def realized_r(outcome, pr):
+    """Realized R for a resolved setup: +planned on a clean target hit,
+    -1 (full planned risk) on a loss. None when unresolved or unmeasurable."""
+    if pr is None:
+        return None
+    status = (outcome or {}).get('status')
+    if status == 'win':
+        return pr
+    if status == 'loss':
+        return -1.0
+    return None
+
+
 def scorecard(db, c, now, limit=100, horizon_sessions=DEFAULT_HORIZON):
     rows = db.recent(c, 'pick_check', limit=limit)
     checks, groups = [], {}
@@ -173,17 +213,22 @@ def scorecard(db, c, now, limit=100, horizon_sessions=DEFAULT_HORIZON):
                        'mfe_pct': None, 'mae_pct': None,
                        'horizon_return_pct': None, 'entry_used': None,
                        'entry_source': None, 'basis': 'Unusable check record.'}
-        checks.append({**check, 'outcome': outcome})
+        pr = planned_r(check, outcome.get('entry_used'))
+        rr = realized_r(outcome, pr)
+        full = {**check, 'outcome': outcome, 'planned_r': pr, 'realized_r': rr}
+        checks.append(full)
         g = groups.setdefault(check['source'],
                               {'checks': [], 'resolved': []})
-        g['checks'].append((check, outcome))
+        g['checks'].append((full, outcome))
         if outcome['status'] in ('win', 'loss'):
-            g['resolved'].append((check, outcome))
+            g['resolved'].append((full, outcome))
 
     by_source = []
     for source, g in sorted(groups.items()):
         wins = sum(1 for _, o in g['resolved'] if o['status'] == 'win')
         losses = sum(1 for _, o in g['resolved'] if o['status'] == 'loss')
+        rrs = [c_.get('realized_r') for c_, o in g['resolved']
+               if c_.get('realized_r') is not None]
         by_source.append({
             'source': source,
             'checks': len(g['checks']),
@@ -193,6 +238,9 @@ def scorecard(db, c, now, limit=100, horizon_sessions=DEFAULT_HORIZON):
             'hit_rate': round(wins / (wins + losses), 3) if wins + losses else None,
             'avg_horizon_return_pct': _mean([o['horizon_return_pct'] for _, o in g['resolved']]),
             'avg_mfe_pct': _mean([o['mfe_pct'] for _, o in g['resolved']]),
+            'avg_planned_r': _mean([c_.get('planned_r') for c_, o in g['resolved']]),
+            'expectancy_r': round(sum(rrs) / len(rrs), 2) if rrs else None,
+            'total_r': round(sum(rrs), 2) if rrs else None,
             'avg_evidence_score_win': _mean([c_['evidence_score'] for c_, o in g['resolved']
                                              if o['status'] == 'win']),
             'avg_evidence_score_loss': _mean([c_['evidence_score'] for c_, o in g['resolved']
@@ -212,12 +260,18 @@ def scorecard(db, c, now, limit=100, horizon_sessions=DEFAULT_HORIZON):
         resolved = [(c_, o) for c_, o in rows if o['status'] in ('win', 'loss')]
         wins = sum(1 for _, o in resolved if o['status'] == 'win')
         losses = len(resolved) - wins
+        rrs = [c_.get('realized_r') for c_, o in resolved
+               if c_.get('realized_r') is not None]
         by_pattern.append({
             'source': source, 'pattern': pattern,
             'checks': len(rows), 'wins': wins, 'losses': losses,
             'open': sum(1 for _, o in rows if o['status'] == 'open'),
             'hit_rate': round(wins / (wins + losses), 3) if wins + losses else None,
             'avg_horizon_return_pct': _mean([o['horizon_return_pct'] for _, o in resolved]),
+            'avg_planned_r': _mean([c_.get('planned_r') for c_, o in resolved]),
+            'expectancy_r': round(sum(rrs) / len(rrs), 2) if rrs else None,
+            'total_r': round(sum(rrs), 2) if rrs else None,
+            'r_count': len(rrs),
         })
     return {'asof': now, 'horizon_sessions': horizon_sessions,
             'by_source': by_source, 'by_pattern': by_pattern, 'checks': checks}

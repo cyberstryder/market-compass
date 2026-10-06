@@ -31,6 +31,11 @@ function money(n){
 function signCls(n){ return (n === null || n === undefined || isNaN(n)) ? '' : (n > 0 ? 'pos' : (n < 0 ? 'neg' : '')); }
 function pct(x){ return (x === null || x === undefined) ? '—' : (Math.round(x*10)/10) + '%'; }
 function num(x){ return (x === null || x === undefined) ? '—' : Number(x).toLocaleString('en-US'); }
+function expR(v){
+  if(v === null || v === undefined) return '';
+  var s = (v >= 0 ? '+' : '') + Number(v).toFixed(2) + 'R';
+  return ' · <b class="' + (v >= 0 ? 'pos' : 'neg') + '">' + s + ' expectancy</b>';
+}
 
 function todayKey(){
   var d = new Date();
@@ -122,7 +127,7 @@ function renderCards(){
     set('flow', 'No tracks closed yet');
   }
   if((fl.resolved||0) > 0){
-    set('flash', 'Clean targets <b>' + num(fl.wins) + ' of ' + num(fl.resolved) + ' · ' + pct(fl.win_rate) + '</b>');
+    set('flash', 'Clean targets <b>' + num(fl.wins) + ' of ' + num(fl.resolved) + ' · ' + pct(fl.win_rate) + '</b>' + expR(fl.expectancy_r));
   } else {
     set('flash', '<b>' + num(fl.tracked) + '</b> setups logged');
   }
@@ -166,7 +171,7 @@ function drillCard(it, id, cfg){
   if(cfg.hit){
     var r = st.resolved || 0;
     if(r > 0){
-      res = '<span><b>' + num(w) + ' of ' + num(r) + ' targets · ' + pct(st.win_rate) + '</b></span>';
+      res = '<span><b>' + num(w) + ' of ' + num(r) + ' targets · ' + pct(st.win_rate) + '</b>' + expR(st.expectancy_r) + '</span>';
     } else if(n > 0){
       res = '<span><b>' + num(n) + '</b> logged · none resolved yet</span>';
     } else {
@@ -211,7 +216,7 @@ function selectDrill(id, scroll){
   if(cfg.hit){
     var r = st.resolved || 0;
     sum = ['<b>' + num(n) + '</b> setups logged',
-           '<b>' + num(w) + '</b> clean targets' + (r ? ' · ' + pct(st.win_rate) : ''),
+           '<b>' + num(w) + '</b> clean targets' + (r ? ' · ' + pct(st.win_rate) : '') + expR(st.expectancy_r),
            'No dollars attached — evidence only'];
   } else {
     sum = ['<b>' + num(n) + '</b> trades',
@@ -318,7 +323,7 @@ function renderBoard(){
     var result;
     if(r.hit){
       var rr = st.resolved || 0;
-      result = rr > 0 ? '<b>' + num(w) + '/' + num(rr) + ' targets · ' + Math.round(100*w/rr) + '%</b>'
+      result = rr > 0 ? '<b>' + num(w) + '/' + num(rr) + ' targets · ' + Math.round(100*w/rr) + '%</b>' + expR(st.expectancy_r)
                       : '<b>' + num(n) + '</b> logged';
     } else {
       result = '<b class="' + signCls(st.pnl) + '">' + money(st.pnl) + '</b>';
