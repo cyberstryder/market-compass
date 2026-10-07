@@ -489,11 +489,65 @@ def create_app(cfg=None):
             raise HTTPException(400, 'unknown detail type')
         return d
 
+    @app.get('/ideas', response_class=HTMLResponse)
+    def ideas_page():
+        # Standalone Ideas page: swing ideas (1-21 DTE) that also go to Discord #ideas.
+        # Server-rendered (CSP blocks inline scripts).
+        from .option_ideas import ideas as ideas_tbl
+        from sqlalchemy import select, desc
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        cards = ""
+        try:
+            with db.tx() as c:
+                rows = c.execute(
+                    select(ideas_tbl).order_by(desc(ideas_tbl.c.created)).limit(50)
+                ).mappings().all()
+                for r in rows:
+                    p = r.get("payload") or {}
+                    contract = p.get("contract", {})
+                    signal = p.get("signal", {})
+                    side = (signal.get("side") or "").lower()
+                    badge_cls = "long" if side == "long" else "short" if side == "short" else ""
+                    dt = datetime.fromtimestamp(r.get("created", 0), ZoneInfo("America/Chicago"))
+                    dt_str = dt.strftime("%m/%d %H:%M CT")
+                    detail = ""
+                    if contract.get("symbol"):
+                        detail += " · " + str(contract["symbol"])
+                    if contract.get("strike"):
+                        detail += " · $%s %s" % (contract["strike"], (contract.get("type") or "").upper())
+                    if contract.get("expiry"):
+                        detail += " · exp " + str(contract["expiry"])
+                    reason = signal.get("reason") or ""
+                    reason_html = '<div style="font-size:.9em;color:#aaa">%s</div>' % reason if reason else ""
+                    cards += (
+                        '<div class="card"><h3>%s '
+                        '<span class="badge %s">%s</span>'
+                        '<span class="badge" style="background:#222;color:#aaa">%s</span></h3>'
+                        '<div class="meta">%s%s</div>%s</div>'
+                        % (r.get("underlying"), badge_cls, (signal.get("side") or "").upper(),
+                           r.get("status"), dt_str, detail, reason_html))
+                if not cards:
+                    cards = '<p style="color:#666">No ideas yet.</p>'
+        except Exception as e:
+            cards = '<p style="color:#f77">Error loading ideas.</p>'
+        return """<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Compass Ideas</title>
+<style>body{background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 20px}
+h1{font-size:1.4em;border-bottom:1px solid #333;padding-bottom:10px}
+.card{background:#141414;border:1px solid #2a2a2a;border-radius:8px;padding:16px;margin:12px 0}
+.card h3{margin:0 0 6px;font-size:1em}
+.meta{color:#888;font-size:.85em;margin-bottom:8px}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.8em;margin-right:6px}
+.long{background:#1a3a1a;color:#7f7}.short{background:#3a1a1a;color:#f77}
+a{color:#888}</style></head><body>
+<h1>Option Ideas <span style="font-size:.6em;color:#666">1-21 DTE swings</span></h1>
+""" + cards + """
+<p><a href="/detailed">← Back to workspace</a></p>
+</body></html>"""
+
     @app.get('/admin', response_class=HTMLResponse)
     def admin_page():
-        # Simple admin panel behind the password guard. Forms POST to the
-        # admin API endpoints so both Josh and the browser agent can trigger
-        # destructive actions without console/curl.
         return """<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>Compass Admin</title>
 <style>body{background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;max-width:600px;margin:40px auto;padding:0 20px}
@@ -549,6 +603,32 @@ a{color:#888}</style></head><body>
         from .alpaca_option_stream import compare_sources
         try:
             return compare_sources(db)
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "traceback": traceback.format_exc(limit=5)}
+
+    @app.get('/api/option-ideas')
+    def get_option_ideas():
+        # Swing ideas (1-21 DTE) for the dashboard Ideas section.
+        from .option_ideas import ideas
+        from sqlalchemy import select, desc
+        try:
+            with db.tx() as c:
+                rows = c.execute(
+                    select(ideas).order_by(desc(ideas.c.created)).limit(50)
+                ).mappings().all()
+                out = []
+                for r in rows:
+                    p = r.get("payload") or {}
+                    out.append({
+                        "id": r.get("id"),
+                        "underlying": r.get("underlying"),
+                        "status": r.get("status"),
+                        "created": r.get("created"),
+                        "contract": p.get("contract", {}),
+                        "signal": p.get("signal", {}),
+                    })
+                return {"ideas": out}
         except Exception as e:
             import traceback
             return {"error": str(e), "traceback": traceback.format_exc(limit=5)}
