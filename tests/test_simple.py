@@ -86,7 +86,7 @@ def test_calendar_groups_by_chicago_day(db):
 def test_empty_db_returns_empty_blocks(db):
     with db.tx() as c:
         out = simple.summary(db, c, 1_000_000_000.0)
-    assert set(out['types']) == {'smoothers', 'futures', 'flow_pulse', 'flash', '0dte'}
+    assert set(out['types']) == {'smoothers', 'futures', 'flow_pulse', 'flash', '0dte', 'swings'}
     assert all(t['stats']['tracked'] == 0 for t in out['types'].values())
 
 
