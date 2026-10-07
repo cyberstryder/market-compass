@@ -129,6 +129,22 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
     if atr_v and risk_pts < min_stop_atr * atr_v:
         return {'submitted': False, 'reason': 'stop_too_tight',
                 'risk_pts': round(risk_pts, 4), 'atr': round(atr_v, 4)}
+    # Regime filter (Quill Trend Kit): trend-continuation detectors are
+    # blocked in range/squeeze (they chop); fade/reversion detectors are
+    # blocked in strong trends (they get run over). Skipped when bars are
+    # unavailable rather than blocking the trade.
+    try:
+        from .regime import classify as _classify, allowed as _allowed
+        from .ict_common import ict_bars as _ict_bars
+        _rbars = _ict_bars(db, c, symbol)
+        if len(_rbars) >= 120:
+            _reg = _classify(_rbars)
+            if not _allowed(detector, _reg['regime']):
+                return {'submitted': False, 'reason': 'regime_mismatch',
+                        'regime': _reg['regime'],
+                        'adx': round(_reg['adx'], 1) if _reg['adx'] else None}
+    except Exception:
+        pass
     per_unit = risk_pts * spec['multiplier'] + 2 * spec['fee'] + \
         2 * spec['tick'] * spec['multiplier']
     if per_unit <= 0:
