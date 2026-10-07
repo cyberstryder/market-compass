@@ -83,6 +83,9 @@ async def consume(ws, collector, buffer=None):
     subscribed = set()
     committed = {"quotes": 0, "trades": 0}
     trace = SubscriptionTrace(time.time(), "alpaca")
+    # Diagnostics for the status endpoint: what we're actually receiving.
+    diag = {"last_raw_type": None, "last_raw_len": 0, "last_msgpack_error": None,
+            "msgpack_failures": 0, "messages_received": 0, "last_message_at": None}
 
     async def read():
         while True:
@@ -94,10 +97,25 @@ async def consume(ws, collector, buffer=None):
                         "Alpaca OPRA authentication timed out; reconnecting") from None
                 continue
             now, mono = time.time(), time.monotonic()
+            diag["messages_received"] += 1
+            diag["last_message_at"] = now
+            diag["last_raw_type"] = type(raw).__name__
+            diag["last_raw_len"] = len(raw) if hasattr(raw, "__len__") else 0
             try:
                 # OPRA uses MessagePack binary, not JSON text.
                 msgs = msgpack.unpackb(raw, raw=False)
-            except Exception:
+            except Exception as e:
+                diag["msgpack_failures"] += 1
+                diag["last_msgpack_error"] = str(e)[:200]
+                # Try to see if it's actually JSON/text (wrong encoding)
+                if isinstance(raw, (bytes, bytearray)):
+                    try:
+                        preview = raw[:200].decode('utf-8', errors='replace')
+                        diag["last_raw_preview"] = preview
+                    except Exception:
+                        diag["last_raw_preview"] = "<binary>"
+                else:
+                    diag["last_raw_preview"] = str(raw)[:200]
                 continue
             if not isinstance(msgs, list):
                 msgs = [msgs]
@@ -193,7 +211,7 @@ async def consume(ws, collector, buffer=None):
                 "receiving" if latest else "waiting",
                 "Alpaca OPRA parallel run; source-tagged rows for parity check",
                 latest, subscribed=len(subscribed),
-                committed=dict(committed))
+                committed=dict(committed), diag=dict(diag))
             await asyncio.sleep(30)
 
     async def authenticate():
