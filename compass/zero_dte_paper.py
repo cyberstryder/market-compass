@@ -37,6 +37,28 @@ def _num(x):
         return None
 
 
+def _gex_vex_at_entry(db, c, underlying):
+    """Capture current GEX/VEX for divergence analysis (Discord heuristic test).
+
+    Returns dict with gex, vex, and divergence flag. Used to test whether
+    GEX/VEX divergences predict reversals at 0DTE entry points.
+    """
+    try:
+        exp = db.get(c, "exposure:" + underlying) or {}
+        gex = _num(exp.get("gex"))
+        vex = _num(exp.get("vex"))
+        # Divergence: GEX and VEX have opposite signs with meaningful magnitude
+        divergent = (
+            gex is not None and vex is not None
+            and gex != 0 and vex != 0
+            and (gex > 0) != (vex > 0)
+            and abs(vex) >= 5000  # per the heuristic: ignore small VEX
+        )
+        return {"gex": gex, "vex": vex, "gex_vex_divergent": divergent}
+    except Exception:
+        return {"gex": None, "vex": None, "gex_vex_divergent": False}
+
+
 def _fresh_quote(db, c, symbol, now, max_age=120):
     try:
         q = db.get(c, "quote:" + symbol) or {}
@@ -127,6 +149,7 @@ def _open_spy_plans(db, c, now, flatten_at):
                 "target_rule": rule,
                 "decision": decision, "plan_ts": ts,
                 "status": "open", "fee": FEE, "flatten_at": flatten_at,
+                **_gex_vex_at_entry(db, c, "SPY"),
             }
             if _open(db, c, rkey, rec):
                 opened += 1
@@ -196,6 +219,7 @@ def _open_scanner(db, c, now, flatten_at):
             "exit_up_pct": 50.0, "exit_down_pct": -50.0,
             "alert_key": r.get("key"), "alert_event": pub.get("status") or pub.get("event"),
             "status": "open", "fee": FEE, "flatten_at": flatten_at,
+            **_gex_vex_at_entry(db, c, contract.get("underlying") or "SPY"),
         }
         if _open(db, c, key, rec):
             opened += 1
