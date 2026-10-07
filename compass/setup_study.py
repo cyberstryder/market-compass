@@ -206,22 +206,20 @@ class SetupStudy:
     def observe(self, c, p, q, observed, recorded=False):
         # Legacy trials keep their original latest-quote method. V2 may
         # replay quotes that were already recorded fresh by the collector.
-        # Flatten deadline takes precedence over quote gaps: if we're past
-        # flatten_at, close the position now using the best available price
-        # rather than waiting for a fresh quote that may never come.
-        if observed >= p['flatten_at'] and p['status'] == 'open':
-            # Use the last available quote price for the flatten.
-            last_q = self.db.get(c, 'quote:'+p['symbol']) or {}
-            price = last_q.get('bid') if p['side'] == 'long' else last_q.get('ask')
-            if price is not None:
-                self.finish(c, p, observed, 'session_flatten', price=price, quote_ts=last_q.get('ts'))
-            else:
-                # No price available at all; mark unresolved but with flatten reason.
-                self.finish(c, p, observed, 'session_flatten')
-            return
         checked = q['recorded_at'] if recorded else observed
         last = p['last_quote_ts']
         if not fresh(q, checked) or q['ts'] > checked or q['ts'] <= last:
+            # Flatten deadline takes precedence over quote gaps: if we're past
+            # flatten_at, close the position now using the last available price
+            # rather than leaving it open with session_quote_missing.
+            if observed >= p['flatten_at'] and p['status'] == 'open':
+                last_q = self.db.get(c, 'quote:'+p['symbol']) or {}
+                price = last_q.get('bid') if p['side'] == 'long' else last_q.get('ask')
+                if price is not None:
+                    self.finish(c, p, observed, 'session_flatten', price=price, quote_ts=last_q.get('ts'))
+                else:
+                    self.finish(c, p, observed, 'session_flatten')
+                return
             if observed-last > MAX_GAP and not recorded:
                 p['gap_detail'] = {'last_quote_ts':last, 'checked_at':observed,
                                    'latest_quote_ts':(q or {}).get('ts'), 'reason':'no_usable_quote'}
