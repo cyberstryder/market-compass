@@ -162,6 +162,12 @@ async def consume(ws, collector, buffer=None):
                 await ws.send(msgpack.packb({"action": "subscribe",
                                              "trades": wire, "quotes": wire}))
                 trace.sent("subscribe", wanted, time.time())
+                # Log what we actually sent for diagnostics
+                diag["last_subscribe_sent"] = {
+                    "at": time.time(),
+                    "count": len(wire),
+                    "sample": wire[:3] if wire else [],
+                }
             subscribed.clear()
             subscribed.update(wanted)
             buffer.prune(wanted)
