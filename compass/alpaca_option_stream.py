@@ -124,6 +124,15 @@ async def consume(ws, collector, buffer=None):
                     continue
                 if msg.get("T") == "success" and msg.get("msg") == "authenticated":
                     authenticated.set()
+                    diag["authenticated_at"] = now
+                    continue
+                if msg.get("T") == "subscription":
+                    # Alpaca confirms subscriptions: {"T":"subscription","trades":[...],"quotes":[...]}
+                    diag["last_subscription"] = {
+                        "at": now,
+                        "trades": len(msg.get("trades") or []),
+                        "quotes": len(msg.get("quotes") or []),
+                    }
                     continue
                 if msg.get("T") == "error":
                     raise OptionStreamError(
