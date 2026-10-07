@@ -16,6 +16,7 @@
 <button type="button" class="nav" data-tab="morning-brief">Morning Brief</button>
 <button type="button" class="nav" data-tab="0dte">0DTE</button>
 <button type="button" class="nav" data-tab="ideas">Ideas</button>
+<button type="button" class="nav" data-tab="swings">Swings</button>
 <button type="button" class="nav" data-tab="smoothers">Smoothers</button>
 <button type="button" class="nav" data-tab="futures">Futures</button>
 <button type="button" class="nav" data-tab="compass">Compass</button>
@@ -181,6 +182,18 @@
 </section>
 </div></section>
 
+<section id="sec-swings" class="acc-section"><button class="acc-head" data-section="swings"><span class="acc-title">Swings</span><span class="acc-chn">swing ideas</span><span class="chev">▾</span></button><div class="acc-body">
+<section id="swing-ideas" class="tab legacy">
+<div class="banner">SWING IDEAS · Bullish and bearish daily setups with fresh, vendor-classified options flow. Selected contracts are tracked across stock sessions.</div>
+<p><a href="/#swing-study">Compare all technical candidates, including rejected flow →</a></p>
+<p id="swings-status" class="fine"></p><div id="swings-stats" class="stats"></div>
+<article class="panel"><div class="panel-head"><h2>Swing ideas and outcomes</h2><label for="swings-filter">Show <select id="swings-filter"><option value="all">All recent ideas</option><option value="active">Pending and open</option><option value="closed">Completed outcomes</option></select></label></div><div id="swings-records"></div>
+<p class="fine">Pending candidates have no option entry. Closed markets preserve the last observed mark. Overnight gaps can exceed stops; missing open-session observations remain unresolved. These overlapping one-contract experiments are separate from Smoothers and account performance.</p></article>
+<article class="panel"><h2>Results by swing setup</h2><div id="swings-groups"></div></article>
+<article class="panel"><h2>Swing scan coverage</h2><p id="swings-coverage-summary" class="fine"></p><details data-key="swing-coverage"><summary>Watchlist readiness</summary><div id="swings-coverage"></div></details></article>
+</section>
+</div></section>
+
 <section id="sec-smoothers" class="acc-section"><button class="acc-head" data-section="smoothers"><span class="acc-title">Smoothers</span><span class="acc-chn">#smoothers</span><span class="chev">▾</span></button><div class="acc-body">
 <article class="panel"><h2>Smoothers sender handoff</h2><details open><summary>Review a complete week and prepare the next weekly cohort</summary>
 <p>The original app remains official during the comparison week. Activation requires matched weekly observations, current message previews, a review of the original channel, and the original sender paused. The source feed does not retain Discord delivery receipts.</p>
@@ -334,15 +347,6 @@
 <div id="secondary-comparison"></div><div id="secondary-weekly"></div>
 <p class="fine">Watch and rejected candidates remain in the comparison. A missed positive move is shown alongside an avoided negative move. The per-candidate filter result assigns zero exposure to unselected candidates; it is not portfolio performance. No automatic rule optimization runs.</p></article>
 <article class="panel"><div class="panel-head"><h2>Secondary assessments</h2><label for="secondary-filter">Source <select id="secondary-filter"><option value="all">All sources</option><option value="obsidian">Obsidian Watchlist</option><option value="morning">Morning Algo</option><option value="smoothers">Smoothers</option><option value="futures">TradingView futures</option><option value="compass_futures">Compass futures</option></select></label></div><div id="secondary-reviews"></div></article>
-</section>
-<section id="swing-ideas" class="tab legacy">
-<div class="banner">SWING IDEAS · Bullish and bearish daily setups with fresh, vendor-classified options flow. Selected contracts are tracked across stock sessions.</div>
-<p><a href="/#swing-study">Compare all technical candidates, including rejected flow →</a></p>
-<p id="swings-status" class="fine"></p><div id="swings-stats" class="stats"></div>
-<article class="panel"><div class="panel-head"><h2>Swing ideas and outcomes</h2><label for="swings-filter">Show <select id="swings-filter"><option value="all">All recent ideas</option><option value="active">Pending and open</option><option value="closed">Completed outcomes</option></select></label></div><div id="swings-records"></div>
-<p class="fine">Pending candidates have no option entry. Closed markets preserve the last observed mark. Overnight gaps can exceed stops; missing open-session observations remain unresolved. These overlapping one-contract experiments are separate from Smoothers and account performance.</p></article>
-<article class="panel"><h2>Results by swing setup</h2><div id="swings-groups"></div></article>
-<article class="panel"><h2>Swing scan coverage</h2><p id="swings-coverage-summary" class="fine"></p><details data-key="swing-coverage"><summary>Watchlist readiness</summary><div id="swings-coverage"></div></details></article>
 </section>
 <section id="discovery" class="tab legacy">
 <div class="notice">Independent flow-led continuation and bounce research. No orders or Discord alerts.</div>
