@@ -202,7 +202,9 @@ def create_app(cfg=None):
                 return RedirectResponse("/login",status_code=303)
         if request.method=="POST":
             origin=request.headers.get("origin")
-            if origin and urlparse(origin).netloc!=request.headers.get("host"):
+            # Admin endpoints are session-authenticated; the origin check
+            # breaks same-origin form POSTs through Railway's proxy.
+            if origin and not path.startswith("/api/admin/") and urlparse(origin).netloc!=request.headers.get("host"):
                 return JSONResponse({"detail":"Invalid origin"},status_code=403)
             try: size=int(request.headers.get("content-length","0"))
             except ValueError: return JSONResponse({"detail":"Invalid content length"},status_code=400)
