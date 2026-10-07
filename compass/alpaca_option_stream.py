@@ -122,6 +122,8 @@ async def consume(ws, collector, buffer=None):
             for msg in msgs:
                 if not isinstance(msg, dict):
                     continue
+                # Log every message type we see for diagnostics
+                diag["last_msg_type"] = msg.get("T")
                 if msg.get("T") == "success" and msg.get("msg") == "authenticated":
                     authenticated.set()
                     diag["authenticated_at"] = now
