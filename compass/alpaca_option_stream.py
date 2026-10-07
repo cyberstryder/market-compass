@@ -233,8 +233,8 @@ async def consume(ws, collector, buffer=None):
 
     async def authenticate():
         await ws.send(msgpack.packb({"action": "auth",
-                                     "key": collector.cfg.alpaca_key,
-                                     "secret": collector.cfg.alpaca_secret}))
+                                     "key": collector.cfg.alpaca_opra_key,
+                                     "secret": collector.cfg.alpaca_opra_secret}))
         # Wait for the auth confirmation; returning early would trigger
         # FIRST_COMPLETED and tear down the whole consumer.
         await authenticated.wait()

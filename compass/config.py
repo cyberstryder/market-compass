@@ -26,6 +26,12 @@ class Config:
     extra_futures: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("EXTRA_FUTURES_SYMBOLS","MGC.v.0,GC.v.0,SIL.v.0,SI.v.0,MCL.v.0,CL.v.0,YM.v.0,MYM.v.0").split(",") if s.strip()))
     alpaca_key: str = field(default_factory=lambda: env("APCA_API_KEY_ID"))
     alpaca_secret: str = field(default_factory=lambda: env("APCA_API_SECRET_KEY"))
+    # Dedicated OPRA stream keys (defaults to main keys if not set).
+    # Use these to give the OPRA WebSocket its own API keys, avoiding
+    # the 1-connection-per-account limit when another app (e.g. Obsidian)
+    # holds a stream with the main keys.
+    alpaca_opra_key: str = field(default_factory=lambda: env("APCA_OPRA_KEY_ID") or env("APCA_API_KEY_ID"))
+    alpaca_opra_secret: str = field(default_factory=lambda: env("APCA_OPRA_SECRET_KEY") or env("APCA_API_SECRET_KEY"))
     feed: str = field(default_factory=lambda: env("ALPACA_FEED","sip"))
     databento: str = field(default_factory=lambda: env("DATABENTO_API_KEY"))
     massive: str = field(default_factory=lambda: env("MASSIVE_API_KEY"))
