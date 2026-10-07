@@ -126,14 +126,19 @@ async def consume(ws, collector, buffer=None):
                 diag["last_msg_type"] = msg.get("T")
                 diag["last_msg_detail"] = str(msg.get("msg") or "")[:100]
                 if msg.get("T") == "success":
-                    # Auth confirmation: {"T":"success","msg":"authenticated"}
-                    # Subscription confirmation may also come as success
-                    if msg.get("msg") == "authenticated":
+                    # Auth: {"T":"success","msg":"authenticated"}
+                    # Sub confirm: {"T":"success","msg":"subscribed to trades: [...], quotes: [...]"}
+                    msg_text = str(msg.get("msg") or "")
+                    if msg_text == "authenticated":
                         authenticated.set()
                         diag["authenticated_at"] = now
+                    elif "subscribed to" in msg_text:
+                        diag["last_subscription"] = {
+                            "at": now,
+                            "detail": msg_text[:300],
+                        }
                     else:
-                        # Log non-auth success (likely subscription ack)
-                        diag["last_success_msg"] = str(msg.get("msg") or "")[:200]
+                        diag["last_success_msg"] = msg_text[:200]
                     continue
                 if msg.get("T") == "subscription":
                     # Alpaca confirms subscriptions: {"T":"subscription","trades":[...],"quotes":[...]}
