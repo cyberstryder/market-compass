@@ -577,20 +577,23 @@ a{color:#888}</style></head><body>
         # Clears paper trades, open paper positions, and the futures
         # paper-risk ledger; the paper_decision audit log is preserved.
         confirm = None
-        # Try JSON first
+        # Read body once; try JSON, then form-encoded.
         try:
-            body = await request.json()
-            if isinstance(body, dict):
-                confirm = body.get('confirm')
+            raw = await request.body()
+            ctype = request.headers.get('content-type', '')
+            if 'application/json' in ctype:
+                import json as _json
+                body = _json.loads(raw.decode('utf-8'))
+                if isinstance(body, dict):
+                    confirm = body.get('confirm')
+            else:
+                from urllib.parse import parse_qs
+                form = parse_qs(raw.decode('utf-8'))
+                vals = form.get('confirm')
+                if vals:
+                    confirm = vals[0]
         except Exception:
             pass
-        # Fall back to form data
-        if not confirm:
-            try:
-                form = await request.form()
-                confirm = form.get('confirm')
-            except Exception:
-                pass
         if confirm != 'reset-futures-paper':
             raise HTTPException(400, 'body must confirm reset-futures-paper')
         from . import ict_paper
