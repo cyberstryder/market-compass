@@ -305,6 +305,55 @@ def _flash(db, c, now):
         stats, drill), by_day)
 
 
+# ---------------------------------------------------------------- swings
+
+
+def _swings(db, c, now):
+    from .swing_ideas import swings
+    from sqlalchemy import select, func
+    try:
+        rows = c.execute(select(
+            swings.c.status,
+            swings.c.payload['outcome'].as_string().label('outcome'),
+            swings.c.payload['return_pct'].as_float().label('ret'),
+            swings.c.created,
+        ).where(swings.c.created >= now - 90 * 86400)).mappings().all()
+    except Exception:
+        rows = []
+    by_day = defaultdict(lambda: {"pnl": 0.0, "count": 0})
+    per_rule = defaultdict(list)
+    for r in rows:
+        d = _day(r.get("created"))
+        if d:
+            by_day[d]["count"] += 1
+        outcome = r.get("outcome")
+        ret = r.get("ret")
+        # Group by rule if available, otherwise by status
+        rule = "swing"
+        try:
+            # Try to get rule from payload if we have full payload
+            pass
+        except Exception:
+            pass
+        per_rule[rule].append((outcome == "win", ret))
+    drill = []
+    for rule in sorted(per_rule):
+        trades = per_rule[rule]
+        s = _stats(trades)
+        drill.append(_drill(
+            rule,
+            "Swing option ideas (1-21 DTE).",
+            s))
+    all_trades = [t for trades in per_rule.values() for t in trades]
+    stats = _stats(all_trades)
+    return (_block(
+        "swings", "Swings",
+        "Bullish and bearish daily setups with fresh options flow.",
+        "Fresh vendor-classified flow + technical setup align.",
+        "Win = target hit before stop/invalidation. Paper-tracked, 1 contract.",
+        stats, drill), by_day)
+
+
 # ---------------------------------------------------------------- 0dte
 
 
@@ -717,6 +766,37 @@ def _detail_0dte(db, c, now, name):
     return {"type": "0dte", "name": name, "title": title, "sub": sub, "items": items}
 
 
+def _detail_swings(db, c, now, name):
+    from .swing_ideas import swings
+    from sqlalchemy import select
+    try:
+        rows = c.execute(select(swings).where(
+            swings.c.created >= now - 90 * 86400,
+        ).order_by(swings.c.created.desc()).limit(100)).mappings()
+    except Exception:
+        rows = []
+    items = []
+    for r in rows:
+        p = r.get("payload") or {}
+        underlying = r.get("underlying") or p.get("underlying") or "?"
+        status = r.get("status") or "?"
+        outcome = p.get("outcome") or "—"
+        ret = p.get("return_pct")
+        ts = _num(r.get("created")) or 0
+        title_txt = "%s (%s)" % (underlying, status)
+        orows = [["Status", status], ["Outcome", outcome], ["Time", _ts(ts)]]
+        if ret is not None:
+            orows.append(["Return", "%.1f%%" % ret])
+        items.append({
+            "tag": underlying[:6], "title": title_txt,
+            "sub": _ts(ts), "rows": orows,
+            "result": outcome, "result_cls": "win" if outcome == "win" else "loss" if outcome == "loss" else "",
+        })
+    title = "Swings — idea by idea"
+    sub = "Every swing idea (1-21 DTE), newest first."
+    return {"type": "swings", "name": name, "title": title, "sub": sub, "items": items}
+
+
 def detail(db, c, now, dtype, name):
     builders = {
         "smoothers": _detail_smoothers,
@@ -724,6 +804,7 @@ def detail(db, c, now, dtype, name):
         "flow_pulse": _detail_flow,
         "flash": _detail_flash,
         "0dte": _detail_0dte,
+        "swings": _detail_swings,
     }
     fn = builders.get(dtype)
     if not fn or not name:
@@ -740,7 +821,7 @@ def detail(db, c, now, dtype, name):
 
 def summary(db, c, now):
     blocks = {}
-    for fn in (_smoothers, _futures, _flow_pulse, _flash, _0dte):
+    for fn in (_smoothers, _futures, _flow_pulse, _flash, _0dte, _swings):
         try:
             block, _ = fn(db, c, now)
         except Exception:
@@ -751,7 +832,7 @@ def summary(db, c, now):
 
 def calendar(db, c, now, year, month):
     days = defaultdict(lambda: defaultdict(lambda: {"pnl": 0.0, "count": 0}))
-    fns = (_smoothers, _futures, _flow_pulse, _flash, _0dte)
+    fns = (_smoothers, _futures, _flow_pulse, _flash, _0dte, _swings)
     for fn in fns:
         try:
             block, by_day = fn(db, c, now)

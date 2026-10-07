@@ -8,11 +8,12 @@ var TYPES = [
   { id:'smoothers', label:'Smoothers',   api:'smoothers' },
   { id:'futures',   label:'Futures',     api:'futures' },
   { id:'zeroDte',   label:'0DTE',        api:'0dte' },
+  { id:'swings',    label:'Swings',      api:'swings' },
   { id:'flowPulse', label:'Flow Pulse',  api:'flow_pulse' },
   { id:'flash',     label:'Flash',       api:'flash' }
 ];
-var TYPE_LABEL = { smoothers:'Smoothers', futures:'Futures', zeroDte:'0DTE', flowPulse:'Flow Pulse', flash:'Flash' };
-var DOLLAR = ['smoothers','futures','flowPulse','zeroDte']; /* mockup ids that carry P&L */
+var TYPE_LABEL = { smoothers:'Smoothers', futures:'Futures', zeroDte:'0DTE', swings:'Swings', flowPulse:'Flow Pulse', flash:'Flash' };
+var DOLLAR = ['smoothers','futures','flowPulse','zeroDte','swings']; /* mockup ids that carry P&L */
 var COUNT  = ['flash'];
 
 var activeFilter = 'all';
@@ -152,7 +153,10 @@ var DRILL = {
     pill:'Paper tracking', pillCls:'test', hit:false, deeper:'View pulses ›' },
   flash: { title:'Flash Agentic, pattern by pattern',
     sub:'Setups grouped by pattern type, scored like the pick checker: target touched before invalidation wins, over five sessions.',
-    pill:'Evidence only', pillCls:'test', hit:true, deeper:'View setups ›' }
+    pill:'Evidence only', pillCls:'test', hit:true, deeper:'View setups ›' },
+  swings: { title:'Swings, idea by idea',
+    sub:'Every swing idea (1-21 DTE), newest first. Paper-tracked, 1 contract each.',
+    pill:'Paper / proving', pillCls:'test', hit:false, deeper:'View ideas ›' }
 };
 var drillType = null; /* mockup id of the level-2 view being shown */
 
@@ -162,7 +166,7 @@ function tagFor(name, id){
   var tag = words.slice(0,2).map(function(w){ return w[0]; }).join('').toUpperCase();
   return tag || '?';
 }
-var DOT_CLASS = { smoothers:'d-smooth', futures:'d-futures', zeroDte:'d-0dte', flowPulse:'d-flow', flash:'d-flash' };
+var DOT_CLASS = { smoothers:'d-smooth', futures:'d-futures', zeroDte:'d-0dte', swings:'d-swings', flowPulse:'d-flow', flash:'d-flash' };
 
 function drillCard(it, id, cfg){
   var st = it.stats || {};

@@ -4,7 +4,7 @@
   --green:#177245; --green-bg:#E7F4EC;
   --red:#B42318; --red-bg:#FCECEA;
   --amber-bg:#FFF3D6;
-  --c-smooth:#0E7C6B; --c-futures:#9A6B12; --c-0dte:#1D4ED8; --c-flow:#C2410C; --c-flash:#475569;
+  --c-smooth:#0E7C6B; --c-futures:#9A6B12; --c-0dte:#1D4ED8; --c-swings:#7C3AED; --c-flow:#C2410C; --c-flash:#475569;
   --radius:16px;
   color-scheme: light dark;
 }
@@ -15,7 +15,7 @@
     --green:#4ADE80; --green-bg:#153324;
     --red:#F87171; --red-bg:#3A1D1A;
     --amber-bg:#332A12;
-    --c-smooth:#2DD4BF; --c-futures:#FBBF24; --c-0dte:#60A5FA; --c-flow:#FB923C; --c-flash:#94A3B8;
+    --c-smooth:#2DD4BF; --c-futures:#FBBF24; --c-0dte:#60A5FA; --c-swings:#A78BFA; --c-flow:#FB923C; --c-flash:#94A3B8;
   }
 }
 *{box-sizing:border-box}
@@ -60,6 +60,7 @@ section{margin-top:34px}
 .dot.d-smooth{background:var(--c-smooth)}
 .dot.d-futures{background:var(--c-futures)}
 .dot.d-0dte{background:var(--c-0dte)}
+.dot.d-swings{background:var(--c-swings)}
 .dot.d-flow{background:var(--c-flow)}
 .dot.d-flash{background:var(--c-flash)}
 .dot.d-digest{background:var(--ink)}
@@ -106,6 +107,7 @@ section{margin-top:34px}
 .tname i.t-smoothers{background:var(--c-smooth)}
 .tname i.t-futures{background:var(--c-futures)}
 .tname i.t-zeroDte{background:var(--c-0dte)}
+.tname i.t-swings{background:var(--c-swings)}
 .tname i.t-flowPulse{background:var(--c-flow)}
 .tname i.t-flash{background:var(--c-flash)}
 .bar{height:6px;background:var(--line);border-radius:999px;overflow:hidden;min-width:70px}
@@ -162,6 +164,7 @@ section{margin-top:34px}
 .dots i.dt-smoothers{background:var(--c-smooth)}
 .dots i.dt-futures{background:var(--c-futures)}
 .dots i.dt-zeroDte{background:var(--c-0dte)}
+.dots i.dt-swings{background:var(--c-swings)}
 .dots i.dt-flowPulse{background:var(--c-flow)}
 .dots i.dt-flash{background:var(--c-flash)}
 @media(max-width:640px){.day{min-height:74px;padding:7px}.day .total{font-size:13px}.day .sub{display:none}.dow span{font-size:10px}}
@@ -177,6 +180,7 @@ section{margin-top:34px}
 .mini label i.m-smoothers{background:var(--c-smooth)}
 .mini label i.m-futures{background:var(--c-futures)}
 .mini label i.m-zeroDte{background:var(--c-0dte)}
+.mini label i.m-swings{background:var(--c-swings)}
 .mini label i.m-flowPulse{background:var(--c-flow)}
 .mini label i.m-flash{background:var(--c-flash)}
 .mini strong{font-size:18px;display:block;margin:5px 0 2px;font-variant-numeric:tabular-nums}
