@@ -576,16 +576,21 @@ a{color:#888}</style></head><body>
         # key. Also accepts form-encoded confirm for the admin UI.
         # Clears paper trades, open paper positions, and the futures
         # paper-risk ledger; the paper_decision audit log is preserved.
+        confirm = None
+        # Try JSON first
         try:
-            ctype = request.headers.get('content-type', '')
-            if 'application/json' in ctype:
-                body = await request.json()
-                confirm = body.get('confirm') if isinstance(body, dict) else None
-            else:
+            body = await request.json()
+            if isinstance(body, dict):
+                confirm = body.get('confirm')
+        except Exception:
+            pass
+        # Fall back to form data
+        if not confirm:
+            try:
                 form = await request.form()
                 confirm = form.get('confirm')
-        except Exception:
-            confirm = None
+            except Exception:
+                pass
         if confirm != 'reset-futures-paper':
             raise HTTPException(400, 'body must confirm reset-futures-paper')
         from . import ict_paper
