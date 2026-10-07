@@ -487,19 +487,50 @@ def create_app(cfg=None):
             raise HTTPException(400, 'unknown detail type')
         return d
 
+    @app.get('/admin', response_class=HTMLResponse)
+    def admin_page():
+        # Simple admin panel behind the password guard. Forms POST to the
+        # admin API endpoints so both Josh and the browser agent can trigger
+        # destructive actions without console/curl.
+        return """<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Compass Admin</title>
+<style>body{background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;max-width:600px;margin:40px auto;padding:0 20px}
+h1{font-size:1.4em;border-bottom:1px solid #333;padding-bottom:10px}
+.card{background:#141414;border:1px solid #2a2a2a;border-radius:8px;padding:20px;margin:16px 0}
+.card h2{margin:0 0 8px;font-size:1.1em}
+.card p{color:#999;font-size:.9em;margin:0 0 12px}
+button{background:#c0392b;color:#fff;border:none;border-radius:6px;padding:10px 20px;font-size:1em;cursor:pointer}
+button:hover{background:#e74c3c}
+a{color:#888}</style></head><body>
+<h1>Compass Admin</h1>
+<div class="card"><h2>Reset futures paper book</h2>
+<p>Clears all ICT futures paper trades, open positions, and the risk ledger. Starts a fresh sample. The paper_decision audit log is preserved. <strong>This cannot be undone.</strong></p>
+<form method="post" action="/api/admin/reset-futures-paper">
+<input type="hidden" name="confirm" value="reset-futures-paper">
+<button type="submit">Reset futures paper</button></form></div>
+<p><a href="/detailed">← Back to workspace</a></p>
+</body></html>"""
+
     @app.post('/api/admin/reset-futures-paper')
     async def post_reset_futures_paper(request: Request):
         # One-shot destructive reset of the ICT futures paper book, for
         # starting a fresh sample. Password-gated by the app guard (this
         # path is not in the public set) and requires
         # {"confirm": "reset-futures-paper"} in the JSON body as a second
-        # key. Clears paper trades, open paper positions, and the futures
+        # key. Also accepts form-encoded confirm for the admin UI.
+        # Clears paper trades, open paper positions, and the futures
         # paper-risk ledger; the paper_decision audit log is preserved.
         try:
-            body = await request.json()
+            ctype = request.headers.get('content-type', '')
+            if 'application/json' in ctype:
+                body = await request.json()
+                confirm = body.get('confirm') if isinstance(body, dict) else None
+            else:
+                form = await request.form()
+                confirm = form.get('confirm')
         except Exception:
-            body = {}
-        if not isinstance(body, dict) or body.get('confirm') != 'reset-futures-paper':
+            confirm = None
+        if confirm != 'reset-futures-paper':
             raise HTTPException(400, 'body must confirm reset-futures-paper')
         from . import ict_paper
         try:
