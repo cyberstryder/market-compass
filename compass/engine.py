@@ -559,6 +559,9 @@ class Engine:
             if self.cfg.ict_continuation:
                 from .continuation import scan as ict_continuation_scan
                 ict_summaries['continuation'] = ict_continuation_scan(self.db,c,self.cfg,now)
+            if getattr(self.cfg, 'ict_trend_rider', False):
+                from .trend_rider import scan as ict_trend_rider_scan
+                ict_summaries['trend_rider'] = ict_trend_rider_scan(self.db,c,self.cfg,now)
             if self.cfg.ict_tier_a_b:
                 from .tier_a_b import scan as ict_tier_a_b_scan
                 ict_summaries['tier_a_b'] = ict_tier_a_b_scan(self.db,c,self.cfg,now)

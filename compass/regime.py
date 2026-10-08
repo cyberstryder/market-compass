@@ -158,6 +158,7 @@ DETECTOR_STYLE = {
     'turtle_soup': 'fade',
     'smt_divergence': 'fade',  # SMT divergence is a reversal signal
     'session_liquidity': 'trend',  # Liquidity sweeps continue the trend
+    'trend_rider': 'trend',  # Trend rider: captures long moves with trailing stops
     'htf_levels': 'any',  # No mechanical entry; context only
     'tier_a_b': 'any',  # Tier system, not directional
     'trend_bias': 'any',  # Bias indicator, not a trigger
