@@ -142,7 +142,8 @@ def classify(bars):
 # Detector classification: which regime each detector wants.
 # 'trend' = continuation/momentum (blocked in range/squeeze)
 # 'fade' = mean-reversion (blocked in strong trend)
-# 'any' = no regime filter applied
+# 'any' = no regime filter applied (truly regime-agnostic)
+# Map every detector to its style; 'any' only for those with no directional bias
 DETECTOR_STYLE = {
     'bos_fvg': 'trend',
     'bos_gz_vwap': 'trend',
@@ -155,21 +156,33 @@ DETECTOR_STYLE = {
     'aoi_zones': 'fade',
     'aoi_fade': 'fade',
     'turtle_soup': 'fade',
-    'smt_divergence': 'any',
-    'session_liquidity': 'any',
-    'htf_levels': 'any',
-    'tier_a_b': 'any',
-    'trend_bias': 'any',
+    'smt_divergence': 'fade',  # SMT divergence is a reversal signal
+    'session_liquidity': 'trend',  # Liquidity sweeps continue the trend
+    'htf_levels': 'any',  # No mechanical entry; context only
+    'tier_a_b': 'any',  # Tier system, not directional
+    'trend_bias': 'any',  # Bias indicator, not a trigger
 }
 
 
-def allowed(detector, regime):
-    """Check if a detector is allowed to fire in the given regime."""
+def allowed(detector, regime, direction=None):
+    """Check if a detector is allowed to fire in the given regime.
+    
+    direction: 'long', 'short', or None. When provided, trend detectors
+    require direction to align with regime direction (longs in trend_up,
+    shorts in trend_down).
+    """
     style = DETECTOR_STYLE.get(detector, 'any')
     if style == 'any' or regime == 'unknown':
         return True
     if style == 'trend':
-        return regime in ('trend_up', 'trend_down')
+        if regime not in ('trend_up', 'trend_down'):
+            return False
+        # Direction alignment: longs need uptrend, shorts need downtrend
+        if direction == 'long':
+            return regime == 'trend_up'
+        if direction == 'short':
+            return regime == 'trend_down'
+        return True
     if style == 'fade':
         return regime in ('range', 'squeeze')
     return True

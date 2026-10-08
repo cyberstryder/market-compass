@@ -139,7 +139,7 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
         _rbars = _ict_bars(db, c, symbol)
         if len(_rbars) >= 120:
             _reg = _classify(_rbars)
-            if not _allowed(detector, _reg['regime']):
+            if not _allowed(detector, _reg['regime'], side):
                 return {'submitted': False, 'reason': 'regime_mismatch',
                         'regime': _reg['regime'],
                         'adx': round(_reg['adx'], 1) if _reg['adx'] else None}
