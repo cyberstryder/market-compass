@@ -638,6 +638,32 @@ class Engine:
                                '%d positions trailing' % _trail_result['trailed'])
         except Exception:
             pass
+        # MU scalp detectors (Josh 2026-10-08): gap fade premarket, spike fade 9:45-11am ET.
+        # Alerts feed the 0DTE paper book via options_0dte category.
+        # Gated by MU_SCALP_ENABLED (default true).
+        try:
+            if getattr(self.cfg, 'mu_scalp', True):
+                from . import mu_scalp
+                from datetime import datetime, timezone
+                import pytz
+                et = pytz.timezone('America/New_York')
+                now_et = datetime.fromtimestamp(now, tz=timezone.utc).astimezone(et)
+                hm = now_et.strftime('%H:%M')
+            # Gap fade: premarket 08:30-09:25 ET, once per day
+            if '08:30' <= hm <= '09:25':
+                day_key = now_et.strftime('%Y-%m-%d')
+                if not self.db.get(c, 'mu_scalp:gap_done:' + day_key):
+                    sig = mu_scalp.check_gap_fade(self.db, c, now)
+                    if sig:
+                        mu_scalp.publish_alert(self.db, c, sig, now)
+                    self.db.put(c, 'mu_scalp:gap_done:' + day_key, True)
+            # Spike fade: 09:45-11:00 ET, every minute
+            if '09:45' <= hm <= '11:00':
+                sig = mu_scalp.check_spike_fade(self.db, c, now)
+                if sig:
+                    mu_scalp.publish_alert(self.db, c, sig, now)
+        except Exception:
+            pass
 
     async def run(self):
         while True:
