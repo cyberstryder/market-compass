@@ -100,7 +100,10 @@ async def recover_alpaca(collector, symbols):
             at=time.time()
             q=dict(ts=stamp,bid=raw.get('bp'),ask=raw.get('ap'),bid_size=raw.get('bs'),ask_size=raw.get('as'),
                 recovery='live_rest_opra',recovery_fetched_at=at,collection_version=COLLECTION_VERSION)
-            valid=stamp is not None and 0<=at-stamp<=5 and fresh(q,at)
+            # For gap recovery, accept quotes up to 60s old (vs 5s for normal).
+            # Stale quotes are marked data_gap and excluded from win/loss stats,
+            # but they're better than force-exiting blind.
+            valid=stamp is not None and 0<=at-stamp<=60 and fresh(q,at)
             if valid:rows.append((symbol,q,True))
             results.append(dict(symbol=symbol,status='fresh_quotes' if valid else 'no_fresh_quotes',
                 latest_source_ts=stamp,fresh_rows=int(valid)))
