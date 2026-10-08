@@ -87,7 +87,9 @@ def delivery_payload(row, now):
     # Minimal block: just the levels for TradingView AI (Josh 2026-10-08).
     # The full prompt with 30 lines of instructions is available via API.
     text = minimal_prompt(p)
-    return {'content': '**SPY Levels · ' + p['day'] + ' ' + p.get('phase_label', p['phase'].upper()) + '**\n```\n' + text + '\n```',
+    return {'content': '**SPY Levels · ' + p['day'] + ' ' + p.get('phase_label', p['phase'].upper()) + '**',
+            'embeds': [{'title': 'Draw these levels',
+                        'description': '```\n' + text + '\n```'}],
             'username': 'Market Compass · SPY Charts', 'allowed_mentions': {'parse': []}}
 
 

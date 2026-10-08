@@ -273,7 +273,9 @@ def test_two_messages_are_atomic_deduplicated_and_individually_acknowledged(db):
     def handler(request):
         if request.method == 'GET': return httpx.Response(200, json={'id': '123'})
         p = json.loads(request.content); sent.append(p)
-        if 'message 2 of 2' in p['content'] and fail_chart:
+        # Chart message: new minimal format has 'SPY Levels', old had 'message 2 of 2'
+        is_chart = 'message 2 of 2' in p['content'] or 'SPY Levels' in p['content']
+        if is_chart and fail_chart:
             return httpx.Response(429, json={'retry_after': 1})
         return httpx.Response(200, json={'id': str(1000+len(sent))})
     async def run():
@@ -287,7 +289,9 @@ def test_two_messages_are_atomic_deduplicated_and_individually_acknowledged(db):
             await delivery.tick(client, NOW+3)
     asyncio.run(run())
     assert len(sent) == 3
-    assert sum('message 2 of 2' in p['content'] for p in sent) == 2
+    # Chart message: new minimal format has 'SPY Levels', old had 'message 2 of 2'
+    def is_chart(p): return 'message 2 of 2' in p['content'] or 'SPY Levels' in p['content']
+    assert sum(is_chart(p) for p in sent) == 2
     assert not any('message 1 of 2' in p['content'] for p in sent)
     assert any('**SPY 0DTE ·' in p['content'] for p in sent)
     with db.tx() as c: assert outbox_status(db, c, NOW+3)['pending'] == 0
