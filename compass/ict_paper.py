@@ -36,6 +36,7 @@ STRATEGY_TAGS = {
     'icc': 'yt-icc',
     'rumers_box': 'yt-rumers-box',
     'aoi_fade': 'ict-aoi-fade',
+    'trend_rider': 'ict-trend-rider',
 }
 
 # detector -> config attr carrying its own enabled flag

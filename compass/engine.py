@@ -625,6 +625,16 @@ class Engine:
         if _tb and _tb.get('ran'):
             self.db.health('trend_bias', 'running',
                            'ran, %d symbols' % (_tb.get('symbols', 0)))
+        # Runner: trailing stops for ICT positions at 1R+ profit.
+        # Lets winners run (overnight trends) instead of fixed 2R exits.
+        try:
+            from .ict_trail import manage_all as _trail_all
+            _trail_result = _trail_all(self.db, c, now)
+            if _trail_result.get('trailed'):
+                self.db.health('ict_trail', 'running',
+                               '%d positions trailing' % _trail_result['trailed'])
+        except Exception:
+            pass
 
     async def run(self):
         while True:
