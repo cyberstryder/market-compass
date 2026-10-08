@@ -597,12 +597,31 @@ a{color:#888}</style></head><body>
         if confirm != 'reset-futures-paper':
             raise HTTPException(400, 'body must confirm reset-futures-paper')
         from . import ict_paper
-        try:
-            with db.tx() as c:
-                counts = ict_paper.reset_paper_book(db, c, time.time())
-        except Exception as e:
+        # Retry loop for lock contention: the engine holds row locks during
+        # its per-tick updates. If we hit LockNotAvailable, rollback and
+        # retry after a brief pause. The engine's transactions are short,
+        # so a retry usually succeeds between ticks.
+        import time as _time
+        last_err = None
+        for attempt in range(5):
+            try:
+                with db.tx() as c:
+                    counts = ict_paper.reset_paper_book(db, c, time.time())
+                break
+            except Exception as e:
+                last_err = e
+                err_str = str(e).lower()
+                # Only retry on lock contention; other errors fail fast
+                if 'lock' not in err_str and 'timeout' not in err_str:
+                    import traceback
+                    return {"error": str(e), "traceback": traceback.format_exc(limit=10)}
+                if attempt < 4:
+                    _time.sleep(1.5 * (attempt + 1))  # backoff: 1.5s, 3s, 4.5s, 6s
+                continue
+        else:
             import traceback
-            return {"error": str(e), "traceback": traceback.format_exc(limit=10)}
+            return {"error": "Reset failed after 5 attempts (lock contention with running engine). Try again in a moment.",
+                    "last_error": str(last_err)}
         return {'reset': True, **counts}
 
     @app.get('/api/option-stream-parity')

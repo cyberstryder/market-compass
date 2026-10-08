@@ -269,31 +269,20 @@ def reset_paper_book(db, c, now):
     from .futures import risk_day
     from sqlalchemy import text
     counts = {'trades': 0, 'positions': 0, 'ledgers': 0}
-    # Bulk delete with LIKE patterns — single statement per prefix,
-    # far less lock contention than row-by-row.
+    # Bulk delete with LIKE patterns — single statement per prefix.
+    # If we hit lock contention, let it raise so the caller (app.py)
+    # can rollback and retry the whole transaction.
     for prefix, key in [('trade:ict-%', 'trades'),
                         ('position:ict:%', 'positions')]:
-        try:
-            result = c.execute(
-                text("DELETE FROM state WHERE key LIKE :pattern"),
-                {'pattern': prefix}
-            )
-            counts[key] = result.rowcount or 0
-        except Exception:
-            # Fallback to row-by-row if bulk fails
-            for k in list(db.prefix(c, prefix.replace('%', '')).keys()):
-                try:
-                    db.delete(c, k)
-                    counts[key] += 1
-                except Exception:
-                    pass
+        result = c.execute(
+            text("DELETE FROM state WHERE key LIKE :pattern"),
+            {'pattern': prefix}
+        )
+        counts[key] = result.rowcount or 0
     for k in list(db.prefix(c, 'paper_risk:v2:').keys()):
         if k.endswith(':futures'):
-            try:
-                db.delete(c, k)
-                counts['ledgers'] += 1
-            except Exception:
-                pass
+            db.delete(c, k)
+            counts['ledgers'] += 1
     # Seed a clean zeroed ledger for today so ledgers() returns saved
     # state instead of attempting a reconstruction.
     db.put(c, paper_risk.key(now, 'future'),
