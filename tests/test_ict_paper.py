@@ -427,3 +427,29 @@ def test_trailer_leg_has_no_target_exit(db, cfg):
     # Engine exits should not crash on None target
     with db.tx() as c:
         e.exits(c, NOW)  # should not raise
+
+
+def test_trailer_leg_bar_does_not_crash_on_none_target(db, cfg):
+    """Regression: bar loop in exits() must guard None target for trailer legs.
+
+    The quote path already guarded None (tgt is not None), but the completed-bar
+    scan did payload['h'] >= p['target'] directly, raising TypeError when a bar
+    was written while a trailer leg (target=None) was open — aborting the whole
+    tick. This test writes a bar after entry and runs exits().
+    """
+    e = open_position(db, cfg)
+    bar_ts = NOW + 120
+    with db.tx() as c:
+        # Completed 1-min bar after entry; high would touch a target if one existed
+        db.append(c, 'bar', 'test', SYM, bar_ts,
+                  {'o': 100.0, 'h': 106.0, 'l': 99.5, 'c': 105.0, 'v': 100})
+        db.put(c, 'quote:' + SYM, quote(NOW + 300, 105.0, 105.1))
+    # Must not raise TypeError on None target in the bar scan
+    with db.tx() as c:
+        e.exits(c, NOW + 300)  # should not raise
+    # Trailer leg must still be open (no target exit, no stop hit)
+    with db.tx() as c:
+        positions = [p for k, p in db.prefix(c, 'position:ict:').items()
+                     if p.get('is_trailer')]
+        assert len(positions) == 1
+        assert positions[0]['target'] is None

@@ -303,7 +303,7 @@ class Engine:
                 p["last_bar_checked"]=b["ts"]
                 payload=b["payload"]
                 stop_crossed=payload["l"]<=p["stop"] if long else payload["h"]>=p["stop"]
-                target_touched=payload["h"]>=p["target"] if long else payload["l"]<=p["target"]
+                target_touched=(payload["h"]>=tgt if long else payload["l"]<=tgt) if tgt is not None else False
                 if stop_crossed:
                     # A bar touching both levels is ambiguous intrabar; the
                     # stop wins by conservative convention.
