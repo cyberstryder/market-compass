@@ -337,5 +337,5 @@ def test_paper_submit_tag(db):
         r = ict_paper.submit(db, c, cfg, 1_699_992_000,
                              'rumers_box', SYM, _sig())
         assert r['submitted'] is True
-        trade = db.get(c, 'trade:' + r['trade_id'])
+        trade = db.get(c, 'trade:' + r['legs'][0])
         assert trade['strategy'] == 'yt-rumers-box'

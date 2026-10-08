@@ -321,7 +321,7 @@ def test_paper_submit_swing_track(db):
         r = ict_paper.submit(db, c, cfg, 1_699_992_000, 'icc', SYM, _sig(),
                              track='swing', flatten_at=1_800_000_000)
         assert r['submitted'] is True
-        trade = db.get(c, 'trade:' + r['trade_id'])
+        trade = db.get(c, 'trade:' + r['legs'][0])
         assert trade['track'] == 'swing'  # exits() skips session flatten
         assert trade['flatten_at'] == 1_800_000_000
         assert trade['strategy'] == 'yt-icc'

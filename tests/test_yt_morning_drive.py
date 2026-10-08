@@ -249,7 +249,7 @@ def test_paper_submit_time_stop(db):
         r = ict_paper.submit(db, c, cfg, 1_699_992_000, 'morning_drive', SYM,
                              _sig(), flatten_at=1_700_002_000)
         assert r['submitted'] is True
-        trade = db.get(c, 'trade:' + r['trade_id'])
+        trade = db.get(c, 'trade:' + r['legs'][0])
         assert trade['flatten_at'] == 1_700_002_000
         assert trade['strategy'] == 'yt-morning-drive'
         assert 'track' not in trade
