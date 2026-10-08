@@ -54,14 +54,14 @@ def test_real_gap_stays_unresolved_but_later_measurements_continue(db,cfg):
     with db.tx() as c:
         worker,p=opened(db,c,cfg)
         worker.observe(c,p,NOW+16)
-        worker.observe(c,p,NOW+120)
+        worker.observe(c,p,NOW+200)
         assert p['status']=='unresolved' and p['pnl'] is None
         row=c.execute(select(gap_followups.c.payload)).scalar_one()
         assert row['status']=='active' and row['samples']==0
-        assert CALL in inventory(db,c,NOW+125)['options']
-        archive(db,c,CALL,NOW+130,5,5.05) # Beyond target, but unknown earlier path.
-        archive(db,c,'SPY',NOW+130,103,103.02)
-        followups(db,c,NOW+130)
+        assert CALL in inventory(db,c,NOW+205)['options']
+        archive(db,c,CALL,NOW+210,5,5.05) # Beyond target, but unknown earlier path.
+        archive(db,c,'SPY',NOW+210,103,103.02)
+        followups(db,c,NOW+210)
         row=c.execute(select(gap_followups.c.payload)).scalar_one()
         assert row['samples']==1 and row['latest']['original_outcome']=='unresolved'
         assert rows(c)[0]['status']=='unresolved' and rows(c)[0]['pnl'] is None
@@ -80,7 +80,7 @@ def test_late_stored_quotes_do_not_repair_outcomes(db,cfg):
         worker.observe(c,p,NOW+16)
         for offset in (5,10,15):
             archive(db,c,CALL,NOW+offset,received=NOW+30)
-        worker.observe(c,p,NOW+120)
+        worker.observe(c,p,NOW+200)
         assert p['status']=='unresolved' and p['pnl'] is None
         assert p['archive_check']['option']['stale_or_invalid_when_recorded']==3
 
@@ -156,7 +156,7 @@ def test_grace_does_not_cross_unknown_interval_to_award_target(db,cfg):
         archive(db,c,'SPY',NOW+16,103,103.02)
         worker.observe(c,p,NOW+16)
         assert p['status']=='open' and p['pnl'] is None
-        worker.observe(c,p,NOW+120)
+        worker.observe(c,p,NOW+200)
         assert p['status']=='unresolved' and p['pnl'] is None
         assert p['samples']==0
 
@@ -173,7 +173,7 @@ def test_setup_gap_grace_and_followup_preserve_original_bracket(db,cfg):
         worker.tick(c,NOW+16)
         p=c.execute(select(trials.c.payload)).scalar_one()
         assert p['status']=='open' and p['gap_pending']
-        worker.tick(c,NOW+120)
+        worker.tick(c,NOW+200)
         p=c.execute(select(trials.c.payload)).scalar_one()
         assert p['status']=='unresolved' and p['pnl'] is None
         assert c.execute(select(gap_followups.c.payload)).scalar_one()['symbol']=='MESZ6@1'
@@ -182,7 +182,7 @@ def test_setup_gap_grace_and_followup_preserve_original_bracket(db,cfg):
 def test_expired_followup_never_samples_a_later_session(db,cfg):
     with db.tx() as c:
         worker,p=opened(db,c,cfg)
-        worker.observe(c,p,NOW+16);worker.observe(c,p,NOW+120)
+        worker.observe(c,p,NOW+16);worker.observe(c,p,NOW+200)
         archive(db,c,CALL,p['flatten_at']+60)
         followups(db,c,p['flatten_at']+60)
         row=c.execute(select(gap_followups.c.payload)).scalar_one()
@@ -245,5 +245,5 @@ def test_v8_entry_keeps_original_processing_grace_and_gap_limit(db,cfg):
         assert p['status']=='open' and p['gap_policy']=='observation-recovery-v1'
         worker.observe(c,p,NOW+16)
         assert p['status']=='open' and p['gap_pending']['first_detected_at']==NOW+16
-        worker.observe(c,p,NOW+120)
+        worker.observe(c,p,NOW+200)
         assert p['status']=='unresolved' and p['pnl'] is None
