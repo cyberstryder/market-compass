@@ -160,14 +160,18 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
     # - Leg 1: 2 contracts, target = 2R (signal target)
     # - Leg 2: 2 contracts, target = 3R (1.5x the 2R distance)
     # - Leg 3: 1 contract, no fixed target (trailer via ict_trail.py)
-    # All legs share the same stop. Each leg is a separate position so the
-    # engine's exits() loop manages them independently.
+    # Variant B (Josh 2026-10-08): progressive staircase scale-out.
+    # 2 contracts at 1R, 2 at 2R, 1 runner. Stops ratchet up as targets hit:
+    # T1 hit → T2 and runner stops → breakeven. T2 hit → runner stop → 1R.
+    # Backtest showed this beats plain 2/2/1 and single-position at realistic
+    # continuation rates (+0.45R/trade vs -1.26R for plain 2/2/1).
+    # Each leg is a separate position so the engine's exits() loop manages them.
     direction_mult = 1 if side == 'long' else -1
     risk_dist = (target - entry) * direction_mult  # positive 2R distance
-    target_3r = entry + direction_mult * risk_dist * 1.5
+    target_1r = entry + direction_mult * risk_dist * 0.5
     legs = [
-        {'leg': 't1', 'qty': 2, 'target': target, 'is_trailer': False},
-        {'leg': 't2', 'qty': 2, 'target': target_3r, 'is_trailer': False},
+        {'leg': 't1', 'qty': 2, 'target': target_1r, 'is_trailer': False},
+        {'leg': 't2', 'qty': 2, 'target': target, 'is_trailer': False},
         {'leg': 'trail', 'qty': 1, 'target': None, 'is_trailer': True},
     ]
     base_trade_id = 'ict-%s-%s-%d' % (detector, symbol.replace('.', '-'),

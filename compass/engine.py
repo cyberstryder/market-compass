@@ -329,20 +329,58 @@ class Engine:
                 p.update(exit_risk_policy=paper_risk.VERSION,exit_risk_day=risk_day(now),
                          exit_paper_portfolio=paper_risk.portfolio(p["asset"]))
                 self.alert(c,p["symbol"],p,"exit:"+p["id"])
-                # 2/2/1 scale-out: when T1 hits target, move T2's stop to breakeven.
-                # Josh 2026-10-08: lock in the partial profit, remaining position is risk-free.
-                if p.get("leg") == "t1" and reason in ("target", "target_detected_in_bar"):
+                # Variant B progressive stops (Josh 2026-10-08):
+                # T1 (1R) hit → T2 and runner stops → breakeven
+                # T2 (2R) hit → runner stop → 1R profit (ratchet up only)
+                if reason in ("target", "target_detected_in_bar"):
                     try:
-                        t2_key = key.replace(":t1", ":t2") if key.endswith(":t1") else None
-                        if t2_key:
-                            t2 = self.db.get(c, t2_key)
-                            if t2 and t2.get("status") == "open":
-                                t2["stop"] = t2["entry"]  # breakeven
-                                t2["breakeven_moved"] = True
-                                t2["breakeven_at"] = now
-                                t2["breakeven_reason"] = "t1_target_hit"
-                                self.db.put(c, t2_key, t2)
-                                self.db.put(c, "trade:"+t2["id"], t2)
+                        leg = p.get("leg")
+                        entry = p.get("entry")
+                        side_long = p.get("side") == "long"
+                        if leg == "t1":
+                            # Move T2 to breakeven
+                            t2_key = key.replace(":t1", ":t2") if key.endswith(":t1") else None
+                            if t2_key:
+                                t2 = self.db.get(c, t2_key)
+                                if t2 and t2.get("status") == "open":
+                                    t2["stop"] = t2["entry"]
+                                    t2["breakeven_moved"] = True
+                                    t2["breakeven_at"] = now
+                                    t2["breakeven_reason"] = "t1_target_hit"
+                                    self.db.put(c, t2_key, t2)
+                                    self.db.put(c, "trade:"+t2["id"], t2)
+                            # Ensure runner stop is at least breakeven
+                            trail_key = key.replace(":t1", ":trail") if key.endswith(":t1") else None
+                            if trail_key:
+                                tr = self.db.get(c, trail_key)
+                                if tr and tr.get("status") == "open":
+                                    be = tr["entry"]
+                                    cur = tr.get("stop")
+                                    # Only ratchet up (for long: stop up; for short: stop down)
+                                    if side_long and (cur is None or cur < be):
+                                        tr["stop"] = be
+                                    elif not side_long and (cur is None or cur > be):
+                                        tr["stop"] = be
+                                    self.db.put(c, trail_key, tr)
+                                    self.db.put(c, "trade:"+tr["id"], tr)
+                        elif leg == "t2":
+                            # Move runner stop to 1R profit (ratchet up only)
+                            trail_key = key.replace(":t2", ":trail") if key.endswith(":t2") else None
+                            if trail_key:
+                                tr = self.db.get(c, trail_key)
+                                if tr and tr.get("status") == "open":
+                                    # 1R profit level
+                                    risk = abs(entry - p.get("stop", entry))
+                                    one_r = entry + (risk if side_long else -risk)
+                                    cur = tr.get("stop")
+                                    if side_long and (cur is None or cur < one_r):
+                                        tr["stop"] = one_r
+                                        tr["locked_1r"] = True
+                                    elif not side_long and (cur is None or cur > one_r):
+                                        tr["stop"] = one_r
+                                        tr["locked_1r"] = True
+                                    self.db.put(c, trail_key, tr)
+                                    self.db.put(c, "trade:"+tr["id"], tr)
                     except Exception:
                         pass
             self.db.put(c,key,p)

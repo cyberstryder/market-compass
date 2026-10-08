@@ -107,7 +107,7 @@ def test_submission_tags_strategy_and_levels(db, cfg):
     assert p['side'] == 'long'
     assert p['entry'] == pytest.approx(100.0)
     assert p['stop'] == pytest.approx(98.0)
-    assert p['target'] == pytest.approx(104.0)  # detector target preserved
+    assert p['target'] == pytest.approx(102.0)  # t1 at 1R  # detector target preserved
     assert p['qty'] == 2  # t1 leg of 2/2/1 scale-out
     assert p['status'] == 'open'
     assert p['fill_version']  # same fill conventions as legacy paper
@@ -133,7 +133,7 @@ def test_each_detector_submits_with_own_tag(db, cfg):
             assert p['strategy'] == tag
             assert p['entry'] == pytest.approx(100.0)
             assert p['stop'] == pytest.approx(98.0)
-            assert p['target'] == pytest.approx(104.0)
+            assert p['target'] == pytest.approx(102.0)  # t1 at 1R
 
 
 # --- exits / P&L ---
@@ -151,7 +151,7 @@ def test_target_hit_records_win(db, cfg):
     p = exit_with(e, db, NOW + 120, quote(NOW + 120, 104.1, 104.11))
     assert p['status'] == 'closed'
     assert p['exit_reason'] == 'target'
-    assert p['exit'] == pytest.approx(104.0)  # exits at the detector target
+    assert p['exit'] == pytest.approx(102.0)  # t1 exits at 1R target
     assert p['pnl'] > 0
 
 
@@ -164,7 +164,8 @@ def test_quiet_quote_leaves_position_open(db, cfg):
 def test_attribution_splits_pnl_by_detector(db, cfg):
     cfg.ict_bos_fvg = True
     e = open_position(db, cfg, 'golden_zone')
-    exit_with(e, db, NOW + 120, quote(NOW + 120, 104.1, 104.11))
+    # Quote at 102.5 hits t1 (1R=102.0) but not t2 (2R=104.0)
+    exit_with(e, db, NOW + 120, quote(NOW + 120, 102.5, 102.51))
     e2 = open_position(db, cfg, 'bos_fvg',
                        direction='short', entry=100.0, stop=102.0, target=96.0)
     p2 = exit_with(e2, db, NOW + 240, quote(NOW + 240, 102.1, 102.11),
@@ -173,7 +174,7 @@ def test_attribution_splits_pnl_by_detector(db, cfg):
     with db.tx() as c:
         attr = ict_paper.attribution(db, c)
     gz, bf = attr['ict-golden-zone'], attr['ict-bos-fvg']
-    # 2/2/1 scale-out: gz t1 hits target (t2/trail open); bf short stop-out
+    # Variant B: gz t1 hits 1R target (t2/trail open); bf short stop-out
     # hits all 3 legs (same stop)
     assert gz['trades'] == 1 and gz['wins'] == 1 and gz['realized'] > 0
     assert bf['trades'] == 3 and bf['losses'] == 3 and bf['realized'] < 0
@@ -369,13 +370,13 @@ def test_scale_out_221_creates_three_legs(db, cfg):
         assert r['qty'] == 5
         assert len(r['legs']) == 3
     with db.tx() as c:
-        # Leg 1: 2 contracts at 2R (104.0)
+        # Leg 1: 2 contracts at 1R (102.0)
         t1 = db.get(c, 'trade:' + r['legs'][0])
-        assert t1['qty'] == 2 and t1['target'] == 104.0
+        assert t1['qty'] == 2 and t1['target'] == 102.0
         assert t1['leg'] == 't1' and not t1['is_trailer']
-        # Leg 2: 2 contracts at 3R (106.0 = 100 + 1.5 * 4)
+        # Leg 2: 2 contracts at 2R (104.0 = detector target)
         t2 = db.get(c, 'trade:' + r['legs'][1])
-        assert t2['qty'] == 2 and t2['target'] == 106.0
+        assert t2['qty'] == 2 and t2['target'] == 104.0
         assert t2['leg'] == 't2' and not t2['is_trailer']
         # Leg 3: 1 contract, no fixed target (trailer)
         tr = db.get(c, 'trade:' + r['legs'][2])
