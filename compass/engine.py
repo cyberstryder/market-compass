@@ -329,6 +329,22 @@ class Engine:
                 p.update(exit_risk_policy=paper_risk.VERSION,exit_risk_day=risk_day(now),
                          exit_paper_portfolio=paper_risk.portfolio(p["asset"]))
                 self.alert(c,p["symbol"],p,"exit:"+p["id"])
+                # 2/2/1 scale-out: when T1 hits target, move T2's stop to breakeven.
+                # Josh 2026-10-08: lock in the partial profit, remaining position is risk-free.
+                if p.get("leg") == "t1" and reason in ("target", "target_detected_in_bar"):
+                    try:
+                        t2_key = key.replace(":t1", ":t2") if key.endswith(":t1") else None
+                        if t2_key:
+                            t2 = self.db.get(c, t2_key)
+                            if t2 and t2.get("status") == "open":
+                                t2["stop"] = t2["entry"]  # breakeven
+                                t2["breakeven_moved"] = True
+                                t2["breakeven_at"] = now
+                                t2["breakeven_reason"] = "t1_target_hit"
+                                self.db.put(c, t2_key, t2)
+                                self.db.put(c, "trade:"+t2["id"], t2)
+                    except Exception:
+                        pass
             self.db.put(c,key,p)
             self.db.put(c,"trade:"+p["id"],p)
             # ICT exit alert (target/stop)
