@@ -31,6 +31,10 @@ SPIKE_STOP_PCT = 0.3        # 0.3% beyond spike extreme
 SPIKE_MAX_HOLD_MIN = 15
 SPIKE_WINDOW_START_ET = "09:45"
 SPIKE_WINDOW_END_ET = "11:00"
+# At-extreme filter (research 2026-10-08): only fade spikes whose extreme is
+# within 0.3% of the running session high/low. Mid-range spikes are PF 0.81
+# (losing); at-extreme spikes are 57% win, PF 1.44.
+SPIKE_EXTREME_PROXIMITY_PCT = 0.3
 
 
 def _pct(a, b):
@@ -137,6 +141,20 @@ def check_spike_fade(db, c, now, symbol="MU"):
         # Fade the spike
         direction = 'short' if move_pct > 0 else 'long'
         extreme = max(b['h'] for b in recent) if move_pct > 0 else min(b['l'] for b in recent)
+        
+        # At-extreme filter: spike must be within 0.3% of session high/low.
+        # Get session high/low from all bars today (not just last 5 min).
+        session_high = max(b['h'] for b in bars if b['h'])
+        session_low = min(b['l'] for b in bars if b['l'])
+        if direction == 'short':
+            # Up-spike: extreme must be near session high
+            proximity = abs(extreme - session_high) / session_high * 100.0
+        else:
+            # Down-spike: extreme must be near session low
+            proximity = abs(extreme - session_low) / session_low * 100.0
+        if proximity > SPIKE_EXTREME_PROXIMITY_PCT:
+            return None  # mid-range spike, skip (PF 0.81, losing)
+        
         entry = end_price
         
         # Target: 50% retrace of the spike
