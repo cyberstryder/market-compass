@@ -52,6 +52,7 @@ DETECTOR_FLAGS = {
     'icc': 'ict_icc',
     'rumers_box': 'ict_rumers_box',
     'aoi_fade': 'ict_aoi_fade',
+    'trend_rider': 'ict_trend_rider',
 }
 
 
