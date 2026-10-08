@@ -9,6 +9,7 @@ def minimal_prompt(report):
     """Minimal level block for TradingView AI — just the prices, no instruction bloat.
     
     Josh 2026-10-08: the full prompt is way too much. Just need the levels to draw.
+    Includes material changes from preopen on confirmation alerts.
     """
     p = report
     lines = [f"Draw these SPY levels as horizontal rays:"]
@@ -16,8 +17,13 @@ def minimal_prompt(report):
         spy = r.get('spy')
         if spy is not None:
             lines.append(f"{r['label']}: {spy:.2f}")
-    # Add the plan triggers if available
-    ctx = p.get('context', {})
+    # Show what changed from preopen (on 08:45+ confirmations)
+    changes = (p.get('drawing_update') or {}).get('changes') or []
+    if changes:
+        lines.append("")
+        lines.append("Changed since preopen:")
+        for ch in changes[:5]:  # Limit to 5 to keep it slim
+            lines.append(f"• {ch}")
     return '\n'.join(lines)
 
 
