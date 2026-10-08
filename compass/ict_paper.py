@@ -260,20 +260,40 @@ def reset_paper_book(db, c, now):
     so the next ledgers() call starts clean. Used to start a fresh
     sample; the paper_decision audit log is intentionally preserved.
     Returns counts of what was removed.
+
+    Uses bulk DELETEs to avoid lock contention with the running engine
+    (row-by-row deletes can hit LockNotAvailable when the engine is
+    actively updating positions).
     """
     from . import paper_risk
     from .futures import risk_day
+    from sqlalchemy import text
     counts = {'trades': 0, 'positions': 0, 'ledgers': 0}
-    for k in list(db.prefix(c, 'trade:ict-').keys()):
-        db.delete(c, k)
-        counts['trades'] += 1
-    for k in list(db.prefix(c, 'position:ict:').keys()):
-        db.delete(c, k)
-        counts['positions'] += 1
+    # Bulk delete with LIKE patterns — single statement per prefix,
+    # far less lock contention than row-by-row.
+    for prefix, key in [('trade:ict-%', 'trades'),
+                        ('position:ict:%', 'positions')]:
+        try:
+            result = c.execute(
+                text("DELETE FROM state WHERE key LIKE :pattern"),
+                {'pattern': prefix}
+            )
+            counts[key] = result.rowcount or 0
+        except Exception:
+            # Fallback to row-by-row if bulk fails
+            for k in list(db.prefix(c, prefix.replace('%', '')).keys()):
+                try:
+                    db.delete(c, k)
+                    counts[key] += 1
+                except Exception:
+                    pass
     for k in list(db.prefix(c, 'paper_risk:v2:').keys()):
         if k.endswith(':futures'):
-            db.delete(c, k)
-            counts['ledgers'] += 1
+            try:
+                db.delete(c, k)
+                counts['ledgers'] += 1
+            except Exception:
+                pass
     # Seed a clean zeroed ledger for today so ledgers() returns saved
     # state instead of attempting a reconstruction.
     db.put(c, paper_risk.key(now, 'future'),
