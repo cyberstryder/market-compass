@@ -165,20 +165,30 @@ async def consume(ws, collector, buffer=None):
         except asyncio.TimeoutError:
             raise OptionStreamError(
                 "Alpaca OPRA authentication timed out; reconnecting") from None
+        # Alpaca silently drops large subscribe payloads. Batch into chunks
+        # of 20 symbols to stay under undocumented per-message limits.
+        SUBSCRIBE_BATCH_SIZE = 20
         while True:
             wanted = set(collector.option_symbols)
             wire = sorted(to_alpaca_symbol(s) for s in wanted)
             have_wire = sorted(to_alpaca_symbol(s) for s in subscribed)
             if wire != have_wire:
                 trace.request("subscribe", wanted, time.time())
-                await ws.send(msgpack.packb({"action": "subscribe",
-                                             "trades": wire, "quotes": wire}))
+                # Send in batches to avoid silent drops on large payloads
+                for i in range(0, len(wire), SUBSCRIBE_BATCH_SIZE):
+                    batch = wire[i:i + SUBSCRIBE_BATCH_SIZE]
+                    await ws.send(msgpack.packb({"action": "subscribe",
+                                                 "trades": batch, "quotes": batch}))
+                    # Small delay between batches to avoid rate limiting
+                    if i + SUBSCRIBE_BATCH_SIZE < len(wire):
+                        await asyncio.sleep(0.1)
                 trace.sent("subscribe", wanted, time.time())
                 # Log what we actually sent for diagnostics
                 diag["last_subscribe_sent"] = {
                     "at": time.time(),
                     "count": len(wire),
                     "sample": wire[:3] if wire else [],
+                    "batches": (len(wire) + SUBSCRIBE_BATCH_SIZE - 1) // SUBSCRIBE_BATCH_SIZE,
                 }
             subscribed.clear()
             subscribed.update(wanted)
