@@ -150,7 +150,7 @@ def test_scan_writes_snapshot_and_signal_without_paper(db):
         assert len(signals) == 1
         assert signals[0]['payload']['entry'] == pytest.approx(102.0)
         # paper flag off: evidence only, no position
-        assert db.get(c, 'position:ict:golden_zone:' + SYM) is None
+        assert db.get(c, 'position:ict:golden_zone:' + SYM + ':t1') is None
 
 
 def test_scan_submits_paper_when_both_flags_on(db):
@@ -158,7 +158,7 @@ def test_scan_submits_paper_when_both_flags_on(db):
     with db.tx() as c:
         _seed(db, c)
         gz.scan(db, c, cfg, NOW)
-        pos = db.get(c, 'position:ict:golden_zone:' + SYM)
+        pos = db.get(c, 'position:ict:golden_zone:' + SYM + ':t1')
     assert pos is not None
     assert pos['strategy'] == 'ict-golden-zone'
     assert pos['side'] == 'short'
@@ -172,7 +172,7 @@ def test_scan_no_paper_when_detector_flag_off_but_paper_on(db):
         out = gz.scan(db, c, cfg, NOW)
     assert out['reason'] == 'disabled'
     with db.tx() as c:
-        assert db.get(c, 'position:ict:golden_zone:' + SYM) is None
+        assert db.get(c, 'position:ict:golden_zone:' + SYM + ':t1') is None
 
 
 def test_display_note_mentions_paper(db):

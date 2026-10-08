@@ -132,14 +132,14 @@ def test_scan_writes_snapshot_and_signal_without_paper(db):
         assert snap['rows'][SYM]['direction'] == 'long'
         signals = db.recent(c, 'ict_bos_gz_vwap_signal', limit=10)
         assert len(signals) == 1
-        assert db.get(c, 'position:ict:bos_gz_vwap:' + SYM) is None
+        assert db.get(c, 'position:ict:bos_gz_vwap:' + SYM + ':t1') is None
 
 
 def test_scan_submits_paper_when_both_flags_on(db):
     with db.tx() as c:
         _seed(db, c)
         bgv.scan(db, c, _cfg(ict_futures_paper=True), NOW)
-        pos = db.get(c, 'position:ict:bos_gz_vwap:' + SYM)
+        pos = db.get(c, 'position:ict:bos_gz_vwap:' + SYM + ':t1')
     assert pos is not None
     assert pos['strategy'] == 'ict-bos-gz-vwap'
     assert pos['side'] == 'long'
