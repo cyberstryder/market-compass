@@ -59,7 +59,8 @@ def test_smoothers_and_futures_aggregation(db):
     fu = out['types']['futures']
     assert fu['stats']['pnl'] == -63.0 and fu['stats']['tracked'] == 1
     # Full paper-trading roster is always listed, even with zero trades
-    assert len(fu['drill']) == 11
+    # 12 detectors: 11 original + trend_rider (added 2026-10-08)
+    assert len(fu['drill']) == 12
     aoi = [d for d in fu['drill'] if d['name'] == 'AOI Zones'][0]
     assert aoi['stats']['tracked'] == 1 and aoi['stats']['pnl'] == -63.0
     gz = [d for d in fu['drill'] if d['name'] == 'Golden Zone + VWAP'][0]
