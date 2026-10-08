@@ -12,7 +12,7 @@ def minimal_prompt(report):
     Includes material changes from preopen on confirmation alerts.
     """
     p = report
-    lines = [f"Draw these SPY levels as horizontal rays:"]
+    lines = [f"Replace all Compass levels with these SPY horizontal rays:"]
     for r in p.get('chart_levels', []):
         spy = r.get('spy')
         if spy is not None:
@@ -21,8 +21,8 @@ def minimal_prompt(report):
     changes = (p.get('drawing_update') or {}).get('changes') or []
     if changes:
         lines.append("")
-        lines.append("Changed since preopen:")
-        for ch in changes[:5]:  # Limit to 5 to keep it slim
+        lines.append("Changes since preopen:")
+        for ch in changes[:8]:  # Limit to keep it slim
             lines.append(f"• {ch}")
     return '\n'.join(lines)
 
@@ -113,6 +113,11 @@ def drawing_changes(previous, report):
             if a is not None and b is not None and scale and abs(b-a)/abs(scale) >= threshold-1e-8:
                 changes.append(name + ' moved materially')
                 break
+    # Removed levels: in preopen but gone at confirmation (Josh 2026-10-08)
+    for name in before.keys() - after.keys():
+        if name in ignored or name.startswith(('Apex #', 'GEX #')):
+            continue
+        changes.append(name + ' removed')
     # Exposure rank changes alone must not cause a repeat of identical levels.
     for prefix in ('Apex #', 'GEX #'):
         a = [r['spy'] for k,r in before.items() if k.startswith(prefix)]
