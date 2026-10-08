@@ -649,19 +649,19 @@ class Engine:
                 et = pytz.timezone('America/New_York')
                 now_et = datetime.fromtimestamp(now, tz=timezone.utc).astimezone(et)
                 hm = now_et.strftime('%H:%M')
-            # Gap fade: premarket 08:30-09:25 ET, once per day
-            if '08:30' <= hm <= '09:25':
-                day_key = now_et.strftime('%Y-%m-%d')
-                if not self.db.get(c, 'mu_scalp:gap_done:' + day_key):
-                    sig = mu_scalp.check_gap_fade(self.db, c, now)
+                # Gap fade: premarket 08:30-09:25 ET, once per day
+                if '08:30' <= hm <= '09:25':
+                    day_key = now_et.strftime('%Y-%m-%d')
+                    if not self.db.get(c, 'mu_scalp:gap_done:' + day_key):
+                        sig = mu_scalp.check_gap_fade(self.db, c, now)
+                        if sig:
+                            mu_scalp.publish_alert(self.db, c, sig, now)
+                        self.db.put(c, 'mu_scalp:gap_done:' + day_key, True)
+                # Spike fade: 09:45-11:00 ET, every minute
+                if '09:45' <= hm <= '11:00':
+                    sig = mu_scalp.check_spike_fade(self.db, c, now)
                     if sig:
                         mu_scalp.publish_alert(self.db, c, sig, now)
-                    self.db.put(c, 'mu_scalp:gap_done:' + day_key, True)
-            # Spike fade: 09:45-11:00 ET, every minute
-            if '09:45' <= hm <= '11:00':
-                sig = mu_scalp.check_spike_fade(self.db, c, now)
-                if sig:
-                    mu_scalp.publish_alert(self.db, c, sig, now)
         except Exception:
             pass
 
