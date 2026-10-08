@@ -39,7 +39,7 @@ class Collectors:
         self.db,self.cfg=db,cfg
         self.option_symbols=set()
         self.background_option_symbols=[]
-        self.client=httpx.AsyncClient(timeout=20,follow_redirects=False)
+        self.client=httpx.AsyncClient(timeout=20,follow_redirects=False,trust_env=False)
         self.live=None
         self.extra_live={}
         self.matrix_last=0
@@ -244,7 +244,7 @@ class Collectors:
         # HTTP transports belong to this loop; never share the main-loop client.
         from types import SimpleNamespace
         from .option_recovery import recover, recover_stocks
-        async with httpx.AsyncClient(timeout=20,follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=20,follow_redirects=False,trust_env=False) as client:
             async def get(url,headers=None,params=None):
                 return await self.get_with_client(client,url,headers,params)
             worker=SimpleNamespace(db=self.db,cfg=self.cfg,get=get,
@@ -282,7 +282,7 @@ class Collectors:
         from .stock_history import collect
         from .secondary_data import refresh
         import logging
-        async with httpx.AsyncClient(timeout=20,follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=20,follow_redirects=False,trust_env=False) as client:
             async def get(url,headers=None,params=None):
                 return await self.get_with_client(client,url,headers,params)
             worker=SimpleNamespace(db=self.db,cfg=self.cfg,get=get,stock_symbols=self.stock_symbols,
