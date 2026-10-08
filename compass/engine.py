@@ -199,7 +199,8 @@ class Engine:
         return True
 
     def exits(self,c,now):
-        for key,p in self.db.prefix(c,"position:").items():
+        positions=self.db.prefix(c,"position:")
+        for key,p in positions.items():
             if p.get("status")!="open": continue
             q=self.db.get(c,"quote:"+p["symbol"])
             if q is None and p.get("asset")=="future":
@@ -332,6 +333,11 @@ class Engine:
                 # Variant B progressive stops (Josh 2026-10-08):
                 # T1 (1R) hit → T2 and runner stops → breakeven
                 # T2 (2R) hit → runner stop → 1R profit (ratchet up only)
+                # NOTE: mutate the loop's `positions` snapshot objects, not a
+                # fresh db.get copy. The loop's bottom put() persists the
+                # snapshot object, so updates to a detached copy are clobbered
+                # when this tick later reaches that key. The immediate db.put
+                # covers the case where that key already ran earlier this tick.
                 if reason in ("target", "target_detected_in_bar"):
                     try:
                         leg = p.get("leg")
@@ -341,7 +347,7 @@ class Engine:
                             # Move T2 to breakeven
                             t2_key = key.replace(":t1", ":t2") if key.endswith(":t1") else None
                             if t2_key:
-                                t2 = self.db.get(c, t2_key)
+                                t2 = positions.get(t2_key) or self.db.get(c, t2_key)
                                 if t2 and t2.get("status") == "open":
                                     t2["stop"] = t2["entry"]
                                     t2["breakeven_moved"] = True
@@ -352,7 +358,7 @@ class Engine:
                             # Ensure runner stop is at least breakeven
                             trail_key = key.replace(":t1", ":trail") if key.endswith(":t1") else None
                             if trail_key:
-                                tr = self.db.get(c, trail_key)
+                                tr = positions.get(trail_key) or self.db.get(c, trail_key)
                                 if tr and tr.get("status") == "open":
                                     be = tr["entry"]
                                     cur = tr.get("stop")
@@ -367,20 +373,25 @@ class Engine:
                             # Move runner stop to 1R profit (ratchet up only)
                             trail_key = key.replace(":t2", ":trail") if key.endswith(":t2") else None
                             if trail_key:
-                                tr = self.db.get(c, trail_key)
+                                tr = positions.get(trail_key) or self.db.get(c, trail_key)
                                 if tr and tr.get("status") == "open":
-                                    # 1R profit level
-                                    risk = abs(entry - p.get("stop", entry))
-                                    one_r = entry + (risk if side_long else -risk)
-                                    cur = tr.get("stop")
-                                    if side_long and (cur is None or cur < one_r):
-                                        tr["stop"] = one_r
-                                        tr["locked_1r"] = True
-                                    elif not side_long and (cur is None or cur > one_r):
-                                        tr["stop"] = one_r
-                                        tr["locked_1r"] = True
-                                    self.db.put(c, trail_key, tr)
-                                    self.db.put(c, "trade:"+tr["id"], tr)
+                                    # 1R profit level, derived from the t2 leg's own
+                                    # target (the 2R level): t2["stop"] is already at
+                                    # breakeven by now (moved on the t1 hit), so it
+                                    # cannot be used to recover the original risk.
+                                    # Using it made this step a silent no-op.
+                                    t2_target = p.get("target")
+                                    if t2_target is not None and entry is not None:
+                                        one_r = entry + (t2_target - entry) / 2.0
+                                        cur = tr.get("stop")
+                                        if side_long and (cur is None or cur < one_r):
+                                            tr["stop"] = one_r
+                                            tr["locked_1r"] = True
+                                        elif not side_long and (cur is None or cur > one_r):
+                                            tr["stop"] = one_r
+                                            tr["locked_1r"] = True
+                                        self.db.put(c, trail_key, tr)
+                                        self.db.put(c, "trade:"+tr["id"], tr)
                     except Exception:
                         pass
             self.db.put(c,key,p)

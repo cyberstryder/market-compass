@@ -161,6 +161,30 @@ def test_quiet_quote_leaves_position_open(db, cfg):
     assert p['status'] == 'open'
 
 
+def test_variant_b_t2_hit_ratchets_runner_to_1r(db, cfg):
+    # Variant B progressive stops: t1 (1R=102) hit -> t2/runner stops to
+    # breakeven (100); t2 (2R=104) hit -> runner stop to 1R profit (102).
+    # Regression: the old code derived 1R from t2's *current* stop, which is
+    # already breakeven by then, so the runner never locked 1R.
+    e = open_position(db, cfg)
+    t2_key = 'position:ict:golden_zone:' + SYM + ':t2'
+    trail_key = 'position:ict:golden_zone:' + SYM + ':trail'
+    exit_with(e, db, NOW + 120, quote(NOW + 120, 102.5, 102.51))
+    with db.tx() as c:
+        t2 = db.get(c, t2_key)
+        tr = db.get(c, trail_key)
+    assert t2['status'] == 'open' and t2['stop'] == pytest.approx(100.0)
+    assert tr['status'] == 'open' and tr['stop'] == pytest.approx(100.0)
+    exit_with(e, db, NOW + 240, quote(NOW + 240, 104.1, 104.11), pos_key=t2_key)
+    with db.tx() as c:
+        t2b = db.get(c, t2_key)
+        trb = db.get(c, trail_key)
+    assert t2b['status'] == 'closed' and t2b['exit_reason'] == 'target'
+    assert trb['status'] == 'open'
+    assert trb['stop'] == pytest.approx(102.0)
+    assert trb.get('locked_1r') is True
+
+
 def test_attribution_splits_pnl_by_detector(db, cfg):
     cfg.ict_bos_fvg = True
     e = open_position(db, cfg, 'golden_zone')
