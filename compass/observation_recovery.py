@@ -4,9 +4,12 @@ from .store import gap_followups, identity
 from .market import fresh, session, day
 
 VERSION = 'observation-recovery-v1'
-# NBIS 2026-10-06: 30s grace was killing good trades on feed blips.
-# 90s covers routine latency without trusting truly dead feeds.
-GRACE = 90
+# 2026-10-06: 30s grace was killing good trades on feed blips.
+# 2026-10-08: Bumped to 180s (3 min). RKLB 70 PUT got killed at 126s by a
+# Massive contract drop; Alpaca REST needs more time for per-contract fallback.
+# The trade is marked data_gap=True during extended grace so it never counts
+# in P&L even if it later exits.
+GRACE = 180
 
 
 def enable(p):
@@ -34,6 +37,12 @@ def defer(db,c,p,now,reason):
     checked=p.get('evidence_checked_at',now)
     pending=p.setdefault('gap_pending',dict(first_detected_at=checked,reason=reason))
     pending.update(last_detected_at=checked,detail=dict(p.get('gap_detail',{})))
+    # Mark data_gap=True immediately when gap detected (not after grace).
+    # Per Josh's rule: missing data never counts as win/loss. This ensures
+    # the trade is excluded from P&L even if it later exits during the gap.
+    if not p.get('data_gap'):
+        p['data_gap'] = True
+        p['data_gap_since'] = checked
     # Bounded grace lets already-received, fresh-at-storage quotes become visible.
     # It does not increase the permitted source-time gap or admit stale history.
     return checked-pending['first_detected_at'] < GRACE
