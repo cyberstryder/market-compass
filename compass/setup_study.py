@@ -94,6 +94,14 @@ class SetupStudy:
             'basis':'Independent one-unit trial; sampled executable quotes, one adverse entry/stop tick, illustrative fees; not account P&L'}
         p['collection_version']=(q or {}).get('collection_version','unversioned')
         if p['collection_version'] in ('option-reliability-v5','option-reliability-v6','option-reliability-v7','option-reliability-v8'):recovery.enable(p)
+        # Signal-to-fill delay: how long between signal generation and position entry.
+        # Tracks whether data feed latency causes late entries.
+        _sig_time = signal.get('signal_time')
+        if _sig_time and not cause:
+            p['signal_to_fill_seconds'] = round(now - _sig_time, 2)
+            # Log if delay exceeds 5 seconds (potential late entry)
+            if p['signal_to_fill_seconds'] > 5:
+                p['late_entry'] = True
         cash_hours=session(day(now))
         context=signal.get('context',{})
         p['research_context']={
