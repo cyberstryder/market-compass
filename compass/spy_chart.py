@@ -5,6 +5,22 @@ from .store import events
 from sqlalchemy import select
 
 
+def minimal_prompt(report):
+    """Minimal level block for TradingView AI — just the prices, no instruction bloat.
+    
+    Josh 2026-10-08: the full prompt is way too much. Just need the levels to draw.
+    """
+    p = report
+    lines = [f"Draw these SPY levels as horizontal rays:"]
+    for r in p.get('chart_levels', []):
+        spy = r.get('spy')
+        if spy is not None:
+            lines.append(f"{r['label']}: {spy:.2f}")
+    # Add the plan triggers if available
+    ctx = p.get('context', {})
+    return '\n'.join(lines)
+
+
 def prompt(report, now):
     p = report
     dated = now >= p.get('expires_at', 0)
@@ -62,14 +78,10 @@ def companion(report):
 
 def delivery_payload(row, now):
     p = row['payload']
-    text = prompt(p, now)
-    # Rich description supports a complete, copyable code block in one second message.
-    # The report bounds Apex/GEX rows and uses fixed labels; no truncation of prices.
-    update = ' · MATERIAL UPDATE' if p.get('drawing_update', {}).get('reason') == 'material_level_change' else ''
-    return {'content': '**TRADINGVIEW AI' + update + ' · message 2 of 2 · ' + p['day'] + ' ' + p.get('phase_label', p['phase'].upper()) + '**\nCopy the full block into your chart AI.',
-            'embeds': [{'title': 'Draw on the 1-minute and 15-minute charts',
-                        'description': '```text\n' + text + '\n```',
-                        'footer': {'text': p.get('parent_plan', p.get('id', 'preview')) + ' · Event ' + str(row['id'])}}],
+    # Minimal block: just the levels for TradingView AI (Josh 2026-10-08).
+    # The full prompt with 30 lines of instructions is available via API.
+    text = minimal_prompt(p)
+    return {'content': '**SPY Levels · ' + p['day'] + ' ' + p.get('phase_label', p['phase'].upper()) + '**\n```\n' + text + '\n```',
             'username': 'Market Compass · SPY Charts', 'allowed_mentions': {'parse': []}}
 
 
