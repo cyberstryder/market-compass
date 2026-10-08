@@ -22,7 +22,11 @@ def _bars_from_recent(rows):
     return sorted(out, key=lambda b: b['ts'])
 
 def manage_all(db, c, now):
-    """Apply trailing stops to all open ICT positions."""
+    """Apply trailing stops to open ICT trailer legs (2/2/1 scale-out).
+
+    Only positions with is_trailer=True are trailed. The t1 (2R) and t2 (3R)
+    legs use fixed targets managed by the engine's exits() loop.
+    """
     try:
         positions = db.prefix(c, 'position:ict:')
     except Exception:
@@ -31,6 +35,9 @@ def manage_all(db, c, now):
     trailed = 0
     for pos_key, pos in positions.items():
         if not isinstance(pos, dict) or pos.get('status') != 'open':
+            continue
+        # Only trail the runner leg (1 contract); t1/t2 use fixed targets
+        if not pos.get('is_trailer'):
             continue
         
         # Skip if trail already active

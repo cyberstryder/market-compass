@@ -15,7 +15,7 @@ from compass import ict_paper
 
 NOW = datetime(2026, 9, 28, 17, 0, tzinfo=timezone.utc).timestamp()  # Mon 12:00 CT
 SYM = 'NQ.c.0'
-POS = 'position:ict:golden_zone:' + SYM
+POS = 'position:ict:golden_zone:' + SYM + ':t1'  # t1 leg of 2/2/1 scale-out
 
 
 @pytest.fixture
@@ -108,7 +108,7 @@ def test_submission_tags_strategy_and_levels(db, cfg):
     assert p['entry'] == pytest.approx(100.0)
     assert p['stop'] == pytest.approx(98.0)
     assert p['target'] == pytest.approx(104.0)  # detector target preserved
-    assert p['qty'] == 1
+    assert p['qty'] == 2  # t1 leg of 2/2/1 scale-out
     assert p['status'] == 'open'
     assert p['fill_version']  # same fill conventions as legacy paper
     assert p['flatten_at']  # session flatten still applies
@@ -129,7 +129,7 @@ def test_each_detector_submits_with_own_tag(db, cfg):
             r = ict_paper.submit(db, c, cfg, NOW, detector, SYM, sig())
             assert r['submitted'], (detector, r)
             assert r['strategy'] == tag
-            p = db.get(c, 'position:ict:%s:%s' % (detector, SYM))
+            p = db.get(c, 'position:ict:%s:%s:t1' % (detector, SYM))
             assert p['strategy'] == tag
             assert p['entry'] == pytest.approx(100.0)
             assert p['stop'] == pytest.approx(98.0)
@@ -168,13 +168,15 @@ def test_attribution_splits_pnl_by_detector(db, cfg):
     e2 = open_position(db, cfg, 'bos_fvg',
                        direction='short', entry=100.0, stop=102.0, target=96.0)
     p2 = exit_with(e2, db, NOW + 240, quote(NOW + 240, 102.1, 102.11),
-                   pos_key='position:ict:bos_fvg:' + SYM)
+                   pos_key='position:ict:bos_fvg:' + SYM + ':t1')
     assert p2['exit_reason'] == 'stop' and p2['pnl'] < 0
     with db.tx() as c:
         attr = ict_paper.attribution(db, c)
     gz, bf = attr['ict-golden-zone'], attr['ict-bos-fvg']
+    # 2/2/1 scale-out: gz t1 hits target (t2/trail open); bf short stop-out
+    # hits all 3 legs (same stop)
     assert gz['trades'] == 1 and gz['wins'] == 1 and gz['realized'] > 0
-    assert bf['trades'] == 1 and bf['losses'] == 1 and bf['realized'] < 0
+    assert bf['trades'] == 3 and bf['losses'] == 3 and bf['realized'] < 0
 
 
 def test_exits_log_no_alerts_only_paper_decisions(db, cfg):
@@ -276,7 +278,7 @@ def test_exits_resolves_dated_contract_quote_for_alias(db, cfg):
         db.put(c, 'quote:MCLZ25@999', quote(NOW + 120, 101.0, 101.01))
         e.exits(c, NOW + 120)
     with db.tx() as c:
-        p = db.get(c, 'position:ict:golden_zone:MCL.v.0')
+        p = db.get(c, 'position:ict:golden_zone:MCL.v.0:t1')
     assert p['status'] == 'open'
     assert p['last_quote_ts'] == NOW + 120  # dated quote was seen
     assert p['mark'] == pytest.approx(101.0, abs=0.05)  # fill-adjusted bid
@@ -344,7 +346,7 @@ def test_reset_paper_book(db, cfg):
     with db.tx() as c:
         db.put(c, 'trade:ict-bos_fvg-MNQ-c-0-123',
                {'id': 'x', 'status': 'closed', 'pnl': -10.0, 'strategy': 'ict-bos-fvg'})
-        db.put(c, 'position:ict:bos_fvg:MNQ.c.0', {'status': 'open'})
+        db.put(c, 'position:ict:bos_fvg:MNQ.c.0:t1', {'status': 'open'})
         db.put(c, 'paper_risk:v2:2026-09-27:futures', {'realized': -10.0})
         db.put(c, 'trade:legacy-1', {'status': 'closed'})
         counts = ict_paper.reset_paper_book(db, c, NOW)
@@ -352,8 +354,51 @@ def test_reset_paper_book(db, cfg):
     assert counts['ledgers'] == 2  # one deleted, one clean seeded
     with db.tx() as c:
         assert db.get(c, 'trade:ict-bos_fvg-MNQ-c-0-123') is None
-        assert db.get(c, 'position:ict:bos_fvg:MNQ.c.0') is None
+        assert db.get(c, 'position:ict:bos_fvg:MNQ.c.0:t1') is None
         assert db.get(c, 'trade:legacy-1') is not None  # untouched
         assert db.get(c, 'paper_risk:v2:2026-09-27:futures') is None
         ledger = db.get(c, paper_risk.key(NOW, 'future'))
         assert ledger['realized'] == 0.0 and ledger['ready'] is True
+
+
+def test_scale_out_221_creates_three_legs(db, cfg):
+    """2/2/1 scale-out: submit creates 3 legs with correct qty/targets."""
+    with db.tx() as c:
+        r = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', SYM, sig())
+        assert r['submitted'], r
+        assert r['qty'] == 5
+        assert len(r['legs']) == 3
+    with db.tx() as c:
+        # Leg 1: 2 contracts at 2R (104.0)
+        t1 = db.get(c, 'trade:' + r['legs'][0])
+        assert t1['qty'] == 2 and t1['target'] == 104.0
+        assert t1['leg'] == 't1' and not t1['is_trailer']
+        # Leg 2: 2 contracts at 3R (106.0 = 100 + 1.5 * 4)
+        t2 = db.get(c, 'trade:' + r['legs'][1])
+        assert t2['qty'] == 2 and t2['target'] == 106.0
+        assert t2['leg'] == 't2' and not t2['is_trailer']
+        # Leg 3: 1 contract, no fixed target (trailer)
+        tr = db.get(c, 'trade:' + r['legs'][2])
+        assert tr['qty'] == 1 and tr['target'] is None
+        assert tr['leg'] == 'trail' and tr['is_trailer']
+        # All share the same stop and group
+        assert t1['stop'] == t2['stop'] == tr['stop'] == 98.0
+        assert t1['group_id'] == t2['group_id'] == tr['group_id']
+
+
+def test_trailer_leg_has_no_target_exit(db, cfg):
+    """Trailer leg with target=None does not exit on target; only stop/flatten."""
+    e = open_position(db, cfg)
+    with db.tx() as c:
+        # Find the trailer position
+        positions = [p for k, p in db.prefix(c, 'position:ict:').items()
+                     if p.get('is_trailer')]
+        assert len(positions) == 1
+        pos = positions[0]
+        assert pos['target'] is None
+        # Price well above 2R target should NOT trigger target exit
+        # (exits() checks target only if not None)
+        db.put(c, 'quote:' + SYM, quote(NOW, 110.0, 110.1))
+    # Engine exits should not crash on None target
+    with db.tx() as c:
+        e.exits(c, NOW)  # should not raise

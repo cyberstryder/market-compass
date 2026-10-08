@@ -285,7 +285,10 @@ class Engine:
             long=p["side"]=="long"
             trigger=(q['bid'] if long else q['ask']) if p.get('fill_version')==FILL_VERSION else price
             stopped=trigger<=p["stop"] if long else trigger>=p["stop"]
-            target=trigger>=p["target"] if long else trigger<=p["target"]
+            # Trailer legs (2/2/1 scale-out) have no fixed target; they exit
+            # on the trailing stop (managed by ict_trail.py) or session flatten.
+            tgt = p.get("target")
+            target = (trigger>=tgt if long else trigger<=tgt) if tgt is not None else False
             reason="stop" if stopped else "target" if target else None
             if p.get('underlying_invalidation') is not None:
                 underlying=self.db.get(c,'quote:'+p['underlying'])

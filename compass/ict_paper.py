@@ -99,14 +99,19 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
     if not spec:
         return {'submitted': False, 'reason': 'not_a_future'}
     pos_key = 'position:ict:%s:%s' % (detector, symbol)
+    # 2/2/1 scale-out: check if any leg position is open
+    for leg_suffix in (':t1', ':t2', ':trail'):
+        prev = db.get(c, pos_key + leg_suffix, {}) or {}
+        if prev.get('status') == 'open':
+            return {'submitted': False, 'reason': 'existing_position'}
     prev = db.get(c, pos_key, {}) or {}
-    if prev.get('status') == 'open':
-        return {'submitted': False, 'reason': 'existing_position'}
     # Churn guardrail 1: no re-entry within the cooldown after this
     # detector+symbol's last exit. Kills the machine-gun re-entry loop
     # (observed 2026-10-06: same-instrument re-entry 1-4 min after a
     # stop-out, median hold 3 min on bos_fvg).
+    # 2/2/1 scale-out: check the t1 leg for the last exit time.
     cooldown_s = (number(getattr(cfg, 'ict_paper_cooldown_min', 15)) or 15) * 60
+    prev = db.get(c, pos_key + ':t1', {}) or {}
     if prev.get('status') == 'closed' and prev.get('exited_at'):
         if now - prev['exited_at'] < cooldown_s:
             return {'submitted': False, 'reason': 'cooldown',
@@ -151,51 +156,73 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
         2 * spec['tick'] * spec['multiplier']
     if per_unit <= 0:
         return {'submitted': False, 'reason': 'bad_risk'}
-    risk_dollars = number(getattr(cfg, 'risk', 100)) or 100
-    qty = min(spec['max_qty'], max(1, int(risk_dollars / per_unit)))
-    if qty < 1:
-        return {'submitted': False, 'reason': 'no_size'}
-    trade_id = 'ict-%s-%s-%d' % (detector, symbol.replace('.', '-'),
-                                 int(number(sig.get('signal_ts')) or now))
-    if db.get(c, 'trade:' + trade_id):
+    # 2/2/1 scale-out (Josh 2026-10-08): 5 contracts total
+    # - Leg 1: 2 contracts, target = 2R (signal target)
+    # - Leg 2: 2 contracts, target = 3R (1.5x the 2R distance)
+    # - Leg 3: 1 contract, no fixed target (trailer via ict_trail.py)
+    # All legs share the same stop. Each leg is a separate position so the
+    # engine's exits() loop manages them independently.
+    direction_mult = 1 if side == 'long' else -1
+    risk_dist = (target - entry) * direction_mult  # positive 2R distance
+    target_3r = entry + direction_mult * risk_dist * 1.5
+    legs = [
+        {'leg': 't1', 'qty': 2, 'target': target, 'is_trailer': False},
+        {'leg': 't2', 'qty': 2, 'target': target_3r, 'is_trailer': False},
+        {'leg': 'trail', 'qty': 1, 'target': None, 'is_trailer': True},
+    ]
+    base_trade_id = 'ict-%s-%s-%d' % (detector, symbol.replace('.', '-'),
+                                      int(number(sig.get('signal_ts')) or now))
+    if db.get(c, 'trade:' + base_trade_id + '-t1'):
         return {'submitted': False, 'reason': 'duplicate'}
-    trade = {
-        'id': trade_id, 'strategy': STRATEGY_TAGS[detector],
-        'detector': detector, 'symbol': symbol, 'side': side,
-        'asset': 'future', 'signal_time': sig.get('signal_ts'),
-        'decided_at': now, 'signal_price': entry, 'status': 'open',
-        'entry': entry, 'entered_at': now,
-        'entry_quote_ts': 0, 'last_quote_ts': 0,
-        'last_bar_checked': (number(sig.get('signal_ts')) or now) - 60,
-        'stop': stop, 'target': target, 'qty': qty,
-        'initial_risk': per_unit * qty, 'risk_basis': 'stop_distance',
-        'tick': spec['tick'], 'multiplier': spec['multiplier'],
-        'fee': spec['fee'],
-        'fill_model': FILL_DESCRIPTION, 'fill_version': FILL_VERSION,
-        'risk_day': risk_day(now), 'risk_policy': paper_risk.VERSION,
+    group_id = base_trade_id
+    submitted_ids = []
+    for leg in legs:
+        trade_id = '%s-%s' % (base_trade_id, leg['leg'])
+        leg_pos_key = '%s:%s' % (pos_key, leg['leg'])
+        trade = {
+            'id': trade_id, 'strategy': STRATEGY_TAGS[detector],
+            'detector': detector, 'symbol': symbol, 'side': side,
+            'asset': 'future', 'signal_time': sig.get('signal_ts'),
+            'decided_at': now, 'signal_price': entry, 'status': 'open',
+            'entry': entry, 'entered_at': now,
+            'entry_quote_ts': 0, 'last_quote_ts': 0,
+            'last_bar_checked': (number(sig.get('signal_ts')) or now) - 60,
+            'stop': stop, 'target': leg['target'], 'qty': leg['qty'],
+            'leg': leg['leg'], 'group_id': group_id,
+            'is_trailer': leg['is_trailer'],
+            'initial_risk': per_unit * leg['qty'], 'risk_basis': 'stop_distance',
+            'tick': spec['tick'], 'multiplier': spec['multiplier'],
+            'fee': spec['fee'],
+            'fill_model': FILL_DESCRIPTION, 'fill_version': FILL_VERSION,
+            'risk_day': risk_day(now), 'risk_policy': paper_risk.VERSION,
         'paper_portfolio': paper_risk.portfolio('future'),
         'flatten_at': flat,
         'signal_rr': number(sig.get('rr')),
         'signal_level': sig.get('level_kind'),
         'source': 'ict_paper',
-    }
-    if track:
-        trade['track'] = track
-    db.put(c, pos_key, trade)
-    db.put(c, 'trade:' + trade_id, trade)
+        }
+        if track:
+            trade['track'] = track
+        db.put(c, leg_pos_key, trade)
+        db.put(c, 'trade:' + trade_id, trade)
+        db.append(c, 'paper_decision', 'ict_paper', symbol, now,
+                  {**trade, 'status': 'entered'}, 'entry:' + trade_id)
+        submitted_ids.append(trade_id)
+    # Queue Discord alert so Josh can see which detectors fire when
+    # (use the t1 leg trade for the alert payload)
+    try:
+        from . import ict_push
+        first_trade = db.get(c, 'trade:' + submitted_ids[0])
+        if first_trade:
+            ict_push.maybe_queue(db, c, cfg, first_trade)
+    except Exception:
+        pass
     risk = paper_risk.account(db, c, now, 'future', persist=True)
     risk['entries'] = risk.get('entries', 0) + 1
     db.put(c, paper_risk.key(now, 'future'), risk)
-    db.append(c, 'paper_decision', 'ict_paper', symbol, now,
-              {**trade, 'status': 'entered'}, 'entry:' + trade_id)
-    # Queue Discord alert so Josh can see which detectors fire when
-    try:
-        from . import ict_push
-        ict_push.maybe_queue(db, c, cfg, trade)
-    except Exception:
-        pass
-    return {'submitted': True, 'reason': 'entered', 'trade_id': trade_id,
-            'qty': qty, 'strategy': trade['strategy']}
+    return {'submitted': True, 'reason': 'entered', 'trade_id': group_id,
+            'qty': 5, 'strategy': STRATEGY_TAGS[detector],
+            'legs': submitted_ids}
 
 
 def attribution(db, c):
