@@ -643,7 +643,7 @@ class Engine:
         # Gated by MU_SCALP_ENABLED (default true).
         try:
             if getattr(self.cfg, 'mu_scalp', True):
-                from . import mu_scalp
+                from . import mu_scalp, mu_paper
                 from datetime import datetime, timezone
                 import pytz
                 et = pytz.timezone('America/New_York')
@@ -655,13 +655,21 @@ class Engine:
                     if not self.db.get(c, 'mu_scalp:gap_done:' + day_key):
                         sig = mu_scalp.check_gap_fade(self.db, c, now)
                         if sig:
-                            mu_scalp.publish_alert(self.db, c, sig, now)
+                            # Dedupe by signal key (not timestamp)
+                            if not self.db.get(c, 'alert:' + sig.get('dedupe_key', '')):
+                                mu_scalp.publish_alert(self.db, c, sig, now)
+                                mu_paper.open_trade(self.db, c, sig, now)
                         self.db.put(c, 'mu_scalp:gap_done:' + day_key, True)
                 # Spike fade: 09:45-11:00 ET, every minute
                 if '09:45' <= hm <= '11:00':
                     sig = mu_scalp.check_spike_fade(self.db, c, now)
                     if sig:
-                        mu_scalp.publish_alert(self.db, c, sig, now)
+                        # Dedupe by spike event key (stable across ticks)
+                        if not self.db.get(c, 'alert:' + sig.get('dedupe_key', '')):
+                            mu_scalp.publish_alert(self.db, c, sig, now)
+                            mu_paper.open_trade(self.db, c, sig, now)
+                # Manage open MU paper trades (target/stop/15min exits)
+                mu_paper.manage_trades(self.db, c, now)
         except Exception:
             pass
 

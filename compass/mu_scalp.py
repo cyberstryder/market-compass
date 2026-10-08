@@ -100,6 +100,7 @@ def check_gap_fade(db, c, now, symbol="MU"):
             'gap_pct': round(gap_pct, 2),
             'signal': 'gap_fade',
             'ts': now,
+            'dedupe_key': 'mu-gap-%s-%d' % (symbol, int(now / 86400)),
         }
     except Exception:
         return None
@@ -111,26 +112,39 @@ def check_spike_fade(db, c, now, symbol="MU"):
     Call every minute 9:45-11:00 ET. Looks for ≥0.7% spike over ≤5 min on 1M bars.
     """
     try:
-        # Get 1M bars for the last 10 minutes
-        bars = []
+        # Get 1M bars: recent for spike detection, full session for high/low filter
+        recent_bars = []
+        session_bars = []
+        # Session start: 9:30am ET (in UTC: 13:30 or 14:30 depending on DST)
+        # Use a 6.5-hour lookback to cover the full session
+        session_start = now - (6.5 * 3600)
         for k, v in db.prefix(c, 'bar:%s:' % symbol).items():
             if ':1m:' in k or ':1M:' in k:
                 payload = v.get('payload') or {}
                 ts = v.get('ts')
-                if ts and now - ts <= 600:  # last 10 min
-                    bars.append({
-                        'ts': ts,
-                        'o': number(payload.get('o')),
-                        'h': number(payload.get('h')),
-                        'l': number(payload.get('l')),
-                        'c': number(payload.get('c')),
-                    })
-        bars = sorted([b for b in bars if b['c']], key=lambda x: x['ts'])
-        if len(bars) < SPIKE_LOOKBACK_MIN:
+                if not ts:
+                    continue
+                bar = {
+                    'ts': ts,
+                    'o': number(payload.get('o')),
+                    'h': number(payload.get('h')),
+                    'l': number(payload.get('l')),
+                    'c': number(payload.get('c')),
+                }
+                if not bar['c']:
+                    continue
+                if ts >= session_start:
+                    session_bars.append(bar)
+                if now - ts <= 600:  # last 10 min for spike detection
+                    recent_bars.append(bar)
+        
+        recent_bars = sorted(recent_bars, key=lambda x: x['ts'])
+        session_bars = sorted(session_bars, key=lambda x: x['ts'])
+        if len(recent_bars) < SPIKE_LOOKBACK_MIN:
             return None
         
         # Check for spike in last 5 minutes
-        recent = bars[-SPIKE_LOOKBACK_MIN:]
+        recent = recent_bars[-SPIKE_LOOKBACK_MIN:]
         start_price = recent[0]['o']
         end_price = recent[-1]['c']
         move_pct = _pct(end_price, start_price)
@@ -141,11 +155,14 @@ def check_spike_fade(db, c, now, symbol="MU"):
         # Fade the spike
         direction = 'short' if move_pct > 0 else 'long'
         extreme = max(b['h'] for b in recent) if move_pct > 0 else min(b['l'] for b in recent)
+        extreme_ts = max(b['ts'] for b in recent if b['h'] == extreme) if move_pct > 0 else max(b['ts'] for b in recent if b['l'] == extreme)
         
-        # At-extreme filter: spike must be within 0.3% of session high/low.
-        # Get session high/low from all bars today (not just last 5 min).
-        session_high = max(b['h'] for b in bars if b['h'])
-        session_low = min(b['l'] for b in bars if b['l'])
+        # At-extreme filter: spike must be within 0.3% of SESSION high/low.
+        # Use full session bars, not just the last 10 minutes.
+        if not session_bars:
+            return None
+        session_high = max(b['h'] for b in session_bars if b['h'])
+        session_low = min(b['l'] for b in session_bars if b['l'])
         if direction == 'short':
             # Up-spike: extreme must be near session high
             proximity = abs(extreme - session_high) / session_high * 100.0
@@ -166,6 +183,10 @@ def check_spike_fade(db, c, now, symbol="MU"):
             target = entry + retrace
             stop = extreme * (1 - SPIKE_STOP_PCT / 100.0)
         
+        # Dedupe key: based on spike extreme + timestamp (stable across ticks)
+        # Same spike firing on consecutive ticks gets the same key
+        dedupe_key = 'mu-spike-%s-%d-%d' % (symbol, int(extreme_ts), int(extreme * 100))
+        
         return {
             'detector': 'mu_spike_fade',
             'symbol': symbol,
@@ -176,31 +197,77 @@ def check_spike_fade(db, c, now, symbol="MU"):
             'spike_pct': round(move_pct, 2),
             'signal': 'spike_fade',
             'ts': now,
+            'dedupe_key': dedupe_key,
+            'extreme': extreme,
+            'session_high': session_high,
+            'session_low': session_low,
         }
     except Exception:
         return None
 
 
 def publish_alert(db, c, signal, now):
-    """Publish MU scalp signal as 0DTE alert for paper tracking."""
+    """Publish MU scalp signal as 0DTE alert for paper tracking.
+    
+    Uses the signal's dedupe_key for idempotency (stable across engine ticks).
+    Includes full trade details for Discord: entry, stop, target, invalidation,
+    timing, and detector context.
+    """
     try:
-        key = 'mu-%s-%d' % (signal['detector'], int(now))
+        # Use dedupe_key if available (stable across ticks), else timestamp
+        dedupe = signal.get('dedupe_key')
+        key = dedupe if dedupe else 'mu-%s-%d' % (signal['detector'], int(now))
         if db.get(c, 'alert:' + key):
             return None  # already alerted
         
+        # Build Discord-friendly details
+        detector = signal.get('detector', '')
+        direction = signal.get('direction', '').upper()
+        entry = signal.get('entry')
+        stop = signal.get('stop')
+        target = signal.get('target')
+        
+        # Calculate risk/reward
+        risk = abs(entry - stop) if entry and stop else 0
+        reward = abs(target - entry) if entry and target else 0
+        rr = round(reward / risk, 2) if risk > 0 else 0
+        
+        # Invalidation: stop level (trade is wrong if stop hits)
+        # Timing: max hold info
+        if 'spike' in detector:
+            max_hold = '15 min'
+            timing = 'Exit at target/stop or 15 min max'
+        else:
+            max_hold = '11:00 AM ET'
+            timing = 'Exit at target/stop or 11am ET flat'
+        
         alert = {
             'symbol': signal['symbol'],
-            'detector': signal['detector'],
+            'detector': detector,
             'direction': signal['direction'],
-            'entry': signal['entry'],
-            'stop': signal['stop'],
-            'target': signal['target'],
+            'entry': entry,
+            'stop': stop,
+            'target': target,
             'signal': signal['signal'],
             'ts': now,
+            # Discord display fields
+            'title': 'MU %s %s' % (direction, detector.replace('mu_', '').replace('_', ' ').title()),
+            'entry_price': round(entry, 2) if entry else None,
+            'stop_price': round(stop, 2) if stop else None,
+            'target_price': round(target, 2) if target else None,
+            'risk_reward': rr,
+            'invalidation': 'Stop at $%.2f' % stop if stop else None,
+            'timing': timing,
+            'max_hold': max_hold,
+            # Detector-specific context
+            'gap_pct': signal.get('gap_pct'),
+            'spike_pct': signal.get('spike_pct'),
+            'extreme': round(signal.get('extreme'), 2) if signal.get('extreme') else None,
             'publication': {
                 'category': 'options_0dte',
                 'underlying': signal['symbol'],
                 'status': 'MU_SCALP',
+                'detector': detector,
             },
         }
         db.put(c, 'alert:' + key, alert)
