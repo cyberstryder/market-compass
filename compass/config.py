@@ -47,6 +47,7 @@ class Config:
                     'smoothers', 'futures', 'research')})
     discord_fallback: bool = field(default_factory=lambda: env('DISCORD_SHARED_FALLBACK', 'true') == 'true')
     spy_morning_brief: bool = field(default_factory=lambda: env("SPY_MORNING_BRIEF_ENABLED", "true") == "true")
+    spy_chart_discord: bool = field(default_factory=lambda: env("SPY_CHART_DISCORD_ENABLED", "false") == "true")
     spy_timeframes_enabled: bool = field(default_factory=lambda: env("SPY_TIMEFRAMES_ENABLED", "false") == "true")
     paper_trading: bool = field(default_factory=lambda: env("PAPER_TRADING_ENABLED", "false") == "true")
     stock_paper_trades: bool = field(default_factory=lambda: env("STOCK_PAPER_TRADES", "false") == "true")

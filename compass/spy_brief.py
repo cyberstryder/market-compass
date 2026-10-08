@@ -313,7 +313,10 @@ class BriefWorker:
             from .spy_chart import companion, prepare_drawing
             send_drawing = prepare_drawing(self.db, c, report)
             self.db.append(c, 'alert', 'spy_brief', 'SPY', now, report, key)
-            if send_drawing:
+            # Chart drawing prompt: disabled by default (SPY_CHART_DISCORD_ENABLED).
+            # Josh 2026-10-08: the TradingView AI block is way too much; just need
+            # the levels and entry triggers from the compact brief.
+            if send_drawing and getattr(self.cfg, 'spy_chart_discord', False):
                 self.db.append(c, 'alert', 'spy_brief', 'SPY', now, companion(report), key + ':chart')
             self.db.put(c, key, report)
             self.db.put(c, 'spy-brief:latest', report)
