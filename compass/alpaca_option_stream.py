@@ -189,6 +189,7 @@ async def consume(ws, collector, buffer=None):
                     "count": len(wire),
                     "sample": wire[:3] if wire else [],
                     "batches": (len(wire) + SUBSCRIBE_BATCH_SIZE - 1) // SUBSCRIBE_BATCH_SIZE,
+                    "deploy_marker": "BATCH_FIX_V2_20261008",
                 }
             subscribed.clear()
             subscribed.update(wanted)
