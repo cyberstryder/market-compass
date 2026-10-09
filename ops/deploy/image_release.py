@@ -16,7 +16,7 @@ PROJECT = '4801dbfb-a7a9-411b-abef-696df393f0b1'
 ENVIRONMENT = '711a06df-cbcd-4ee8-8332-b60be4c17723'
 SERVICES = (
     ('dashboard', '33e96fc3-e153-4944-a131-b5944c12e902'),
-    ('collector', '5a1ad3c7-4090-42d0-954f-a5a55f8e8f9d'),
+    ('collector', 'a4d135aa-4e2a-4e0b-b0f3-6777a878418b'),
     ('engine', 'b5a4b496-4359-45a4-b69e-8b0cfe5f2209'),
 )
 API = 'https://backboard.railway.com/graphql/v2'
