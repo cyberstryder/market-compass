@@ -28,7 +28,7 @@ class Data:
         return response.json()
 
     def calendar(self,monday):
-        rows=self.get('https://paper-api.alpaca.markets/v2/calendar',{'start':monday.isoformat(),'end':(monday+timedelta(days=4)).isoformat()})
+        rows=self.get(self.cfg.alpaca_base_url + '/v2/calendar',{'start':monday.isoformat(),'end':(monday+timedelta(days=4)).isoformat()})
         if not isinstance(rows,list) or len(rows)>5: raise ValueError('Invalid calendar')
         result=[]
         for row in rows:

@@ -628,7 +628,7 @@ class Collectors:
             "expiration_date_lte":expiry_end or day(time.time()+self.cfg.chain_dte*86400),"limit":1000}
         complete=False
         for _ in range(page_limit):
-            data=await self.get("https://paper-api.alpaca.markets/v2/options/contracts",self.alpaca_headers,params)
+            data=await self.get(self.cfg.alpaca_base_url + "/v2/options/contracts",self.alpaca_headers,params)
             for x in data.get("option_contracts",[]): metadata[x["symbol"]]=x
             if not data.get("next_page_token"):
                 complete=True

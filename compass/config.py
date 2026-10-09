@@ -32,6 +32,10 @@ class Config:
     # holds a stream with the main keys.
     alpaca_opra_key: str = field(default_factory=lambda: env("APCA_OPRA_KEY_ID") or env("APCA_API_KEY_ID"))
     alpaca_opra_secret: str = field(default_factory=lambda: env("APCA_OPRA_SECRET_KEY") or env("APCA_API_SECRET_KEY"))
+    # Alpaca API base URL: live (https://api.alpaca.markets) vs paper
+    # (https://paper-api.alpaca.markets). Defaults to live; set to paper
+    # explicitly for paper trading.
+    alpaca_base_url: str = field(default_factory=lambda: env("APCA_API_BASE_URL", "https://api.alpaca.markets"))
     feed: str = field(default_factory=lambda: env("ALPACA_FEED","sip"))
     databento: str = field(default_factory=lambda: env("DATABENTO_API_KEY"))
     massive: str = field(default_factory=lambda: env("MASSIVE_API_KEY"))
