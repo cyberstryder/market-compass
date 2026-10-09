@@ -38,5 +38,7 @@ def inventory(db,c,now,include_followups=True):
 def select_contracts(active,previous,requested,background,limit):
     pinned=set(active)
     ordered=list(dict.fromkeys([*(s for s in previous if s in pinned),*active,*requested,*background]))
-    selected=ordered[:max(0,limit)]
+    # Active positions are never dropped, even if over the limit.
+    # The limit applies to requested/background only.
+    selected=list(dict.fromkeys([*pinned,*ordered]))[:max(len(pinned),limit)]
     return selected,sorted(pinned-set(selected))
