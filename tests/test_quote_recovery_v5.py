@@ -29,8 +29,9 @@ def archive(db,c,symbol,t,bid=2,ask=2.05,received=None):
 
 
 def test_active_subscription_stability_and_capacity_is_explicit():
+    # Active positions are never dropped, even over the limit.
     selected,missing=select_contracts(['new','spy','held'],['held','spy'],['pending'],['background'],2)
-    assert selected==['held','spy'] and missing==['new']
+    assert set(selected)=={'new','spy','held'} and missing==[]
     selected,missing=select_contracts(['spy'],[],['pending'],['background'],2)
     assert selected==['spy','pending'] and not missing
 
