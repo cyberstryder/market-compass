@@ -111,7 +111,10 @@ def promote(image, revision, api, head=current_main, sleep=time.sleep,
     for name, service in SERVICES:
         instance = api(INSTANCE, {'s':service,'e':ENVIRONMENT}, retries=3)['serviceInstance']
         source = instance.get('source') or {}
-        if source.get('repo') or not (source.get('image') or '').startswith(REGISTRY+'@sha256:'):
+        img = source.get('image') or ''
+        # Accept both digest (@sha256:) and tag (:sha-...) formats for GHCR images.
+        # The tag format is used during manual cutover; the script will promote to digest.
+        if source.get('repo') or not (img.startswith(REGISTRY+'@sha256:') or img.startswith(REGISTRY+':')):
             raise ReleaseError(name+': private image source cutover is not configured')
         if (instance.get('latestDeployment') or {}).get('status') in BUSY:
             raise ReleaseError(name+': another deployment is active')
