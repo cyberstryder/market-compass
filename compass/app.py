@@ -455,6 +455,24 @@ def create_app(cfg=None):
         with db.tx() as c:
             return assemble(db,c,time.time())
 
+    @app.get('/api/subscription-slots')
+    def get_subscription_slots():
+        # Diagnostic: what's filling the Massive option subscription slots.
+        # Shows active vs requested vs background breakdown.
+        with db.tx() as c:
+            report = db.get(c,'options:subscriptions',{})
+            return {
+                "at": report.get("at"),
+                "capacity": report.get("capacity"),
+                "total_selected": len(report.get("symbols",[])),
+                "active_contracts": report.get("active_contracts"),
+                "active_symbols": report.get("active_symbols",[]),
+                "active_missing": report.get("active_missing",[]),
+                "requested_ideas": report.get("requested_ideas"),
+                "waiting_ideas": report.get("waiting_ideas"),
+                "symbols": report.get("symbols",[]),
+            }
+
     @app.get('/api/simple')
     def get_simple():
         # Plain-English scoreboards + drill-downs. Read-only.
