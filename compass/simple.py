@@ -288,20 +288,22 @@ def _flash(db, c, now):
              "wins": h.get("wins", 0),
              "win_rate": h.get("hit_rate"),
              "resolved": checks,
+             "pnl": h.get("total_pnl"),
              "expectancy_r": h.get("expectancy_r")}))
     total_tracked = sum(per_pattern.values())
     total_wins = sum((hit.get(p) or {}).get("wins", 0) for p in per_pattern)
     total_resolved = sum((hit.get(p) or {}).get("checks", 0) for p in per_pattern)
+    total_pnl = sum((hit.get(p) or {}).get("total_pnl") or 0 for p in per_pattern)
     stats = {"tracked": total_tracked, "wins": total_wins,
              "win_rate": round(100.0 * total_wins / total_resolved, 1) if total_resolved else None,
-             "resolved": total_resolved, "pnl": None,
+             "resolved": total_resolved, "pnl": round(total_pnl, 2) if total_pnl else None,
              "expectancy_r": round(total_r / r_n, 2) if r_n else None}
     return (_block(
         "flash", "Flash Agentic",
         "Chart setups from the Obsidian Cipher scanner.",
         "Whenever a setup triggers intraday. Tracked silently; one summary a day.",
         "Win = price hit the target before the invalidation level, within five sessions. "
-        "Scored by hit rate, not dollars — these are setups, not trades.",
+        "Paper-traded at 100 shares for dollar P&L.",
         stats, drill), by_day)
 
 
@@ -347,20 +349,22 @@ def _tape(db, c, now):
              "wins": h.get("wins", 0),
              "win_rate": h.get("hit_rate"),
              "resolved": checks,
+             "pnl": h.get("total_pnl"),
              "expectancy_r": h.get("expectancy_r")}))
     total_tracked = sum(per_pattern.values())
     total_wins = sum((hit.get(p) or {}).get("wins", 0) for p in per_pattern)
     total_resolved = sum((hit.get(p) or {}).get("checks", 0) for p in per_pattern)
+    total_pnl = sum((hit.get(p) or {}).get("total_pnl") or 0 for p in per_pattern)
     stats = {"tracked": total_tracked, "wins": total_wins,
              "win_rate": round(100.0 * total_wins / total_resolved, 1) if total_resolved else None,
-             "resolved": total_resolved, "pnl": None,
+             "resolved": total_resolved, "pnl": round(total_pnl, 2) if total_pnl else None,
              "expectancy_r": round(total_r / r_n, 2) if r_n else None}
     return (_block(
         "tape", "Tape Flow",
         "High-conviction option flow from TraderMatrix (score 95+).",
         "Whenever unusual flow prints intraday. Tracked silently via pick checker.",
         "Win = price hit the target before the invalidation level, within five sessions. "
-        "Scored by hit rate, not dollars — these are flow signals, not trades.",
+        "Paper-traded at 100 shares for dollar P&L.",
         stats, drill), by_day)
 
 

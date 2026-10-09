@@ -138,6 +138,21 @@ def measure_outcome(db, c, check, now, horizon_sessions=DEFAULT_HORIZON):
         basis = ('Direction-adjusted underlying move over %d of %d sessions; not option P&L.'
                  % (n, horizon_sessions))
 
+    # Dollar P&L for 100-share paper position (added 2026-10-09 at Josh's
+    # direction: show dollar results, not just hit rate).
+    # Win: exit at target. Loss: exit at invalidation.
+    pnl_dollars = None
+    if status == 'win' and target is not None:
+        if direction == 'long':
+            pnl_dollars = round((target - entry) * 100, 2)
+        else:
+            pnl_dollars = round((entry - target) * 100, 2)
+    elif status == 'loss' and invalidation is not None:
+        if direction == 'long':
+            pnl_dollars = round((invalidation - entry) * 100, 2)
+        else:
+            pnl_dollars = round((entry - invalidation) * 100, 2)
+
     return {'status': status, 'target_hit': target_hit and not inval_hit_first,
             'invalidation_hit_first': inval_hit_first,
             'sessions_measured': n,
@@ -145,6 +160,7 @@ def measure_outcome(db, c, check, now, horizon_sessions=DEFAULT_HORIZON):
             'mfe_pct': round(mfe * 100, 2), 'mae_pct': round(mae * 100, 2),
             'horizon_return_pct': round(horizon_return * 100, 2),
             'entry_used': entry, 'entry_source': entry_source,
+            'pnl_dollars': pnl_dollars,
             'basis': basis}
 
 
@@ -262,6 +278,8 @@ def scorecard(db, c, now, limit=100, horizon_sessions=DEFAULT_HORIZON):
         losses = len(resolved) - wins
         rrs = [c_.get('realized_r') for c_, o in resolved
                if c_.get('realized_r') is not None]
+        pnls = [o.get('pnl_dollars') for _, o in resolved
+                if o.get('pnl_dollars') is not None]
         by_pattern.append({
             'source': source, 'pattern': pattern,
             'checks': len(rows), 'wins': wins, 'losses': losses,
@@ -272,6 +290,8 @@ def scorecard(db, c, now, limit=100, horizon_sessions=DEFAULT_HORIZON):
             'expectancy_r': round(sum(rrs) / len(rrs), 2) if rrs else None,
             'total_r': round(sum(rrs), 2) if rrs else None,
             'r_count': len(rrs),
+            'total_pnl': round(sum(pnls), 2) if pnls else None,
+            'pnl_count': len(pnls),
         })
     return {'asof': now, 'horizon_sessions': horizon_sessions,
             'by_source': by_source, 'by_pattern': by_pattern, 'checks': checks}
