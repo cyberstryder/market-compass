@@ -80,8 +80,8 @@ class Config:
     day_board_push_enabled: bool = field(default_factory=lambda: env("DAY_BOARD_PUSH_ENABLED","true")=="true")
     futures_scanner_push_enabled: bool = field(default_factory=lambda: env("FUTURES_SCANNER_PUSH_ENABLED","false")=="true")
     # ICT futures concept detectors (Phase 1: evidence-only, all default OFF).
-    ict_session_liquidity: bool = field(default_factory=lambda: env("ICT_SESSION_LIQUIDITY_ENABLED","false")=="true")
-    ict_htf_levels: bool = field(default_factory=lambda: env("ICT_HTF_LEVELS_ENABLED","false")=="true")
+    ict_session_liquidity: bool = field(default_factory=lambda: env("ICT_SESSION_LIQUIDITY_ENABLED","true")=="true")
+    ict_htf_levels: bool = field(default_factory=lambda: env("ICT_HTF_LEVELS_ENABLED","true")=="true")
     ict_turtle_soup: bool = field(default_factory=lambda: env("ICT_TURTLE_SOUP_ENABLED","false")=="true")
     ict_smt_divergence: bool = field(default_factory=lambda: env("ICT_SMT_DIVERGENCE_ENABLED","false")=="true")
     ict_aoi_zones: bool = field(default_factory=lambda: env("ICT_AOI_ZONES_ENABLED","false")=="true")
