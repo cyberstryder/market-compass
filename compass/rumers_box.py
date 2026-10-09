@@ -32,7 +32,7 @@ from .ict_paper import submit as _paper_submit
 NY = ZoneInfo("America/New_York")
 
 SCAN_THROTTLE = 120
-SUPPORTED_ROOTS = ('NQ', 'YM')
+SUPPORTED_ROOTS = ('NQ', 'YM', 'MNQ', 'MYM')
 WINDOW_MINUTES = 30
 VOL_LOOKBACK = 20
 STOP_BUF_ATR_FRAC_DEFAULT = 0.25

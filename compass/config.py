@@ -94,7 +94,7 @@ class Config:
     ict_gz_ema_fast: int = field(default_factory=lambda: int(env("ICT_GZ_EMA_FAST","9")))
     ict_gz_ema_slow: int = field(default_factory=lambda: int(env("ICT_GZ_EMA_SLOW","21")))
     ict_gz_ema_cross_lookback: int = field(default_factory=lambda: int(env("ICT_GZ_EMA_CROSS_LOOKBACK","5")))
-    ict_gz_ema_cross: bool = field(default_factory=lambda: env("ICT_GZ_EMA_CROSS_ENABLED","true")=="true")
+    ict_gz_ema_cross: bool = field(default_factory=lambda: env("ICT_GZ_EMA_CROSS_ENABLED","false")=="true")
     ict_bos_fvg: bool = field(default_factory=lambda: env("ICT_BOS_FVG_ENABLED","false")=="true")
     ict_bos_gz_vwap: bool = field(default_factory=lambda: env("ICT_BOS_GZ_VWAP_ENABLED","false")=="true")
     ict_morning_drive: bool = field(default_factory=lambda: env("ICT_MORNING_DRIVE_ENABLED","false")=="true")

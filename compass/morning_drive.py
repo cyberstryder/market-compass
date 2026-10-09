@@ -39,7 +39,7 @@ from .ict_paper import submit as _paper_submit
 NY = ZoneInfo("America/New_York")
 
 SCAN_THROTTLE = 120
-SUPPORTED_ROOTS = ('NQ',)
+SUPPORTED_ROOTS = ('NQ', 'MNQ')
 DRIVE_FRAC_DEFAULT = 0.50
 AVG_DAYS_DEFAULT = 14
 MIN_HISTORY_SESSIONS_DEFAULT = 14  # spec: 14-day average, all 14 required

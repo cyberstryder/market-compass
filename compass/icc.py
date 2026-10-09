@@ -45,7 +45,7 @@ from .ict_paper import submit as _paper_submit
 NY = ZoneInfo("America/New_York")
 
 SCAN_THROTTLE = 300
-SUPPORTED_ROOTS = ('GC', 'CL', 'NQ')
+SUPPORTED_ROOTS = ('GC', 'CL', 'NQ', 'MGC', 'MCL', 'MNQ')
 LOOKBACK_1H_DEFAULT = 120
 SWING_N_1H = 2
 SWING_N_4H = 2
