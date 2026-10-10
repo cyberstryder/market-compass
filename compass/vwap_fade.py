@@ -193,7 +193,7 @@ def detect(bars, symbol, now, sd_entry=2.0, sd_stop=3.0, min_rr=1.5, session='ny
 
 
 def scan(db, c, cfg, now):
-    """Throttled VWAP fade scan over configured symbols."""
+    """Throttled VWAP fade scan over configured symbols and all sessions."""
     if not getattr(cfg, 'vwap_fade_enabled', False):
         return {'ran': False, 'reason': 'disabled'}
     if now - db.get(c, 'vwap_fade:scanned_at', 0) < SCAN_THROTTLE:
@@ -205,23 +205,30 @@ def scan(db, c, cfg, now):
     
     sd_entry = number(getattr(cfg, 'vwap_fade_sd_entry', 2.0)) or 2.0
     sd_stop = number(getattr(cfg, 'vwap_fade_sd_stop', 3.0)) or 3.0
-    session = getattr(cfg, 'vwap_fade_session', 'ny') or 'ny'
+    # Run all three sessions simultaneously for comparison
+    # (vwap_fade_session config is deprecated, kept for backwards compat)
+    sessions = ['ny', 'london', 'asian']
     
     rows = {}
-    for symbol in symbols:
-        window = ict_bars(db, c, symbol)
-        bars = _bars_from_window(window)
-        if not bars:
-            continue
-        
-        sig = detect(bars, symbol, now, sd_entry=sd_entry, sd_stop=sd_stop, session=session)
-        if sig:
-            rows[symbol] = {'symbol': symbol, 'signal': sig, 'at': now}
-            db.append(c, 'vwap_fade_signal', 'ict_futures', symbol, now,
-                      sig, key='vwapfade:%s:%s' % (symbol, day(now)))
-            from .ict_paper import submit as _paper_submit
-            _paper_submit(db, c, cfg, now, 'vwap_fade', symbol, sig)
+    for session in sessions:
+        for symbol in symbols:
+            window = ict_bars(db, c, symbol)
+            bars = _bars_from_window(window)
+            if not bars:
+                continue
+            
+            sig = detect(bars, symbol, now, sd_entry=sd_entry, sd_stop=sd_stop, session=session)
+            if sig:
+                # Tag with session for separate tracking
+                sig['session'] = session
+                detector_name = 'vwap_fade_%s' % session
+                key = '%s:%s:%s' % (symbol, session, day(now))
+                rows[key] = {'symbol': symbol, 'session': session, 'signal': sig, 'at': now}
+                db.append(c, 'vwap_fade_signal', 'ict_futures', symbol, now,
+                          sig, key='vwapfade:%s' % key)
+                from .ict_paper import submit as _paper_submit
+                _paper_submit(db, c, cfg, now, detector_name, symbol, sig)
     
     db.put(c, 'vwap_fade:latest', {'at': now, 'rows': rows, 'status': 'running' if rows else 'idle'})
     db.put(c, 'vwap_fade:scanned_at', now)
-    return {'ran': True, 'symbols': len(rows)}
+    return {'ran': True, 'symbols': len(rows), 'sessions': sessions}
