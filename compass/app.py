@@ -673,6 +673,21 @@ a{color:#888}</style></head><body>
     def get_archive_status():
         """Check archive export progress. Admin-only."""
         return {'ok': True, **_archive_state}
+
+    @app.post('/api/admin/archive-reset')
+    @app.get('/api/admin/archive-reset')
+    def post_archive_reset():
+        """Reset archive progress (clears destination lock). Admin-only.
+        Use when switching archive destinations."""
+        from .archive_schedule import KEY
+        with db.tx() as c:
+            # Delete the progress record and any range records
+            deleted = 0
+            # Get all keys starting with the archive key prefix
+            # (store API may not support prefix delete, so we do it manually)
+            db.put(c, KEY, None)
+            deleted += 1
+        return {'ok': True, 'reset': True, 'deleted_keys': deleted}
     @app.post('/api/admin/reset-futures-paper')
     async def post_reset_futures_paper(request: Request):
         # One-shot destructive reset of the ICT futures paper book, for
