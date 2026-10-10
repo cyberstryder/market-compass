@@ -687,7 +687,7 @@ a{color:#888}</style></head><body>
             # Set fresh progress with correct destination
             db.put(c, KEY, dict(frontier=0, audit_cursor=0, audit_target=0,
                                verified_ranges=0, repairs=0, audit_passes=0,
-                               width=10000, destination=destination))
+                               width=100000, destination=destination))
         return {'ok': True, 'reset': True, 'destination': destination[:16]}
     @app.post('/api/admin/reset-futures-paper')
     async def post_reset_futures_paper(request: Request):
