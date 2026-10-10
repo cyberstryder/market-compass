@@ -21,7 +21,14 @@ from .ict_common import ict_bars
 
 SCAN_THROTTLE = 120
 
-# RTH open in CT
+# Session open times in CT (hour, minute)
+SESSION_OPENS = {
+    'ny': (8, 30),      # 8:30 AM CT (RTH open)
+    'london': (2, 0),   # 2:00 AM CT (London open)
+    'asian': (19, 0),   # 7:00 PM CT (Tokyo open, prior day)
+}
+
+# RTH open in CT (default for NY session)
 RTH_OPEN_HOUR = 8
 RTH_OPEN_MIN = 30
 
@@ -41,12 +48,21 @@ def _bars_from_window(window):
     return out
 
 
-def _rth_open_ts(day_ts):
-    """8:30 AM CT timestamp for given day."""
+def _session_open_ts(day_ts, session='ny'):
+    """Session open timestamp for given day. Session: 'ny', 'london', 'asian'."""
     import datetime
+    hour, minute = SESSION_OPENS.get(session, SESSION_OPENS['ny'])
     dt = datetime.datetime.fromtimestamp(day_ts, tz=CT)
-    open_dt = dt.replace(hour=RTH_OPEN_HOUR, minute=RTH_OPEN_MIN, second=0, microsecond=0)
+    # Asian session starts prior day evening
+    if session == 'asian':
+        dt = dt - datetime.timedelta(days=1)
+    open_dt = dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
     return int(open_dt.timestamp())
+
+
+def _rth_open_ts(day_ts):
+    """8:30 AM CT timestamp for given day. (Legacy, use _session_open_ts)"""
+    return _session_open_ts(day_ts, 'ny')
 
 
 def calculate_vwap(bars, anchor_ts):
@@ -82,19 +98,21 @@ def calculate_sd(bars, anchor_ts, vwap, lookback=20):
     return math.sqrt(variance) if variance > 0 else None
 
 
-def detect(bars, symbol, now, sd_entry=2.0, sd_stop=3.0, min_rr=1.5):
+def detect(bars, symbol, now, sd_entry=2.0, sd_stop=3.0, min_rr=1.5, session='ny'):
     """Pure: detect VWAP fade setup. Returns signal dict or None."""
     import datetime
     dt = datetime.datetime.fromtimestamp(now, tz=CT)
     
-    # Only during RTH (8:30 AM - 3:15 PM CT)
-    if dt.hour < 8 or (dt.hour == 8 and dt.minute < 30):
-        return None
-    if dt.hour > 15 or (dt.hour == 15 and dt.minute > 15):
-        return None
+    # Session time filter (only for NY session, others run 23h)
+    if session == 'ny':
+        # Only during RTH (8:30 AM - 3:15 PM CT)
+        if dt.hour < 8 or (dt.hour == 8 and dt.minute < 30):
+            return None
+        if dt.hour > 15 or (dt.hour == 15 and dt.minute > 15):
+            return None
     
     day_ts = int(dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
-    anchor = _rth_open_ts(day_ts)
+    anchor = _session_open_ts(day_ts, session)
     
     # Need bars after anchor
     if now < anchor + 30 * 60:  # Wait 30 min after open for VWAP to stabilize
@@ -187,6 +205,7 @@ def scan(db, c, cfg, now):
     
     sd_entry = number(getattr(cfg, 'vwap_fade_sd_entry', 2.0)) or 2.0
     sd_stop = number(getattr(cfg, 'vwap_fade_sd_stop', 3.0)) or 3.0
+    session = getattr(cfg, 'vwap_fade_session', 'ny') or 'ny'
     
     rows = {}
     for symbol in symbols:
@@ -195,7 +214,7 @@ def scan(db, c, cfg, now):
         if not bars:
             continue
         
-        sig = detect(bars, symbol, now, sd_entry=sd_entry, sd_stop=sd_stop)
+        sig = detect(bars, symbol, now, sd_entry=sd_entry, sd_stop=sd_stop, session=session)
         if sig:
             rows[symbol] = {'symbol': symbol, 'signal': sig, 'at': now}
             db.append(c, 'vwap_fade_signal', 'ict_futures', symbol, now,
