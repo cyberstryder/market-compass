@@ -634,8 +634,8 @@ a{color:#888}</style></head><body>
                                        'retention_days': v['retention_days'],
                                        'requires_archive': v['requires_archive']}
                                    for k, v in EVENT_POLICY.items()},
-                'study_policies': {k: {'retention_days': v['retention_days']}
-                                   for k, v in STUDY_POLICY.items()}}
+                'study_policies': [{'name': s['name'], 'retention_days': s['retention_days']}
+                                   for s in STUDY_POLICY]}}
 
     @app.post('/api/admin/reset-futures-paper')
     async def post_reset_futures_paper(request: Request):
