@@ -150,6 +150,9 @@ def create_app(cfg=None):
                 await asyncio.to_thread(db.shutdown)
 
     app=FastAPI(title="Market Compass",lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
+    # Gzip compression for API responses (cuts egress 70-80%)
+    from fastapi.middleware.gzip import GZipMiddleware
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
 
     @app.get('/api/spy-morning-brief')
     def spy_morning_brief():
