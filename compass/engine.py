@@ -650,6 +650,9 @@ class Engine:
             if getattr(self.cfg, 'gap_fade_enabled', False):
                 from .gap_fade import scan as gap_fade_scan
                 ict_summaries['gap_fade'] = gap_fade_scan(self.db,c,self.cfg,now)
+            if getattr(self.cfg, 'vwap_fade_enabled', False):
+                from .vwap_fade import scan as vwap_fade_scan
+                ict_summaries['vwap_fade'] = vwap_fade_scan(self.db,c,self.cfg,now)
             if self.cfg.ict_tier_a_b:
                 from .tier_a_b import scan as ict_tier_a_b_scan
                 ict_summaries['tier_a_b'] = ict_tier_a_b_scan(self.db,c,self.cfg,now)

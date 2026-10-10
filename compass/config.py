@@ -101,6 +101,10 @@ class Config:
     vix_regime_enabled: bool = field(default_factory=lambda: env("VIX_REGIME_ENABLED","false")=="true")
     vix_low_threshold: float = field(default_factory=lambda: float(env("VIX_LOW_THRESHOLD","15.0")))
     vix_high_threshold: float = field(default_factory=lambda: float(env("VIX_HIGH_THRESHOLD","25.0")))
+    # VWAP fade detector (futures): mean reversion from 2-3 SD extremes
+    vwap_fade_enabled: bool = field(default_factory=lambda: env("VWAP_FADE_ENABLED","false")=="true")
+    vwap_fade_sd_entry: float = field(default_factory=lambda: float(env("VWAP_FADE_SD_ENTRY","2.0")))
+    vwap_fade_sd_stop: float = field(default_factory=lambda: float(env("VWAP_FADE_SD_STOP","3.0")))
     mu_scalp: bool = field(default_factory=lambda: env("MU_SCALP_ENABLED","true")=="true")
     ict_tier_a_b: bool = field(default_factory=lambda: env("ICT_TIER_A_B_ENABLED","false")=="true")
     ict_golden_zone: bool = field(default_factory=lambda: env("ICT_GOLDEN_ZONE_ENABLED","false")=="true")
