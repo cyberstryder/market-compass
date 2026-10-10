@@ -92,6 +92,15 @@ class Config:
     ict_aoi_fade: bool = field(default_factory=lambda: env("ICT_AOI_FADE_ENABLED","false")=="true")
     ict_continuation: bool = field(default_factory=lambda: env("ICT_CONTINUATION_ENABLED","false")=="true")
     ict_trend_rider: bool = field(default_factory=lambda: env("ICT_TREND_RIDER_ENABLED","false")=="true")
+    # Gap fade detector (futures): fade overnight gaps at RTH open
+    gap_fade_enabled: bool = field(default_factory=lambda: env("GAP_FADE_ENABLED","false")=="true")
+    gap_fade_min_pct: float = field(default_factory=lambda: float(env("GAP_FADE_MIN_PCT","0.005")))
+    gap_fade_max_pct: float = field(default_factory=lambda: float(env("GAP_FADE_MAX_PCT","0.02")))
+    gap_fade_target_pct: float = field(default_factory=lambda: float(env("GAP_FADE_TARGET_PCT","0.5")))
+    # VIX regime filter: adjust strategy selection based on VIX level
+    vix_regime_enabled: bool = field(default_factory=lambda: env("VIX_REGIME_ENABLED","false")=="true")
+    vix_low_threshold: float = field(default_factory=lambda: float(env("VIX_LOW_THRESHOLD","15.0")))
+    vix_high_threshold: float = field(default_factory=lambda: float(env("VIX_HIGH_THRESHOLD","25.0")))
     mu_scalp: bool = field(default_factory=lambda: env("MU_SCALP_ENABLED","true")=="true")
     ict_tier_a_b: bool = field(default_factory=lambda: env("ICT_TIER_A_B_ENABLED","false")=="true")
     ict_golden_zone: bool = field(default_factory=lambda: env("ICT_GOLDEN_ZONE_ENABLED","false")=="true")

@@ -606,6 +606,23 @@ class Engine:
             # by dependency: liquidity map -> HTF levels -> event detectors ->
             # confluence tiering.
             ict_summaries = {}
+            # VIX regime filter: skip detectors that underperform in current regime
+            _vix_regime = 'normal'
+            if getattr(self.cfg, 'vix_regime_enabled', False):
+                try:
+                    from .vix_regime import get_regime_info, should_run_detector
+                    _regime_info = get_regime_info(self.db, c, self.cfg)
+                    _vix_regime = _regime_info.get('regime', 'normal')
+                except Exception:
+                    pass
+            def _should_run(detector_name):
+                if not getattr(self.cfg, 'vix_regime_enabled', False):
+                    return True
+                try:
+                    from .vix_regime import should_run_detector
+                    return should_run_detector(detector_name, _vix_regime)
+                except Exception:
+                    return True
             if self.cfg.ict_session_liquidity:
                 from .session_liquidity import scan as ict_session_liquidity_scan
                 ict_summaries['session_liquidity'] = ict_session_liquidity_scan(self.db,c,self.cfg,now)
@@ -630,6 +647,9 @@ class Engine:
             if getattr(self.cfg, 'ict_trend_rider', False):
                 from .trend_rider import scan as ict_trend_rider_scan
                 ict_summaries['trend_rider'] = ict_trend_rider_scan(self.db,c,self.cfg,now)
+            if getattr(self.cfg, 'gap_fade_enabled', False):
+                from .gap_fade import scan as gap_fade_scan
+                ict_summaries['gap_fade'] = gap_fade_scan(self.db,c,self.cfg,now)
             if self.cfg.ict_tier_a_b:
                 from .tier_a_b import scan as ict_tier_a_b_scan
                 ict_summaries['tier_a_b'] = ict_tier_a_b_scan(self.db,c,self.cfg,now)
