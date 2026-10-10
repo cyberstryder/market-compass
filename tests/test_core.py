@@ -186,7 +186,7 @@ def test_alpaca_unmatched_contracts_remain_in_coverage(db,cfg):
         metadata={"option_contracts":[{"symbol":"SPY260914C00102000","expiration_date":"2026-09-14","strike_price":"102","type":"call","size":"100","open_interest":"100"}]}
         snapshots={"snapshots":{"SPY260914P00102000":{"greeks":{"gamma":.1}}}}
         def handler(request):
-            return httpx.Response(200,json=metadata if request.url.host=="paper-api.alpaca.markets" else snapshots)
+            return httpx.Response(200,json=metadata if request.url.host in ("paper-api.alpaca.markets","api.alpaca.markets") else snapshots)
         collector.client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
         contracts,complete=await collector.alpaca_chain("SPY")
         assert complete and len(contracts)==2
