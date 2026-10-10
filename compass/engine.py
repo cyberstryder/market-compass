@@ -636,25 +636,25 @@ class Engine:
             if self.cfg.ict_htf_levels:
                 from .htf_levels import scan as ict_htf_levels_scan
                 ict_summaries['htf_levels'] = ict_htf_levels_scan(self.db,c,self.cfg,now)
-            if self.cfg.ict_turtle_soup:
+            if self.cfg.ict_turtle_soup and _should_run('turtle_soup'):
                 from .turtle_soup import scan as ict_turtle_soup_scan
                 ict_summaries['turtle_soup'] = ict_turtle_soup_scan(self.db,c,self.cfg,now)
             if self.cfg.ict_smt_divergence:
                 from .smt_divergence import scan as ict_smt_divergence_scan
                 ict_summaries['smt_divergence'] = ict_smt_divergence_scan(self.db,c,self.cfg,now)
-            if self.cfg.ict_aoi_zones:
+            if self.cfg.ict_aoi_zones and _should_run('aoi_zones'):
                 from .aoi_zones import scan as ict_aoi_zones_scan
                 ict_summaries['aoi_zones'] = ict_aoi_zones_scan(self.db,c,self.cfg,now)
-            if self.cfg.ict_aoi_fade:
+            if self.cfg.ict_aoi_fade and _should_run('aoi_fade'):
                 from .aoi_fade import scan as ict_aoi_fade_scan
                 ict_summaries['aoi_fade'] = ict_aoi_fade_scan(self.db,c,self.cfg,now)
-            if self.cfg.ict_continuation:
+            if self.cfg.ict_continuation and _should_run('continuation'):
                 from .continuation import scan as ict_continuation_scan
                 ict_summaries['continuation'] = ict_continuation_scan(self.db,c,self.cfg,now)
             if getattr(self.cfg, 'ict_trend_rider', False):
                 from .trend_rider import scan as ict_trend_rider_scan
                 ict_summaries['trend_rider'] = ict_trend_rider_scan(self.db,c,self.cfg,now)
-            if getattr(self.cfg, 'gap_fade_enabled', False):
+            if getattr(self.cfg, 'gap_fade_enabled', False) and _should_run('gap_fade'):
                 from .gap_fade import scan as gap_fade_scan
                 ict_summaries['gap_fade'] = gap_fade_scan(self.db,c,self.cfg,now)
             if getattr(self.cfg, 'vwap_fade_enabled', False):
@@ -669,22 +669,22 @@ class Engine:
             if self.cfg.ict_golden_zone:
                 from .golden_zone import scan as ict_golden_zone_scan
                 ict_summaries['golden_zone'] = ict_golden_zone_scan(self.db,c,self.cfg,now)
-            if self.cfg.ict_bos_fvg:
+            if self.cfg.ict_bos_fvg and _should_run('bos_fvg'):
                 from .bos_fvg import scan as ict_bos_fvg_scan
                 ict_summaries['bos_fvg'] = ict_bos_fvg_scan(self.db,c,self.cfg,now)
-            if self.cfg.ict_bos_gz_vwap:
+            if self.cfg.ict_bos_gz_vwap and _should_run('bos_gz_vwap'):
                 from .bos_gz_vwap import scan as ict_bos_gz_vwap_scan
                 ict_summaries['bos_gz_vwap'] = ict_bos_gz_vwap_scan(self.db,c,self.cfg,now)
             # YouTube-trader method detectors: evidence snapshots always; paper
             # fills only when ICT_FUTURES_PAPER_ENABLED is also on (handled
             # inside each scan via ict_paper).
-            if self.cfg.ict_morning_drive:
+            if self.cfg.ict_morning_drive and _should_run('morning_drive'):
                 from .morning_drive import scan as yt_morning_drive_scan
                 ict_summaries['morning_drive'] = yt_morning_drive_scan(self.db,c,self.cfg,now)
-            if self.cfg.ict_icc:
+            if self.cfg.ict_icc and _should_run('icc'):
                 from .icc import scan as yt_icc_scan
                 ict_summaries['icc'] = yt_icc_scan(self.db,c,self.cfg,now)
-            if self.cfg.ict_rumers_box:
+            if self.cfg.ict_rumers_box and _should_run('rumers_box'):
                 from .rumers_box import scan as yt_rumers_box_scan
                 ict_summaries['rumers_box'] = yt_rumers_box_scan(self.db,c,self.cfg,now)
             # Daily trend-bias regime (Rumers 3R rule): evidence-only context,

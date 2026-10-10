@@ -145,3 +145,25 @@ def test_regime_info_disabled_returns_normal():
     db, cfg = FakeDB(), FakeCfg(vix_regime_enabled=False)
     info = get_regime_info(db, None, cfg)
     assert info == {"enabled": False, "regime": "normal", "vix": None}
+
+
+def test_engine_dispatch_calls_vix_gate():
+    """Regression: _should_run must actually gate detector dispatch in
+    compass/engine.py (defined-but-unused happened on 2026-10-09/10)."""
+    import re
+    src = open(os.path.join(os.path.dirname(__file__), "..", "compass",
+                            "engine.py")).read()
+    # detectors the gate is specified for: 6 breakout + 4 fade
+    gated = {"bos_fvg", "bos_gz_vwap", "continuation", "morning_drive",
+             "icc", "rumers_box", "turtle_soup", "aoi_zones", "aoi_fade",
+             "gap_fade"}
+    # each gated detector's dispatch line must call _should_run('<name>')
+    for name in sorted(gated):
+        pattern = r"_should_run\(['\"]%s['\"]\)" % re.escape(name)
+        assert re.search(pattern, src), \
+            "engine dispatch does not gate %r via _should_run" % name
+    # context/evidence detectors must NOT be regime-gated
+    for name in ("session_liquidity", "htf_levels", "trend_bias"):
+        pattern = r"_should_run\(['\"]%s['\"]\)" % re.escape(name)
+        assert not re.search(pattern, src), \
+            "context detector %r must stay ungated" % name
