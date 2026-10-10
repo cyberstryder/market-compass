@@ -636,6 +636,42 @@ a{color:#888}</style></head><body>
                                    for k, v in EVENT_POLICY.items()},
                 'study_policies': [{'name': s['name'], 'retention_days': s['retention_days']}
                                    for s in STUDY_POLICY]}
+
+    # Archive export background task state
+    _archive_state = {'running': False, 'started_at': None, 'result': None, 'error': None}
+
+    @app.post('/api/admin/archive-start')
+    def post_archive_start():
+        """Start archive export to R2 in background. Admin-only."""
+        import threading
+        if _archive_state['running']:
+            return {'ok': False, 'error': 'Archive already running'}
+        _archive_state['running'] = True
+        _archive_state['started_at'] = time.time()
+        _archive_state['result'] = None
+        _archive_state['error'] = None
+
+        def _run():
+            try:
+                from .archive_object import main as archive_main
+                import io
+                from contextlib import redirect_stdout
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    archive_main()
+                _archive_state['result'] = buf.getvalue()[-2000:]
+            except Exception as e:
+                _archive_state['error'] = str(e)[:1000]
+            finally:
+                _archive_state['running'] = False
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {'ok': True, 'started': True}
+
+    @app.get('/api/admin/archive-status')
+    def get_archive_status():
+        """Check archive export progress. Admin-only."""
+        return {'ok': True, **_archive_state}
     @app.post('/api/admin/reset-futures-paper')
     async def post_reset_futures_paper(request: Request):
         # One-shot destructive reset of the ICT futures paper book, for
