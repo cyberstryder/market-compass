@@ -674,6 +674,41 @@ a{color:#888}</style></head><body>
         """Check archive export progress. Admin-only."""
         return {'ok': True, **_archive_state}
 
+    _simple_archive_state = {'running': False, 'started_at': None,
+                             'result': None, 'error': None}
+
+    @app.post('/api/admin/simple-archive-start')
+    @app.get('/api/admin/simple-archive-start')
+    def post_simple_archive_start():
+        """Start simple archive (no safety checks). Admin-only."""
+        import threading
+        if _simple_archive_state['running']:
+            return {'ok': False, 'error': 'Already running'}
+        _simple_archive_state.update(running=True, started_at=time.time(),
+                                     result=None, error=None)
+
+        def _run():
+            try:
+                from .simple_archive import run_simple_archive, _s3_client
+                import os
+                client = _s3_client()
+                bucket = os.environ['ARCHIVE_BUCKET']
+                result = run_simple_archive(db, client, bucket)
+                _simple_archive_state['result'] = result
+            except Exception as e:
+                import traceback
+                _simple_archive_state['error'] = str(e)[:2000] + "\n" + traceback.format_exc()[-2000:]
+            finally:
+                _simple_archive_state['running'] = False
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {'ok': True, 'started': True}
+
+    @app.get('/api/admin/simple-archive-status')
+    def get_simple_archive_status():
+        """Check simple archive progress. Admin-only."""
+        return {'ok': True, **_simple_archive_state}
+
     @app.post('/api/admin/archive-reset')
     @app.get('/api/admin/archive-reset')
     def post_archive_reset():
