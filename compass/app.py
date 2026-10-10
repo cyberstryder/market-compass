@@ -641,6 +641,7 @@ a{color:#888}</style></head><body>
     _archive_state = {'running': False, 'started_at': None, 'result': None, 'error': None}
 
     @app.post('/api/admin/archive-start')
+    @app.get('/api/admin/archive-start')
     def post_archive_start():
         """Start archive export to R2 in background. Admin-only."""
         import threading
