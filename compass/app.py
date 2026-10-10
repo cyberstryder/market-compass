@@ -622,13 +622,20 @@ a{color:#888}</style></head><body>
 
     @app.get('/api/admin/archive-dry-run')
     def get_archive_dry_run():
-        """Show what archive_prune would delete. Admin-only, dry-run only."""
-        from .archive_prune import plan
-        try:
-            result = plan(db)
-            return {'ok': True, 'plan': result}
-        except Exception as e:
-            return {'ok': False, 'error': str(e)[:500]}
+        """Show archive retention policies. Admin-only, dry-run only.
+        Exact row counts timeout on the 133M-row events table, so this
+        returns the policies and known table sizes instead."""
+        from .archive_prune import EVENT_POLICY, STUDY_POLICY
+        return {'ok': True,
+                'note': 'Exact counts timeout on 133M-row events table. '
+                        'From Postgres dashboard 2026-10-10: events=103.6GB/133.5M rows. '
+                        'Policies below show what would be archived per retention.',
+                'event_policies': {k: {'kinds': v['kinds'],
+                                       'retention_days': v['retention_days'],
+                                       'requires_archive': v['requires_archive']}
+                                   for k, v in EVENT_POLICY.items()},
+                'study_policies': {k: {'retention_days': v['retention_days']}
+                                   for k, v in STUDY_POLICY.items()}}
 
     @app.post('/api/admin/reset-futures-paper')
     async def post_reset_futures_paper(request: Request):
