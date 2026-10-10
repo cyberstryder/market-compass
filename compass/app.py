@@ -620,6 +620,16 @@ a{color:#888}</style></head><body>
         except Exception as e:
             return {'ok': False, 'error': str(e)[:500]}
 
+    @app.get('/api/admin/archive-dry-run')
+    def get_archive_dry_run():
+        """Show what archive_prune would delete. Admin-only, dry-run only."""
+        from .archive_prune import plan
+        try:
+            result = plan(db)
+            return {'ok': True, 'plan': result}
+        except Exception as e:
+            return {'ok': False, 'error': str(e)[:500]}
+
     @app.post('/api/admin/reset-futures-paper')
     async def post_reset_futures_paper(request: Request):
         # One-shot destructive reset of the ICT futures paper book, for
