@@ -635,8 +635,7 @@ a{color:#888}</style></head><body>
                                        'requires_archive': v['requires_archive']}
                                    for k, v in EVENT_POLICY.items()},
                 'study_policies': [{'name': s['name'], 'retention_days': s['retention_days']}
-                                   for s in STUDY_POLICY]}}
-
+                                   for s in STUDY_POLICY]}
     @app.post('/api/admin/reset-futures-paper')
     async def post_reset_futures_paper(request: Request):
         # One-shot destructive reset of the ICT futures paper book, for
