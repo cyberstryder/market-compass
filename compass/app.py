@@ -588,6 +588,38 @@ a{color:#888}</style></head><body>
 <p><a href="/detailed">← Back to workspace</a></p>
 </body></html>"""
 
+    @app.get('/api/admin/s3-test')
+    def get_s3_test():
+        """Test S3 archive connectivity. Admin-only (not in public set)."""
+        import os
+        required = ['ARCHIVE_BUCKET', 'ARCHIVE_ENDPOINT', 'ARCHIVE_REGION',
+                    'ARCHIVE_ACCESS_KEY_ID', 'ARCHIVE_SECRET_ACCESS_KEY']
+        missing = [k for k in required if not os.environ.get(k)]
+        if missing:
+            return {'ok': False, 'missing': missing}
+        try:
+            import boto3
+            from botocore.config import Config as BotoConfig
+            client = boto3.client('s3',
+                endpoint_url=os.environ['ARCHIVE_ENDPOINT'],
+                region_name=os.environ['ARCHIVE_REGION'],
+                aws_access_key_id=os.environ['ARCHIVE_ACCESS_KEY_ID'],
+                aws_secret_access_key=os.environ['ARCHIVE_SECRET_ACCESS_KEY'],
+                config=BotoConfig(connect_timeout=5, read_timeout=10,
+                    retries={'mode': 'standard', 'max_attempts': 2}))
+            bucket = os.environ['ARCHIVE_BUCKET']
+            # Test: list objects (read-only check)
+            resp = client.list_objects_v2(Bucket=bucket, MaxKeys=1)
+            # Test: write and delete a small test object
+            test_key = '_compass-connectivity-test'
+            client.put_object(Bucket=bucket, Key=test_key, Body=b'test')
+            client.delete_object(Bucket=bucket, Key=test_key)
+            return {'ok': True, 'bucket': bucket,
+                    'endpoint': os.environ['ARCHIVE_ENDPOINT'],
+                    'region': os.environ['ARCHIVE_REGION']}
+        except Exception as e:
+            return {'ok': False, 'error': str(e)[:500]}
+
     @app.post('/api/admin/reset-futures-paper')
     async def post_reset_futures_paper(request: Request):
         # One-shot destructive reset of the ICT futures paper book, for
