@@ -98,7 +98,7 @@ class Config:
     gap_fade_max_pct: float = field(default_factory=lambda: float(env("GAP_FADE_MAX_PCT","0.02")))
     gap_fade_target_pct: float = field(default_factory=lambda: float(env("GAP_FADE_TARGET_PCT","0.5")))
     # VIX regime filter: adjust strategy selection based on VIX level
-    vix_regime_enabled: bool = field(default_factory=lambda: env("VIX_REGIME_ENABLED","false")=="true")
+    vix_regime_enabled: bool = field(default_factory=lambda: env("VIX_REGIME_ENABLED","true")=="true")
     vix_low_threshold: float = field(default_factory=lambda: float(env("VIX_LOW_THRESHOLD","15.0")))
     vix_high_threshold: float = field(default_factory=lambda: float(env("VIX_HIGH_THRESHOLD","25.0")))
     # VWAP fade detector (futures): mean reversion from 2-3 SD extremes
