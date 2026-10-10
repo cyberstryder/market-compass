@@ -24,6 +24,7 @@ RETENTION = {
     'exposure': 90,
     'bar': 365,
     'mapping': 365,
+    'alert_delivery': 30,  # delivery receipts
     # audit trail kinds: 365 days
 }
 
@@ -113,10 +114,8 @@ def run_simple_archive(db, client, bucket, max_batches_per_kind=1000):
     now = time.time()
     summary = {'kinds': {}, 'total_rows': 0, 'started_at': now}
 
-    # Get distinct kinds
-    with db.tx() as c:
-        kinds = [r[0] for r in c.execute(
-            select(events.c.kind).distinct()).all()]
+    # Hardcoded kinds (SELECT DISTINCT times out on 133M rows)
+    kinds = list(RETENTION.keys()) + list(AUDIT_KINDS) + ['alert_delivery']
 
     for kind in kinds:
         retention = _retention_days(kind)
