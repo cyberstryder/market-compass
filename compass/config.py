@@ -93,7 +93,7 @@ class Config:
     ict_continuation: bool = field(default_factory=lambda: env("ICT_CONTINUATION_ENABLED","false")=="true")
     ict_trend_rider: bool = field(default_factory=lambda: env("ICT_TREND_RIDER_ENABLED","false")=="true")
     # Gap fade detector (futures): fade overnight gaps at RTH open
-    gap_fade_enabled: bool = field(default_factory=lambda: env("GAP_FADE_ENABLED","false")=="true")
+    gap_fade_enabled: bool = field(default_factory=lambda: env("GAP_FADE_ENABLED","true")=="true")
     gap_fade_min_pct: float = field(default_factory=lambda: float(env("GAP_FADE_MIN_PCT","0.005")))
     gap_fade_max_pct: float = field(default_factory=lambda: float(env("GAP_FADE_MAX_PCT","0.02")))
     gap_fade_target_pct: float = field(default_factory=lambda: float(env("GAP_FADE_TARGET_PCT","0.5")))
@@ -102,7 +102,7 @@ class Config:
     vix_low_threshold: float = field(default_factory=lambda: float(env("VIX_LOW_THRESHOLD","15.0")))
     vix_high_threshold: float = field(default_factory=lambda: float(env("VIX_HIGH_THRESHOLD","25.0")))
     # VWAP fade detector (futures): mean reversion from 2-3 SD extremes
-    vwap_fade_enabled: bool = field(default_factory=lambda: env("VWAP_FADE_ENABLED","false")=="true")
+    vwap_fade_enabled: bool = field(default_factory=lambda: env("VWAP_FADE_ENABLED","true")=="true")
     vwap_fade_sd_entry: float = field(default_factory=lambda: float(env("VWAP_FADE_SD_ENTRY","2.0")))
     vwap_fade_sd_stop: float = field(default_factory=lambda: float(env("VWAP_FADE_SD_STOP","3.0")))
     vwap_fade_session: str = field(default_factory=lambda: env("VWAP_FADE_SESSION","ny"))
