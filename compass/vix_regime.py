@@ -12,7 +12,71 @@ Research shows 10-20 percentage point win rate swings for the same strategy
 across regimes. This filter removes negative alpha by disabling strategies
 in regimes where they underperform.
 """
+import time
+
 from .market import number
+
+SCAN_THROTTLE = 300  # 5 minutes; VIX moves intraday, gap fade needs a morning read
+SNAPSHOT_URL = "https://api.massive.com/v3/snapshot"
+VIX_TICKER = "I:VIX"
+
+
+def fetch_vix(api_key, timeout=20):
+    """Fetch current VIX from the Massive unified indices snapshot.
+
+    Massive is already the primary options-data vendor (MASSIVE_API_KEY);
+    the unified snapshot endpoint serves I:VIX with no new keys needed.
+    Returns {"value", "market_status", "last_updated", ...} or None.
+    """
+    import httpx
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.get(SNAPSHOT_URL,
+                          params={"ticker": VIX_TICKER, "apiKey": api_key})
+    resp.raise_for_status()
+    results = (resp.json() or {}).get("results") or []
+    for row in results:
+        if str(row.get("ticker", "")).upper() != VIX_TICKER:
+            continue
+        try:
+            v = float(row.get("value"))
+        except (TypeError, ValueError):
+            return None
+        if v <= 0:
+            return None
+        return {
+            "value": v,
+            "market_status": row.get("market_status"),
+            "last_updated": row.get("last_updated"),
+            "timeframe": row.get("timeframe"),
+            "source": "massive",
+            "at": time.time(),
+        }
+    return None
+
+
+def scan(db, c, cfg, now):
+    """Throttled pass: fetch VIX from Massive, store under the keys
+    get_vix() probes ('vix:latest' first). Runs whenever the Massive key
+    is present so data is already flowing before VIX_REGIME_ENABLED flips."""
+    if not getattr(cfg, "massive", ""):
+        return {"ran": False, "reason": "no_api_key"}
+    if now - db.get(c, "vix:scanned_at", 0) < SCAN_THROTTLE:
+        return {"ran": False, "reason": "throttled"}
+    db.put(c, "vix:scanned_at", now)
+    try:
+        row = fetch_vix(cfg.massive)
+    except Exception as e:
+        db.health("vix_regime", "error", "fetch failed: %s" % (e,),
+                  poll_ts=now)
+        return {"ran": True, "fetched": False, "error": str(e)}
+    if not row or not row.get("value"):
+        db.health("vix_regime", "error", "no value in snapshot", poll_ts=now)
+        return {"ran": True, "fetched": False, "error": "no_value"}
+    db.put(c, "vix:latest", row)
+    db.health("vix_regime", "available",
+              "VIX %.2f (%s)" % (row["value"], row.get("market_status") or "?"),
+              poll_ts=now)
+    return {"ran": True, "fetched": True, "vix": row["value"]}
 
 
 def get_vix(db, c):
@@ -74,7 +138,6 @@ def should_run_detector(detector_name, regime):
 
 def get_regime_info(db, c, cfg):
     """Get current regime info. Returns dict with regime, vix, and timestamp."""
-    import time
     if not getattr(cfg, 'vix_regime_enabled', False):
         return {'enabled': False, 'regime': 'normal', 'vix': None}
     

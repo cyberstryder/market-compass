@@ -606,6 +606,13 @@ class Engine:
             # by dependency: liquidity map -> HTF levels -> event detectors ->
             # confluence tiering.
             ict_summaries = {}
+            # VIX data feed: keep the regime keys fresh before the gating
+            # block below reads them. Runs whenever the Massive key exists so
+            # data is already flowing when VIX_REGIME_ENABLED is flipped.
+            vix_regime_summary = None
+            if getattr(self.cfg, "massive", ""):
+                from .vix_regime import scan as vix_regime_scan
+                vix_regime_summary = vix_regime_scan(self.db, c, self.cfg, now)
             # VIX regime filter: skip detectors that underperform in current regime
             _vix_regime = 'normal'
             if getattr(self.cfg, 'vix_regime_enabled', False):
