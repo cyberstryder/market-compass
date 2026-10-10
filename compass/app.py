@@ -679,10 +679,16 @@ a{color:#888}</style></head><body>
     def post_archive_reset():
         """Reset archive progress (clears destination lock). Admin-only.
         Use when switching archive destinations."""
+        import os, hashlib
         from .archive_schedule import KEY
+        bucket = os.environ.get('ARCHIVE_BUCKET', '')
+        destination = hashlib.sha256(bucket.encode()).hexdigest()
         with db.tx() as c:
-            db.delete(c, KEY)
-        return {'ok': True, 'reset': True}
+            # Set fresh progress with correct destination
+            db.put(c, KEY, dict(frontier=0, audit_cursor=0, audit_target=0,
+                               verified_ranges=0, repairs=0, audit_passes=0,
+                               width=10000, destination=destination))
+        return {'ok': True, 'reset': True, 'destination': destination[:16]}
     @app.post('/api/admin/reset-futures-paper')
     async def post_reset_futures_paper(request: Request):
         # One-shot destructive reset of the ICT futures paper book, for
