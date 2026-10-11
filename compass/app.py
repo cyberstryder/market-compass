@@ -709,6 +709,24 @@ a{color:#888}</style></head><body>
         """Check simple archive progress. Admin-only."""
         return {'ok': True, **_simple_archive_state}
 
+    @app.post('/api/admin/simple-archive-chunk')
+    @app.get('/api/admin/simple-archive-chunk')
+    def post_simple_archive_chunk():
+        """Process one chunk (20 batches) of the archive synchronously.
+        Admin-only. Safe to call repeatedly - resumes from DB progress.
+        Returns immediately with results (no background thread)."""
+        from .simple_archive import run_archive_chunk, _s3_client
+        import os
+        try:
+            client = _s3_client()
+            bucket = os.environ['ARCHIVE_BUCKET']
+            result = run_archive_chunk(db, client, bucket, max_batches=20)
+            return {'ok': True, **result}
+        except Exception as e:
+            import traceback
+            return {'ok': False, 'error': str(e)[:1000],
+                    'traceback': traceback.format_exc()[-2000:]}
+
     @app.post('/api/admin/archive-create-index')
     @app.get('/api/admin/archive-create-index')
     def post_archive_create_index():

@@ -151,3 +151,66 @@ def run_simple_archive(db, client, bucket, max_batches_per_kind=1000):
     summary['finished_at'] = time.time()
     summary['elapsed_s'] = summary['finished_at'] - now
     return summary
+
+
+def run_archive_chunk(db, client, bucket, max_batches=20):
+    """Process up to max_batches total (across all kinds). Returns summary.
+    Designed for repeated HTTP-triggered chunks - each call does a small
+    amount of work and returns. Safe to call repeatedly; resumes from DB."""
+    now = time.time()
+    summary = {'batches_done': 0, 'rows': 0, 'kinds_touched': [],
+               'complete': True, 'started_at': now}
+
+    kinds = list(RETENTION.keys()) + list(AUDIT_KINDS) + ['alert_delivery']
+
+    batches_left = max_batches
+    for kind in kinds:
+        if batches_left <= 0:
+            summary['complete'] = False
+            break
+        retention = _retention_days(kind)
+        if retention is None:
+            continue
+
+        cutoff = now - retention * DAY
+        progress_key = f"simple-archive-progress:{kind}"
+        with db.tx() as c:
+            after_id = db.get(c, progress_key, 0) or 0
+
+        kind_batches = 0
+        while batches_left > 0:
+            n, last_id = export_batch(db, client, bucket, kind, cutoff,
+                                      after_id)
+            if n == 0:
+                break
+            summary['rows'] += n
+            summary['batches_done'] += 1
+            kind_batches += 1
+            batches_left -= 1
+            after_id = last_id
+            with db.tx() as c:
+                db.put(c, progress_key, after_id)
+
+        if kind_batches > 0 and kind not in summary['kinds_touched']:
+            summary['kinds_touched'].append(kind)
+
+        # If this kind still has more data, we're not complete
+        # (check by trying one more batch peek)
+        if kind_batches > 0:
+            # Peek: is there more?
+            with db.tx() as c:
+                c.execute(__import__('sqlalchemy').text(
+                    "SET LOCAL statement_timeout = '30s'"))
+                from sqlalchemy import select, func
+                cnt = c.execute(
+                    select(func.count()).select_from(events).where(
+                        events.c.kind == kind,
+                        events.c.ts < cutoff,
+                        events.c.id > after_id)
+                ).scalar()
+            if cnt and cnt > 0:
+                summary['complete'] = False
+
+    summary['finished_at'] = time.time()
+    summary['elapsed_s'] = summary['finished_at'] - now
+    return summary
