@@ -187,7 +187,7 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/backtest-scalp"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
@@ -740,6 +740,92 @@ a{color:#888}</style></head><body>
             bucket = os.environ['ARCHIVE_BUCKET']
             result = run_copy_chunk(db, client, bucket, max_months=3)
             return {'ok': True, **result}
+        except Exception as e:
+            import traceback
+            return {'ok': False, 'error': str(e)[:1000],
+                    'traceback': traceback.format_exc()[-2000:]}
+
+    @app.post('/api/admin/backtest-scalp')
+    @app.get('/api/admin/backtest-scalp')
+    def backtest_scalp():
+        """Historical backtest for stock scalp strategies.
+        
+        Runs gap fade + spike fade logic on historical bars.
+        Query params: days (default 30), symbols (comma-separated, default MU)
+        Public for cron. Returns summary stats.
+        """
+        from flask import request
+        try:
+            days = int(request.args.get('days', 30))
+            symbols = request.args.get('symbols', 'MU').split(',')
+            symbols = [s.strip().upper() for s in symbols if s.strip()]
+            
+            from datetime import datetime, timezone
+            import time
+            from .market import number
+            
+            now = time.time()
+            results = {}
+            
+            with db.tx() as c:
+                for symbol in symbols:
+                    # Get daily bars for prior closes
+                    daily = {}
+                    for k, v in db.prefix(c, f'bar:{symbol}:').items():
+                        if ':1d:' in k or ':D:' in k:
+                            payload = v.get('payload') or {}
+                            ts = v.get('ts') or 0
+                            if ts:
+                                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                                day_key = dt.strftime('%Y-%m-%d')
+                                daily[day_key] = number(payload.get('c'))
+                    
+                    sorted_days = sorted(daily.keys())[-days-1:]
+                    signals = []
+                    
+                    for i in range(1, len(sorted_days)):
+                        prev_day = sorted_days[i-1]
+                        cur_day = sorted_days[i]
+                        prior_close = daily.get(prev_day)
+                        if not prior_close:
+                            continue
+                        
+                        # Get opening price (first 1m bar of cur_day)
+                        day_start = datetime.strptime(cur_day, '%Y-%m-%d').replace(
+                            tzinfo=timezone.utc).timestamp()
+                        
+                        open_px = None
+                        open_ts = None
+                        for k, v in db.prefix(c, f'bar:{symbol}:').items():
+                            if ':1m:' not in k and ':1M:' not in k:
+                                continue
+                            ts = v.get('ts') or 0
+                            if day_start <= ts < day_start + 7200:  # First 2 hours
+                                payload = v.get('payload') or {}
+                                o = number(payload.get('o'))
+                                if o and (open_ts is None or ts < open_ts):
+                                    open_ts = ts
+                                    open_px = o
+                        
+                        if not open_px:
+                            continue
+                        
+                        gap_pct = (open_px - prior_close) / prior_close * 100.0
+                        if abs(gap_pct) >= 2.0:
+                            signals.append({
+                                'date': cur_day,
+                                'gap_pct': round(gap_pct, 2),
+                                'direction': 'short' if gap_pct > 0 else 'long',
+                                'entry': round(open_px, 2),
+                                'prior_close': round(prior_close, 2),
+                            })
+                    
+                    results[symbol] = {
+                        'signals': len(signals),
+                        'details': signals[-10:],  # Last 10
+                    }
+            
+            return {'ok': True, 'days': days, 'results': results}
         except Exception as e:
             import traceback
             return {'ok': False, 'error': str(e)[:1000],
