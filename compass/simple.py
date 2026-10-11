@@ -481,6 +481,7 @@ def _0dte(db, c, now):
         pass
     per_kind = defaultdict(list)
     per_rule = defaultdict(list)
+    per_underlying = defaultdict(list)
     data_gap_count = 0
     data_gap_pnl = 0.0
     open_count = 0
@@ -498,6 +499,10 @@ def _0dte(db, c, now):
             pnl = _num(t.get("pnl"))
             won = pnl is not None and pnl > 0
             per_kind[t.get("kind") or "?"].append((won, pnl))
+            # Track scanner trades by underlying (MU, AAPL, TSLA, etc.)
+            if t.get("kind") == "scanner":
+                underlying = t.get("underlying") or "?"
+                per_underlying[underlying].append((won, pnl))
             if t.get("kind") == "spy_plan":
                 per_rule[t.get("target_rule") or "wall"].append((won, pnl))
             if pnl is not None:
@@ -526,6 +531,16 @@ def _0dte(db, c, now):
              _drill("MU scalp",
                     "MU gap fade (premarket) and spike fade (9:45-11am ET). Paper trades 1 contract.",
                     _stats(per_kind.get("mu_scalp", [])))]
+    # Add per-underlying drill-downs for scanner trades (MU, AAPL, TSLA, etc.)
+    # Sort by trade count descending so most active underlyings appear first
+    for underlying in sorted(per_underlying.keys(),
+                             key=lambda u: len(per_underlying[u]), reverse=True):
+        trades = per_underlying[underlying]
+        if len(trades) >= 1:  # Show even single-trade underlyings
+            drill.append(_drill(
+                f"0DTE {underlying}",
+                f"Scanner paper trades on {underlying}. 1 contract at ask; +50%/-50% or 2:55pm CT.",
+                _stats(trades)))
     return (_block(
         "0dte", "0DTE",
         "Same-day-expiry option plans and scanner alerts.",
@@ -861,6 +876,47 @@ def _detail_0dte(db, c, now, name):
         items.sort(key=lambda i: i.pop("_sort"), reverse=True)
         title = "MU scalp — trade by trade"
         sub = "MU gap fade and spike fade paper trades, newest first."
+    elif name.startswith("0DTE ") and name != "0DTE scanner":
+        # Per-underlying scanner drill-down (e.g., "0DTE MU", "0DTE AAPL")
+        underlying = name[5:]  # Strip "0DTE " prefix
+        try:
+            all_trades = db.prefix(c, "trade:0dte-")
+        except Exception:
+            all_trades = {}
+        for k, t in all_trades.items():
+            if not isinstance(t, dict):
+                continue
+            if t.get("kind") != "scanner":
+                continue
+            if (t.get("underlying") or "?") != underlying:
+                continue
+            if t.get("status") != "closed" and not _num(t.get("exited_at")):
+                continue
+            pnl = _num(t.get("pnl"))
+            symbol = t.get("symbol") or "?"
+            entry = _num(t.get("entry"))
+            exit_px = _num(t.get("exit"))
+            exited_at = _num(t.get("exited_at")) or 0
+            orows = []
+            if symbol and symbol != "?":
+                orows.append(["Contract", symbol])
+            if entry:
+                orows.append(["Entry", "$%.2f" % entry])
+            if exit_px:
+                orows.append(["Exit", "$%.2f" % exit_px])
+            if pnl is not None:
+                orows.append(["P&L", "$%.2f" % pnl])
+            won = pnl is not None and pnl > 0
+            items.append({
+                "tag": underlying[:6], "title": "%s scanner" % underlying,
+                "sub": _ts(exited_at), "rows": orows,
+                "result": "win" if won else "loss",
+                "result_cls": "pos" if won else "neg",
+                "_sort": exited_at,
+            })
+        items.sort(key=lambda i: i.pop("_sort"), reverse=True)
+        title = f"0DTE {underlying} — trade by trade"
+        sub = f"Scanner paper trades on {underlying}, newest first."
     elif name == "SPY morning plan":
         from .day_digest import _plan_outcome
         try:
