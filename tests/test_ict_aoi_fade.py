@@ -291,3 +291,33 @@ def test_scan_survives_ict_bars_dicts():
 
     result = scan(db, 'c', CfgOn(), 1_700_000_000 + 150 * 60)
     assert result['ran'] is True
+
+
+def test_trend_gate_blocks_counter_trend():
+    # Uptrend: price above 4H 50-EMA. Longs allowed, shorts blocked.
+    from compass.aoi_fade import _trend_ok, _ema
+    # Build 60 4H bars in a steady uptrend
+    bars = [{'ts': 1_700_000_000 + i * 14400, 'o': 100 + i, 'h': 101 + i,
+             'l': 99 + i, 'c': 100.5 + i} for i in range(60)]
+    ema = _ema(bars, 50)
+    assert ema is not None
+    assert ema < bars[-1]['c']  # uptrend: price above EMA
+    assert _trend_ok('long', bars) is True
+    assert _trend_ok('short', bars) is False
+
+    # Downtrend: price below 4H 50-EMA. Shorts allowed, longs blocked.
+    bars_dn = [{'ts': 1_700_000_000 + i * 14400, 'o': 200 - i, 'h': 201 - i,
+                'l': 199 - i, 'c': 199.5 - i} for i in range(60)]
+    ema_dn = _ema(bars_dn, 50)
+    assert ema_dn > bars_dn[-1]['c']  # downtrend: price below EMA
+    assert _trend_ok('short', bars_dn) is True
+    assert _trend_ok('long', bars_dn) is False
+
+
+def test_trend_gate_fails_open():
+    # Insufficient bars: allow the trade rather than blocking everything.
+    from compass.aoi_fade import _trend_ok
+    bars = [{'ts': 1_700_000_000 + i * 14400, 'o': 100, 'h': 101,
+             'l': 99, 'c': 100} for i in range(10)]
+    assert _trend_ok('long', bars) is True
+    assert _trend_ok('short', bars) is True

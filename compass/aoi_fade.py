@@ -129,6 +129,39 @@ def _atr(bars, length=ATR_LEN):
     return sum(nums) / len(nums)
 
 
+def _ema(bars, length=50):
+    """EMA(length) of closes over the last `length` bars. Returns None if insufficient data."""
+    if len(bars) < length:
+        return None
+    closes = [number(b['c']) for b in bars[-length:]]
+    if any(c is None for c in closes):
+        return None
+    # Seed with SMA, then apply EMA smoothing
+    k = 2.0 / (length + 1)
+    ema = sum(closes) / len(closes)
+    # Refine with one more pass over the same window for stability
+    for c in closes:
+        ema = c * k + ema * (1 - k)
+    return ema
+
+
+def _trend_ok(direction, bars_4h):
+    """Trend gate: longs only above 4H 50-EMA, shorts only below it.
+    Returns True if the direction aligns with trend, False otherwise.
+    If EMA can't be computed, allow the trade (fail open)."""
+    ema = _ema(bars_4h, 50)
+    if ema is None:
+        return True
+    last_close = number(bars_4h[-1]['c'])
+    if last_close is None:
+        return True
+    if direction == 'long':
+        return last_close > ema
+    elif direction == 'short':
+        return last_close < ema
+    return True
+
+
 def find_fractal_swings(bars, k=2, keep=10):
     """4H fractal swings: bar i is a swing low if low[i] is the lowest of
     low[i-k..i+k]; swing high is the mirror. Returns (swing_lows, swing_highs),
@@ -330,6 +363,7 @@ def scan(db, c, cfg, now):
         bars_1h = _resample(bars, 3600)
         if len(bars_1h) < 15:
             continue
+        bars_4h = _resample(bars, 14400)
         atr = _atr(bars_1h)
         # Check today's 1H bars (completed bars only, skip the forming bar)
         day_start = datetime.fromtimestamp(now, CT).replace(
@@ -339,6 +373,9 @@ def scan(db, c, cfg, now):
         for bar in today_bars:
             sig = check_signal(bar, zones, atr)
             if not sig:
+                continue
+            # Trend gate: only fade with the 4H trend
+            if not _trend_ok(sig['direction'], bars_4h):
                 continue
             z = sig['zone']
             sess = _session_for(bar['ts'])
