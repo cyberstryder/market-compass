@@ -12,10 +12,14 @@ Each trade:
 - Max hold: 15 minutes for spike fade, 11am ET for gap fade
 - Size: 100 shares equivalent (1 contract)
 
-P&L in underlying points × 100.
+P&L in underlying points × 100, net of slippage and fees.
 """
 
 from .market import number
+
+# Trading costs (2026-10-11: added per audit — paper was optimistic)
+SLIPPAGE_PER_SHARE = 0.02  # $0.02/share slippage on entry and exit
+FEE_PER_TRADE = 1.00        # $1.00 all-in commission per trade (conservative)
 
 
 def open_trade(db, c, signal, now):
@@ -33,9 +37,19 @@ def open_trade(db, c, signal, now):
         if 'spike' in detector:
             max_hold = 15 * 60  # 15 minutes
         else:
-            # Gap fade: flat by 11am ET — compute seconds until 11am ET
-            # For simplicity, use 2.5 hours from 8:30am ET entry
-            max_hold = 2.5 * 3600
+            # Gap fade: flat by 11am ET — compute actual seconds until 11am ET
+            try:
+                from datetime import datetime, timezone
+                import pytz
+                et = pytz.timezone('America/New_York')
+                now_et = datetime.fromtimestamp(now, tz=timezone.utc).astimezone(et)
+                eleven_et = now_et.replace(hour=11, minute=0, second=0, microsecond=0)
+                max_hold = max(0, eleven_et.timestamp() - now)
+                # If already past 11am (shouldn't happen), use 15 min fallback
+                if max_hold <= 0:
+                    max_hold = 15 * 60
+            except Exception:
+                max_hold = 2.5 * 3600  # fallback
         
         trade = {
             'id': key,
@@ -110,7 +124,13 @@ def manage_trades(db, c, now):
                     pnl_points = exit_price - entry
                 else:
                     pnl_points = entry - exit_price
-                pnl = pnl_points * trade.get('qty', 100)
+                qty = trade.get('qty', 100)
+                gross_pnl = pnl_points * qty
+                # Subtract trading costs: slippage on entry+exit, plus fee
+                # Slippage: $0.02/share × 100 shares × 2 (in+out) = $4.00
+                # Fee: $1.00 per trade
+                costs = (SLIPPAGE_PER_SHARE * qty * 2) + FEE_PER_TRADE
+                pnl = gross_pnl - costs
                 
                 trade['status'] = 'closed'
                 trade['exit_reason'] = exit_reason
@@ -118,6 +138,7 @@ def manage_trades(db, c, now):
                 trade['exited_at'] = now
                 trade['pnl'] = round(pnl, 2)
                 trade['pnl_points'] = round(pnl_points, 4)
+                trade['costs'] = round(costs, 2)
                 db.put(c, k, trade)
                 closed.append(trade)
     except Exception:

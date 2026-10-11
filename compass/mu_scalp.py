@@ -115,9 +115,25 @@ def check_spike_fade(db, c, now, symbol="MU"):
         # Get 1M bars: recent for spike detection, full session for high/low filter
         recent_bars = []
         session_bars = []
-        # Session start: 9:30am ET (in UTC: 13:30 or 14:30 depending on DST)
-        # Use a 6.5-hour lookback to cover the full session
-        session_start = now - (6.5 * 3600)
+        # Session start: 9:30am ET on the current trading day.
+        # Use actual market open, not a fixed lookback (which includes premarket).
+        try:
+            from datetime import datetime, timezone
+            import pytz
+            et = pytz.timezone('America/New_York')
+            now_et = datetime.fromtimestamp(now, tz=timezone.utc).astimezone(et)
+            # Market open today at 9:30am ET
+            market_open_et = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+            session_start = market_open_et.timestamp()
+            # If now is before 9:30am ET (shouldn't happen in 9:45-11 window, but safe),
+            # use previous day's open
+            if now < session_start:
+                from datetime import timedelta
+                market_open_et = market_open_et - timedelta(days=1)
+                session_start = market_open_et.timestamp()
+        except Exception:
+            # Fallback to 6.5hr lookback if timezone calc fails
+            session_start = now - (6.5 * 3600)
         for k, v in db.prefix(c, 'bar:%s:' % symbol).items():
             if ':1m:' in k or ':1M:' in k:
                 payload = v.get('payload') or {}
