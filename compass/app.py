@@ -747,94 +747,20 @@ a{color:#888}</style></head><body>
 
     @app.post('/api/admin/backtest-scalp')
     @app.get('/api/admin/backtest-scalp')
-    def backtest_scalp():
+    def backtest_scalp(request: Request):
         """Historical backtest for stock scalp strategies.
-        
-        Runs gap fade + spike fade logic on historical bars.
+
+        Replays the gap-fade rule (>=2% gap between prior session close and
+        session open) on 1-minute bars from the events table.
         Query params: days (default 30), symbols (comma-separated, default MU)
         Public for cron. Returns summary stats.
         """
-        from flask import request
         try:
-            days = int(request.args.get('days', 30))
-            symbols = request.args.get('symbols', 'MU').split(',')
+            days = int(request.query_params.get('days', 30))
+            symbols = request.query_params.get('symbols', 'MU').split(',')
             symbols = [s.strip().upper() for s in symbols if s.strip()]
-            
-            from datetime import datetime, timezone
-            import time
-            from .market import number
-            
-            now = time.time()
-            results = {}
-            
-            with db.tx() as c:
-                for symbol in symbols:
-                    # Get daily bars for prior closes
-                    daily = {}
-                    try:
-                        prefix_data = db.prefix(c, 'bar:%s:' % symbol)
-                        items = prefix_data.items() if hasattr(prefix_data, 'items') else []
-                    except Exception:
-                        items = []
-                    for k, v in items:
-                        if ':1d:' in k or ':D:' in k:
-                            payload = v.get('payload') or {}
-                            ts = v.get('ts') or 0
-                            if ts:
-                                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-                                day_key = dt.strftime('%Y-%m-%d')
-                                daily[day_key] = number(payload.get('c'))
-                    
-                    sorted_days = sorted(daily.keys())[-days-1:]
-                    signals = []
-                    
-                    for i in range(1, len(sorted_days)):
-                        prev_day = sorted_days[i-1]
-                        cur_day = sorted_days[i]
-                        prior_close = daily.get(prev_day)
-                        if not prior_close:
-                            continue
-                        
-                        # Get opening price (first 1m bar of cur_day)
-                        day_start = datetime.strptime(cur_day, '%Y-%m-%d').replace(
-                            tzinfo=timezone.utc).timestamp()
-                        
-                        open_px = None
-                        open_ts = None
-                        try:
-                            prefix_data2 = db.prefix(c, 'bar:%s:' % symbol)
-                            items2 = prefix_data2.items() if hasattr(prefix_data2, 'items') else []
-                        except Exception:
-                            items2 = []
-                        for k, v in items2:
-                            if ':1m:' not in k and ':1M:' not in k:
-                                continue
-                            ts = v.get('ts') or 0
-                            if day_start <= ts < day_start + 7200:  # First 2 hours
-                                payload = v.get('payload') or {}
-                                o = number(payload.get('o'))
-                                if o and (open_ts is None or ts < open_ts):
-                                    open_ts = ts
-                                    open_px = o
-                        
-                        if not open_px:
-                            continue
-                        
-                        gap_pct = (open_px - prior_close) / prior_close * 100.0
-                        if abs(gap_pct) >= 2.0:
-                            signals.append({
-                                'date': cur_day,
-                                'gap_pct': round(gap_pct, 2),
-                                'direction': 'short' if gap_pct > 0 else 'long',
-                                'entry': round(open_px, 2),
-                                'prior_close': round(prior_close, 2),
-                            })
-                    
-                    results[symbol] = {
-                        'signals': len(signals),
-                        'details': signals[-10:],  # Last 10
-                    }
-            
+            from .scalp_backtest import run_gap_backtest
+            results = run_gap_backtest(db, days, symbols, now=time.time())
             return {'ok': True, 'days': days, 'results': results}
         except Exception as e:
             import traceback
