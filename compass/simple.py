@@ -455,10 +455,21 @@ def _0dte(db, c, now):
         if d:
             by_day[d]["count"] += 1
     # Paper trades: 1 contract each, same-session only (see zero_dte_paper.py)
+    # Also include MU scalp paper trades (trade:mu-) which use the same 0DTE framework
     try:
         paper = db.prefix(c, "trade:0dte-")
     except Exception:
         paper = {}
+    try:
+        mu_paper = db.prefix(c, "trade:mu-")
+        # Merge MU trades into the paper dict with kind='mu_scalp'
+        for k, v in mu_paper.items():
+            if isinstance(v, dict) and 'kind' not in v:
+                v = dict(v)
+                v['kind'] = 'mu_scalp'
+            paper[k] = v
+    except Exception:
+        pass
     per_kind = defaultdict(list)
     per_rule = defaultdict(list)
     data_gap_count = 0
@@ -502,7 +513,10 @@ def _0dte(db, c, now):
                     _stats(per_rule.get("2r", []))),
              _drill("0DTE scanner",
                     "Same-day-expiry setups on the liquid watchlist. Paper buys 1 contract at the ask; exits at +50%/-50% or 2:55pm CT.",
-                    _stats(per_kind.get("scanner", [])))]
+                    _stats(per_kind.get("scanner", []))),
+             _drill("MU scalp",
+                    "MU gap fade (premarket) and spike fade (9:45-11am ET). Paper trades 1 contract.",
+                    _stats(per_kind.get("mu_scalp", [])))]
     return (_block(
         "0dte", "0DTE",
         "Same-day-expiry option plans and scanner alerts.",
@@ -800,7 +814,45 @@ def _detail_0dte(db, c, now, name):
     from sqlalchemy import or_
     p = events.c.payload
     items = []
-    if name == "SPY morning plan":
+    if name == "MU scalp":
+        # MU scalp paper trades (trade:mu- prefix)
+        try:
+            mu_trades = db.prefix(c, "trade:mu-")
+        except Exception:
+            mu_trades = {}
+        for k, t in mu_trades.items():
+            if not isinstance(t, dict):
+                continue
+            if t.get("status") != "closed" and not _num(t.get("exited_at")):
+                continue
+            pnl = _num(t.get("pnl"))
+            symbol = t.get("symbol") or "MU"
+            side = t.get("side") or ""
+            entry = _num(t.get("entry"))
+            exit_px = _num(t.get("exit"))
+            exited_at = _num(t.get("exited_at")) or 0
+            orows = []
+            if entry:
+                orows.append(["Entry", "$%.2f" % entry])
+            if exit_px:
+                orows.append(["Exit", "$%.2f" % exit_px])
+            if pnl is not None:
+                orows.append(["P&L", "$%.2f" % pnl])
+            reason = t.get("exit_reason") or t.get("reason") or ""
+            if reason:
+                orows.append(["Exit reason", reason])
+            won = pnl is not None and pnl > 0
+            items.append({
+                "tag": "MU", "title": "%s %s" % (symbol, side),
+                "sub": _ts(exited_at), "rows": orows,
+                "result": "win" if won else "loss",
+                "result_cls": "pos" if won else "neg",
+                "_sort": exited_at,
+            })
+        items.sort(key=lambda i: i.pop("_sort"), reverse=True)
+        title = "MU scalp — trade by trade"
+        sub = "MU gap fade and spike fade paper trades, newest first."
+    elif name == "SPY morning plan":
         from .day_digest import _plan_outcome
         try:
             rows = c.execute(select(events).where(
