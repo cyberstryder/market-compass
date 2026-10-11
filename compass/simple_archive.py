@@ -37,7 +37,7 @@ AUDIT_KINDS = ('alert', 'signal', 'paper_decision', 'breakout_event',
     'native_config', 'option_subscription', 'strategy_revision',
     'secondary_review', 'secondary_error')
 
-BATCH_SIZE = 50000
+BATCH_SIZE = 10000
 DAY = 86400
 
 

@@ -709,6 +709,35 @@ a{color:#888}</style></head><body>
         """Check simple archive progress. Admin-only."""
         return {'ok': True, **_simple_archive_state}
 
+    @app.post('/api/admin/archive-create-index')
+    @app.get('/api/admin/archive-create-index')
+    def post_archive_create_index():
+        """Create (kind, id) index for archive queries. Admin-only.
+        Uses CONCURRENTLY to avoid locking. Takes a while on 133M rows."""
+        import threading
+        _idx_state = getattr(post_archive_create_index, '_state',
+                             {'running': False})
+        if _idx_state['running']:
+            return {'ok': False, 'error': 'Already running'}
+        _idx_state['running'] = True
+        post_archive_create_index._state = _idx_state
+
+        def _run():
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(__import__('sqlalchemy').text(
+                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+                        "ix_events_kind_id ON events (kind, id)"))
+                    conn.commit()
+                _idx_state['result'] = 'Index created'
+            except Exception as e:
+                _idx_state['error'] = str(e)[:1000]
+            finally:
+                _idx_state['running'] = False
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {'ok': True, 'started': True}
+
     @app.post('/api/admin/archive-reset')
     @app.get('/api/admin/archive-reset')
     def post_archive_reset():
