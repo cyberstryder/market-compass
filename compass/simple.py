@@ -503,6 +503,10 @@ def _0dte(db, c, now):
             if t.get("kind") == "scanner":
                 underlying = t.get("underlying") or "?"
                 per_underlying[underlying].append((won, pnl))
+            # Track scalp trades by symbol (MU, TSLA, NVDA, etc.)
+            if t.get("kind") == "mu_scalp":
+                scalp_sym = t.get("symbol") or "?"
+                per_underlying["SCALP:" + scalp_sym].append((won, pnl))
             if t.get("kind") == "spy_plan":
                 per_rule[t.get("target_rule") or "wall"].append((won, pnl))
             if pnl is not None:
@@ -528,19 +532,27 @@ def _0dte(db, c, now):
              _drill("0DTE scanner",
                     "Same-day-expiry setups on the liquid watchlist. Paper buys 1 contract at the ask; exits at +50%/-50% or 2:55pm CT.",
                     _stats(per_kind.get("scanner", []))),
-             _drill("MU scalp",
-                    "MU gap fade (premarket) and spike fade (9:45-11am ET). Paper trades 1 contract.",
+             _drill("Stock scalp (all)",
+                    "Gap fade (premarket) and spike fade (9:45-11am ET) on volatile stocks. 100 shares, underlying P&L net of costs.",
                     _stats(per_kind.get("mu_scalp", [])))]
     # Add per-underlying drill-downs for scanner trades (MU, AAPL, TSLA, etc.)
+    # and per-symbol scalp drill-downs (SCALP:MU, SCALP:TSLA, etc.)
     # Sort by trade count descending so most active underlyings appear first
     for underlying in sorted(per_underlying.keys(),
                              key=lambda u: len(per_underlying[u]), reverse=True):
         trades = per_underlying[underlying]
         if len(trades) >= 1:  # Show even single-trade underlyings
-            drill.append(_drill(
-                f"0DTE {underlying}",
-                f"Scanner paper trades on {underlying}. 1 contract at ask; +50%/-50% or 2:55pm CT.",
-                _stats(trades)))
+            if underlying.startswith("SCALP:"):
+                sym = underlying[6:]
+                drill.append(_drill(
+                    f"Scalp {sym}",
+                    f"Gap/spike fade paper trades on {sym}. 100 shares, net of costs.",
+                    _stats(trades)))
+            else:
+                drill.append(_drill(
+                    f"0DTE {underlying}",
+                    f"Scanner paper trades on {underlying}. 1 contract at ask; +50%/-50% or 2:55pm CT.",
+                    _stats(trades)))
     return (_block(
         "0dte", "0DTE",
         "Same-day-expiry option plans and scanner alerts.",
@@ -838,8 +850,14 @@ def _detail_0dte(db, c, now, name):
     from sqlalchemy import or_
     p = events.c.payload
     items = []
-    if name == "MU scalp":
-        # MU scalp paper trades (trade:mu- prefix)
+    if name == "MU scalp" or name == "Stock scalp (all)" or name.startswith("Scalp "):
+        # Stock scalp paper trades (trade:mu- prefix, now multi-symbol)
+        # Filter by symbol if name is "Scalp {SYM}"
+        filter_sym = None
+        if name.startswith("Scalp ") and name != "Stock scalp (all)":
+            filter_sym = name[6:]  # Strip "Scalp " prefix
+        elif name == "MU scalp":
+            filter_sym = "MU"  # Legacy: MU scalp drill was MU-only
         try:
             mu_trades = db.prefix(c, "trade:mu-")
         except Exception:
@@ -849,8 +867,10 @@ def _detail_0dte(db, c, now, name):
                 continue
             if t.get("status") != "closed" and not _num(t.get("exited_at")):
                 continue
-            pnl = _num(t.get("pnl"))
             symbol = t.get("symbol") or "MU"
+            if filter_sym and symbol != filter_sym:
+                continue
+            pnl = _num(t.get("pnl"))
             side = t.get("side") or ""
             entry = _num(t.get("entry"))
             exit_px = _num(t.get("exit"))
@@ -874,8 +894,12 @@ def _detail_0dte(db, c, now, name):
                 "_sort": exited_at,
             })
         items.sort(key=lambda i: i.pop("_sort"), reverse=True)
-        title = "MU scalp — trade by trade"
-        sub = "MU gap fade and spike fade paper trades, newest first."
+        if filter_sym:
+            title = f"Scalp {filter_sym} — trade by trade"
+            sub = f"{filter_sym} gap fade and spike fade paper trades, newest first."
+        else:
+            title = "Stock scalp — trade by trade"
+            sub = "Gap fade and spike fade paper trades on all symbols, newest first."
     elif name.startswith("0DTE ") and name != "0DTE scanner":
         # Per-underlying scanner drill-down (e.g., "0DTE MU", "0DTE AAPL")
         underlying = name[5:]  # Strip "0DTE " prefix

@@ -734,6 +734,7 @@ class Engine:
         except Exception:
             pass
         # MU scalp detectors (Josh 2026-10-08): gap fade premarket, spike fade 9:45-11am ET.
+        # Generalized 2026-10-11 to run on all volatile single-stocks, not just MU.
         # Alerts feed the 0DTE paper book via options_0dte category.
         # Gated by MU_SCALP_ENABLED (default true).
         try:
@@ -744,25 +745,33 @@ class Engine:
                 et = pytz.timezone('America/New_York')
                 now_et = datetime.fromtimestamp(now, tz=timezone.utc).astimezone(et)
                 hm = now_et.strftime('%H:%M')
-                # Gap fade: premarket 08:30-09:25 ET, once per day
+                # Volatile single-stocks for gap/spike fade (ETFs excluded — different behavior)
+                # MU, TSLA, NVDA, AAPL, AMD, META, AMZN, MSFT, GOOGL, NFLX, AVGO, PLTR
+                scalp_symbols = ('MU', 'TSLA', 'NVDA', 'AAPL', 'AMD', 'META',
+                                 'AMZN', 'MSFT', 'GOOGL', 'NFLX', 'AVGO', 'PLTR')
+                # Gap fade: premarket 08:30-09:25 ET, once per day per symbol
                 if '08:30' <= hm <= '09:25':
                     day_key = now_et.strftime('%Y-%m-%d')
-                    if not self.db.get(c, 'mu_scalp:gap_done:' + day_key):
-                        sig = mu_scalp.check_gap_fade(self.db, c, now)
+                    for symbol in scalp_symbols:
+                        done_key = 'mu_scalp:gap_done:%s:%s' % (symbol, day_key)
+                        if self.db.get(c, done_key):
+                            continue
+                        sig = mu_scalp.check_gap_fade(self.db, c, now, symbol=symbol)
                         if sig:
                             # Dedupe by signal key (not timestamp)
                             if not self.db.get(c, 'alert:' + sig.get('dedupe_key', '')):
                                 mu_scalp.publish_alert(self.db, c, sig, now)
                                 mu_paper.open_trade(self.db, c, sig, now)
-                        self.db.put(c, 'mu_scalp:gap_done:' + day_key, True)
-                # Spike fade: 09:45-11:00 ET, every minute
+                        self.db.put(c, done_key, True)
+                # Spike fade: 09:45-11:00 ET, every minute, per symbol
                 if '09:45' <= hm <= '11:00':
-                    sig = mu_scalp.check_spike_fade(self.db, c, now)
-                    if sig:
-                        # Dedupe by spike event key (stable across ticks)
-                        if not self.db.get(c, 'alert:' + sig.get('dedupe_key', '')):
-                            mu_scalp.publish_alert(self.db, c, sig, now)
-                            mu_paper.open_trade(self.db, c, sig, now)
+                    for symbol in scalp_symbols:
+                        sig = mu_scalp.check_spike_fade(self.db, c, now, symbol=symbol)
+                        if sig:
+                            # Dedupe by spike event key (stable across ticks)
+                            if not self.db.get(c, 'alert:' + sig.get('dedupe_key', '')):
+                                mu_scalp.publish_alert(self.db, c, sig, now)
+                                mu_paper.open_trade(self.db, c, sig, now)
                 # Manage open MU paper trades (target/stop/15min exits)
                 mu_paper.manage_trades(self.db, c, now)
         except Exception:
