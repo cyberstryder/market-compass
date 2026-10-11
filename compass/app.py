@@ -187,7 +187,7 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
@@ -721,6 +721,24 @@ a{color:#888}</style></head><body>
             client = _s3_client()
             bucket = os.environ['ARCHIVE_BUCKET']
             result = run_archive_chunk(db, client, bucket, max_batches=20)
+            return {'ok': True, **result}
+        except Exception as e:
+            import traceback
+            return {'ok': False, 'error': str(e)[:1000],
+                    'traceback': traceback.format_exc()[-2000:]}
+
+    @app.post('/api/admin/copy-archive-chunk')
+    @app.get('/api/admin/copy-archive-chunk')
+    def post_copy_archive_chunk():
+        """Process up to 3 (kind, month) chunks via COPY. Public for cron.
+        Each call exports entire months using COPY TO STDOUT (fast).
+        Safe to call repeatedly; resumes from DB progress."""
+        from .copy_archive import run_copy_chunk, _s3_client
+        import os
+        try:
+            client = _s3_client()
+            bucket = os.environ['ARCHIVE_BUCKET']
+            result = run_copy_chunk(db, client, bucket, max_months=3)
             return {'ok': True, **result}
         except Exception as e:
             import traceback
