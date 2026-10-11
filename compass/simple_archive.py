@@ -9,7 +9,7 @@ import json
 import os
 import time
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 
 from .store import Store, events
 
@@ -64,8 +64,11 @@ def _retention_days(kind):
 def export_batch(db, client, bucket, kind, cutoff_ts, after_id, limit=BATCH_SIZE):
     """Export one batch of events to R2. Returns (rows_exported, last_id)."""
     with db.tx() as c:
-        # Allow long scans for the one-time archive (default timeout is too short for 133M rows)
-        c.execute(__import__('sqlalchemy').text("SET LOCAL statement_timeout = '10min'"))
+        # Allow long scans for the one-time archive (default timeouts are too short for 133M rows).
+        # NOTE: the session default transaction_timeout is 60s (Postgres 17+, see store.py); without
+        # lifting it here the transaction dies with TransactionTimeout before statement_timeout matters.
+        c.execute(text("SET LOCAL statement_timeout = '10min'"))
+        c.execute(text("SET LOCAL transaction_timeout = '10min'"))
         rows = c.execute(
             select(events.c.id, events.c.key, events.c.kind, events.c.source,
                    events.c.symbol, events.c.ts, events.c.received,
@@ -199,9 +202,7 @@ def run_archive_chunk(db, client, bucket, max_batches=20):
         if kind_batches > 0:
             # Peek: is there more?
             with db.tx() as c:
-                c.execute(__import__('sqlalchemy').text(
-                    "SET LOCAL statement_timeout = '30s'"))
-                from sqlalchemy import select, func
+                c.execute(text("SET LOCAL statement_timeout = '30s'"))
                 cnt = c.execute(
                     select(func.count()).select_from(events).where(
                         events.c.kind == kind,
