@@ -771,7 +771,12 @@ a{color:#888}</style></head><body>
                 for symbol in symbols:
                     # Get daily bars for prior closes
                     daily = {}
-                    for k, v in db.prefix(c, f'bar:{symbol}:').items():
+                    try:
+                        prefix_data = db.prefix(c, 'bar:%s:' % symbol)
+                        items = prefix_data.items() if hasattr(prefix_data, 'items') else []
+                    except Exception:
+                        items = []
+                    for k, v in items:
                         if ':1d:' in k or ':D:' in k:
                             payload = v.get('payload') or {}
                             ts = v.get('ts') or 0
@@ -796,7 +801,12 @@ a{color:#888}</style></head><body>
                         
                         open_px = None
                         open_ts = None
-                        for k, v in db.prefix(c, f'bar:{symbol}:').items():
+                        try:
+                            prefix_data2 = db.prefix(c, 'bar:%s:' % symbol)
+                            items2 = prefix_data2.items() if hasattr(prefix_data2, 'items') else []
+                        except Exception:
+                            items2 = []
+                        for k, v in items2:
                             if ':1m:' not in k and ':1M:' not in k:
                                 continue
                             ts = v.get('ts') or 0
