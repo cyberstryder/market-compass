@@ -738,7 +738,7 @@ a{color:#888}</style></head><body>
         try:
             client = _s3_client()
             bucket = os.environ['ARCHIVE_BUCKET']
-            result = run_copy_chunk(db, client, bucket, max_months=3)
+            result = run_copy_chunk(db, client, bucket, max_months=6)
             return {'ok': True, **result}
         except Exception as e:
             import traceback

@@ -74,32 +74,52 @@ def _month_range(ts):
     return start.timestamp(), end.timestamp()
 
 
+def _week_range(ts):
+    """Return (week_start, week_end) timestamps for the ISO week containing ts.
+    Weeks start Monday 00:00 UTC. Smaller chunks than months to avoid timeouts.
+    """
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    # Monday of this week
+    start = dt - timedelta(days=dt.weekday())
+    start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=7)
+    return start.timestamp(), end.timestamp()
+
+
 def _months_to_archive(kind, now):
-    """List of (month_start, month_end) tuples that need archiving for this kind."""
+    """List of (period_start, period_end) tuples that need archiving for this kind.
+    
+    Changed 2026-10-11: Use weekly chunks instead of monthly to avoid timeouts
+    on large quote months. Each chunk is ~1/4 the size.
+    """
     retention = _retention_days(kind)
     if retention is None:
         return []
     cutoff = now - retention * DAY
     # Start from a reasonable epoch (2024-01-01) to now
-    # We'll check each month; empty months are skipped quickly
-    months = []
+    periods = []
     ts = 1704067200  # 2024-01-01 UTC
     while ts < cutoff:
-        ms, me = _month_range(ts)
-        if me <= cutoff:  # Only full months before cutoff
-            months.append((ms, me))
-        ts = me
-    return months
+        ws, we = _week_range(ts)
+        if we <= cutoff:  # Only full weeks before cutoff
+            periods.append((ws, we))
+        ts = we
+    return periods
 
 
-def export_month(db, client, bucket, kind, month_start, month_end):
-    """Export one month of one kind via COPY. Returns (rows, bytes).
+def export_month(db, client, bucket, kind, period_start, period_end):
+    """Export one period (week) of one kind via COPY. Returns (rows, bytes).
     
     Streams COPY output directly to a gzipped temp file on disk (not memory)
-    to handle multi-GB months without OOM.
+    to handle large periods without OOM.
+    
+    Changed 2026-10-11: Weekly chunks instead of monthly (4x smaller).
     """
-    month_str = datetime.fromtimestamp(month_start, tz=timezone.utc).strftime('%Y-%m')
-    progress_key = f"copy-archive:{kind}:{month_str}"
+    # Use ISO week format: 2024-W01
+    dt = datetime.fromtimestamp(period_start, tz=timezone.utc)
+    iso_year, iso_week, _ = dt.isocalendar()
+    period_str = f"{iso_year}-W{iso_week:02d}"
+    progress_key = f"copy-archive:{kind}:{period_str}"
 
     # Check if already done
     with db.tx() as c:
@@ -131,8 +151,8 @@ def export_month(db, client, bucket, kind, month_start, month_end):
                     with cur.copy(
                         f"COPY (SELECT row_to_json(t) FROM "
                         f"(SELECT id, key, kind, source, symbol, ts, received, payload "
-                        f"FROM events WHERE kind = '{kind}' AND ts >= {month_start} "
-                        f"AND ts < {month_end}) t) TO STDOUT"
+                        f"FROM events WHERE kind = '{kind}' AND ts >= {period_start} "
+                        f"AND ts < {period_end}) t) TO STDOUT"
                     ) as copy:
                         for chunk in copy:
                             # chunk is bytes, may contain partial lines
@@ -152,7 +172,7 @@ def export_month(db, client, bucket, kind, month_start, month_end):
             db.put(c, progress_key, {'rows': 0, 'at': time.time()})
         return 0, 0
 
-    key = f"copy-archive/{kind}/{month_str}.jsonl.gz"
+    key = f"copy-archive/{kind}/{period_str}.jsonl.gz"
 
     # Upload to R2 from file (streaming, not loading into memory)
     with open(tmp_path, 'rb') as f:
@@ -178,8 +198,12 @@ def export_month(db, client, bucket, kind, month_start, month_end):
     return row_count, file_size
 
 
-def run_copy_chunk(db, client, bucket, max_months=3):
-    """Process up to max_months (kind, month) chunks. Returns summary."""
+def run_copy_chunk(db, client, bucket, max_months=6):
+    """Process up to max_months (kind, week) chunks. Returns summary.
+    
+    Changed 2026-10-11: Weekly chunks (was monthly), 6 per call (was 3).
+    Each week is ~1/4 the size of a month, so 6 weeks ≈ 1.5 months of data.
+    """
     now = time.time()
     summary = {'chunks_done': 0, 'rows': 0, 'bytes': 0,
                'chunks': [], 'complete': True, 'started_at': now}
@@ -195,8 +219,11 @@ def run_copy_chunk(db, client, bucket, max_months=3):
             if chunks_left <= 0:
                 summary['complete'] = False
                 break
-            month_str = datetime.fromtimestamp(ms, tz=timezone.utc).strftime('%Y-%m')
-            progress_key = f"copy-archive:{kind}:{month_str}"
+            # Use ISO week format for progress key (must match export_month)
+            dt = datetime.fromtimestamp(ms, tz=timezone.utc)
+            iso_year, iso_week, _ = dt.isocalendar()
+            period_str = f"{iso_year}-W{iso_week:02d}"
+            progress_key = f"copy-archive:{kind}:{period_str}"
             with db.tx() as c:
                 if db.get(c, progress_key):
                     continue  # Already done
@@ -206,10 +233,10 @@ def run_copy_chunk(db, client, bucket, max_months=3):
                 summary['chunks_done'] += 1
                 summary['rows'] += rows
                 summary['bytes'] += nbytes
-                summary['chunks'].append(f"{kind}/{month_str}:{rows}rows")
+                summary['chunks'].append(f"{kind}/{period_str}:{rows}rows")
                 chunks_left -= 1
             except Exception as e:
-                summary['error'] = f"{kind}/{month_str}: {str(e)[:500]}"
+                summary['error'] = f"{kind}/{period_str}: {str(e)[:500]}"
                 summary['complete'] = False
                 break
         if 'error' in summary:
@@ -217,11 +244,13 @@ def run_copy_chunk(db, client, bucket, max_months=3):
 
     # Check if there's more work
     if summary['complete']:
-        # Verify by checking if any month is not done
+        # Verify by checking if any period is not done
         for kind in kinds:
             for ms, me in _months_to_archive(kind, now):
-                month_str = datetime.fromtimestamp(ms, tz=timezone.utc).strftime('%Y-%m')
-                progress_key = f"copy-archive:{kind}:{month_str}"
+                dt = datetime.fromtimestamp(ms, tz=timezone.utc)
+                iso_year, iso_week, _ = dt.isocalendar()
+                period_str = f"{iso_year}-W{iso_week:02d}"
+                progress_key = f"copy-archive:{kind}:{period_str}"
                 with db.tx() as c:
                     if not db.get(c, progress_key):
                         summary['complete'] = False
