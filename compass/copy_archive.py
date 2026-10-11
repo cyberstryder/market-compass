@@ -93,7 +93,11 @@ def _months_to_archive(kind, now):
 
 
 def export_month(db, client, bucket, kind, month_start, month_end):
-    """Export one month of one kind via COPY. Returns (rows, bytes)."""
+    """Export one month of one kind via COPY. Returns (rows, bytes).
+    
+    Streams COPY output directly to a gzipped temp file on disk (not memory)
+    to handle multi-GB months without OOM.
+    """
     month_str = datetime.fromtimestamp(month_start, tz=timezone.utc).strftime('%Y-%m')
     progress_key = f"copy-archive:{kind}:{month_str}"
 
@@ -102,71 +106,61 @@ def export_month(db, client, bucket, kind, month_start, month_end):
         if db.get(c, progress_key):
             return 0, 0  # Already archived
 
-    # Use COPY TO STDOUT with row_to_json for efficient streaming
-    # We use a raw connection for COPY
-    copy_sql = text("""
-        COPY (
-            SELECT row_to_json(t)
-            FROM (
-                SELECT id, key, kind, source, symbol, ts, received, payload
-                FROM events
-                WHERE kind = :kind AND ts >= :ms AND ts < :me
-                ORDER BY id
-            ) t
-        ) TO STDOUT
-    """)
-
-    # Stream COPY output, gzip, and upload
-    # We'll buffer in memory (months are manageable) then upload
-    buf = io.BytesIO()
+    # Stream COPY output directly to gzipped temp file
+    # Use workspace disk (not /tmp which is 512MB tmpfs)
+    import tempfile, os
+    tmpdir = os.path.expanduser("~/workspace/.tmp-archive")
+    os.makedirs(tmpdir, exist_ok=True)
+    
     hasher = hashlib.sha256()
     row_count = 0
-
-    # Get raw DBAPI connection for COPY
-    with db.engine.connect() as conn:
-        # Set long timeout for COPY
-        conn.execute(text("SET statement_timeout = '30min'"))
-        raw = conn.connection.driver_connection
-        with raw.cursor() as cur:
-            # Use copy_expert with StringIO buffer
-            import io as bio
-            copy_buf = bio.StringIO()
-            cur.copy_expert(
-                f"COPY (SELECT row_to_json(t) FROM "
-                f"(SELECT id, key, kind, source, symbol, ts, received, payload "
-                f"FROM events WHERE kind = '{kind}' AND ts >= {month_start} "
-                f"AND ts < {month_end} ORDER BY id) t) TO STDOUT",
-                copy_buf
-            )
-            copy_data = copy_buf.getvalue()
-
-    if not copy_data.strip():
-        # Empty month - mark done
+    
+    with tempfile.NamedTemporaryFile(mode='wb', suffix='.jsonl.gz', 
+                                     dir=tmpdir, delete=False) as tmp:
+        tmp_path = tmp.name
+        # We'll write gzip via the file object
+        with gzip.GzipFile(fileobj=tmp, mode='wb') as gz:
+            # Get raw DBAPI connection for COPY
+            with db.engine.connect() as conn:
+                conn.execute(text("SET statement_timeout = '30min'"))
+                raw = conn.connection.driver_connection
+                with raw.cursor() as cur:
+                    # psycopg3: cur.copy() yields bytes chunks
+                    # Note: No ORDER BY — COPY is faster without sort, and archive
+                    # doesn't need ordered output (it's bulk storage, not queryable)
+                    with cur.copy(
+                        f"COPY (SELECT row_to_json(t) FROM "
+                        f"(SELECT id, key, kind, source, symbol, ts, received, payload "
+                        f"FROM events WHERE kind = '{kind}' AND ts >= {month_start} "
+                        f"AND ts < {month_end}) t) TO STDOUT"
+                    ) as copy:
+                        for chunk in copy:
+                            # chunk is bytes, may contain partial lines
+                            # Write directly to gzip (row_to_json outputs valid JSON per row)
+                            gz.write(chunk)
+                            hasher.update(chunk)
+                            # Count newlines for row count (approximate, fine for progress)
+                            row_count += chunk.count(b'\n')
+        
+        # Get file size
+        file_size = os.path.getsize(tmp_path)
+    
+    if row_count == 0:
+        # Empty month - mark done, cleanup
+        os.unlink(tmp_path)
         with db.tx() as c:
             db.put(c, progress_key, {'rows': 0, 'at': time.time()})
         return 0, 0
 
-    # Convert to gzipped JSONL (COPY outputs one JSON per line already)
-    # Just gzip it directly
-    lines = copy_data.strip().split('\n')
-    row_count = len(lines)
-
-    with gzip.GzipFile(fileobj=buf, mode='wb') as gz:
-        for line in lines:
-            # Validate it's valid JSON, then write with newline
-            obj = json.loads(line)
-            # Re-serialize canonically for consistent hashing
-            canon = json.dumps(obj, sort_keys=True, separators=(',', ':'),
-                             allow_nan=False, default=str) + '\n'
-            gz.write(canon.encode())
-            hasher.update(canon.encode())
-
-    data = buf.getvalue()
     key = f"copy-archive/{kind}/{month_str}.jsonl.gz"
 
-    # Upload to R2
-    client.put_object(Bucket=bucket, Key=key, Body=data,
-                      ContentType='application/gzip')
+    # Upload to R2 from file (streaming, not loading into memory)
+    with open(tmp_path, 'rb') as f:
+        client.put_object(Bucket=bucket, Key=key, Body=f,
+                          ContentType='application/gzip')
+    
+    # Cleanup temp file
+    os.unlink(tmp_path)
 
     # Verify
     resp = client.get_object(Bucket=bucket, Key=key)
@@ -177,10 +171,11 @@ def export_month(db, client, bucket, kind, month_start, month_end):
 
     # Mark complete
     with db.tx() as c:
-        db.put(c, progress_key, {'rows': row_count, 'bytes': len(data),
+        db.put(c, progress_key, {'rows': row_count, 'bytes': file_size,
+                                 'sha256': hasher.hexdigest(),
                                  'at': time.time()})
 
-    return row_count, len(data)
+    return row_count, file_size
 
 
 def run_copy_chunk(db, client, bucket, max_months=3):
