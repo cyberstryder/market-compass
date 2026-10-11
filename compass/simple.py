@@ -437,11 +437,20 @@ def _0dte(db, c, now):
     except Exception:
         plan_rows = []
     try:
-        alert_rows = c.execute(select(events).where(
+        # Fetch recent alerts and filter by category in Python (JSON path
+        # in SQL can timeout on 133M rows; Python filter is more reliable)
+        raw_alerts = c.execute(select(events).where(
             events.c.kind == "alert",
             events.c.ts >= now - 90 * 86400,
-            p["publication"]["category"].as_string() == "options_0dte",
-        )).mappings()
+        ).order_by(events.c.ts.desc()).limit(5000)).mappings()
+        alert_rows = []
+        for r in raw_alerts:
+            try:
+                pub = (r.get("payload") or {}).get("publication") or {}
+                if pub.get("category") == "options_0dte":
+                    alert_rows.append(r)
+            except Exception:
+                continue
     except Exception:
         alert_rows = []
     for r in plan_rows:
