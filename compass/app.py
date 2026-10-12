@@ -817,6 +817,7 @@ a{color:#888}</style></head><body>
         return {'ok': True, 'started': True, 'message': 'Archive worker started in background'}
 
     @app.post('/api/admin/archive-worker-reset')
+    @app.get('/api/admin/archive-worker-reset')
     def reset_archive_worker():
         """Password-gated: force-clear a stuck archive worker running flag.
 
