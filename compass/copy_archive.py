@@ -1,11 +1,17 @@
-"""COPY-based archive: Postgres events -> R2, partitioned by month.
+"""COPY-based archive: Postgres events -> R2, partitioned by ISO week.
 
 Design:
-- For each event kind, export in monthly chunks using COPY TO STDOUT
+- For each event kind, export in weekly chunks using COPY TO STDOUT
 - COPY streams efficiently; no per-batch query planning or ID pagination
-- Each (kind, month) becomes gzipped JSONL files in R2
-- Progress tracked by (kind, month) in DB - natural resume points
+- Each (kind, week) becomes gzipped JSONL files in R2
+- Progress tracked by (kind, week) in DB - natural resume points
 - Uses existing (kind, symbol, ts) index efficiently
+
+Timeout note (Postgres 17+): store.py's pool listener sets
+SET SESSION transaction_timeout = '60s' on every connection. Long COPYs must
+lift it with SET SESSION (not SET LOCAL) directly on the raw DBAPI cursor
+before COPY, then reset to 60s after. SET LOCAL via SQLAlchemy does NOT
+propagate to the raw connection's COPY context.
 """
 import gzip
 import hashlib
@@ -86,7 +92,19 @@ def _week_range(ts):
     return start.timestamp(), end.timestamp()
 
 
-def _months_to_archive(kind, now):
+def _week_str(period_start):
+    """ISO week label for a period start, e.g. '2024-W01'."""
+    dt = datetime.fromtimestamp(period_start, tz=timezone.utc)
+    iso_year, iso_week, _ = dt.isocalendar()
+    return f"{iso_year}-W{iso_week:02d}"
+
+
+# A pump run that dies mid-chunk leaves this lock; another run picks the chunk
+# back up once the lock is older than LOCK_TTL_S.
+LOCK_TTL_S = 30 * 60
+
+
+def _periods_to_archive(kind, now):
     """List of (period_start, period_end) tuples that need archiving for this kind.
     
     Changed 2026-10-11: Use weekly chunks instead of monthly to avoid timeouts
@@ -108,65 +126,91 @@ def _months_to_archive(kind, now):
 
 
 def export_month(db, client, bucket, kind, period_start, period_end):
-    """Export one period (week) of one kind via COPY. Returns (rows, bytes).
-    
+    """Export one period (week) of one kind via COPY.
+
+    Returns (rows, bytes), or None if another pump run holds a fresh lock on
+    this chunk (the caller should skip to the next chunk).
+
     Streams COPY output directly to a gzipped temp file on disk (not memory)
     to handle large periods without OOM.
-    
+
     Changed 2026-10-11: Weekly chunks instead of monthly (4x smaller).
     """
-    # Use ISO week format: 2024-W01
-    dt = datetime.fromtimestamp(period_start, tz=timezone.utc)
-    iso_year, iso_week, _ = dt.isocalendar()
-    period_str = f"{iso_year}-W{iso_week:02d}"
+    period_str = _week_str(period_start)
     progress_key = f"copy-archive:{kind}:{period_str}"
+    lock_key = f"copy-archive:lock:{kind}:{period_str}"
 
-    # Check if already done
+    # Check if already done; take the in-progress lock (race-safe: rechecked
+    # here even if the caller pre-checked, so two pump runs can't both export).
     with db.tx() as c:
         if db.get(c, progress_key):
             return 0, 0  # Already archived
+        lock = db.get(c, lock_key)
+        if lock and (time.time() - lock.get('at', 0)) < LOCK_TTL_S:
+            return None  # Another run is exporting this chunk right now
+        db.put(c, lock_key, {'at': time.time()})
 
+    try:
+        return _export_month_locked(db, client, bucket, kind, period_start,
+                                    period_end, period_str, progress_key)
+    finally:
+        with db.tx() as c:
+            db.delete(c, lock_key)
+
+
+def _export_month_locked(db, client, bucket, kind, period_start, period_end,
+                         period_str, progress_key):
+    """Chunk export body; the in-progress lock is held by the caller."""
     # Stream COPY output directly to gzipped temp file
     # Use workspace disk (not /tmp which is 512MB tmpfs)
     import tempfile, os
     tmpdir = os.path.expanduser("~/workspace/.tmp-archive")
     os.makedirs(tmpdir, exist_ok=True)
-    
-    hasher = hashlib.sha256()
+
     row_count = 0
-    
-    with tempfile.NamedTemporaryFile(mode='wb', suffix='.jsonl.gz', 
+
+    with tempfile.NamedTemporaryFile(mode='wb', suffix='.jsonl.gz',
                                      dir=tmpdir, delete=False) as tmp:
         tmp_path = tmp.name
         # We'll write gzip via the file object
         with gzip.GzipFile(fileobj=tmp, mode='wb') as gz:
-            # Get raw DBAPI connection for COPY
+            # Get raw DBAPI connection for COPY.
+            # Postgres 17 sessions default transaction_timeout=60s (store.py pool
+            # listener). SET LOCAL via SQLAlchemy does NOT propagate to the raw
+            # DBAPI connection's COPY — must use SET SESSION directly on the raw
+            # cursor, then reset to 60s before returning to the pool.
             with db.engine.connect() as conn:
-                conn.execute(text("SET statement_timeout = '30min'"))
                 raw = conn.connection.driver_connection
                 with raw.cursor() as cur:
-                    # psycopg3: cur.copy() yields bytes chunks
-                    # Note: No ORDER BY — COPY is faster without sort, and archive
-                    # doesn't need ordered output (it's bulk storage, not queryable)
-                    with cur.copy(
-                        f"COPY (SELECT row_to_json(t) FROM "
-                        f"(SELECT id, key, kind, source, symbol, ts, received, payload "
-                        f"FROM events WHERE kind = '{kind}' AND ts >= {period_start} "
-                        f"AND ts < {period_end}) t) TO STDOUT"
-                    ) as copy:
-                        for chunk in copy:
-                            # chunk is bytes, may contain partial lines
-                            # Write directly to gzip (row_to_json outputs valid JSON per row)
-                            gz.write(chunk)
-                            hasher.update(chunk)
-                            # Count newlines for row count (approximate, fine for progress)
-                            row_count += chunk.count(b'\n')
-        
-        # Get file size
-        file_size = os.path.getsize(tmp_path)
-    
+                    cur.execute("SET SESSION transaction_timeout = '30min'")
+                    cur.execute("SET SESSION statement_timeout = '30min'")
+                    try:
+                        # psycopg3: cur.copy() yields bytes chunks
+                        # Note: No ORDER BY — COPY is faster without sort, and archive
+                        # doesn't need ordered output (it's bulk storage, not queryable)
+                        with cur.copy(
+                            f"COPY (SELECT row_to_json(t) FROM "
+                            f"(SELECT id, key, kind, source, symbol, ts, received, payload "
+                            f"FROM events WHERE kind = '{kind}' AND ts >= {period_start} "
+                            f"AND ts < {period_end}) t) TO STDOUT"
+                        ) as copy:
+                            for chunk in copy:
+                                # chunk is bytes, may contain partial lines
+                                # Write directly to gzip (row_to_json outputs valid JSON per row)
+                                gz.write(chunk)
+                                # Count newlines for row count (approximate, fine for progress)
+                                row_count += chunk.count(b'\n')
+                    finally:
+                        # Reset to pool default before returning connection
+                        cur.execute("SET SESSION transaction_timeout = '60s'")
+                        cur.execute("SET SESSION statement_timeout = '30s'")
+
+    # Size must be read after the temp file is closed/flushed; reading it
+    # inside the with-block sees 0 bytes (buffered writes not yet on disk).
+    file_size = os.path.getsize(tmp_path)
+
     if row_count == 0:
-        # Empty month - mark done, cleanup
+        # Empty week - mark done, cleanup
         os.unlink(tmp_path)
         with db.tx() as c:
             db.put(c, progress_key, {'rows': 0, 'at': time.time()})
@@ -174,25 +218,34 @@ def export_month(db, client, bucket, kind, period_start, period_end):
 
     key = f"copy-archive/{kind}/{period_str}.jsonl.gz"
 
-    # Upload to R2 from file (streaming, not loading into memory)
+    # Hash the gzipped file bytes, then upload streaming from disk
+    # (not loading the whole file into memory).
+    file_hasher = hashlib.sha256()
+    with open(tmp_path, 'rb') as f:
+        for blk in iter(lambda: f.read(8 * 1024 * 1024), b''):
+            file_hasher.update(blk)
+    file_digest = file_hasher.hexdigest()
+
     with open(tmp_path, 'rb') as f:
         client.put_object(Bucket=bucket, Key=key, Body=f,
                           ContentType='application/gzip')
-    
+
     # Cleanup temp file
     os.unlink(tmp_path)
 
-    # Verify
+    # Verify: what R2 serves back must hash to the bytes we uploaded.
+    # (The old code hashed an undefined `data` name here — NameError on
+    # every successful upload. Compare against the file digest instead.)
     resp = client.get_object(Bucket=bucket, Key=key)
     body = resp['Body'].read()
     resp['Body'].close()
-    if hashlib.sha256(body).hexdigest() != hashlib.sha256(data).hexdigest():
+    if hashlib.sha256(body).hexdigest() != file_digest:
         raise ValueError(f"Upload verification failed for {key}")
 
     # Mark complete
     with db.tx() as c:
         db.put(c, progress_key, {'rows': row_count, 'bytes': file_size,
-                                 'sha256': hasher.hexdigest(),
+                                 'sha256': file_digest,
                                  'at': time.time()})
 
     return row_count, file_size
@@ -215,21 +268,26 @@ def run_copy_chunk(db, client, bucket, max_months=6):
         if chunks_left <= 0:
             summary['complete'] = False
             break
-        for ms, me in _months_to_archive(kind, now):
+        for ms, me in _periods_to_archive(kind, now):
             if chunks_left <= 0:
                 summary['complete'] = False
                 break
             # Use ISO week format for progress key (must match export_month)
-            dt = datetime.fromtimestamp(ms, tz=timezone.utc)
-            iso_year, iso_week, _ = dt.isocalendar()
-            period_str = f"{iso_year}-W{iso_week:02d}"
+            period_str = _week_str(ms)
             progress_key = f"copy-archive:{kind}:{period_str}"
             with db.tx() as c:
                 if db.get(c, progress_key):
                     continue  # Already done
+                # Skip chunks a concurrent pump run is exporting (fresh lock)
+                lock = db.get(c, f"copy-archive:lock:{kind}:{period_str}")
+                if lock and (time.time() - lock.get('at', 0)) < LOCK_TTL_S:
+                    continue
             # Not done - export it
             try:
-                rows, nbytes = export_month(db, client, bucket, kind, ms, me)
+                result = export_month(db, client, bucket, kind, ms, me)
+                if result is None:
+                    continue  # Lost the race to another run; try next chunk
+                rows, nbytes = result
                 summary['chunks_done'] += 1
                 summary['rows'] += rows
                 summary['bytes'] += nbytes
@@ -246,10 +304,8 @@ def run_copy_chunk(db, client, bucket, max_months=6):
     if summary['complete']:
         # Verify by checking if any period is not done
         for kind in kinds:
-            for ms, me in _months_to_archive(kind, now):
-                dt = datetime.fromtimestamp(ms, tz=timezone.utc)
-                iso_year, iso_week, _ = dt.isocalendar()
-                period_str = f"{iso_year}-W{iso_week:02d}"
+            for ms, me in _periods_to_archive(kind, now):
+                period_str = _week_str(ms)
                 progress_key = f"copy-archive:{kind}:{period_str}"
                 with db.tx() as c:
                     if not db.get(c, progress_key):
