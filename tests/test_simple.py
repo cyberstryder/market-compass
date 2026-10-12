@@ -55,7 +55,8 @@ def test_smoothers_and_futures_aggregation(db):
     sm = out['types']['smoothers']
     assert sm['stats']['tracked'] == 1 and sm['stats']['wins'] == 1
     assert sm['stats']['pnl'] == 49.68  # (2.51-2.00)*100 - 1.32 fee
-    assert sm['drill'][0]['name'] == 'DEMO'
+    assert sm['drill'][0]['name'] == '__this_week__'
+    assert sm['drill'][1]['name'] == 'DEMO'
     fu = out['types']['futures']
     assert fu['stats']['pnl'] == -63.0 and fu['stats']['tracked'] == 1
     # Full paper-trading roster is always listed, even with zero trades

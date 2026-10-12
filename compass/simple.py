@@ -100,6 +100,9 @@ def _smoothers(db, c, now):
     for ticker in sorted(per_ticker):
         st = _stats(per_ticker[ticker])
         drill.append(_drill(ticker, "Weekly Smoothers pick on %s." % ticker, st))
+    # Add "This Week" at the top - shows current week's picks and their status
+    drill.insert(0, _drill("__this_week__", "This week's Smoothers picks and their live status.",
+                           {"note": "Current week"}))
     stats = _stats(all_trades)
     stats["target_hits"] = target_hits
     return (_block(
@@ -585,7 +588,67 @@ def _ts(ts):
         return "—"
 
 
+def _detail_smoothers_this_week(db, c, now):
+    """Show all Smoothers picks for the current week with their live status."""
+    # Find the most recent week (max week value)
+    week_row = c.execute(select(func.max(smoothers_weekly.c.week))).scalar()
+    if not week_row:
+        return {"type": "smoothers", "name": "__this_week__",
+                "title": "This Week's Smoothers Picks",
+                "sub": "No picks found.", "items": []}
+    rows = list(c.execute(select(
+        smoothers_weekly.c.ticker, smoothers_weekly.c.status,
+        smoothers_weekly.c.payload)
+        .where(smoothers_weekly.c.week == week_row)
+        .order_by(smoothers_weekly.c.ticker)).mappings())
+    items = []
+    for r in rows:
+        p = r.get("payload") or {}
+        if not isinstance(p, dict):
+            continue
+        ticker = r.get("ticker") or "?"
+        status = r.get("status") or "?"
+        res = option_result(p)
+        pnl = res.get("net_pnl")
+        direction = (p.get("direction") or "").upper()
+        entry, target = p.get("entry_price"), p.get("target_price")
+        sub = ("%s %s" % (ticker, direction)).strip()
+        if entry and target:
+            try:
+                sub += " · $%.2f → $%.2f" % (float(entry), float(target))
+            except (TypeError, ValueError):
+                pass
+        # Show status and P&L if available
+        orows = [["Status", status]]
+        if pnl is not None:
+            orows.append(["Net P&L", _m(pnl)])
+        else:
+            # For open positions, show target hit status
+            orows.append(["Target hit", "Yes" if status == "WIN" else ("No" if status == "LOSS" else "Pending")])
+        # Add quality tier if available
+        tier = p.get("quality_tier") or p.get("tier")
+        if tier:
+            orows.append(["Tier", str(tier)])
+        items.append({
+            "tag": ticker, "title": "%s %s" % (ticker, direction), "sub": sub, "rows": orows,
+            "result": _m(pnl) if pnl is not None else status,
+            "result_cls": "pos" if (pnl or 0) > 0 else ("neg" if (pnl or 0) < 0 else ""),
+        })
+    try:
+        dt = datetime.fromisoformat(week_row)
+        wl = dt.strftime("%b %d, %Y")
+    except (ValueError, TypeError):
+        wl = week_row
+    return {"type": "smoothers", "name": "__this_week__",
+            "title": "This Week's Picks — Week of %s" % wl,
+            "sub": "%d picks, live status. Newest signals first." % len(items),
+            "items": items}
+
+
 def _detail_smoothers(db, c, now, name):
+    # Special case: "__this_week__" shows all picks for the current week
+    if name == "__this_week__":
+        return _detail_smoothers_this_week(db, c, now)
     rows = list(c.execute(select(
         smoothers_weekly.c.week, smoothers_weekly.c.status,
         smoothers_weekly.c.payload)
