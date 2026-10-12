@@ -831,6 +831,115 @@ a{color:#888}</style></head><body>
         except Exception as e:
             return {'ok': False, 'error': str(e)[:500]}
 
+    @app.post('/api/admin/db-maintenance')
+    def db_maintenance():
+        """Password-gated DB maintenance: VACUUM ANALYZE + DESC index on events.
+
+        Safe operations only:
+        - VACUUM (ANALYZE) events: reclaims dead rows, non-blocking, loses no data
+        - CREATE INDEX CONCURRENTLY: non-blocking index build for the slow
+          ORDER BY ts DESC query pattern. Skipped if index already exists.
+
+        Runs in background thread. Check /api/admin/db-maintenance-log for progress.
+        NOT in the public list, so requires dashboard access password.
+        """
+        import threading
+        import time
+
+        with db.tx() as c:
+            running = db.get(c, 'db:maintenance:running', False)
+            if running:
+                return {'ok': False, 'error': 'DB maintenance already running'}
+            db.put(c, 'db:maintenance:running', True)
+            db.put(c, 'db:maintenance:log', [f"{time.strftime('%Y-%m-%d %H:%M:%S')}: Started via API"])
+
+        def _run():
+            log = []
+            def log_msg(msg):
+                timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+                log.append(f"{timestamp}: {msg}")
+                try:
+                    with db.tx() as c2:
+                        db.put(c2, 'db:maintenance:log', log[-20:])
+                except:
+                    pass
+
+            try:
+                log_msg("Background thread started")
+                # Use a raw connection for VACUUM (can't run in transaction block)
+                # and CREATE INDEX CONCURRENTLY (also can't be in transaction)
+                import psycopg
+                from .store import DB_URL
+                # DB_URL is not directly available; get from db object
+                # Use the engine's URL instead
+                engine_url = str(db.engine.url)
+                log_msg(f"Connecting to DB")
+
+                # VACUUM cannot run inside a transaction block, so we need
+                # autocommit mode
+                conn = psycopg.connect(engine_url, autocommit=True)
+                try:
+                    with conn.cursor() as cur:
+                        log_msg("Running VACUUM (ANALYZE) events...")
+                        cur.execute("VACUUM (ANALYZE) events;")
+                        log_msg("VACUUM complete")
+
+                        # Check if index already exists
+                        cur.execute("""
+                            SELECT 1 FROM pg_indexes
+                            WHERE indexname = 'events_kind_symbol_ts_desc'
+                        """)
+                        if cur.fetchone():
+                            log_msg("Index events_kind_symbol_ts_desc already exists, skipping")
+                        else:
+                            log_msg("Creating index CONCURRENTLY (non-blocking, 10-30 min)...")
+                            cur.execute("""
+                                CREATE INDEX CONCURRENTLY IF NOT EXISTS
+                                events_kind_symbol_ts_desc
+                                ON events (kind, symbol, ts DESC, id DESC)
+                            """)
+                            log_msg("Index creation complete")
+                finally:
+                    conn.close()
+
+                log_msg("DB maintenance complete")
+                with db.tx() as c2:
+                    db.put(c2, 'db:maintenance:last_result', {'ok': True, 'completed_at': time.time()})
+            except Exception as e:
+                import traceback
+                err = str(e)[:1000]
+                tb = traceback.format_exc()[-2000:]
+                log_msg(f"FATAL: {err}")
+                try:
+                    with db.tx() as c2:
+                        db.put(c2, 'db:maintenance:last_error', err)
+                except:
+                    pass
+            finally:
+                log_msg("Thread finishing, clearing running flag")
+                try:
+                    with db.tx() as c2:
+                        db.put(c2, 'db:maintenance:running', False)
+                except:
+                    pass
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {'ok': True, 'started': True, 'message': 'DB maintenance started in background. Check /api/admin/db-maintenance-log for progress.'}
+
+    @app.get('/api/admin/db-maintenance-log')
+    def get_db_maintenance_log():
+        """Password-gated endpoint to see DB maintenance progress."""
+        try:
+            with db.tx() as c:
+                log = db.get(c, 'db:maintenance:log', [])
+                running = db.get(c, 'db:maintenance:running', False)
+                last_result = db.get(c, 'db:maintenance:last_result', None)
+                last_error = db.get(c, 'db:maintenance:last_error', None)
+            return {'ok': True, 'running': running,
+                    'log': log, 'last_result': last_result, 'last_error': last_error}
+        except Exception as e:
+            return {'ok': False, 'error': str(e)[:500]}
+
     @app.post('/api/admin/backtest-scalp')
     @app.get('/api/admin/backtest-scalp')
     def backtest_scalp(request: Request):
