@@ -58,7 +58,31 @@ class Collectors:
         await self.client.aclose()
 
     async def get(self,url,headers=None,params=None):
-        return await self.get_with_client(self.client,url,headers,params)
+        import time as _time
+        from .provider_monitor import provider_from_url, record_call
+        from urllib.parse import urlparse as _up
+        start = _time.time()
+        provider = provider_from_url(url)
+        # Extract endpoint path for breakdown (e.g., /v3/snapshot/options)
+        try:
+            endpoint = _up(url).path[:50]  # Truncate long paths
+        except:
+            endpoint = 'unknown'
+        try:
+            result = await self.get_with_client(self.client,url,headers,params)
+            latency_ms = (_time.time() - start) * 1000
+            try:
+                record_call(self.db, provider, endpoint, True, latency_ms)
+            except:
+                pass  # Don't break the request if monitoring fails
+            return result
+        except Exception as e:
+            latency_ms = (_time.time() - start) * 1000
+            try:
+                record_call(self.db, provider, endpoint, False, latency_ms)
+            except:
+                pass
+            raise
 
     @staticmethod
     async def get_with_client(client,url,headers=None,params=None):

@@ -730,8 +730,8 @@ a{color:#888}</style></head><body>
     @app.post('/api/admin/copy-archive-chunk')
     @app.get('/api/admin/copy-archive-chunk')
     def post_copy_archive_chunk():
-        """Process up to 3 (kind, month) chunks via COPY. Public for cron.
-        Each call exports entire months using COPY TO STDOUT (fast).
+        """Process up to 6 (kind, week) chunks via COPY. Public for cron.
+        Each call exports whole weeks using COPY TO STDOUT (fast).
         Safe to call repeatedly; resumes from DB progress."""
         from .copy_archive import run_copy_chunk, _s3_client
         import os
@@ -912,6 +912,42 @@ a{color:#888}</style></head><body>
             with db.tx() as c:
                 h = db.get(c, "health:alpaca_option_stream", {})
             return {"health": h}
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "traceback": traceback.format_exc(limit=5)}
+
+    @app.get('/api/provider-usage')
+    def get_provider_usage():
+        # Provider cost-effectiveness monitor.
+        # Shows API call volume, success rate, and cost per provider.
+        # Use ?days=7 for weekly summary, ?day=YYYY-MM-DD for specific day.
+        from .provider_monitor import get_daily_usage, get_all_providers_usage, get_weekly_summary
+        try:
+            from flask import request
+            days = request.args.get('days', '1')
+            day = request.args.get('day')
+
+            with db.tx() as c:
+                # Trick: provider_monitor expects db with .conn and .get/.put
+                # We pass db directly and use c for the context
+                class DBCtx:
+                    def __init__(self, db, c):
+                        self.db = db
+                        self.conn = c
+                    def get(self, c, k, d=None):
+                        return self.db.get(c, k, d)
+                    def put(self, c, k, v):
+                        return self.db.put(c, k, v)
+
+                ctx = DBCtx(db, c)
+                if days == '7':
+                    result = get_weekly_summary(ctx)
+                elif day:
+                    result = get_all_providers_usage(ctx, day)
+                else:
+                    result = get_all_providers_usage(ctx)
+
+            return {"providers": result}
         except Exception as e:
             import traceback
             return {"error": str(e), "traceback": traceback.format_exc(limit=5)}
