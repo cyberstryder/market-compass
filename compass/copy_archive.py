@@ -104,19 +104,25 @@ def _week_str(period_start):
 LOCK_TTL_S = 30 * 60
 
 
-def _periods_to_archive(kind, now):
+def _periods_to_archive(kind, now, earliest=None):
     """List of (period_start, period_end) tuples that need archiving for this kind.
     
     Changed 2026-10-11: Use weekly chunks instead of monthly to avoid timeouts
     on large quote months. Each chunk is ~1/4 the size.
+    Changed 2026-10-12: Accept earliest timestamp to skip empty weeks before
+    data actually exists (was hardcoded to 2024-01-01).
     """
     retention = _retention_days(kind)
     if retention is None:
         return []
     cutoff = now - retention * DAY
-    # Start from a reasonable epoch (2024-01-01) to now
+    # Start from earliest data (or 2024-01-01 fallback) to avoid scanning
+    # hundreds of empty weeks before data collection began
     periods = []
-    ts = 1704067200  # 2024-01-01 UTC
+    ts = earliest if earliest else 1704067200  # 2024-01-01 UTC fallback
+    # Align to week boundary
+    ws, _ = _week_range(ts)
+    ts = ws
     while ts < cutoff:
         ws, we = _week_range(ts)
         if we <= cutoff:  # Only full weeks before cutoff
@@ -296,7 +302,19 @@ def run_copy_chunk(db, client, bucket, max_months=6):
         if chunks_left <= 0:
             summary['complete'] = False
             break
-        for ms, me in _periods_to_archive(kind, now):
+        # Find earliest data for this kind to skip empty weeks before collection began
+        earliest = None
+        try:
+            with db.tx() as c:
+                row = c.execute(
+                    "SELECT MIN(ts) FROM events WHERE kind = :kind",
+                    {"kind": kind}
+                ).scalar()
+                if row:
+                    earliest = float(row)
+        except:
+            pass
+        for ms, me in _periods_to_archive(kind, now, earliest):
             if chunks_left <= 0:
                 summary['complete'] = False
                 break
