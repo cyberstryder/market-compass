@@ -205,9 +205,15 @@ function drillCard(it, id, cfg){
     + '<div class="result">' + res + '</div></article>';
 }
 
-function selectDrill(id, scroll){
+function selectDrill(id, scroll, showList){
   var cfg = DRILL[id];
   if(!cfg || !SUMMARY) return;
+  // For Smoothers, default to this week's picks view unless showList is true
+  // (e.g., when coming back via the back button)
+  if(id === 'smoothers' && !showList){
+    openDetail(id, '__this_week__');
+    return;
+  }
   drillType = id;
   var back = document.getElementById('drillBack');
   back.hidden = true;
@@ -294,7 +300,7 @@ async function openDetail(id, itemName){
     var back = document.getElementById('drillBack');
     back.hidden = false;
     back.textContent = '← ' + cfg.title;
-    back.onclick = function(){ selectDrill(id, true); };
+    back.onclick = function(){ selectDrill(id, true, true); };
     document.getElementById('drillHintText').textContent = '';
   }catch(err){
     document.getElementById('drillSub').textContent = 'Couldn\u2019t load the detail — try again.';

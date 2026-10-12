@@ -100,9 +100,8 @@ def _smoothers(db, c, now):
     for ticker in sorted(per_ticker):
         st = _stats(per_ticker[ticker])
         drill.append(_drill(ticker, "Weekly Smoothers pick on %s." % ticker, st))
-    # Add "This Week" at the top - shows current week's picks and their status
-    drill.insert(0, _drill("__this_week__", "This week's Smoothers picks and their live status.",
-                           {"note": "Current week"}))
+    # Note: "__this_week__" is the default view (auto-opened by frontend),
+    # not a drill list item. The stock list is for research.
     stats = _stats(all_trades)
     stats["target_hits"] = target_hits
     return (_block(
