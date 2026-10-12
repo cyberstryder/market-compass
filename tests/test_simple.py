@@ -172,6 +172,20 @@ def test_detail_smoothers_weeks(db):
     assert d['items'][1]['result_cls'] == 'neg'
 
 
+def test_detail_smoothers_current_week(db):
+    # Regression: _detail_smoothers_this_week used func.max without importing
+    # func, so detail() fell into the exception fallback (title 'current-week',
+    # empty items). The public route must return the real picks.
+    now = NOW
+    _detail_fixtures(db, now)
+    with db.tx() as c:
+        d = simple.detail(db, c, now, 'smoothers', 'current-week')
+    assert d['title'].startswith("This Week's Picks")
+    assert len(d['items']) == 1
+    assert d['items'][0]['tag'] == 'DEMO'
+    assert d['items'][0]['result_cls'] == 'pos'
+
+
 def test_futures_data_gap_excluded(db):
     # Trades that flew blind (no fresh quotes) are not counted as wins/losses.
     now = NOW

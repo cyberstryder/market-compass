@@ -15,7 +15,7 @@ from collections import defaultdict
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from .alert_format import ICT_SETUP_NAMES
 from .ict_paper import STRATEGY_TAGS as ICT_PAPER_TAGS
