@@ -61,8 +61,13 @@ def quote_line(p):
 
 
 def envelope(p,event,description,fields,color):
+    # A+ Featured gets the old-style emoji title (matches 2026-09-08 format)
+    if event == 'ENTRY SIGNAL' and p.get('quality_tier') == 'A+':
+        title = f"☀️ A+ Featured #{p.get('featured_rank') or 0:02d} {p.get('direction','')} - {p['ticker']}"
+    else:
+        title = f"SMOOTHERS | {event} | {p['ticker']} · {p.get('direction','Unavailable')}"
     return {'username':'Smoothers','allowed_mentions':{'parse':[]},'embeds':[{
-        'title':f"SMOOTHERS | {event} | {p['ticker']} · {p.get('direction','Unavailable')}",
+        'title':title,
         'description':description,'color':color,'fields':fields,
         'footer':{'text':f"Smoothers · Weekly swing · Week {p['week']} · Signal {p['id']}"}}]}
 
@@ -79,11 +84,14 @@ def entry(p):
     if dte is None and contract.get('expiration'):
         # Preserve original inclusive Monday-to-expiry convention.
         dte=(datetime.fromisoformat(contract['expiration']).date()-datetime.fromisoformat(p['week']).date()).days+1
-    fields=[field('Underlying Entry',dollar(p.get('entry_price'))),field('Underlying Target',dollar(p.get('target_price'))),
+    # vNext Quality header (matches old A+ Featured style from 2026-09-08)
+    quality_line = f"{p.get('quality_tier','WATCH')} • Featured #{p.get('featured_rank') or 0:02d} • Overall Q #{p.get('quality_rank') or 0:02d} • {p.get('quality_score') or 0:.1f}/100"
+    fields=[field('vNext Quality', quality_line, False),
+        field('A+ selector', 'Raw Target / ATR (lower is better)', False),
+        field('Underlying Entry',dollar(p.get('entry_price'))),field('Underlying Target',dollar(p.get('target_price'))),
         *contract_fields(p),field('Option Reference Premium',dollar(p.get('entry_premium'))),
         field('DTE at Entry',f'{dte} days' if dte is not None else 'Unavailable'),
-        field('Est return',pct(p.get('est_return_pct'),0)),
-        field('Quality Tier',f"{p.get('quality_tier','WATCH')} • Featured #{p.get('featured_rank') or 0:02d} • Overall #{p.get('quality_rank') or 0:02d} • Score {p.get('quality_score') or 0:.1f}/100",False)]
+        field('Est return',pct(p.get('est_return_pct'),0))]
     # Historical conviction data (5w) — added 2026-10-03
     hist=p.get('historical_stats') or {}
     if hist.get('total',0)>0:
