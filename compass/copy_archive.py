@@ -184,6 +184,8 @@ def _export_month_locked(db, client, bucket, kind, period_start, period_end,
                 with raw.cursor() as cur:
                     cur.execute("SET SESSION transaction_timeout = '30min'")
                     cur.execute("SET SESSION statement_timeout = '30min'")
+                    # Must commit for SET SESSION to take effect (see store.py listener)
+                    raw.commit()
                     try:
                         # psycopg3: cur.copy() yields bytes chunks
                         # Note: No ORDER BY — COPY is faster without sort, and archive
@@ -204,6 +206,7 @@ def _export_month_locked(db, client, bucket, kind, period_start, period_end,
                         # Reset to pool default before returning connection
                         cur.execute("SET SESSION transaction_timeout = '60s'")
                         cur.execute("SET SESSION statement_timeout = '30s'")
+                        raw.commit()
 
     # Size must be read after the temp file is closed/flushed; reading it
     # inside the with-block sees 0 bytes (buffered writes not yet on disk).
