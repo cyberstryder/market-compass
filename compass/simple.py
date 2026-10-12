@@ -100,7 +100,7 @@ def _smoothers(db, c, now):
     for ticker in sorted(per_ticker):
         st = _stats(per_ticker[ticker])
         drill.append(_drill(ticker, "Weekly Smoothers pick on %s." % ticker, st))
-    # Note: "__this_week__" is the default view (auto-opened by frontend),
+    # Note: "current-week" is the default view (auto-opened by frontend),
     # not a drill list item. The stock list is for research.
     stats = _stats(all_trades)
     stats["target_hits"] = target_hits
@@ -592,7 +592,7 @@ def _detail_smoothers_this_week(db, c, now):
     # Find the most recent week (max week value)
     week_row = c.execute(select(func.max(smoothers_weekly.c.week))).scalar()
     if not week_row:
-        return {"type": "smoothers", "name": "__this_week__",
+        return {"type": "smoothers", "name": "current-week",
                 "title": "This Week's Smoothers Picks",
                 "sub": "No picks found.", "items": []}
     rows = list(c.execute(select(
@@ -638,15 +638,15 @@ def _detail_smoothers_this_week(db, c, now):
         wl = dt.strftime("%b %d, %Y")
     except (ValueError, TypeError):
         wl = week_row
-    return {"type": "smoothers", "name": "__this_week__",
+    return {"type": "smoothers", "name": "current-week",
             "title": "This Week's Picks — Week of %s" % wl,
             "sub": "%d picks, live status. Newest signals first." % len(items),
             "items": items}
 
 
 def _detail_smoothers(db, c, now, name):
-    # Special case: "__this_week__" shows all picks for the current week
-    if name == "__this_week__":
+    # Special case: "current-week" shows all picks for the current week
+    if name == "current-week":
         return _detail_smoothers_this_week(db, c, now)
     rows = list(c.execute(select(
         smoothers_weekly.c.week, smoothers_weekly.c.status,

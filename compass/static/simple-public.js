@@ -211,7 +211,7 @@ function selectDrill(id, scroll, showList){
   // For Smoothers, default to this week's picks view unless showList is true
   // (e.g., when coming back via the back button)
   if(id === 'smoothers' && !showList){
-    openDetail(id, '__this_week__');
+    openDetail(id, 'current-week');
     return;
   }
   drillType = id;

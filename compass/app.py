@@ -849,8 +849,10 @@ a{color:#888}</style></head><body>
                 last_run = db.get(c, 'archive:worker:last_run', None)
                 last_result = db.get(c, 'archive:worker:last_result', None)
                 last_error = db.get(c, 'archive:worker:last_error', None)
+                heartbeat = db.get(c, 'copy-archive:heartbeat', None)
             return {'ok': True, 'running': running, 'last_run': last_run,
-                    'log': log, 'last_result': last_result, 'last_error': last_error}
+                    'log': log, 'last_result': last_result, 'last_error': last_error,
+                    'heartbeat': heartbeat}
         except Exception as e:
             return {'ok': False, 'error': str(e)[:500]}
 

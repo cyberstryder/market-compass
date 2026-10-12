@@ -190,6 +190,18 @@ def _export_month_locked(db, client, bucket, kind, period_start, period_end,
                         # psycopg3: cur.copy() yields bytes chunks
                         # Note: No ORDER BY — COPY is faster without sort, and archive
                         # doesn't need ordered output (it's bulk storage, not queryable)
+                        # Heartbeat before COPY starts
+                        try:
+                            with db.tx() as c:
+                                db.put(c, 'copy-archive:heartbeat', {
+                                    'at': time.time(),
+                                    'chunk': f"{kind}/{period_str}",
+                                    'phase': 'copy_running',
+                                    'rows_so_far': 0
+                                })
+                        except:
+                            pass
+                        last_heartbeat = time.time()
                         with cur.copy(
                             f"COPY (SELECT row_to_json(t) FROM "
                             f"(SELECT id, key, kind, source, symbol, ts, received, payload "
@@ -202,6 +214,19 @@ def _export_month_locked(db, client, bucket, kind, period_start, period_end,
                                 gz.write(chunk)
                                 # Count newlines for row count (approximate, fine for progress)
                                 row_count += chunk.count(b'\n')
+                                # Heartbeat every 30s during long COPY
+                                if time.time() - last_heartbeat > 30:
+                                    try:
+                                        with db.tx() as c:
+                                            db.put(c, 'copy-archive:heartbeat', {
+                                                'at': time.time(),
+                                                'chunk': f"{kind}/{period_str}",
+                                                'phase': 'copy_running',
+                                                'rows_so_far': row_count
+                                            })
+                                    except:
+                                        pass
+                                    last_heartbeat = time.time()
                     finally:
                         # Reset to pool default before returning connection
                         cur.execute("SET SESSION transaction_timeout = '60s'")
@@ -287,6 +312,16 @@ def run_copy_chunk(db, client, bucket, max_months=6):
                     continue
             # Not done - export it
             try:
+                # Heartbeat: log which chunk we're starting so silent deaths are visible
+                try:
+                    with db.tx() as c:
+                        db.put(c, 'copy-archive:heartbeat', {
+                            'at': time.time(),
+                            'chunk': f"{kind}/{period_str}",
+                            'phase': 'starting'
+                        })
+                except:
+                    pass
                 result = export_month(db, client, bucket, kind, ms, me)
                 if result is None:
                     continue  # Lost the race to another run; try next chunk
@@ -299,6 +334,17 @@ def run_copy_chunk(db, client, bucket, max_months=6):
             except Exception as e:
                 summary['error'] = f"{kind}/{period_str}: {str(e)[:500]}"
                 summary['complete'] = False
+                # Heartbeat the error too
+                try:
+                    with db.tx() as c:
+                        db.put(c, 'copy-archive:heartbeat', {
+                            'at': time.time(),
+                            'chunk': f"{kind}/{period_str}",
+                            'phase': 'error',
+                            'error': str(e)[:500]
+                        })
+                except:
+                    pass
                 break
         if 'error' in summary:
             break
