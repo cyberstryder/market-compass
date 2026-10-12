@@ -60,76 +60,45 @@ def run_gap_backtest(db, days, symbols, now=None):
     Returns {symbol: {'signals': n, 'details': [last-10 signal dicts]}}.
     A signal dict carries date, gap_pct, direction ('short' fades a gap-up,
     'long' fades a gap-down), entry (session open) and prior_close.
-
-    Optimized: fetches all bars per symbol in one query instead of 2 per day.
     """
     now = now if now is not None else datetime.now(timezone.utc).timestamp()
     today = datetime.fromtimestamp(now, tz=NY).date()
     results = {}
-
-    # Calculate date range
-    start_date = today - timedelta(days=days * 3 + 15)  # Buffer for weekends/holidays
-    start_ts = datetime(start_date.year, start_date.month, start_date.day,
-                       0, 0, tzinfo=NY).timestamp()
-    end_ts = datetime(today.year, today.month, today.day,
-                     23, 59, tzinfo=NY).timestamp()
-
     with db.tx() as c:
         for symbol in symbols:
-            # Fetch all 1-min bars for this symbol in the date range in ONE query
-            # We need session opens (9:30 ET) and prior closes (4:00 ET)
-            rows = c.execute(
-                text("""
-                    SELECT ts, payload FROM events
-                    WHERE kind='bar' AND symbol=:s AND ts>=:lo AND ts<:hi
-                    ORDER BY ts
-                """),
-                {"s": symbol, "lo": start_ts, "hi": end_ts}
-            ).mappings().all()
-
-            # Index bars by date for fast lookup
-            # Key: date -> {'open': px, 'close': px}
-            daily = {}
-            for row in rows:
-                ts = row['ts']
-                dt = datetime.fromtimestamp(ts, tz=NY)
-                d = dt.date()
-                payload = _payload(row)
-                if d not in daily:
-                    daily[d] = {}
-                # 9:30 ET is session open (within first 5 min)
-                # 16:00 ET is session close (within last 5 min)
-                hm = (dt.hour, dt.minute)
-                if hm >= (9, 30) and hm < (9, 35):
-                    if 'open' not in daily[d]:
-                        o = number(payload.get("o"))
-                        if o:
-                            daily[d]['open'] = o
-                if hm >= (15, 55):
-                    c_px = number(payload.get("c"))
-                    if c_px:
-                        daily[d]['close'] = c_px
-
-            # Now find gaps
             signals = []
             checked = 0
             back = 0
+            # Calendar-day cap keeps this bounded even for large `days`.
             while checked < days and back < days * 3 + 15:
                 back += 1
                 d = today - timedelta(days=back)
                 if d.weekday() >= 5:
                     continue
                 checked += 1
-
-                if d not in daily or 'open' not in daily[d]:
+                open_ts = _session_open_utc(d)
+                row = c.execute(
+                    _OPEN_Q,
+                    {"s": symbol, "lo": open_ts, "hi": open_ts + OPEN_WINDOW_S},
+                ).mappings().first()
+                if not row:
+                    continue  # holiday or missing data: skip, never fabricate
+                open_px = number(_payload(row).get("o"))
+                if not open_px:
                     continue
-                open_px = daily[d]['open']
-
                 pd = _prev_trading_day(d)
-                if pd not in daily or 'close' not in daily[pd]:
+                p_open = _session_open_utc(pd)
+                p_close = datetime(pd.year, pd.month, pd.day,
+                                   SESSION_CLOSE_H, 0, tzinfo=NY).timestamp()
+                prow = c.execute(
+                    _CLOSE_Q,
+                    {"s": symbol, "lo": p_open, "hi": p_close},
+                ).mappings().first()
+                if not prow:
                     continue
-                prior_close = daily[pd]['close']
-
+                prior_close = number(_payload(prow).get("c"))
+                if not prior_close:
+                    continue
                 gap_pct = (open_px - prior_close) / prior_close * 100.0
                 if abs(gap_pct) >= GAP_THRESHOLD_PCT:
                     signals.append({
