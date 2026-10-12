@@ -187,7 +187,7 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/backtest-scalp"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/backtest-scalp"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
@@ -754,35 +754,82 @@ a{color:#888}</style></head><body>
         import threading
         import time
 
-        # Prevent concurrent runs
-        state = getattr(trigger_archive_worker, '_state', {'running': False, 'last_run': None})
-        if state['running']:
-            return {'ok': False, 'error': 'Archive worker already running',
-                    'last_run': state['last_run']}
-
-        state['running'] = True
-        state['last_run'] = time.time()
-        trigger_archive_worker._state = state
+        # Prevent concurrent runs (check DB, not just memory)
+        with db.tx() as c:
+            running = db.get(c, 'archive:worker:running', False)
+            if running:
+                last_run = db.get(c, 'archive:worker:last_run', None)
+                return {'ok': False, 'error': 'Archive worker already running',
+                        'last_run': last_run}
+            db.put(c, 'archive:worker:running', True)
+            db.put(c, 'archive:worker:last_run', time.time())
+            db.put(c, 'archive:worker:log', [f"{time.strftime('%Y-%m-%d %H:%M:%S')}: Triggered via API"])
 
         def _run():
+            log = []
+            def log_msg(msg):
+                timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+                log.append(f"{timestamp}: {msg}")
+                # Update DB log
+                try:
+                    with db.tx() as c2:
+                        db.put(c2, 'archive:worker:log', log[-20:])  # Keep last 20
+                except:
+                    pass
+
             try:
+                log_msg("Background thread started")
                 from .copy_archive import run_copy_chunk, _s3_client
                 import os
+                log_msg("Imports OK, creating S3 client")
                 client = _s3_client()
                 bucket = os.environ['ARCHIVE_BUCKET']
+                log_msg(f"S3 client OK, bucket={bucket}, starting run_copy_chunk")
                 # Process 6 chunks per trigger
                 result = run_copy_chunk(db, client, bucket, max_months=6)
-                state['last_result'] = result
-                state['last_error'] = None
+                log_msg(f"Completed: chunks={result.get('chunks_done')}, rows={result.get('rows')}, bytes={result.get('bytes')}")
+                if result.get('error'):
+                    log_msg(f"ERROR: {result.get('error')}")
+                with db.tx() as c2:
+                    db.put(c2, 'archive:worker:last_result', result)
+                    db.put(c2, 'archive:worker:last_error', result.get('error'))
             except Exception as e:
                 import traceback
-                state['last_error'] = str(e)[:1000]
-                state['last_result'] = None
+                err = str(e)[:1000]
+                tb = traceback.format_exc()[-2000:]
+                log_msg(f"FATAL: {err}")
+                log_msg(f"Traceback: {tb[:500]}")
+                try:
+                    with db.tx() as c2:
+                        db.put(c2, 'archive:worker:last_error', err)
+                        db.put(c2, 'archive:worker:last_traceback', tb)
+                except:
+                    pass
             finally:
-                state['running'] = False
+                log_msg("Thread finishing, clearing running flag")
+                try:
+                    with db.tx() as c2:
+                        db.put(c2, 'archive:worker:running', False)
+                except:
+                    pass
 
         threading.Thread(target=_run, daemon=True).start()
         return {'ok': True, 'started': True, 'message': 'Archive worker started in background'}
+
+    @app.get('/api/admin/archive-log')
+    def get_archive_log():
+        """Public endpoint to see the archive worker log. For debugging."""
+        try:
+            with db.tx() as c:
+                log = db.get(c, 'archive:worker:log', [])
+                running = db.get(c, 'archive:worker:running', False)
+                last_run = db.get(c, 'archive:worker:last_run', None)
+                last_result = db.get(c, 'archive:worker:last_result', None)
+                last_error = db.get(c, 'archive:worker:last_error', None)
+            return {'ok': True, 'running': running, 'last_run': last_run,
+                    'log': log, 'last_result': last_result, 'last_error': last_error}
+        except Exception as e:
+            return {'ok': False, 'error': str(e)[:500]}
 
     @app.post('/api/admin/backtest-scalp')
     @app.get('/api/admin/backtest-scalp')
