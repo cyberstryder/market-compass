@@ -170,6 +170,12 @@ async def consume(ws, collector, buffer=None):
         SUBSCRIBE_BATCH_SIZE = 20
         while True:
             wanted = set(collector.option_symbols)
+            # If wanted is empty, the symbol selector hasn't populated yet
+            # (e.g., collector just restarted). Keep existing subscriptions
+            # instead of unsubscribing from everything.
+            if not wanted:
+                await asyncio.sleep(0.5)
+                continue
             wire = sorted(to_alpaca_symbol(s) for s in wanted)
             have_wire = sorted(to_alpaca_symbol(s) for s in subscribed)
             if wire != have_wire:
