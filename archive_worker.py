@@ -27,7 +27,8 @@ def main():
     args = parser.parse_args()
 
     # Import after path setup
-    from compass.store import get_db
+    from compass.config import Config
+    from compass.store import Store
     from compass.copy_archive import run_copy_chunk, _s3_client
 
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Archive worker starting", flush=True)
@@ -36,7 +37,8 @@ def main():
         print(f"  Kind filter: {args.kind}", flush=True)
 
     # Get DB and S3 client
-    db = get_db()
+    cfg = Config()
+    db = Store(cfg.db)
     client = _s3_client()
     bucket = os.environ['ARCHIVE_BUCKET']
 
