@@ -816,6 +816,29 @@ a{color:#888}</style></head><body>
         threading.Thread(target=_run, daemon=True).start()
         return {'ok': True, 'started': True, 'message': 'Archive worker started in background'}
 
+    @app.post('/api/admin/archive-reset')
+    def reset_archive_worker():
+        """Password-gated: force-clear a stuck archive worker running flag.
+
+        Use when the worker thread died silently (no bucket growth, no log
+        updates) and the flag is blocking hourly triggers at "already running".
+        Safe: only clears the flag, does not touch data or R2.
+        NOT in the public list, requires dashboard access password.
+        """
+        import time
+        try:
+            with db.tx() as c:
+                was_running = db.get(c, 'archive:worker:running', False)
+                last_run = db.get(c, 'archive:worker:last_run', None)
+                db.put(c, 'archive:worker:running', False)
+                db.put(c, 'archive:worker:log', [
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S')}: Flag force-cleared via API "
+                    f"(was_running={was_running}, last_run={last_run})"
+                ])
+            return {'ok': True, 'cleared': True, 'was_running': was_running}
+        except Exception as e:
+            return {'ok': False, 'error': str(e)[:500]}
+
     @app.get('/api/admin/archive-log')
     def get_archive_log():
         """Public endpoint to see the archive worker log. For debugging."""
