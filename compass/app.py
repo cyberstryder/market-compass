@@ -187,7 +187,7 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/backtest-scalp"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/backtest-scalp"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
@@ -744,6 +744,45 @@ a{color:#888}</style></head><body>
             import traceback
             return {'ok': False, 'error': str(e)[:1000],
                     'traceback': traceback.format_exc()[-2000:]}
+
+    @app.post('/api/admin/archive-trigger')
+    @app.get('/api/admin/archive-trigger')
+    def trigger_archive_worker():
+        """Trigger the archive worker in background. Returns immediately.
+        Avoids the 60s HTTP timeout by running COPY in a background thread.
+        Public for cron. Check /api/admin/archive-status for progress."""
+        import threading
+        import time
+
+        # Prevent concurrent runs
+        state = getattr(trigger_archive_worker, '_state', {'running': False, 'last_run': None})
+        if state['running']:
+            return {'ok': False, 'error': 'Archive worker already running',
+                    'last_run': state['last_run']}
+
+        state['running'] = True
+        state['last_run'] = time.time()
+        trigger_archive_worker._state = state
+
+        def _run():
+            try:
+                from .copy_archive import run_copy_chunk, _s3_client
+                import os
+                client = _s3_client()
+                bucket = os.environ['ARCHIVE_BUCKET']
+                # Process 6 chunks per trigger
+                result = run_copy_chunk(db, client, bucket, max_months=6)
+                state['last_result'] = result
+                state['last_error'] = None
+            except Exception as e:
+                import traceback
+                state['last_error'] = str(e)[:1000]
+                state['last_result'] = None
+            finally:
+                state['running'] = False
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {'ok': True, 'started': True, 'message': 'Archive worker started in background'}
 
     @app.post('/api/admin/backtest-scalp')
     @app.get('/api/admin/backtest-scalp')
