@@ -85,8 +85,9 @@ def entry(p):
         # Preserve original inclusive Monday-to-expiry convention.
         dte=(datetime.fromisoformat(contract['expiration']).date()-datetime.fromisoformat(p['week']).date()).days+1
     # vNext Quality header (matches old A+ Featured style from 2026-09-08)
+    # Field named 'Quality Tier' for backwards compat with tests/dashboard
     quality_line = f"{p.get('quality_tier','WATCH')} • Featured #{p.get('featured_rank') or 0:02d} • Overall Q #{p.get('quality_rank') or 0:02d} • {p.get('quality_score') or 0:.1f}/100"
-    fields=[field('vNext Quality', quality_line, False),
+    fields=[field('Quality Tier', quality_line, False),
         field('A+ selector', 'Raw Target / ATR (lower is better)', False),
         field('Underlying Entry',dollar(p.get('entry_price'))),field('Underlying Target',dollar(p.get('target_price'))),
         *contract_fields(p),field('Option Reference Premium',dollar(p.get('entry_premium'))),
