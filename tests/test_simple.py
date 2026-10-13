@@ -40,7 +40,7 @@ def test_smoothers_and_futures_aggregation(db):
             id='s1', week='2026-10-05', ticker='DEMO', status='WIN',
             payload=_smoothers_payload(50.0, now)))
         db.put(c, 'trade:ict-1', {'id': 'ict-1', 'symbol': 'SIL.v.0', 'direction': 'long',
-                                  'qty': 1, 'strategy': 'ict-aoi-zones', 'entry': 61.3,
+                                  'qty': 1, 'strategy': 'ict-aoi-fade', 'entry': 61.3,
                                   'exit': 61.24, 'pnl': -63.0, 'exit_reason': 'stop',
                                   'entered_at': now - 3600, 'exited_at': now})
         db.put(c, 'flow_pulse_track:k1', {'symbol': 'MRK', 'direction': 'bearish',
@@ -79,7 +79,7 @@ def test_calendar_groups_by_chicago_day(db):
     d = datetime.fromtimestamp(now, CT).date()
     with db.tx() as c:
         db.put(c, 'trade:ict-9', {'id': 'ict-9', 'symbol': 'MCL.v.0', 'direction': 'short',
-                                  'qty': 1, 'strategy': 'ict-turtle-soup', 'pnl': 25.0,
+                                  'qty': 1, 'strategy': 'ict-aoi-fade', 'pnl': 25.0,
                                   'entered_at': now - 7200, 'exited_at': now})
         out = simple.calendar(db, c, now, d.year, d.month)
     assert out['days'][d.isoformat()]['futures']['pnl'] == 25.0
@@ -192,12 +192,12 @@ def test_futures_data_gap_excluded(db):
     now = NOW
     with db.tx() as c:
         db.put(c, 'trade:ict-g1', {'id': 'ict-g1', 'symbol': 'MES.c.0', 'side': 'long',
-                                   'qty': 1, 'strategy': 'ict-aoi-zones', 'entry': 7800.0,
+                                   'qty': 1, 'strategy': 'ict-aoi-fade', 'entry': 7800.0,
                                    'exit': 7810.0, 'pnl': 50.0, 'exit_reason': 'session_flatten',
                                    'status': 'closed', 'data_gap': True,
                                    'entered_at': now - 7200, 'exited_at': now - 3600})
         db.put(c, 'trade:ict-g2', {'id': 'ict-g2', 'symbol': 'MES.c.0', 'side': 'long',
-                                   'qty': 1, 'strategy': 'ict-aoi-zones', 'entry': 7800.0,
+                                   'qty': 1, 'strategy': 'ict-aoi-fade', 'entry': 7800.0,
                                    'exit': 7810.0, 'pnl': 50.0, 'exit_reason': 'target',
                                    'status': 'closed',
                                    'entered_at': now - 7200, 'exited_at': now - 3600})
@@ -208,7 +208,7 @@ def test_futures_data_gap_excluded(db):
     assert fu['stats']['data_gaps'] == 1
     assert fu['stats']['data_gap_pnl'] == 50.0
     with db.tx() as c:
-        d = simple.detail(db, c, now, 'futures', 'AOI Zones')
+        d = simple.detail(db, c, now, 'futures', 'AOI 50/20 Fade')
     assert len(d['items']) == 2
     gapped = [i for i in d['items'] if '⚠️' in i['result']]
     assert len(gapped) == 1
