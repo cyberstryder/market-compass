@@ -894,12 +894,14 @@ a{color:#888}</style></head><body>
                 log_msg("Background thread started")
                 # Use a raw connection for VACUUM (can't run in transaction block)
                 # and CREATE INDEX CONCURRENTLY (also can't be in transaction)
-                import psycopg
-                # Use the engine's URL directly (DB_URL is not exported from store)
-                # Strip SQLAlchemy dialect suffix (+psycopg) for raw psycopg
-                engine_url = str(db.engine.url)
-                for dialect in ('+psycopg', '+psycopg2', '+asyncpg'):
-                    engine_url = engine_url.replace(dialect + '://', '://')
+                import psycopg, os
+                # Use raw DATABASE_URL (not the SQLAlchemy-parsed engine URL,
+                # which can mangle passwords with special chars).
+                # Convert postgres:// -> postgresql:// for psycopg.
+                raw_url = os.environ.get('DATABASE_URL', '')
+                engine_url = raw_url.replace('postgres://', 'postgresql://', 1)
+                engine_url = engine_url.replace('postgresql+psycopg://', 'postgresql://', 1)
+                engine_url = engine_url.replace('postgresql+psycopg2://', 'postgresql://', 1)
                 log_msg(f"Connecting to DB")
 
                 # VACUUM cannot run inside a transaction block, so we need
