@@ -398,9 +398,14 @@ def scan(db, c, cfg, now):
                           key='ictaof:%s:%d' % (symbol, int(bar['ts'])))
                 fired += 1
             else:
-                # Log decline reason for diagnostics (2026-10-13: 4-day darkness was invisible)
+                # Log decline reason for diagnostics (2026-10-13: 4-day darkness was invisible).
+                # Written on the existing cursor: db.health() opens its own nested tx,
+                # which locks sqlite when scan already runs inside one.
                 reason = res.get('reason', 'unknown')
-                db.health('ict_aoi_fade_declines', 'info', f"{reason}: {symbol}")
+                prev = db.get(c, 'health:ict_aoi_fade_declines', {}) or {}
+                db.put(c, 'health:ict_aoi_fade_declines',
+                       {**prev, 'name': 'ict_aoi_fade_declines', 'status': 'info',
+                        'detail': f"{reason}: {symbol}", 'checked_at': time.time()})
     db.put(c, 'ict_aoi_fade:scanned_at', now)
     db.put(c, 'ict_aoi_fade:latest', {'at': now, 'fired': fired})
     return {'ran': True, 'fired': fired}

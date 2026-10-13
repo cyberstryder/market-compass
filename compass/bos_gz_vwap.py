@@ -14,6 +14,8 @@ target is opposing structure when it gives >= 1.5R, else exactly 2R.
 Evidence only. No alerts. Paper fills via ict_paper only when both
 ICT_FUTURES_PAPER_ENABLED and ICT_BOS_GZ_VWAP_ENABLED are on.
 """
+import time
+
 from .market import number, day, CT  # noqa: F401  (CT kept for session-math convention)
 from .ict_common import (ict_bars, atr, fractal_swings, detect_bos,
                          session_vwap)
@@ -281,9 +283,14 @@ def scan(db, c, cfg, now):
             n_signals += 1
         res = _paper_submit(db, c, cfg, now, 'bos_gz_vwap', symbol, sig)
         if not res.get('submitted'):
-            # Log decline reason for diagnostics (2026-10-13: 4-day darkness was invisible)
+            # Log decline reason for diagnostics (2026-10-13: 4-day darkness was invisible).
+            # Written on the existing cursor: db.health() opens its own nested tx,
+            # which locks sqlite when scan already runs inside one.
             reason = res.get('reason', 'unknown')
-            db.health('ict_bos_gz_vwap_declines', 'info', f"{reason}: {symbol}")
+            prev = db.get(c, 'health:ict_bos_gz_vwap_declines', {}) or {}
+            db.put(c, 'health:ict_bos_gz_vwap_declines',
+                   {**prev, 'name': 'ict_bos_gz_vwap_declines', 'status': 'info',
+                    'detail': f"{reason}: {symbol}", 'checked_at': time.time()})
     db.put(c, 'ict_bos_gz_vwap:latest',
            {'at': now, 'rows': rows, 'excluded': excluded, 'params': params,
             'status': 'running' if rows else 'idle'})
