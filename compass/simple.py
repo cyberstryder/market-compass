@@ -139,13 +139,16 @@ def _futures(db, c, now):
             pnl = _num(t.get("pnl"))
             won = pnl is not None and pnl > 0
             per_method[method].append((won, pnl))
-            if pnl is not None:
+            # by_day only tracks focused detectors (2026-10-13)
+            if pnl is not None and method in ('ict-aoi-fade', 'ict-bos-gz-vwap'):
                 d = _day(t.get("exited_at"))
                 if d:
                     by_day[d]["pnl"] += pnl
                     by_day[d]["count"] += 1
         else:
-            open_count += 1
+            # Only count open trades from focused detectors
+            if t.get("strategy") in ('ict-aoi-fade', 'ict-bos-gz-vwap'):
+                open_count += 1
     all_trades = [t for v in per_method.values() for t in v]
     drill = []
     # Full paper-trading roster: every detector wired for attribution shows up,
@@ -168,21 +171,21 @@ def _futures(db, c, now):
         seen.add(tag)
         drill.append(_drill(name, "Paper-traded micro futures signals.",
                             with_gaps(tag, per_method.get(tag, []))))
-    # Any strategy tag seen in the data but not on the roster (legacy/renamed)
-    for method in sorted(set(per_method) | set(per_method_gaps)):
-        if method in seen:
-            continue
-        seen.add(method)
-        name = ICT_SETUP_NAMES.get(method, method)
-        drill.append(_drill(name, "Paper-traded micro futures signals.",
-                            with_gaps(method, per_method.get(method, []))))
-    stats = _stats(all_trades)
+    # Legacy disabled detectors are hidden entirely (2026-10-13 focus decision).
+    # Their historical trades remain in the DB but don't appear on the page.
+    # Stats reflect only the focused detectors (2026-10-13).
+    FOCUSED_SET = set(FOCUSED_TAGS)
+    focused_trades = [t for method, trades in per_method.items()
+                      for t in trades if method in FOCUSED_SET]
+    stats = _stats(focused_trades)
     stats["open"] = open_count
-    total_gaps = sum(len(v) for v in per_method_gaps.values())
+    total_gaps = sum(len(v) for k, v in per_method_gaps.items() if k in FOCUSED_SET)
     if total_gaps:
         stats["data_gaps"] = total_gaps
         stats["data_gap_pnl"] = round(sum(
-            _num(t.get("pnl")) or 0 for v in per_method_gaps.values() for t in v), 2)
+            _num(t.get("pnl")) or 0
+            for k, v in per_method_gaps.items() if k in FOCUSED_SET
+            for t in v), 2)
     return (_block(
         "futures", "Futures Micros",
         "Paper-traded signals on micro futures (MNQ, MES, MGC, SIL, MCL). Focused on the two profitable detectors: AOI Fade and BOS + Golden Zone/VWAP.",

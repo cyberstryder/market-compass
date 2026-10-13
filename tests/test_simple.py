@@ -57,13 +57,10 @@ def test_smoothers_and_futures_aggregation(db):
     assert sm['stats']['pnl'] == 49.68  # (2.51-2.00)*100 - 1.32 fee
     assert sm['drill'][0]['name'] == 'DEMO'
     fu = out['types']['futures']
-    assert fu['stats']['pnl'] == -63.0 and fu['stats']['tracked'] == 1
-    # Focused 2026-10-13: only the 2 profitable detectors in the roster.
-    # Disabled detectors with historical trades appear via legacy section.
-    # 2 focused + 1 legacy (ict-aoi-zones has the test trade) = 3
-    assert len(fu['drill']) == 3
-    aoi = [d for d in fu['drill'] if d['name'] == 'AOI Zones'][0]
-    assert aoi['stats']['tracked'] == 1 and aoi['stats']['pnl'] == -63.0
+    # Focused 2026-10-13: only the 2 profitable detectors; stats exclude disabled.
+    # The test trade is for ict-aoi-zones (disabled), so focused stats are 0.
+    assert fu['stats']['pnl'] == 0 and fu['stats']['tracked'] == 0
+    assert len(fu['drill']) == 2
     # The two focused detectors are present with zero trades
     fade = [d for d in fu['drill'] if d['name'] == 'AOI 50/20 Fade'][0]
     assert fade['stats']['tracked'] == 0
