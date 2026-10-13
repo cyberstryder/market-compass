@@ -687,6 +687,23 @@ def _detail_smoothers(db, c, now, name):
                 pass
         orows = [["Status", status], ["Net P&L", _m(pnl)]]
         orows.append(["Target hit", "Yes" if status == "WIN" else "No"])
+        # Holding time from entry to exit quote timestamps (2026-10-13)
+        try:
+            eq = p.get("quote") or {}
+            xq = p.get("exit_quote") or {}
+            start_ms = eq.get("quote_at_ms")
+            end_ms = xq.get("quote_at_ms")
+            if start_ms and end_ms and end_ms > start_ms:
+                hold_s = (end_ms - start_ms) / 1000.0
+                if hold_s < 3600:
+                    hold_str = "%.1f min" % (hold_s / 60.0)
+                elif hold_s < 86400:
+                    hold_str = "%.1f hrs" % (hold_s / 3600.0)
+                else:
+                    hold_str = "%.1f days" % (hold_s / 86400.0)
+                orows.append(["Holding time", hold_str])
+        except (TypeError, ValueError, AttributeError):
+            pass
         items.append({
             "tag": tag, "title": "Week of " + wl, "sub": sub, "rows": orows,
             "result": _m(pnl),
