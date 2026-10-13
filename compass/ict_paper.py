@@ -219,8 +219,12 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
         first_trade = db.get(c, 'trade:' + submitted_ids[0])
         if first_trade:
             ict_push.maybe_queue(db, c, cfg, first_trade)
-    except Exception:
-        pass
+    except Exception as e:
+        # Log instead of silently swallowing (was hiding table-missing errors)
+        try:
+            db.health('ict_push_queue', 'error', f"{type(e).__name__}: {str(e)[:200]}")
+        except:
+            pass
     risk = paper_risk.account(db, c, now, 'future', persist=True)
     risk['entries'] = risk.get('entries', 0) + 1
     db.put(c, paper_risk.key(now, 'future'), risk)

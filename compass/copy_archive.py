@@ -313,8 +313,20 @@ def run_copy_chunk(db, client, bucket, max_months=6):
                 ).scalar()
                 if row:
                     earliest = float(row)
-        except:
-            pass
+                    # Diagnostic: log earliest timestamp
+                    import datetime
+                    earliest_dt = datetime.datetime.fromtimestamp(earliest, tz=datetime.timezone.utc)
+                    summary.setdefault('diagnostics', []).append(
+                        f"{kind}: earliest ts={earliest} ({earliest_dt.isoformat()})"
+                    )
+                else:
+                    summary.setdefault('diagnostics', []).append(
+                        f"{kind}: MIN(ts) returned NULL (no rows for this kind!)"
+                    )
+        except Exception as e:
+            summary.setdefault('diagnostics', []).append(
+                f"{kind}: earliest query failed: {str(e)[:200]}"
+            )
         for ms, me in _periods_to_archive(kind, now, earliest):
             if chunks_left <= 0:
                 summary['complete'] = False
