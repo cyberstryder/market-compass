@@ -251,7 +251,7 @@ def schedule(db,data,now):
             if p['ticker'] in BEST_10:
                 queue_signal(db,c,p,'entry',messages.entry(p),now,p['model_entry_time'])
         # Compact format for non-Best-10 (split for Discord 2000-char limit)
-        compact=[p for p in ranked if p['ticker'] not in BEST_10 and p.get('is_featured')]
+        compact=[p for p in ranked if p['ticker'] not in BEST_10]
         for i in range(0, len(compact), 30):
             batch=compact[i:i+30]
             lines=[f"{p['ticker']} {p['direction']} ${p['entry_price']:.2f}→${p['target_price']:.2f} Q{p.get('quality_score',0):.1f}" for p in batch]
