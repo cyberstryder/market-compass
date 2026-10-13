@@ -57,13 +57,12 @@ def test_smoothers_and_futures_aggregation(db):
     assert sm['stats']['pnl'] == 49.68  # (2.51-2.00)*100 - 1.32 fee
     assert sm['drill'][0]['name'] == 'DEMO'
     fu = out['types']['futures']
-    # Focused 2026-10-13: only the 2 profitable detectors; stats exclude disabled.
-    # The test trade is for ict-aoi-zones (disabled), so focused stats are 0.
-    assert fu['stats']['pnl'] == 0 and fu['stats']['tracked'] == 0
+    # Focused 2026-10-13: only the 2 profitable detectors.
+    # The test trade uses ict-aoi-fade (focused), so it counts.
+    assert fu['stats']['pnl'] == -63.0 and fu['stats']['tracked'] == 1
     assert len(fu['drill']) == 2
-    # The two focused detectors are present with zero trades
     fade = [d for d in fu['drill'] if d['name'] == 'AOI 50/20 Fade'][0]
-    assert fade['stats']['tracked'] == 0
+    assert fade['stats']['tracked'] == 1 and fade['stats']['pnl'] == -63.0
     gz = [d for d in fu['drill'] if d['name'] == 'Break of Structure + Golden Zone/VWAP'][0]
     assert gz['stats']['tracked'] == 0
     fp = out['types']['flow_pulse']
