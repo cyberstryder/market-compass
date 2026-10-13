@@ -896,7 +896,10 @@ a{color:#888}</style></head><body>
                 # and CREATE INDEX CONCURRENTLY (also can't be in transaction)
                 import psycopg
                 # Use the engine's URL directly (DB_URL is not exported from store)
+                # Strip SQLAlchemy dialect suffix (+psycopg) for raw psycopg
                 engine_url = str(db.engine.url)
+                for dialect in ('+psycopg', '+psycopg2', '+asyncpg'):
+                    engine_url = engine_url.replace(dialect + '://', '://')
                 log_msg(f"Connecting to DB")
 
                 # VACUUM cannot run inside a transaction block, so we need
