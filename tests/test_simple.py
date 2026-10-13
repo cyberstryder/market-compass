@@ -58,12 +58,16 @@ def test_smoothers_and_futures_aggregation(db):
     assert sm['drill'][0]['name'] == 'DEMO'
     fu = out['types']['futures']
     assert fu['stats']['pnl'] == -63.0 and fu['stats']['tracked'] == 1
-    # Full paper-trading roster is always listed, even with zero trades
-    # 12 detectors: 11 original + trend_rider (added 2026-10-08)
-    assert len(fu['drill']) == 12
+    # Focused 2026-10-13: only the 2 profitable detectors in the roster.
+    # Disabled detectors with historical trades appear via legacy section.
+    # 2 focused + 1 legacy (ict-aoi-zones has the test trade) = 3
+    assert len(fu['drill']) == 3
     aoi = [d for d in fu['drill'] if d['name'] == 'AOI Zones'][0]
     assert aoi['stats']['tracked'] == 1 and aoi['stats']['pnl'] == -63.0
-    gz = [d for d in fu['drill'] if d['name'] == 'Golden Zone + VWAP'][0]
+    # The two focused detectors are present with zero trades
+    fade = [d for d in fu['drill'] if d['name'] == 'AOI 50/20 Fade'][0]
+    assert fade['stats']['tracked'] == 0
+    gz = [d for d in fu['drill'] if d['name'] == 'Break of Structure + Golden Zone/VWAP'][0]
     assert gz['stats']['tracked'] == 0
     fp = out['types']['flow_pulse']
     assert fp['stats']['pnl'] == 48.7 and fp['stats']['peak_50_plus'] == 1
