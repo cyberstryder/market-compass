@@ -93,7 +93,7 @@ class Config:
     ict_continuation: bool = field(default_factory=lambda: env("ICT_CONTINUATION_ENABLED","false")=="true")
     ict_trend_rider: bool = field(default_factory=lambda: env("ICT_TREND_RIDER_ENABLED","false")=="true")
     # Gap fade detector (futures): fade overnight gaps at RTH open
-    gap_fade_enabled: bool = field(default_factory=lambda: env("GAP_FADE_ENABLED","true")=="true")
+    gap_fade_enabled: bool = field(default_factory=lambda: env("GAP_FADE_ENABLED","false")=="true")
     gap_fade_min_pct: float = field(default_factory=lambda: float(env("GAP_FADE_MIN_PCT","0.005")))
     gap_fade_max_pct: float = field(default_factory=lambda: float(env("GAP_FADE_MAX_PCT","0.02")))
     gap_fade_target_pct: float = field(default_factory=lambda: float(env("GAP_FADE_TARGET_PCT","0.5")))
