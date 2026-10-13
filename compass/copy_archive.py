@@ -219,7 +219,10 @@ def _export_month_locked(db, client, bucket, kind, period_start, period_end,
                                 # Write directly to gzip (row_to_json outputs valid JSON per row)
                                 gz.write(chunk)
                                 # Count newlines for row count (approximate, fine for progress)
-                                row_count += chunk.count(b'\n')
+                                # psycopg3 cur.copy() yields memoryview, not bytes;
+                                # memoryview has no .count(), so convert to bytes first
+                                # (2026-10-13: fixed 'memoryview' object has no attribute 'count')
+                                row_count += bytes(chunk).count(b'\n')
                                 # Heartbeat every 30s during long COPY
                                 if time.time() - last_heartbeat > 30:
                                     try:
