@@ -305,9 +305,10 @@ def run_copy_chunk(db, client, bucket, max_months=6):
         # Find earliest data for this kind to skip empty weeks before collection began
         earliest = None
         try:
+            from sqlalchemy import text
             with db.tx() as c:
                 row = c.execute(
-                    "SELECT MIN(ts) FROM events WHERE kind = :kind",
+                    text("SELECT MIN(ts) FROM events WHERE kind = :kind"),
                     {"kind": kind}
                 ).scalar()
                 if row:
