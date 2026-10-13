@@ -895,9 +895,7 @@ a{color:#888}</style></head><body>
                 # Use a raw connection for VACUUM (can't run in transaction block)
                 # and CREATE INDEX CONCURRENTLY (also can't be in transaction)
                 import psycopg
-                from .store import DB_URL
-                # DB_URL is not directly available; get from db object
-                # Use the engine's URL instead
+                # Use the engine's URL directly (DB_URL is not exported from store)
                 engine_url = str(db.engine.url)
                 log_msg(f"Connecting to DB")
 
