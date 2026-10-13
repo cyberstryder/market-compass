@@ -302,31 +302,11 @@ def run_copy_chunk(db, client, bucket, max_months=6):
         if chunks_left <= 0:
             summary['complete'] = False
             break
-        # Find earliest data for this kind to skip empty weeks before collection began
+        # Skip the MIN(ts) query (times out on 135M rows without index).
+        # Instead, start from retention window: we only archive data older
+        # than the retention cutoff, so start there. The per-week progress
+        # keys skip already-done weeks.
         earliest = None
-        try:
-            from sqlalchemy import text
-            with db.tx() as c:
-                row = c.execute(
-                    text("SELECT MIN(ts) FROM events WHERE kind = :kind"),
-                    {"kind": kind}
-                ).scalar()
-                if row:
-                    earliest = float(row)
-                    # Diagnostic: log earliest timestamp
-                    import datetime
-                    earliest_dt = datetime.datetime.fromtimestamp(earliest, tz=datetime.timezone.utc)
-                    summary.setdefault('diagnostics', []).append(
-                        f"{kind}: earliest ts={earliest} ({earliest_dt.isoformat()})"
-                    )
-                else:
-                    summary.setdefault('diagnostics', []).append(
-                        f"{kind}: MIN(ts) returned NULL (no rows for this kind!)"
-                    )
-        except Exception as e:
-            summary.setdefault('diagnostics', []).append(
-                f"{kind}: earliest query failed: {str(e)[:200]}"
-            )
         for ms, me in _periods_to_archive(kind, now, earliest):
             if chunks_left <= 0:
                 summary['complete'] = False
