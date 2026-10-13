@@ -235,6 +235,13 @@ def _export_month_locked(db, client, bucket, kind, period_start, period_end,
                                     last_heartbeat = time.time()
                     finally:
                         # Reset to pool default before returning connection
+                        # Rollback first to clear any aborted transaction state
+                        # (2026-10-13: COPY failures left transaction aborted,
+                        # causing "current transaction is aborted" on the reset)
+                        try:
+                            raw.rollback()
+                        except:
+                            pass
                         cur.execute("SET SESSION transaction_timeout = '60s'")
                         cur.execute("SET SESSION statement_timeout = '30s'")
                         raw.commit()
