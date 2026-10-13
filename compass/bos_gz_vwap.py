@@ -279,7 +279,11 @@ def scan(db, c, cfg, now):
                    {'signal_ts': sig['signal_ts'], 'date': today,
                     'direction': sig['direction'], 'at': now})
             n_signals += 1
-        _paper_submit(db, c, cfg, now, 'bos_gz_vwap', symbol, sig)
+        res = _paper_submit(db, c, cfg, now, 'bos_gz_vwap', symbol, sig)
+        if not res.get('submitted'):
+            # Log decline reason for diagnostics (2026-10-13: 4-day darkness was invisible)
+            reason = res.get('reason', 'unknown')
+            db.health('ict_bos_gz_vwap_declines', 'info', f"{reason}: {symbol}")
     db.put(c, 'ict_bos_gz_vwap:latest',
            {'at': now, 'rows': rows, 'excluded': excluded, 'params': params,
             'status': 'running' if rows else 'idle'})

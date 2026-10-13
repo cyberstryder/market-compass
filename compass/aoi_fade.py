@@ -374,9 +374,10 @@ def scan(db, c, cfg, now):
             sig = check_signal(bar, zones, atr)
             if not sig:
                 continue
-            # Trend gate: only fade with the 4H trend
-            if not _trend_ok(sig['direction'], bars_4h):
-                continue
+            # Trend gate REMOVED 2026-10-13: a fade strategy fades overbought/oversold
+            # extremes, which routinely oppose the 4H trend. This was the same mistake
+            # as the golden_zone EMA-cross gate (rejected Oct 9). Fades are counter-trend
+            # by design.
             z = sig['zone']
             sess = _session_for(bar['ts'])
             # One signal per (zone, session, day)
@@ -396,6 +397,10 @@ def scan(db, c, cfg, now):
                           {k: v for k, v in levels.items()},
                           key='ictaof:%s:%d' % (symbol, int(bar['ts'])))
                 fired += 1
+            else:
+                # Log decline reason for diagnostics (2026-10-13: 4-day darkness was invisible)
+                reason = res.get('reason', 'unknown')
+                db.health('ict_aoi_fade_declines', 'info', f"{reason}: {symbol}")
     db.put(c, 'ict_aoi_fade:scanned_at', now)
     db.put(c, 'ict_aoi_fade:latest', {'at': now, 'fired': fired})
     return {'ran': True, 'fired': fired}
