@@ -158,7 +158,10 @@ def _futures(db, c, now):
             st["data_gaps"] = len(gaps)
             st["data_gap_pnl"] = round(sum(_num(t.get("pnl")) or 0 for t in gaps), 2)
         return st
-    for tag in ICT_PAPER_TAGS.values():
+    # Focused 2026-10-13: only the two profitable detectors are active.
+    # Disabled detectors are hidden from the roster (historical trades remain in DB).
+    FOCUSED_TAGS = ('ict-aoi-fade', 'ict-bos-gz-vwap')
+    for tag in FOCUSED_TAGS:
         name = ICT_SETUP_NAMES.get(tag, tag)
         if tag in seen:
             continue
@@ -182,7 +185,7 @@ def _futures(db, c, now):
             _num(t.get("pnl")) or 0 for v in per_method_gaps.values() for t in v), 2)
     return (_block(
         "futures", "Futures Micros",
-        "Paper-traded signals on micro futures (MNQ, MES, MGC, SIL, MCL).",
+        "Paper-traded signals on micro futures (MNQ, MES, MGC, SIL, MCL). Focused on the two profitable detectors: AOI Fade and BOS + Golden Zone/VWAP.",
         "Intraday, whenever a method's setup triggers. Everything closes by 3:45 PM CT.",
         "Win = the paper trade closed with a profit, in micro dollars after fees.",
         stats, drill), by_day)
