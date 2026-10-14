@@ -116,6 +116,67 @@ def build_payload(cfg, trade):
     return payload
 
 
+def send_close_signal(cfg, db, symbol):
+    """Send a flatten/close signal to TradersPost for a symbol.
+
+    Called at 15:45 CT session flatten. Closes ALL open positions for that
+    ticker in the TradersPost strategy (all 3 legs of a 2/2/1 trade).
+    Returns (success, message).
+    """
+    if not is_enabled(cfg):
+        return (False, 'TradersPost disabled')
+
+    webhook_url = getattr(cfg, 'traderspost_webhook_url', '')
+    if not webhook_url:
+        return (False, 'TRADERSPOST_WEBHOOK_URL not set')
+
+    ticker = map_symbol(symbol)
+    payload = {
+        'ticker': ticker,
+        'action': 'close',
+        'strategy': 'compass-flatten',
+    }
+
+    data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(
+        webhook_url,
+        data=data,
+        headers={'Content-Type': 'application/json'},
+        method='POST'
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode('utf-8', errors='ignore')[:500]
+            try:
+                with db.tx() as c:
+                    db.health('traderspost_webhook', 'ok',
+                              f"Flatten {ticker}",
+                              at=time.time(), ticker=ticker, action='close')
+            except Exception:
+                pass
+            return (True, f"Flatten sent for {ticker}: {body[:100]}")
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode('utf-8', errors='ignore')[:500]
+        try:
+            with db.tx() as c:
+                db.health('traderspost_webhook', 'error',
+                          f"Flatten HTTP {e.code}: {err_body[:200]}",
+                          at=time.time(), ticker=ticker)
+        except Exception:
+            pass
+        return (False, f"Flatten HTTP {e.code}: {err_body[:200]}")
+    except Exception as e:
+        try:
+            with db.tx() as c:
+                db.health('traderspost_webhook', 'error',
+                          f"Flatten failed: {str(e)[:200]}",
+                          at=time.time(), ticker=ticker)
+        except Exception:
+            pass
+        return (False, f"Flatten failed: {str(e)[:200]}")
+
+
 def send_signal(cfg, db, trade):
     """Send a trade signal to TradersPost webhook.
 

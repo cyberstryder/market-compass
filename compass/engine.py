@@ -247,6 +247,18 @@ class Engine:
                         ict_push.maybe_queue_exit(self.db, c, self.cfg, p)
                     except Exception:
                         pass
+                    # TradersPost flatten (2026-10-14): send close signal so
+                    # live TradersPost positions flatten at 15:45 CT, matching
+                    # paper. Only send once per ticker per flatten (the T1 leg
+                    # triggers it; T2/Trail legs will find no open TradersPost
+                    # position and the close is a no-op).
+                    # Use leg suffix to dedupe: only T1 sends the close.
+                    if p["id"].endswith("-t1"):
+                        try:
+                            from . import traderspost
+                            traderspost.send_close_signal(self.cfg, self.db, p["symbol"])
+                        except Exception:
+                            pass
                 continue
             # Per-symbol freshness: quote arrival gaps vary by liquidity.
             # MNQ/MES tick every ~0.5s; SIL/YM can go 2-4s between quotes.
