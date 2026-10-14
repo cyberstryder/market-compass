@@ -225,6 +225,20 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
             db.health('ict_push_queue', 'error', f"{type(e).__name__}: {str(e)[:200]}")
         except:
             pass
+    # CrossTrade webhook for live automation (2026-10-13)
+    # Fires after successful paper submit, only for focused detectors.
+    # Disabled by default (CROSSTRADE_ENABLED=true to enable).
+    try:
+        from . import crosstrade
+        if first_trade:
+            # Build trade dict for CrossTrade from the submitted trade
+            # first_trade has detector, symbol, side, entry, stop, target
+            crosstrade.send_webhook(db, cfg, first_trade)
+    except Exception as e:
+        try:
+            db.health('crosstrade_webhook', 'error', f"hook failed: {type(e).__name__}: {str(e)[:200]}")
+        except:
+            pass
     risk = paper_risk.account(db, c, now, 'future', persist=True)
     risk['entries'] = risk.get('entries', 0) + 1
     db.put(c, paper_risk.key(now, 'future'), risk)

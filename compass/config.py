@@ -79,6 +79,12 @@ class Config:
     flow_pulse_webhook: str = field(default_factory=lambda: env("DISCORD_FLOW_PULSE_WEBHOOK_URL",""))
     ict_push_enabled: bool = field(default_factory=lambda: env("ICT_PUSH_ENABLED","false")=="true")
     ict_push_webhook: str = field(default_factory=lambda: env("DISCORD_ICT_WEBHOOK_URL",""))
+    # CrossTrade webhook bridge for live futures automation (2026-10-13)
+    # Disabled by default; enable with CROSSTRADE_ENABLED=true
+    crosstrade_enabled: bool = field(default_factory=lambda: env("CROSSTRADE_ENABLED","false")=="true")
+    crosstrade_webhook_url: str = field(default_factory=lambda: env("CROSSTRADE_WEBHOOK_URL",""))
+    crosstrade_key: str = field(default_factory=lambda: env("CROSSTRADE_KEY",""))
+    crosstrade_account: str = field(default_factory=lambda: env("CROSSTRADE_ACCOUNT",""))
     tape_confirmed: bool = field(default_factory=lambda: env("TAPE_CONFIRMED_ENABLED","true")=="true")
     gap_push_enabled: bool = field(default_factory=lambda: env("GAP_PUSH_ENABLED","true")=="true")
     day_board_push_enabled: bool = field(default_factory=lambda: env("DAY_BOARD_PUSH_ENABLED","true")=="true")
