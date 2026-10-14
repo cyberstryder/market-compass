@@ -305,7 +305,10 @@ def run_copy_chunk(db, client, bucket, max_months=6):
     summary = {'chunks_done': 0, 'rows': 0, 'bytes': 0,
                'chunks': [], 'complete': True, 'started_at': now}
 
-    kinds = list(RETENTION.keys()) + list(AUDIT_KINDS) + ['alert_delivery']
+    # 2026-10-14: Skip chain_archive - all weeks are empty (0 rows).
+    # The data is in quote weeks, not chain_archive. Skipping saves hours.
+    kinds = [k for k in list(RETENTION.keys()) + list(AUDIT_KINDS) + ['alert_delivery']
+             if k != 'chain_archive']
 
     chunks_left = max_months
     for kind in kinds:
