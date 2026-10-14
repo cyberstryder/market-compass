@@ -833,7 +833,22 @@ class Collectors:
 
 def select_contracts(contracts,reference,limit):
     """Balance near-money calls and puts; a historical reference only seeds subscriptions."""
-    if not reference or reference<=0 or limit<1: return []
+    if limit<1: return []
+    # If no reference price (stale quote, no bars), fall back to expiry-sorted
+    # selection so the stream still gets contracts. Without this, OPRA never
+    # subscribes when data is stale (2026-10-13: option_symbols empty).
+    if not reference or reference<=0:
+        valid=[o for o in contracts if o.get("symbol") and o.get("expiry") and (number(o.get("strike")) or 0)>0
+            and o.get("type") in {"call","put"} and number(o.get("multiplier"))==100]
+        # Sort by expiry only, take balanced calls/puts
+        calls=sorted((o for o in valid if o["type"]=="call"),key=lambda o:o["expiry"])
+        puts=sorted((o for o in valid if o["type"]=="put"),key=lambda o:o["expiry"])
+        chosen=[]
+        for i in range(max(len(calls),len(puts))):
+            for side in (calls,puts):
+                if i<len(side): chosen.append(side[i])
+                if len(chosen)>=limit: return chosen
+        return chosen
     valid=[o for o in contracts if o.get("symbol") and o.get("expiry") and (number(o.get("strike")) or 0)>0
         and o.get("type") in {"call","put"} and number(o.get("multiplier"))==100]
     calls=sorted((o for o in valid if o["type"]=="call"),key=lambda o:(o["expiry"],abs(o["strike"]-reference)))
