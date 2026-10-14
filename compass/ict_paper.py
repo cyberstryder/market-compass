@@ -280,10 +280,14 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
     # TradersPost webhook for live automation (2026-10-14)
     # Fires after successful paper submit. Disabled by default
     # (TRADERSPOST_ENABLED=true + TRADERSPOST_WEBHOOK_URL to enable).
+    # Sends ALL 3 legs (T1, T2, Trail) as separate webhooks so TradersPost
+    # replicates the full 2/2/1 scale-out (5 contracts total), not just 1.
     try:
         from . import traderspost
-        if first_trade:
-            traderspost.send_signal(cfg, db, first_trade)
+        for trade_id in submitted_ids:
+            leg_trade = db.get(c, 'trade:' + trade_id)
+            if leg_trade:
+                traderspost.send_signal(cfg, db, leg_trade)
     except Exception as e:
         try:
             db.health('traderspost_webhook', 'error', f"hook failed: {type(e).__name__}: {str(e)[:200]}")

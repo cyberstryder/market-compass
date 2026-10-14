@@ -3,6 +3,11 @@
 Sends ICT detector signals to TradersPost as orders via webhook.
 TradersPost routes to Tradovate (sim or live) with bracket orders.
 
+Sends the full 2/2/1 scale-out (5 contracts total) as 3 separate webhooks:
+- T1: 2 contracts, target at 1R
+- T2: 2 contracts, target at 2R
+- Trail: 1 contract, far target (10R) — holds until stop or 15:45 flatten
+
 Enable with:
   TRADERSPOST_ENABLED=true
   TRADERSPOST_WEBHOOK_URL=https://webhooks.traderspost.io/trading/webhook/... (your TradersPost webhook URL, contains secret)
@@ -11,8 +16,8 @@ Only fires for detectors when ICT_FUTURES_PAPER_ENABLED is also on
 (so paper and live stay in sync).
 
 Safety:
-- Micros only (qty=1)
-- Bracket orders with per-signal stop/target from the detector
+- Micros only
+- Bracket orders with per-leg stop/target from the detector
 - Does NOT fire when paper is disabled
 - Logs all webhook attempts via db.health for audit
 - Webhook URL contains secret — never log it
@@ -50,7 +55,9 @@ def map_symbol(compass_symbol):
 def build_payload(cfg, trade):
     """Build TradersPost webhook JSON payload from a trade dict.
 
-    trade needs: detector, symbol, side ('long'/'short'), entry, stop, target
+    trade needs: detector, symbol, side ('long'/'short'), entry, stop, target, qty
+    For trailer legs (target=None), uses a far target (10R) so the position
+    holds until stop or 15:45 flatten — matching the paper trailer behavior.
     Returns dict ready for JSON serialization, or None if invalid.
     """
     symbol = trade.get('symbol', '')
@@ -67,9 +74,21 @@ def build_payload(cfg, trade):
     entry = trade.get('entry')
     stop = trade.get('stop')
     target = trade.get('target')
+    qty = trade.get('qty', 1)
 
-    if not all([entry, stop, target]):
+    if not all([entry, stop]):
         return None
+    if not qty or qty < 1:
+        return None
+
+    # Trailer leg: no fixed target (trailing stop in paper). Use far target
+    # (10R) so TradersPost holds it until stop or 15:45 flatten.
+    if target is None:
+        risk = abs(entry - stop)
+        if side == 'long':
+            target = entry + risk * 10
+        else:
+            target = entry - risk * 10
 
     # Validate stop/target are on correct side
     if side == 'long':
@@ -84,7 +103,7 @@ def build_payload(cfg, trade):
     payload = {
         'ticker': ticker,
         'action': action,
-        'quantity': 1,  # Micros only, 1 contract
+        'quantity': qty,  # Use leg qty (2 for T1/T2, 1 for Trail)
         'price': entry,
         'stop': stop,
         'target': target,
