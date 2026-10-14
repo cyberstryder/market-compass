@@ -206,7 +206,7 @@ class Config:
         # 2026-10-14: Restrict to OPRA-covered tickers only. The OPRA stream
         # subscribes to 100 contracts across 16 tickers. Monitoring other
         # tickers wastes compute (no quotes → observation_gap on every signal).
-        OPRA_TICKERS = {'AAPL','AMD','AMZN','AVGO','GOOGL','IWM','META','MSFT',
+        OPRA_TICKERS = {'AAPL','AMD','AMZN','AVGO','CRWV','GOOGL','META','MSFT',
                         'MU','NFLX','NVDA','PLTR','QQQ','SPY','TSLA','USAR'}
         return tuple(s for s in symbols((*self.stocks, *extra))
                      if s not in EXCLUDED_STOCKS and s in OPRA_TICKERS)
