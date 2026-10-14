@@ -829,7 +829,7 @@ a{color:#888}</style></head><body>
         """
         from sqlalchemy import select, update
         from .native_smoothers import weekly
-        from .native_outbox import outbox
+        from .native_outbox import outbox, owner
         from .store import identity
         import time
         
@@ -838,6 +838,12 @@ a{color:#888}</style></head><body>
         skipped = []
         
         with db.tx() as c:
+            # Get current ownership epoch - drainer requires owner_epoch to match
+            # or it skips the row. Alerts queued as shadow have owner_epoch=None,
+            # so repair must set it to the current epoch.
+            ownership = owner(db, c, 'smoothers', now)
+            owner_epoch = ownership.get('epoch') if ownership else None
+            
             # Get current week
             week_row = c.execute(
                 select(weekly.c.week).order_by(weekly.c.week.desc()).limit(1)
@@ -874,12 +880,19 @@ a{color:#888}</style></head><body>
                         select(outbox.c.delivery).where(outbox.c.id == outbox_id)
                     ).first()
                     delivery = dict(existing_row[0] or {}) if existing_row else {}
-                    # Only repair if not already has bypass flag (avoid double-count)
-                    if delivery.get('repair_bypass'):
+                    # Only repair if not already has bypass flag AND correct epoch
+                    # (avoid double-count, but re-repair if epoch is stale)
+                    if delivery.get('repair_bypass') and delivery.get('owner_epoch') == owner_epoch:
                         skipped.append(ticker)
                         continue
                     delivery['repair_bypass'] = True
                     delivery['repaired_at'] = now
+                    # 2026-10-14: Set owner_epoch to match current ownership.
+                    # Drainer skips rows where owner_epoch != ownership['epoch'].
+                    # Shadow-queued alerts have owner_epoch=None, so they were
+                    # being skipped even after repair set them to pending.
+                    if owner_epoch:
+                        delivery['owner_epoch'] = owner_epoch
                     c.execute(
                         update(outbox)
                         .where(outbox.c.id == outbox_id)
