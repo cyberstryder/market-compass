@@ -85,6 +85,8 @@ class Config:
     crosstrade_webhook_url: str = field(default_factory=lambda: env("CROSSTRADE_WEBHOOK_URL",""))
     crosstrade_key: str = field(default_factory=lambda: env("CROSSTRADE_KEY",""))
     crosstrade_account: str = field(default_factory=lambda: env("CROSSTRADE_ACCOUNT",""))
+    traderspost_enabled: bool = field(default_factory=lambda: env("TRADERSPOST_ENABLED","false")=="true")
+    traderspost_webhook_url: str = field(default_factory=lambda: env("TRADERSPOST_WEBHOOK_URL",""))
     tape_confirmed: bool = field(default_factory=lambda: env("TAPE_CONFIRMED_ENABLED","true")=="true")
     gap_push_enabled: bool = field(default_factory=lambda: env("GAP_PUSH_ENABLED","true")=="true")
     day_board_push_enabled: bool = field(default_factory=lambda: env("DAY_BOARD_PUSH_ENABLED","true")=="true")
