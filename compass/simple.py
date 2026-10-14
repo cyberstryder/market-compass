@@ -117,6 +117,7 @@ def _smoothers(db, c, now):
 
 
 def _futures(db, c, now):
+    from .ict_paper import symbol_allowed
     try:
         trades = db.prefix(c, "trade:ict-")
     except Exception:
@@ -127,6 +128,13 @@ def _futures(db, c, now):
     open_count = 0
     for t in trades.values():
         if not isinstance(t, dict):
+            continue
+        # Mix/match filter (Josh 2026-10-14): only count KEEP detector+symbol
+        # combos in totals. Dropped combos are hidden from stats (they're
+        # still in the DB for history, but don't count toward the totals).
+        detector = t.get("detector") or ""
+        symbol = t.get("symbol") or ""
+        if not symbol_allowed(detector, symbol):
             continue
         if t.get("status") == "closed" or _num(t.get("exited_at")):
             method = t.get("strategy") or "unknown"
@@ -186,7 +194,7 @@ def _futures(db, c, now):
             for t in v), 2)
     return (_block(
         "futures", "Futures Micros",
-        "Paper-traded signals on micro futures (MNQ, MES, MGC, SIL, MCL). Focused on the two profitable detectors: AOI Fade and BOS + Golden Zone/VWAP.",
+        "Paper-traded signals on micro futures. Mix/match (2026-10-14): only profitable detector+symbol combos — AOI Fade on MCL/MNQ, AOI Zones on MES, BOS+FVG on MNQ/SIL, BOS+GZ on MCL, Turtle Soup on MCL.",
         "Intraday, whenever a method's setup triggers. Everything closes by 3:45 PM CT.",
         "Win = the paper trade closed with a profit, in micro dollars after fees.",
         stats, drill), by_day)
@@ -715,6 +723,7 @@ def _detail_smoothers(db, c, now, name):
 
 def _detail_futures(db, c, now, name):
     from .alert_format import FUTURES_EXIT_REASONS
+    from .ict_paper import symbol_allowed
     name_to_tag = {ICT_SETUP_NAMES.get(t, t): t for t in ICT_PAPER_TAGS.values()}
     tag = name_to_tag.get(name, name)
     try:
@@ -727,6 +736,9 @@ def _detail_futures(db, c, now, name):
     groups = {}
     for t in trades.values():
         if not isinstance(t, dict) or t.get("strategy") != tag:
+            continue
+        # Mix/match filter: only show KEEP detector+symbol combos
+        if not symbol_allowed(t.get("detector") or "", t.get("symbol") or ""):
             continue
         gid = t.get("group_id") or t.get("id")
         groups.setdefault(gid, []).append(t)

@@ -55,6 +55,39 @@ DETECTOR_FLAGS = {
     'trend_rider': 'ict_trend_rider',
 }
 
+# Mix/match (Josh 2026-10-14): per-detector symbol allowlist based on
+# paper-trading P&L analysis. Only these detector+symbol combos are profitable.
+# - AOI Fade: MCL (+$752) and MNQ (+$288) work; MES (-$220) doesn't
+# - AOI Zones: only MES (+$253) is profitable; MCL breakeven, MGC/MNQ/SIL lose
+# - BOS+FVG: MNQ (+$520) and SIL (+$561) work; MCL/MES/MGC lose
+# - BOS+GZ/VWAP: only MCL (+$22, 1 trade) — keep for now
+# - Turtle Soup: only MCL (+$445) works; MES/MGC/MNQ lose
+# - Continuation: loses on ALL symbols — disabled entirely
+# - MGC: loses on every detector (-$3,689 total) — excluded everywhere
+DETECTOR_SYMBOL_ALLOWLIST = {
+    'aoi_fade': {'MCL', 'MNQ'},
+    'aoi_zones': {'MES'},
+    'bos_fvg': {'MNQ', 'SIL'},
+    'bos_gz_vwap': {'MCL'},
+    'turtle_soup': {'MCL'},
+    'continuation': set(),  # disabled entirely
+    # Detectors not listed here have no symbol restriction (they're
+    # either disabled or not in the futures mix).
+}
+
+def symbol_allowed(detector, symbol):
+    """True if this detector is allowed to trade this symbol.
+
+    Returns True for detectors not in the allowlist (no restriction).
+    Returns False if the detector is in the allowlist but the symbol root
+    is not in its allowed set.
+    """
+    allowed = DETECTOR_SYMBOL_ALLOWLIST.get(detector)
+    if allowed is None:
+        return True
+    root = str(symbol or '').split('.')[0].upper()
+    return root in allowed
+
 
 def paper_enabled(cfg, detector):
     """True only when the paper flag AND the detector's own flag are on."""
@@ -80,6 +113,11 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
         return {'submitted': False, 'reason': 'unknown_detector'}
     if not paper_enabled(cfg, detector):
         return {'submitted': False, 'reason': 'paper_disabled'}
+    # Mix/match filter (Josh 2026-10-14): only allow detector+symbol combos
+    # that were profitable in paper trading. Decline others.
+    if not symbol_allowed(detector, symbol):
+        return {'submitted': False, 'reason': 'symbol_not_allowed',
+                'detector': detector, 'symbol': symbol}
     # Prop-firm rule: no entries when the market is closed, and no entries
     # past the session flatten time (the position would have to flatten
     # immediately). Nothing is held between sessions or over the weekend.

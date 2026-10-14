@@ -49,15 +49,22 @@ def quote(ts, bid, ask):
 
 def open_position(db, cfg, detector='golden_zone', **kw):
     e = Engine(db, cfg)
+    # Use a symbol allowed for this detector (mix/match allowlist).
+    # Detectors not in allowlist have no restriction, use SYM.
+    allowed = ict_paper.DETECTOR_SYMBOL_ALLOWLIST.get(detector)
+    sym = SYM
+    if allowed:
+        root = sorted(allowed)[0]
+        sym = f"{root}.c.0"
     with db.tx() as c:
-        r = ict_paper.submit(db, c, cfg, NOW, detector, SYM, sig(**kw))
+        r = ict_paper.submit(db, c, cfg, NOW, detector, sym, sig(**kw))
         assert r['submitted'], r
     return e
 
 
-def exit_with(e, db, now, q, pos_key=POS):
+def exit_with(e, db, now, q, pos_key=POS, sym=SYM):
     with db.tx() as c:
-        db.put(c, 'quote:' + SYM, q)
+        db.put(c, 'quote:' + sym, q)
         e.exits(c, now)
     with db.tx() as c:
         return db.get(c, pos_key)
@@ -126,10 +133,25 @@ def test_each_detector_submits_with_own_tag(db, cfg):
         setattr(cfg, flag, True)
     with db.tx() as c:
         for detector, tag in ict_paper.STRATEGY_TAGS.items():
-            r = ict_paper.submit(db, c, cfg, NOW, detector, SYM, sig())
+            # Use a symbol allowed for this detector (mix/match allowlist).
+            # Detectors not in the allowlist have no restriction, use NQ.
+            # Detectors with empty allowlist (e.g. continuation) are disabled
+            # entirely — skip them (they should decline all symbols).
+            allowed = ict_paper.DETECTOR_SYMBOL_ALLOWLIST.get(detector)
+            if allowed is not None and len(allowed) == 0:
+                r = ict_paper.submit(db, c, cfg, NOW, detector, SYM, sig())
+                assert not r['submitted'], (detector, r)
+                assert r['reason'] == 'symbol_not_allowed'
+                continue
+            sym = SYM
+            if allowed:
+                # Pick first allowed symbol, convert to .c.0 format for test
+                root = sorted(allowed)[0]
+                sym = f"{root}.c.0"
+            r = ict_paper.submit(db, c, cfg, NOW, detector, sym, sig())
             assert r['submitted'], (detector, r)
             assert r['strategy'] == tag
-            p = db.get(c, 'position:ict:%s:%s:t1' % (detector, SYM))
+            p = db.get(c, 'position:ict:%s:%s:t1' % (detector, sym))
             assert p['strategy'] == tag
             assert p['entry'] == pytest.approx(100.0)
             assert p['stop'] == pytest.approx(98.0)
@@ -192,8 +214,10 @@ def test_attribution_splits_pnl_by_detector(db, cfg):
     exit_with(e, db, NOW + 120, quote(NOW + 120, 102.5, 102.51))
     e2 = open_position(db, cfg, 'bos_fvg',
                        direction='short', entry=100.0, stop=102.0, target=96.0)
+    # bos_fvg allowlist uses MNQ (first allowed), not SYM (NQ)
+    bos_sym = sorted(ict_paper.DETECTOR_SYMBOL_ALLOWLIST['bos_fvg'])[0] + '.c.0'
     p2 = exit_with(e2, db, NOW + 240, quote(NOW + 240, 102.1, 102.11),
-                   pos_key='position:ict:bos_fvg:' + SYM + ':t1')
+                   pos_key='position:ict:bos_fvg:' + bos_sym + ':t1', sym=bos_sym)
     assert p2['exit_reason'] == 'stop' and p2['pnl'] < 0
     with db.tx() as c:
         attr = ict_paper.attribution(db, c)
