@@ -721,21 +721,55 @@ def _detail_futures(db, c, now, name):
         trades = db.prefix(c, "trade:ict-")
     except Exception:
         trades = {}
-    items = []
+    # Group legs by group_id (2/2/1 scale-out: T1, T2, Trail are legs of ONE trade).
+    # Without grouping, a single trade shows as 3 separate cards, which looks
+    # like 9 trades when there are really 3 (e.g. MES, MGC, MCL).
+    groups = {}
     for t in trades.values():
         if not isinstance(t, dict) or t.get("strategy") != tag:
             continue
+        gid = t.get("group_id") or t.get("id")
+        groups.setdefault(gid, []).append(t)
+    items = []
+    for gid, legs in groups.items():
+        # Use the T1 leg (or first leg) as the representative for the group
+        legs_sorted = sorted(legs, key=lambda x: (x.get("leg") or "") != "t1")
+        t = legs_sorted[0]
         sym = str(t.get("symbol") or "?").split(".")[0]
         side = str(t.get("side") or "?")
         entered = _num(t.get("entered_at")) or _num(t.get("decided_at"))
-        exited = _num(t.get("exited_at"))
-        pnl = _num(t.get("pnl"))
-        entry, exit = _num(t.get("entry")), _num(t.get("exit"))
-        status = t.get("status") or "?"
+        # Group status: open if ANY leg is open, closed if ALL legs closed
+        any_open = any(l.get("status") == "open" for l in legs)
+        all_closed = all(l.get("status") == "closed" for l in legs)
+        status = "open" if any_open else ("closed" if all_closed else t.get("status") or "?")
+        # Group P&L: sum of closed legs' P&L (open legs have no P&L yet)
+        total_pnl = sum(_num(l.get("pnl")) or 0 for l in legs if l.get("status") == "closed")
+        has_closed = any(l.get("status") == "closed" for l in legs)
+        pnl = total_pnl if has_closed else None
+        entry = _num(t.get("entry"))
+        # Exit: use the latest exit among closed legs
+        closed_legs = [l for l in legs if l.get("status") == "closed"]
+        exit = _num(closed_legs[-1].get("exit")) if closed_legs else None
+        exited = max([_num(l.get("exited_at")) or 0 for l in closed_legs], default=0) or None
         if exited:
             sub = "%s → %s" % (_ts(entered), _ts(exited))
         else:
             sub = "Opened %s · still open" % _ts(entered)
+        # Add leg count to subtitle if multiple legs
+        if len(legs) > 1:
+            leg_status = []
+            for leg in sorted(legs, key=lambda x: x.get("leg") or ""):
+                leg_name = leg.get("leg") or "?"
+                leg_st = leg.get("status") or "?"
+                leg_tgt = _num(leg.get("target"))
+                if leg_st == "closed":
+                    leg_pnl = _num(leg.get("pnl"))
+                    leg_status.append("%s: %s" % (leg_name.upper(), _m(leg_pnl) if leg_pnl is not None else "closed"))
+                elif leg_tgt is not None:
+                    leg_status.append("%s: tgt %.2f" % (leg_name.upper(), leg_tgt))
+                else:
+                    leg_status.append("%s: trailing" % leg_name.upper())
+            sub += " · " + ", ".join(leg_status)
         reason = t.get("exit_reason")
         orows = [["Entry", "%.2f" % entry if entry is not None else "—"],
                  ["Exit", "%.2f" % exit if exit is not None else "—"]]
@@ -743,7 +777,13 @@ def _detail_futures(db, c, now, name):
             orows.append(["Exit reason", FUTURES_EXIT_REASONS.get(reason, reason)])
         elif status != "closed":
             orows.append(["Stop", "%.2f" % _num(t.get("stop")) if _num(t.get("stop")) is not None else "—"])
-            orows.append(["Target", "%.2f" % _num(t.get("target")) if _num(t.get("target")) is not None else "—"])
+            # Show targets for each leg
+            for leg in sorted(legs, key=lambda x: x.get("leg") or ""):
+                leg_tgt = _num(leg.get("target"))
+                if leg_tgt is not None:
+                    orows.append(["Target %s" % (leg.get("leg") or "?").upper(), "%.2f" % leg_tgt])
+                elif leg.get("is_trailer"):
+                    orows.append(["Target TRAIL", "Trailing"])
         gap = t.get("data_gap")
         if gap:
             orows.append(["Data", "⚠️ flew blind — excluded from wins/losses"])
@@ -757,7 +797,7 @@ def _detail_futures(db, c, now, name):
     items.sort(key=lambda i: i.pop("_sort"), reverse=True)
     return {"type": "futures", "name": name,
             "title": "%s — trade by trade" % name,
-            "sub": "Every paper trade this detector has taken, newest first. Micros, flat by 3:45pm CT.",
+            "sub": "Every paper trade this detector has taken, newest first. Micros, flat by 3:45pm CT. 2/2/1 legs grouped.",
             "items": items[:100]}
 
 
