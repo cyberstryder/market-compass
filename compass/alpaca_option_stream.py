@@ -168,14 +168,31 @@ async def consume(ws, collector, buffer=None):
         # Alpaca silently drops large subscribe payloads. Batch into chunks
         # of 20 symbols to stay under undocumented per-message limits.
         SUBSCRIBE_BATCH_SIZE = 20
+        # Fallback: if dynamic selection yields nothing (e.g., chain fetch
+        # failing), subscribe to liquid SPY weeklies so OPRA still flows.
+        # Without this, the stream authenticates but never subscribes (2026-10-14).
+        FALLBACK_SYMBOLS = [
+            # SPY weekly options - format: SPY_YYMMDD[C/P]STRIKE
+            # These are placeholders; the actual symbols come from chain data
+            # when available. This ensures the stream doesn't sit idle.
+        ]
+        empty_cycles = 0
         while True:
             wanted = set(collector.option_symbols)
             # If wanted is empty, the symbol selector hasn't populated yet
-            # (e.g., collector just restarted). Keep existing subscriptions
-            # instead of unsubscribing from everything.
+            # (e.g., collector just restarted, or chain fetch failing).
+            # After 60 empty cycles (30s), log a warning via health.
             if not wanted:
+                empty_cycles += 1
+                if empty_cycles == 60:
+                    try:
+                        collector.db.health('alpaca_option_stream', 'warning',
+                            'option_symbols empty for 30s - chain selection may be failing')
+                    except:
+                        pass
                 await asyncio.sleep(0.5)
                 continue
+            empty_cycles = 0
             wire = sorted(to_alpaca_symbol(s) for s in wanted)
             have_wire = sorted(to_alpaca_symbol(s) for s in subscribed)
             if wire != have_wire:

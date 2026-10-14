@@ -513,7 +513,16 @@ class Collectors:
             self.chain_inflight.update(targets)
         for symbol in targets:
             try:
-                contracts,complete=await (self.massive_chain(symbol) if source=="massive" else self.alpaca_chain(symbol))
+                # 2026-10-14: Massive->Alpaca fallback. If Massive fails,
+                # try Alpaca instead of leaving chains empty (breaks OPRA).
+                if source=="massive":
+                    try:
+                        contracts,complete=await self.massive_chain(symbol)
+                    except Exception:
+                        source="alpaca"
+                        contracts,complete=await self.alpaca_chain(symbol)
+                else:
+                    contracts,complete=await self.alpaca_chain(symbol)
                 now=time.time()
                 with self.db.tx() as c:
                     q=self.db.get(c,"quote:"+symbol)
