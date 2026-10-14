@@ -176,12 +176,13 @@ def _futures(db, c, now):
                        for t in trades]
     stats = _stats(all_trades_list)
     stats["open"] = open_count
-    total_gaps = sum(len(v) for k, v in per_method_gaps.items() if k in FOCUSED_SET)
+    # Count all data gaps across all detectors (2026-10-14: filter removed)
+    total_gaps = sum(len(v) for v in per_method_gaps.values())
     if total_gaps:
         stats["data_gaps"] = total_gaps
         stats["data_gap_pnl"] = round(sum(
             _num(t.get("pnl")) or 0
-            for k, v in per_method_gaps.items() if k in FOCUSED_SET
+            for v in per_method_gaps.values()
             for t in v), 2)
     return (_block(
         "futures", "Futures Micros",
