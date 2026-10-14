@@ -171,7 +171,11 @@ def test_stream_selection_balances_nearby_calls_and_puts_without_old_price_fills
     selected = select_contracts(contracts, 100, 4)
     assert len(selected) == 4 and sum(row["type"] == "call" for row in selected) == 2
     assert all(abs(row["strike"]-100) <= 1 for row in selected)
-    assert select_contracts(contracts, None, 4) == []
+    # 2026-10-13: fallback when no reference - returns expiry-sorted contracts
+    # instead of empty, so OPRA subscribes even with stale data
+    fallback = select_contracts(contracts, None, 4)
+    assert len(fallback) == 4
+    assert sum(row["type"] == "call" for row in fallback) == 2
 
 
 def test_discord_requires_saved_message_and_retains_queue_on_ambiguous_response(db):
