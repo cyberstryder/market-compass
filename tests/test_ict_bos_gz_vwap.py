@@ -7,7 +7,7 @@ from compass import bos_gz_vwap as bgv
 from compass.ict_common import atr
 
 OPEN = 1_699_992_000
-SYM = 'NQ.c.0'
+SYM = 'MCL.c.0'  # BOS_GZ_VWAP allowlist: MCL only (mix/match 2026-10-14)
 NOW = OPEN + 15 * 60
 
 # Same BOS tape as the FVG fixture: swing high 102 broken at idx11,
