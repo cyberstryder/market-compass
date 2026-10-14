@@ -864,15 +864,20 @@ a{color:#888}</style></head><body>
                 
                 if existing:
                     status = existing[0]
-                    if status in ('pending', 'delivered'):
+                    if status == 'delivered':
                         skipped.append(ticker)
                         continue
-                    # Flip shadow/failed to pending, with repair_bypass flag
-                    # so the drainer skips the entry-delivered check (2026-10-14).
+                    # 2026-10-14: Also update PENDING alerts to add bypass flag.
+                    # First repair run (old code) set them to pending WITHOUT the flag,
+                    # so second run skipped them. Need to add flag to pending ones too.
                     existing_row = c.execute(
                         select(outbox.c.delivery).where(outbox.c.id == outbox_id)
                     ).first()
                     delivery = dict(existing_row[0] or {}) if existing_row else {}
+                    # Only repair if not already has bypass flag (avoid double-count)
+                    if delivery.get('repair_bypass'):
+                        skipped.append(ticker)
+                        continue
                     delivery['repair_bypass'] = True
                     delivery['repaired_at'] = now
                     c.execute(

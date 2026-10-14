@@ -44,10 +44,42 @@ function drillHtml(t){
   if(!t.drill.length)h+=empty('Nothing tracked yet','No completed items for this tracker.');
   h+='<div class="research-cards">'+t.drill.map(d=>{
     const st=d.stats;
+    // 2026-10-14: Add View trades button for futures methods (drill to trade list)
+    const viewTrades = (t.key==='futures' && (st.tracked||0) > 0)
+      ? '<button type="button" class="quiet" data-detail-futures="'+esc(d.name)+'">View trades ›</button>'
+      : '';
     return '<article class="panel research-card" style="margin-bottom:0"><div class="panel-head"><h2>'+esc(d.name)+'</h2></div>'
-      +'<p class="fine">'+esc(d.watches)+'</p>'+statsHtml(st,dollar)+'</article>';
+      +'<p class="fine">'+esc(d.watches)+'</p>'+statsHtml(st,dollar)+viewTrades+'</article>';
   }).join('')+'</div></article>';
   return h;
+}
+
+// 2026-10-14: Fetch and display futures trade list for a method
+async function showFuturesTrades(methodName){
+  try{
+    const res = await fetch('/api/simple/detail?type=futures&name='+encodeURIComponent(methodName));
+    const data = await res.json();
+    const items = data.items || [];
+    let html = '<article class="panel"><div class="panel-head"><h2>'+esc(data.title||methodName)+' — trades</h2><button type="button" class="quiet" id="simple-trades-close">Close</button></div>';
+    if(!items.length) html += '<p class="fine">No trades yet.</p>';
+    else {
+      html += '<div class="research-cards">' + items.map(it=>{
+        const rows = (it.rows||[]).map(r=>'<div><dt>'+esc(r[0])+'</dt><dd>'+esc(r[1])+'</dd></div>').join('');
+        return '<article class="panel research-card" style="margin-bottom:0"><div class="panel-head"><h3>'+esc(it.title)+'</h3></div>'
+          + '<p class="fine">'+esc(it.sub||'')+'</p>'
+          + (rows ? '<dl class="rows">'+rows+'</dl>' : '')
+          + '<div class="result"><span class="'+esc(it.result_cls||'')+'">'+esc(it.result||'')+'</span></div></article>';
+      }).join('') + '</div>';
+    }
+    html += '</article>';
+    // Replace drill panel with trades view
+    const drillPanel = document.querySelector('.panel:has(#simple-drill-close)');
+    if(drillPanel) drillPanel.outerHTML = html;
+    const closeBtn = document.getElementById('simple-trades-close');
+    if(closeBtn) closeBtn.onclick = ()=>{ render(); };
+  }catch(e){
+    console.error('Failed to load futures trades', e);
+  }
 }
 
 function shiftMonth(m,delta){
@@ -135,6 +167,10 @@ function render(){
     drillKey=drillKey===k?null:k;render();
   });
   const dc=$('#simple-drill-close');if(dc)dc.onclick=()=>{drillKey=null;render();};
+  // 2026-10-14: Wire View trades buttons
+  document.querySelectorAll('[data-detail-futures]').forEach(btn=>{
+    btn.onclick = ()=>{ showFuturesTrades(btn.getAttribute('data-detail-futures')); };
+  });
   el.querySelectorAll('[data-simple-day]').forEach(c=>c.onclick=()=>{
     const ds=c.getAttribute('data-simple-day');
     daySel=daySel===ds?null:ds;render();
