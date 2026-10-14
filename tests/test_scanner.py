@@ -47,7 +47,10 @@ def test_full_watchlist_and_explicit_overrides():
     assert len(saved_watchlist())==144
     assert symbols('NASDAQ:NVDA, NVDA\nNYSE:TSLA')==('NVDA','TSLA')
     cfg=Config(local=False,stocks=('SPY',),watchlist=())
-    assert len(cfg.watch_symbols)==144
+    # 2026-10-14: watch_symbols filtered to OPRA tickers in production.
+    # Saved watchlist has 144, but only 15 are in OPRA list (USAR not in saved).
+    assert len(cfg.watch_symbols)==15
+    assert set(cfg.watch_symbols) <= {'AAPL','AMD','AMZN','AVGO','CRWV','GOOGL','META','MSFT','MU','NFLX','NVDA','PLTR','QQQ','SPY','TSLA','USAR'}
     assert Config(local=True,stocks=('SPY',),watchlist=('TSLA','NVDA')).watch_symbols==('SPY','TSLA','NVDA')
     with pytest.raises(ValueError): symbols('SPY,https://attacker.invalid')
 
