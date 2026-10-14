@@ -816,6 +816,79 @@ a{color:#888}</style></head><body>
         threading.Thread(target=_run, daemon=True).start()
         return {'ok': True, 'started': True, 'message': 'Archive worker started in background'}
 
+    @app.post('/api/admin/repair-smoothers-alerts')
+    @app.get('/api/admin/repair-smoothers-alerts')
+    def repair_smoothers_alerts():
+        """Re-queue shadowed Smoothers exit alerts for the current week.
+        
+        Finds WINs in smoothers_weekly that have shadow/failed outbox entries
+        (or no entry) for the 'target' event, and flips them to pending
+        so the drainer will deliver them to Discord.
+        
+        This repairs the 2026-10-13 issue where 35 WINs didn't generate alerts.
+        """
+        from sqlalchemy import select, update
+        from .native_smoothers import weekly
+        from .native_outbox import outbox
+        from .store import identity
+        import time
+        
+        now = time.time()
+        repaired = []
+        skipped = []
+        
+        with db.tx() as c:
+            # Get current week
+            week_row = c.execute(
+                select(weekly.c.week).order_by(weekly.c.week.desc()).limit(1)
+            ).scalar()
+            if not week_row:
+                return {'ok': False, 'error': 'No weeks found'}
+            
+            # Get all WINs for current week
+            rows = list(c.execute(
+                select(weekly.c.id, weekly.c.ticker)
+                .where(weekly.c.week == week_row)
+                .where(weekly.c.status == 'WIN')
+            ).mappings())
+            
+            for r in rows:
+                pid = r['id']
+                ticker = r['ticker']
+                event_key = f"{pid}:target"
+                outbox_id = identity('native-outbox-v1', 'smoothers', event_key)
+                
+                existing = c.execute(
+                    select(outbox.c.status).where(outbox.c.id == outbox_id)
+                ).first()
+                
+                if existing:
+                    status = existing[0]
+                    if status in ('pending', 'delivered'):
+                        skipped.append(ticker)
+                        continue
+                    # Flip shadow/failed to pending
+                    c.execute(
+                        update(outbox)
+                        .where(outbox.c.id == outbox_id)
+                        .values(status='pending', updated=now)
+                    )
+                    repaired.append(ticker)
+                else:
+                    # No outbox entry at all - this shouldn't happen if queue_signal ran,
+                    # but if it did, we can't reconstruct the payload here.
+                    # Log it for manual investigation.
+                    skipped.append(f"{ticker}(no outbox)")
+        
+        return {
+            'ok': True,
+            'week': week_row,
+            'repaired': repaired,
+            'repaired_count': len(repaired),
+            'skipped': skipped,
+            'skipped_count': len(skipped),
+        }
+
     @app.post('/api/admin/archive-worker-reset')
     @app.get('/api/admin/archive-worker-reset')
     def reset_archive_worker():
