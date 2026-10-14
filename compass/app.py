@@ -871,7 +871,7 @@ a{color:#888}</style></head><body>
                     c.execute(
                         update(outbox)
                         .where(outbox.c.id == outbox_id)
-                        .values(status='pending', updated=now)
+                        .values(status='pending')
                     )
                     repaired.append(ticker)
                 else:
