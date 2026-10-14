@@ -867,11 +867,18 @@ a{color:#888}</style></head><body>
                     if status in ('pending', 'delivered'):
                         skipped.append(ticker)
                         continue
-                    # Flip shadow/failed to pending
+                    # Flip shadow/failed to pending, with repair_bypass flag
+                    # so the drainer skips the entry-delivered check (2026-10-14).
+                    existing_row = c.execute(
+                        select(outbox.c.delivery).where(outbox.c.id == outbox_id)
+                    ).first()
+                    delivery = dict(existing_row[0] or {}) if existing_row else {}
+                    delivery['repair_bypass'] = True
+                    delivery['repaired_at'] = now
                     c.execute(
                         update(outbox)
                         .where(outbox.c.id == outbox_id)
-                        .values(status='pending')
+                        .values(status='pending', delivery=delivery)
                     )
                     repaired.append(ticker)
                 else:

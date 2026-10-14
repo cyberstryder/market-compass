@@ -269,12 +269,18 @@ async def consume(ws, collector, buffer=None):
             latest = max((r.get("last_source_ts") for r in
                           buffer.diagnostics.values() if "last_source_ts" in r),
                          default=None)
-            await asyncio.to_thread(
-                collector.db.health, "alpaca_option_stream",
-                "receiving" if latest else "waiting",
-                "Alpaca OPRA parallel run; source-tagged rows for parity check",
-                latest, subscribed=len(subscribed),
-                committed=dict(committed), diag=dict(diag))
+            # 2026-10-14: Wrap health write in try/except so DB failures
+            # don't crash the health task and trigger stream restart.
+            try:
+                await asyncio.to_thread(
+                    collector.db.health, "alpaca_option_stream",
+                    "receiving" if latest else "waiting",
+                    "Alpaca OPRA parallel run; source-tagged rows for parity check",
+                    latest, subscribed=len(subscribed),
+                    committed=dict(committed), diag=dict(diag))
+            except Exception as e:
+                logging.getLogger('uvicorn.error').warning(
+                    'OPRA health write failed: %s', type(e).__name__)
             await asyncio.sleep(30)
 
     async def authenticate():

@@ -139,7 +139,10 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
                 row=dict(row,payload={'content':publication.format_message(dict(record,payload=decision['payload'])),
                     'username':'Market Compass','allowed_mentions':{'parse':[]}})
             mirror_smoothers(db,c,row,d,webhooks,now)
-            if row['program']=='smoothers' and d.get('publication',{}).get('event') not in (None,'ENTRY') and not channel_entry_delivered(c,'smoothers',d['publication']):
+            # 2026-10-14: Allow repair_bypass flag to skip the entry-delivered check.
+            # Repaired alerts (e.g., via /api/admin/repair-smoothers-alerts) may not have
+            # their entry alerts delivered, but the target should still go out.
+            if row['program']=='smoothers' and d.get('publication',{}).get('event') not in (None,'ENTRY') and not d.get('repair_bypass') and not channel_entry_delivered(c,'smoothers',d['publication']):
                 c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',delivery=dict(d,error='Entry not confirmed in this destination')))
                 continue
             message_id=None
