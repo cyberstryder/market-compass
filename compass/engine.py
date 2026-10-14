@@ -606,6 +606,24 @@ class Engine:
             # by dependency: liquidity map -> HTF levels -> event detectors ->
             # confluence tiering.
             ict_summaries = {}
+            # 2026-10-14: Per-detector isolation — one crashing detector must
+            # never nuke the whole tick (KeyError: 0 in vwap_fade killed
+            # 0DTE, futures, ideas, alerts, health writes for a week).
+            def _safe_scan(name, scan_fn):
+                """Run a detector scan, catching exceptions so one bad
+                detector doesn't roll back the entire tick."""
+                try:
+                    return scan_fn()
+                except Exception as e:
+                    import traceback
+                    logging.getLogger('uvicorn.error').error(
+                        f'Detector {name} crashed: {e}\n{traceback.format_exc(limit=3)}')
+                    try:
+                        self.db.put(c, f'health:detector_{name}_error',
+                                    {'error': str(e)[:500], 'at': now})
+                    except Exception:
+                        pass
+                    return None
             # VIX data feed: keep the regime keys fresh before the gating
             # block below reads them. Runs whenever the Massive key exists so
             # data is already flowing when VIX_REGIME_ENABLED is flipped.
@@ -632,66 +650,66 @@ class Engine:
                     return True
             if self.cfg.ict_session_liquidity:
                 from .session_liquidity import scan as ict_session_liquidity_scan
-                ict_summaries['session_liquidity'] = ict_session_liquidity_scan(self.db,c,self.cfg,now)
+                ict_summaries['session_liquidity'] = _safe_scan('session_liquidity', lambda: ict_session_liquidity_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_htf_levels:
                 from .htf_levels import scan as ict_htf_levels_scan
-                ict_summaries['htf_levels'] = ict_htf_levels_scan(self.db,c,self.cfg,now)
+                ict_summaries['htf_levels'] = _safe_scan('htf_levels', lambda: ict_htf_levels_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_turtle_soup and _should_run('turtle_soup'):
                 from .turtle_soup import scan as ict_turtle_soup_scan
-                ict_summaries['turtle_soup'] = ict_turtle_soup_scan(self.db,c,self.cfg,now)
+                ict_summaries['turtle_soup'] = _safe_scan('turtle_soup', lambda: ict_turtle_soup_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_smt_divergence:
                 from .smt_divergence import scan as ict_smt_divergence_scan
-                ict_summaries['smt_divergence'] = ict_smt_divergence_scan(self.db,c,self.cfg,now)
+                ict_summaries['smt_divergence'] = _safe_scan('smt_divergence', lambda: ict_smt_divergence_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_aoi_zones and _should_run('aoi_zones'):
                 from .aoi_zones import scan as ict_aoi_zones_scan
-                ict_summaries['aoi_zones'] = ict_aoi_zones_scan(self.db,c,self.cfg,now)
+                ict_summaries['aoi_zones'] = _safe_scan('aoi_zones', lambda: ict_aoi_zones_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_aoi_fade and _should_run('aoi_fade'):
                 from .aoi_fade import scan as ict_aoi_fade_scan
-                ict_summaries['aoi_fade'] = ict_aoi_fade_scan(self.db,c,self.cfg,now)
+                ict_summaries['aoi_fade'] = _safe_scan('aoi_fade', lambda: ict_aoi_fade_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_continuation and _should_run('continuation'):
                 from .continuation import scan as ict_continuation_scan
-                ict_summaries['continuation'] = ict_continuation_scan(self.db,c,self.cfg,now)
+                ict_summaries['continuation'] = _safe_scan('continuation', lambda: ict_continuation_scan(self.db,c,self.cfg,now))
             if getattr(self.cfg, 'ict_trend_rider', False):
                 from .trend_rider import scan as ict_trend_rider_scan
-                ict_summaries['trend_rider'] = ict_trend_rider_scan(self.db,c,self.cfg,now)
+                ict_summaries['trend_rider'] = _safe_scan('trend_rider', lambda: ict_trend_rider_scan(self.db,c,self.cfg,now))
             if getattr(self.cfg, 'gap_fade_enabled', False) and _should_run('gap_fade'):
                 from .gap_fade import scan as gap_fade_scan
-                ict_summaries['gap_fade'] = gap_fade_scan(self.db,c,self.cfg,now)
+                ict_summaries['gap_fade'] = _safe_scan('gap_fade', lambda: gap_fade_scan(self.db,c,self.cfg,now))
             if getattr(self.cfg, 'vwap_fade_enabled', False):
                 from .vwap_fade import scan as vwap_fade_scan
-                ict_summaries['vwap_fade'] = vwap_fade_scan(self.db,c,self.cfg,now)
+                ict_summaries['vwap_fade'] = _safe_scan('vwap_fade', lambda: vwap_fade_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_tier_a_b:
                 from .tier_a_b import scan as ict_tier_a_b_scan
-                ict_summaries['tier_a_b'] = ict_tier_a_b_scan(self.db,c,self.cfg,now)
+                ict_summaries['tier_a_b'] = _safe_scan('tier_a_b', lambda: ict_tier_a_b_scan(self.db,c,self.cfg,now))
             # ICT futures Phase 2 detectors: evidence snapshots always; paper
             # fills only when ICT_FUTURES_PAPER_ENABLED is also on (handled
             # inside each scan via ict_paper).
             if self.cfg.ict_golden_zone:
                 from .golden_zone import scan as ict_golden_zone_scan
-                ict_summaries['golden_zone'] = ict_golden_zone_scan(self.db,c,self.cfg,now)
+                ict_summaries['golden_zone'] = _safe_scan('golden_zone', lambda: ict_golden_zone_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_bos_fvg and _should_run('bos_fvg'):
                 from .bos_fvg import scan as ict_bos_fvg_scan
-                ict_summaries['bos_fvg'] = ict_bos_fvg_scan(self.db,c,self.cfg,now)
+                ict_summaries['bos_fvg'] = _safe_scan('bos_fvg', lambda: ict_bos_fvg_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_bos_gz_vwap and _should_run('bos_gz_vwap'):
                 from .bos_gz_vwap import scan as ict_bos_gz_vwap_scan
-                ict_summaries['bos_gz_vwap'] = ict_bos_gz_vwap_scan(self.db,c,self.cfg,now)
+                ict_summaries['bos_gz_vwap'] = _safe_scan('bos_gz_vwap', lambda: ict_bos_gz_vwap_scan(self.db,c,self.cfg,now))
             # YouTube-trader method detectors: evidence snapshots always; paper
             # fills only when ICT_FUTURES_PAPER_ENABLED is also on (handled
             # inside each scan via ict_paper).
             if self.cfg.ict_morning_drive and _should_run('morning_drive'):
                 from .morning_drive import scan as yt_morning_drive_scan
-                ict_summaries['morning_drive'] = yt_morning_drive_scan(self.db,c,self.cfg,now)
+                ict_summaries['morning_drive'] = _safe_scan('morning_drive', lambda: yt_morning_drive_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_icc and _should_run('icc'):
                 from .icc import scan as yt_icc_scan
-                ict_summaries['icc'] = yt_icc_scan(self.db,c,self.cfg,now)
+                ict_summaries['icc'] = _safe_scan('icc', lambda: yt_icc_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_rumers_box and _should_run('rumers_box'):
                 from .rumers_box import scan as yt_rumers_box_scan
-                ict_summaries['rumers_box'] = yt_rumers_box_scan(self.db,c,self.cfg,now)
+                ict_summaries['rumers_box'] = _safe_scan('rumers_box', lambda: yt_rumers_box_scan(self.db,c,self.cfg,now))
             # Daily trend-bias regime (Rumers 3R rule): evidence-only context,
             # never a filter or sizer.
             if self.cfg.ict_trend_bias:
                 from .trend_bias import scan as ict_trend_bias_scan
-                ict_summaries['trend_bias'] = ict_trend_bias_scan(self.db,c,self.cfg,now)
+                ict_summaries['trend_bias'] = _safe_scan('trend_bias', lambda: ict_trend_bias_scan(self.db,c,self.cfg,now))
             self.ideas.tick(c,now)
             from .observation_recovery import tick as recovery_tick
             recovery_tick(self.db,c,self.clock() if self.clock else now)
