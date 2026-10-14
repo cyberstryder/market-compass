@@ -34,8 +34,12 @@ def _bars_from_window(window):
     out = []
     for row in window or []:
         try:
-            ts, o, h, l, c = row[0], row[1], row[2], row[3], row[4]
-        except (IndexError, TypeError):
+            # 2026-10-14: Handle both tuple/list and dict rows (KeyError: 0 fix).
+            if isinstance(row, dict):
+                ts, o, h, l, c = row.get('ts'), row.get('o'), row.get('h'), row.get('l'), row.get('c')
+            else:
+                ts, o, h, l, c = row[0], row[1], row[2], row[3], row[4]
+        except (IndexError, TypeError, KeyError):
             continue
         if None in (ts, o, h, l, c):
             continue

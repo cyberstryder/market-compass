@@ -38,9 +38,15 @@ def _bars_from_window(window):
     out = []
     for row in window or []:
         try:
-            ts, o, h, l, c = row[0], row[1], row[2], row[3], row[4]
-            v = row[5] if len(row) > 5 else 1.0
-        except (IndexError, TypeError):
+            # 2026-10-14: Handle both tuple/list and dict rows.
+            # Dict rows cause KeyError: 0 when indexed by position.
+            if isinstance(row, dict):
+                ts, o, h, l, c = row.get('ts'), row.get('o'), row.get('h'), row.get('l'), row.get('c')
+                v = row.get('v', 1.0)
+            else:
+                ts, o, h, l, c = row[0], row[1], row[2], row[3], row[4]
+                v = row[5] if len(row) > 5 else 1.0
+        except (IndexError, TypeError, KeyError):
             continue
         if None in (ts, o, h, l, c):
             continue
