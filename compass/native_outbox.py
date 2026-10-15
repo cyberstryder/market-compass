@@ -215,10 +215,20 @@ async def run(db,cfg):
     import os
     enabled=os.getenv('NATIVE_PROGRAM_SEND_ENABLED','false').lower()=='true'
     hooks=dict(cfg.discord_routes)
-    hooks.update({p:os.getenv('NATIVE_'+p.upper()+'_DISCORD_WEBHOOK','') for p in ('morning','smoothers')})
+    # 2026-10-15: Only overwrite with NATIVE_* webhook if it's non-empty.
+    # Previously, if NATIVE_SMOOTHERS_DISCORD_WEBHOOK was unset, it would
+    # overwrite the valid DISCORD_SMOOTHERS_WEBHOOK_URL with '', causing
+    # the drainer to skip all Smoothers alerts (URL regex fails on '').
+    for p in ('morning','smoothers'):
+        native_url=os.getenv('NATIVE_'+p.upper()+'_DISCORD_WEBHOOK','')
+        if native_url:
+            hooks[p]=native_url
     hooks['smoothers_shared']=os.getenv('NATIVE_SMOOTHERS_SHARED_DISCORD_WEBHOOK','')
     # Secondary fallback webhooks (tried if primary returns 404/401)
-    hooks.update({p+'_secondary':os.getenv('NATIVE_'+p.upper()+'_DISCORD_WEBHOOK_SECONDARY','') for p in ('morning','smoothers')})
+    for p in ('morning','smoothers'):
+        secondary_url=os.getenv('NATIVE_'+p.upper()+'_DISCORD_WEBHOOK_SECONDARY','')
+        if secondary_url:
+            hooks[p+'_secondary']=secondary_url
     if not cfg.morning_enabled: hooks["morning"]=""
     with httpx.Client(timeout=10,follow_redirects=False) as client:
         while True:
