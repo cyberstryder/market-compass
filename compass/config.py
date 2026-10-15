@@ -50,7 +50,7 @@ class Config:
         for key in ('spy_morning', 'options_0dte', 'intraday', 'magnets', 'options_ideas',
                     'smoothers', 'futures', 'research')})
     discord_fallback: bool = field(default_factory=lambda: env('DISCORD_SHARED_FALLBACK', 'true') == 'true')
-    spy_morning_brief: bool = field(default_factory=lambda: env("SPY_MORNING_BRIEF_ENABLED", "true") == "true")
+    spy_morning_brief: bool = field(default_factory=lambda: env("SPY_MORNING_BRIEF_ENABLED", "false") == "true")
     spy_chart_discord: bool = field(default_factory=lambda: env("SPY_CHART_DISCORD_ENABLED", "true") == "true")
     spy_timeframes_enabled: bool = field(default_factory=lambda: env("SPY_TIMEFRAMES_ENABLED", "false") == "true")
     paper_trading: bool = field(default_factory=lambda: env("PAPER_TRADING_ENABLED", "false") == "true")
