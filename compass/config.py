@@ -170,7 +170,7 @@ class Config:
     scanner: bool = field(default_factory=lambda: env("SCANNER_ENABLED","true")=="true")
     scanner_paper: bool = field(default_factory=lambda: env("SCANNER_PAPER_TRADES","true")=="true")
     research: bool = field(default_factory=lambda: env("RESEARCH_FEEDS_ENABLED","true")=="true")
-    option_focus: int = field(default_factory=lambda: int(env("OPTION_FOCUS_SYMBOLS","12")))
+    option_focus: int = field(default_factory=lambda: int(env("OPTION_FOCUS_SYMBOLS","16")))
     chain_dte: int = field(default_factory=lambda: int(env("OPTION_CHAIN_MAX_DTE","90")))
     # 0DTE option entry gates (relaxed 2026-09-30: the 5s quote / 8% spread /
     # 30-min-cutoff trio was rejecting most same-day contracts; late session
