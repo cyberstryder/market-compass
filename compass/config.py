@@ -205,16 +205,11 @@ class Config:
     @property
     def watch_symbols(self):
         extra = self.watchlist or (saved_watchlist() if not self.local and self.scanner else ())
-        # 2026-10-14: Restrict to OPRA-covered tickers only (production).
-        # The OPRA stream subscribes to 100 contracts across 16 tickers.
-        # Monitoring other tickers wastes compute (no quotes → observation_gap).
-        # Skip filter in local/test mode so tests can use fake symbols (BAD, etc).
-        if self.local:
-            return tuple(s for s in symbols((*self.stocks, *extra)) if s not in EXCLUDED_STOCKS)
-        OPRA_TICKERS = {'AAPL','AMD','AMZN','AVGO','CRWV','GOOGL','META','MSFT',
-                        'MU','NFLX','NVDA','PLTR','QQQ','SPY','TSLA','USAR'}
-        return tuple(s for s in symbols((*self.stocks, *extra))
-                     if s not in EXCLUDED_STOCKS and s in OPRA_TICKERS)
+        # 2026-10-15: REVERTED OPRA filter (d35d433). The filter restricted
+        # scanning from 144 tickers to 16 OPRA tickers, which may have killed
+        # 0DTE/Ideas signals on tickers outside the 16. The MRNA observation_gap
+        # problem should be handled per-ticker, not by nuking scanner coverage.
+        return tuple(s for s in symbols((*self.stocks, *extra)) if s not in EXCLUDED_STOCKS)
 
     def validate(self):
         import math
