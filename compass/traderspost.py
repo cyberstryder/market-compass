@@ -99,18 +99,31 @@ def build_payload(cfg, trade):
             return None
 
     # TradersPost payload format
-    # See: https://traderspost.io/docs/webhooks
+    # See: https://traderspost.io/docs/webhooks and
+    # https://blog.traderspost.io/article/correct-json-structure-for-traderspost-take-profit-webhooks
+    # CRITICAL (2026-10-14): TradersPost expects nested objects, NOT flat fields.
+    # - stopLoss: {"type": "stop", "stopPrice": X} (NOT "stop": X)
+    # - takeProfit: {"limitPrice": X} (NOT "target": X)
+    # - orderType: "market" (camelCase, NOT "order_type")
+    # Flat "stop"/"target" fields are silently IGNORED — TradersPost places a
+    # plain market order with NO bracket. That's why the 2026-10-14 Tradovate
+    # SIM positions had no stops (MNQ -306, MES -52.50).
     payload = {
         'ticker': ticker,
         'action': action,
         'quantity': qty,  # Use leg qty (2 for T1/T2, 1 for Trail)
         'price': entry,
-        'stop': stop,
-        'target': target,
+        'stopLoss': {
+            'type': 'stop',
+            'stopPrice': stop,
+        },
+        'takeProfit': {
+            'limitPrice': target,
+        },
         # Metadata for TradersPost strategy tracking
         'strategy': trade.get('detector', 'compass'),
-        'order_type': 'market',
-        'time_in_force': 'day',
+        'orderType': 'market',
+        'timeInForce': 'day',
     }
 
     return payload
@@ -131,9 +144,11 @@ def send_close_signal(cfg, db, symbol):
         return (False, 'TRADERSPOST_WEBHOOK_URL not set')
 
     ticker = map_symbol(symbol)
+    # CRITICAL (2026-10-14): TradersPost uses action "exit" to close positions,
+    # NOT "close". "close" is silently ignored — positions stay open.
     payload = {
         'ticker': ticker,
-        'action': 'close',
+        'action': 'exit',
         'strategy': 'compass-flatten',
     }
 
