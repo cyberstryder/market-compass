@@ -307,8 +307,11 @@ def run_copy_chunk(db, client, bucket, max_months=6):
 
     # 2026-10-14: Skip chain_archive - all weeks are empty (0 rows).
     # The data is in quote weeks, not chain_archive. Skipping saves hours.
+    # 2026-10-15: Skip matrix_raw too - W11-W16 all 0 rows, same pattern.
+    # Matrix_raw is vendor snapshots (TraderMatrix), not critical trading data.
+    # Skipping saves hours of empty-chunk processing.
     kinds = [k for k in list(RETENTION.keys()) + list(AUDIT_KINDS) + ['alert_delivery']
-             if k != 'chain_archive']
+             if k not in ('chain_archive', 'matrix_raw')]
 
     chunks_left = max_months
     for kind in kinds:
