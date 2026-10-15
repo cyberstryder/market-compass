@@ -1,5 +1,15 @@
 """Alpaca OPRA option stream, translated to the internal option-stream format.
 
+FALLBACK OPTION STREAM (2026-10-15, Audit P1):
+This is the FALLBACK, not the primary. The PRIMARY is compass/option_stream.py
+(Massive/Polygon). This Alpaca stream is disabled by default.
+- Enabled via: ALPACA_OPTION_STREAM_ENABLED=true AND Alpaca keys set
+- Health key: health:alpaca_option_stream
+- As of 2026-10-15, shows 0 subscribed (dark). This is EXPECTED when disabled.
+  Do NOT treat 0-subscribed as a failure - it's the fallback, not the primary.
+- Only enable if Massive stream fails. Do not run both simultaneously in production
+  (would double-count quotes).
+
 Runs side-by-side with the Massive stream during the migration evaluation.
 Every translated item carries 'src': 'alpaca' so downstream persistence can
 tag rows by source and the comparison can measure parity.

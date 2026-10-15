@@ -1,4 +1,21 @@
-"""Read option events independently of bounded, batched persistence."""
+"""Read option events independently of bounded, batched persistence.
+
+AUTHORITATIVE OPTION STREAM (2026-10-15, Audit P1):
+This is the PRIMARY option stream. It uses Massive (Polygon) for OPRA data.
+- Subscribed: ~100 contracts across 16 tickers (OPRA_TICKERS)
+- Health key: health:option_stream (via "Option stream timing" logs)
+- Status endpoint: /api/alpaca-stream-status prefers this stream if subscribed > 0
+
+The OTHER stream is compass/alpaca_option_stream.py (Alpaca OPRA).
+- It is a FALLBACK, disabled by default (ALPACA_OPTION_STREAM_ENABLED=false).
+- It only starts if ALPACA_OPTION_STREAM_ENABLED=true AND Alpaca keys are set.
+- Health key: health:alpaca_option_stream
+- As of 2026-10-15, the Alpaca stream shows 0 subscribed (dark). Massive is the
+  working stream. Do NOT treat Alpaca 0-subscribed as a failure - it's the
+  fallback, not the primary.
+- The two streams are NOT redundant - Massive is primary, Alpaca is fallback
+  if Massive fails. Do not remove Alpaca stream without a replacement fallback.
+"""
 import asyncio
 from collections import deque
 import json
