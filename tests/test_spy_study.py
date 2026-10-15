@@ -42,7 +42,7 @@ def clock(monkeypatch):
     value=[NOW];monkeypatch.setattr('compass.store.time.time',lambda:value[0]);return value
 
 
-def cfg():return Config(local=True,stocks=('SPY',),futures=(),extra_futures=(),massive='fixture')
+def cfg():return Config(local=True,stocks=('SPY',),futures=(),extra_futures=(),massive='fixture',spy_morning_brief=True)
 
 
 def q(t,bid=100,ask=100.02):

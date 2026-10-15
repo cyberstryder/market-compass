@@ -103,7 +103,7 @@ def test_recovery_allows_later_breakout_without_rewriting_opening_report(db):
     seed(db,MONDAY)
     with db.tx() as c:
         c.execute(delete(events).where(events.c.kind=='daily'))
-    worker=BriefWorker(db,Config(local=True))
+    worker=BriefWorker(db,Config(local=True,spy_morning_brief=True))
     opening=worker.tick(MONDAY)
     assert opening['decision']=='WAIT — DATA BLOCKED: prior daily ATR evidence incomplete'
     payload=delivery_payload(dict(id=1,payload=opening),MONDAY)
