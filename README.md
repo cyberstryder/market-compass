@@ -38,7 +38,7 @@ Set the following on the **collector**:
 - MASSIVE_API_KEY: real-time options quotes/trades and chain snapshots.
 - TRADERMATRIX_API_KEY: API subscription; optional for the raw local exposure engine.
 
-Set COMPASS_PASSWORD (16+ characters) on **dashboard**. SESSION_SECRET is optional: the application generates a cryptographically random signing key once, inside PostgreSQL. Set OPENAI_API_KEY on dashboard for grounded Q&A. OPENAI_MODEL defaults to gpt-5-mini and can be changed to a model available to the API account.
+Set COMPASS_PASSWORD (16+ characters) on **dashboard**. SESSION_SECRET is optional: the application generates a cryptographically random signing key once, inside PostgreSQL.
 
 For additional direct Morning shadow delivery, set a random 32+ character
 `NATIVE_MORNING_INTAKE_TOKEN` on **dashboard** and use
