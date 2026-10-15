@@ -7,7 +7,7 @@ from compass import bos_fvg as bf
 from compass.ict_common import atr, detect_fvgs, fvg_mitigated
 
 OPEN = 1_699_992_000
-SYM = 'MNQ.c.0'  # BOS_FVG allowlist: MNQ, SIL (mix/match 2026-10-14)
+SYM = 'MNQ.c.0'  # BOS_FVG allowlist: MNQ only (SIL dropped 2026-10-15)
 NOW = OPEN + 15 * 60
 
 # Swing high 102 (idx6), bullish FVG (101.2, 102.6) formed idx9,

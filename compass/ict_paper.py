@@ -59,15 +59,18 @@ DETECTOR_FLAGS = {
 # paper-trading P&L analysis. Only these detector+symbol combos are profitable.
 # - AOI Fade: MCL (+$752) and MNQ (+$288) work; MES (-$220) doesn't
 # - AOI Zones: only MES (+$253) is profitable; MCL breakeven, MGC/MNQ/SIL lose
-# - BOS+FVG: MNQ (+$520) and SIL (+$561) work; MCL/MES/MGC lose
+# - BOS+FVG: MNQ (+$520) works; MCL/MES/MGC lose; SIL dropped 2026-10-15
+#   (Tradeify doesn't support SIL; SI is full-size mini, breaks micros-only)
 # - BOS+GZ/VWAP: only MCL (+$22, 1 trade) — keep for now
 # - Turtle Soup: only MCL (+$445) works; MES/MGC/MNQ lose
 # - Continuation: loses on ALL symbols — disabled entirely
 # - MGC: loses on every detector (-$3,689 total) — excluded everywhere
+# - SIL: dropped 2026-10-15 — Tradeify doesn't support micro silver;
+#   SIL paper was -$1,046 over 19 trades (26% WR), 2/2/1 fails on silver
 DETECTOR_SYMBOL_ALLOWLIST = {
     'aoi_fade': {'MCL', 'MNQ'},
     'aoi_zones': {'MES'},
-    'bos_fvg': {'MNQ', 'SIL'},
+    'bos_fvg': {'MNQ'},
     'bos_gz_vwap': {'MCL'},
     'turtle_soup': {'MCL'},
     'continuation': set(),  # disabled entirely
