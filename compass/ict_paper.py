@@ -67,12 +67,15 @@ DETECTOR_FLAGS = {
 # - MGC: loses on every detector (-$3,689 total) — excluded everywhere
 # - SIL: dropped 2026-10-15 — Tradeify doesn't support micro silver;
 #   SIL paper was -$1,046 over 19 trades (26% WR), 2/2/1 fails on silver
+# - NEW 2026-10-15: MYM, M2K, M6A, M6E added for paper-trading evaluation
+#   (Tradeify allows these micros; no P&L history yet — prune after 20-30
+#   trades based on per-detector P&L, same mix/match process as 2026-10-14)
 DETECTOR_SYMBOL_ALLOWLIST = {
-    'aoi_fade': {'MCL', 'MNQ'},
-    'aoi_zones': {'MES'},
-    'bos_fvg': {'MNQ'},
-    'bos_gz_vwap': {'MCL'},
-    'turtle_soup': {'MCL'},
+    'aoi_fade': {'MCL', 'MNQ', 'MYM', 'M2K', 'M6A', 'M6E'},
+    'aoi_zones': {'MES', 'MYM', 'M2K', 'M6A', 'M6E'},
+    'bos_fvg': {'MNQ', 'MYM', 'M2K', 'M6A', 'M6E'},
+    'bos_gz_vwap': {'MCL', 'MYM', 'M2K', 'M6A', 'M6E'},
+    'turtle_soup': {'MCL', 'MYM', 'M2K', 'M6A', 'M6E'},
     'continuation': set(),  # disabled entirely
     # Detectors not listed here have no symbol restriction (they're
     # either disabled or not in the futures mix).
