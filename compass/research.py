@@ -285,6 +285,28 @@ async def collect(collector, now=None):
                 for level in apex['levels']:
                     level['known_at']=known.get((level['kind'],level['price']),received)
                 db.put(c,'apex:'+apex['symbol'],apex)
+                # 2026-10-14: Archive Apex levels + gamma flip daily for backtesting.
+                # The live apex:SYMBOL key is overwritten on each refresh, so
+                # historical levels are lost. Archive by date so we can reconstruct
+                # what the SPY morning plan saw on any given morning.
+                try:
+                    from datetime import datetime, timezone
+                    day = datetime.fromtimestamp(received, tz=timezone.utc).strftime('%Y-%m-%d')
+                    archive_key = f'apex_archive:{apex["symbol"]}:{day}'
+                    existing = db.get(c, archive_key, {})
+                    # Only archive once per day (first write wins, it's the morning snapshot)
+                    if not existing:
+                        gamma_flip = next((r['price'] for r in apex.get('levels', []) if r.get('kind') == 'gamma_flip'), None)
+                        db.put(c, archive_key, {
+                            'symbol': apex['symbol'],
+                            'day': day,
+                            'archived_at': received,
+                            'levels': apex.get('levels', []),
+                            'gamma_flip': gamma_flip,
+                            'source_ts': apex.get('source_ts'),
+                        })
+                except Exception:
+                    pass  # archiving is best-effort, never block the live write
         log_observation(feed.key,result,received,max(feed.interval*2,180),max(feed.interval*2,180))
         db.health('research','receiving','Independent vendor research jobs; source clocks and per-feed failures retained',
                   last_feed=feed.key,last_success=received)
