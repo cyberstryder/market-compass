@@ -723,9 +723,11 @@ a{color:#888}</style></head><body>
             result = run_archive_chunk(db, client, bucket, max_batches=20)
             return {'ok': True, **result}
         except Exception as e:
-            import traceback
-            return {'ok': False, 'error': str(e)[:1000],
-                    'traceback': traceback.format_exc()[-2000:]}
+            # 2026-10-15: Don't return tracebacks - leaks internal details.
+            # Log full traceback server-side, return generic error.
+            import logging
+            logging.getLogger('uvicorn.error').exception('simple-archive-chunk failed')
+            return {'ok': False, 'error': 'Archive chunk failed. Check server logs.'}
 
     @app.post('/api/admin/copy-archive-chunk')
     @app.get('/api/admin/copy-archive-chunk')
@@ -741,9 +743,10 @@ a{color:#888}</style></head><body>
             result = run_copy_chunk(db, client, bucket, max_months=6)
             return {'ok': True, **result}
         except Exception as e:
-            import traceback
-            return {'ok': False, 'error': str(e)[:1000],
-                    'traceback': traceback.format_exc()[-2000:]}
+            # 2026-10-15: Don't return tracebacks - leaks internal details.
+            import logging
+            logging.getLogger('uvicorn.error').exception('copy-archive-chunk failed')
+            return {'ok': False, 'error': 'Archive chunk failed. Check server logs.'}
 
     @app.post('/api/admin/archive-trigger')
     @app.get('/api/admin/archive-trigger')
@@ -1092,9 +1095,10 @@ a{color:#888}</style></head><body>
             results = run_gap_backtest(db, days, symbols, now=time.time())
             return {'ok': True, 'days': days, 'results': results}
         except Exception as e:
-            import traceback
-            return {'ok': False, 'error': str(e)[:1000],
-                    'traceback': traceback.format_exc()[-2000:]}
+            # 2026-10-15: Don't return tracebacks - leaks internal details.
+            import logging
+            logging.getLogger('uvicorn.error').exception('backtest-scalp failed')
+            return {'ok': False, 'error': 'Backtest failed. Check server logs.'}
 
     @app.post('/api/admin/archive-create-index')
     @app.get('/api/admin/archive-create-index')
