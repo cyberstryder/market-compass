@@ -176,6 +176,37 @@ def technical_candidates(f,arms,now,tick, research=False, orb_enabled=True):
         elif price<f['low20'] and f['htf15_bias']==-1:
             add('volume_breakout','short',min(b['h']+tick,price+1.5*atr),
                 '20-minute low broken on at least 1.5x recent minute volume; 15-minute bias agrees')
+    # Breakdown detector (2026-10-14, Arya MU pattern): intraday level break
+    # with volume confirmation. Catches breakdowns after a key swing low/high
+    # breaks (e.g. MU $938 break on 2026-10-14, -4.1% day). Compass missed it
+    # because the scanner only looked for gaps/spikes, not level breaks.
+    # Rules:
+    # - PUT: price closes below recent swing low, price below VWAP, volume >=1.2x
+    # - CALL: price closes above recent swing high, price above VWAP, volume >=1.2x
+    # - Stop: above broken low (PUT) / below broken high (CALL)
+    # - Target: 2R from entry (scanner paper exits at +50%/-50% anyway)
+    if f.get('vwap') and (f.get('rvol20') or 0) >= 1.2:
+        # Recent swing low/high from last 20 bars (excluding current bar)
+        # Use low20/high20 as proxy for swing levels (they're the 20-bar extremes)
+        swing_low = f.get('low20')
+        swing_high = f.get('high20')
+        vwap = f.get('vwap')
+        # PUT: breakdown below swing low, price below VWAP
+        if swing_low and price < swing_low and p['c'] >= swing_low and price < vwap:
+            # Confirmed break: previous close was above swing low, now below
+            # Stop: above the broken level (swing low + buffer)
+            stop = swing_low + atr * 0.5
+            add('level_breakdown', 'short', stop,
+                'Intraday swing low broken on volume; price below VWAP; breakdown confirmed',
+                [{'source': 'price', 'kind': 'swing_low_break', 'level': swing_low, 'source_ts': clock},
+                 {'source': 'price', 'kind': 'vwap', 'level': vwap, 'source_ts': clock}])
+        # CALL: breakout above swing high, price above VWAP
+        elif swing_high and price > swing_high and p['c'] <= swing_high and price > vwap:
+            stop = swing_high - atr * 0.5
+            add('level_breakdown', 'long', stop,
+                'Intraday swing high broken on volume; price above VWAP; breakout confirmed',
+                [{'source': 'price', 'kind': 'swing_high_break', 'level': swing_high, 'source_ts': clock},
+                 {'source': 'price', 'kind': 'vwap', 'level': vwap, 'source_ts': clock}])
     return result,arms
 
 

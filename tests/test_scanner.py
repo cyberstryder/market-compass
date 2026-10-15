@@ -43,6 +43,66 @@ def fact():
         'high5':100.8,'low5':99.7,'or_complete':False,'prior_complete':False}
 
 
+def test_level_breakdown_put_on_swing_low_break_below_vwap():
+    """2026-10-14 MU pattern: swing low breaks on volume, price below VWAP."""
+    f = fact()
+    # Simulate MU breakdown: price breaks below swing low (99.5), below VWAP (100.2)
+    # Previous close was above swing low, now below
+    f['bar'] = {'o': 99.8, 'h': 99.9, 'l': 99.2, 'c': 99.3, 'v': 250}  # close below low20=99.5
+    f['previous_bar'] = {'o': 100, 'h': 100.5, 'l': 99.6, 'c': 99.9, 'v': 100}  # prev close above 99.5
+    f['low20'] = 99.5
+    f['vwap'] = 100.2
+    f['rvol20'] = 1.5  # volume confirmation
+    f['htf15_bias'] = -1
+    items, arms = technical_candidates(f, {}, NOW, 0.01)
+    breakdowns = [i for i in items if i['rule'] == 'level_breakdown']
+    assert len(breakdowns) == 1
+    assert breakdowns[0]['side'] == 'short'
+    assert breakdowns[0]['invalidation'] > 99.5  # stop above broken low
+
+
+def test_level_breakdown_call_on_swing_high_break_above_vwap():
+    """Mirror: swing high breaks on volume, price above VWAP."""
+    f = fact()
+    f['bar'] = {'o': 100.5, 'h': 101.5, 'l': 100.6, 'c': 101.2, 'v': 250}  # close above high20=100.8
+    f['previous_bar'] = {'o': 100, 'h': 100.5, 'l': 99.9, 'c': 100.5, 'v': 100}  # prev close below 100.8
+    f['high20'] = 100.8
+    f['vwap'] = 100.2
+    f['rvol20'] = 1.5
+    f['htf15_bias'] = 1
+    items, arms = technical_candidates(f, {}, NOW, 0.01)
+    breakdowns = [i for i in items if i['rule'] == 'level_breakdown']
+    assert len(breakdowns) == 1
+    assert breakdowns[0]['side'] == 'long'
+    assert breakdowns[0]['invalidation'] < 100.8  # stop below broken high
+
+
+def test_level_breakdown_no_signal_when_price_above_vwap_for_put():
+    """PUT requires price below VWAP — no signal if price is above VWAP."""
+    f = fact()
+    f['bar'] = {'o': 99.8, 'h': 99.9, 'l': 99.2, 'c': 99.3, 'v': 250}
+    f['previous_bar'] = {'o': 100, 'h': 100.5, 'l': 99.6, 'c': 99.9, 'v': 100}
+    f['low20'] = 99.5
+    f['vwap'] = 99.0  # VWAP below price — not bearish alignment
+    f['rvol20'] = 1.5
+    items, arms = technical_candidates(f, {}, NOW, 0.01)
+    breakdowns = [i for i in items if i['rule'] == 'level_breakdown']
+    assert len(breakdowns) == 0
+
+
+def test_level_breakdown_no_signal_on_low_volume():
+    """Breakdown requires volume confirmation (rvol >= 1.2)."""
+    f = fact()
+    f['bar'] = {'o': 99.8, 'h': 99.9, 'l': 99.2, 'c': 99.3, 'v': 50}
+    f['previous_bar'] = {'o': 100, 'h': 100.5, 'l': 99.6, 'c': 99.9, 'v': 100}
+    f['low20'] = 99.5
+    f['vwap'] = 100.2
+    f['rvol20'] = 0.5  # low volume — no confirmation
+    items, arms = technical_candidates(f, {}, NOW, 0.01)
+    breakdowns = [i for i in items if i['rule'] == 'level_breakdown']
+    assert len(breakdowns) == 0
+
+
 def test_full_watchlist_and_explicit_overrides():
     assert len(saved_watchlist())==144
     assert symbols('NASDAQ:NVDA, NVDA\nNYSE:TSLA')==('NVDA','TSLA')
