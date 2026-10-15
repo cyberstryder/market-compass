@@ -882,7 +882,14 @@ a{color:#888}</style></head><body>
                     delivery = dict(existing_row[0] or {}) if existing_row else {}
                     # Only repair if not already has bypass flag AND correct epoch
                     # (avoid double-count, but re-repair if epoch is stale)
-                    if delivery.get('repair_bypass') and delivery.get('owner_epoch') == owner_epoch:
+                    # 2026-10-15: Do NOT skip if status is 'suppressed'. The drainer
+                    # may have suppressed the alert before the publication-gate fix
+                    # (d2b1d60) deployed. Suppressed alerts need to be reset to
+                    # 'pending' so the fixed drainer can deliver them. The bypass
+                    # flag alone is not enough — status must be pending.
+                    if status == 'suppressed':
+                        pass  # Fall through to reset status to pending
+                    elif delivery.get('repair_bypass') and delivery.get('owner_epoch') == owner_epoch:
                         skipped.append(ticker)
                         continue
                     delivery['repair_bypass'] = True
