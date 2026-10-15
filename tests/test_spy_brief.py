@@ -155,7 +155,7 @@ def test_next_day_options_never_substitute_and_wide_quotes_flagged(db):
 
 def test_scheduler_persists_dedup_and_does_not_replay_missed_windows(db):
     seed(db, OPEN-600)
-    cfg = Config(local=True)
+    cfg = Config(local=True, spy_morning_brief=True)
     w = BriefWorker(db, cfg)
     assert w.tick(OPEN-600)['phase'] == 'preopen'
     assert BriefWorker(db, cfg).tick(OPEN-590) is None
@@ -170,7 +170,7 @@ def test_scheduler_persists_dedup_and_does_not_replay_missed_windows(db):
 
 def test_opening_waits_for_late_bar_then_sends_data_gap_before_deadline(db):
     seed(db, OPEN-600)
-    w = BriefWorker(db, Config(local=True))
+    w = BriefWorker(db, Config(local=True, spy_morning_brief=True))
     assert w.tick(OPEN+905) is None
     r = w.tick(OPEN+1010)
     assert r and r['decision'].startswith('WAIT')
@@ -178,7 +178,7 @@ def test_opening_waits_for_late_bar_then_sends_data_gap_before_deadline(db):
 
 
 def test_holiday_disabled_and_dst_scheduling(db):
-    w = BriefWorker(db, Config(local=True))
+    w = BriefWorker(db, Config(local=True, spy_morning_brief=True))
     assert w.tick(at('2026-09-07T09:20:00')) is None
     assert BriefWorker(db, Config(local=True, spy_morning_brief=False)).tick(OPEN-600) is None
     assert prior_session(at('2026-09-08T09:20:00')) == '2026-09-04'
@@ -211,7 +211,7 @@ def test_discord_preserves_full_plan_and_expiry_banner(db):
 
 def test_index_fallback_uses_matching_raw_daily_closes_and_daily_cache(db):
     class Collector:
-        cfg = Config(local=True, massive='fixture-only')
+        cfg = Config(local=True, massive='fixture-only', spy_morning_brief=True)
         def __init__(self): self.db, self.calls = db, []
         async def get(self, url, **kwargs):
             self.calls.append(url)
@@ -263,7 +263,7 @@ def test_chart_companion_uses_frozen_levels_and_honest_timeframes(db):
 def test_two_messages_are_atomic_deduplicated_and_individually_acknowledged(db):
     from compass.alerts import DeliveryWorker, outbox_status
     seed(db)
-    worker = BriefWorker(db, Config(local=True))
+    worker = BriefWorker(db, Config(local=True, spy_morning_brief=True))
     worker.tick(NOW); worker.tick(NOW+1)
     with db.tx() as c:
         rows = sorted(db.recent(c, 'alert'), key=lambda r: r['id'])
@@ -316,7 +316,7 @@ def seed_checks(db, now, closes=None, missing=(), pm_gap=0):
 @pytest.mark.parametrize('price,side', [(761, 'call'), (759, 'put')])
 def test_later_confirmation_uses_current_candle_and_stops_after_first_setup(db, minute, price, side):
     from compass.store import leases
-    worker = BriefWorker(db, Config(local=True))
+    worker = BriefWorker(db, Config(local=True, spy_morning_brief=True))
     for m in range(15, minute+1, 15):
         now = OPEN+m*60+7
         seed_checks(db, now, {minute: price})
@@ -356,7 +356,7 @@ def test_later_confirmation_uses_current_candle_and_stops_after_first_setup(db, 
         assert sum(x['payload'].get('decision') in ('CALL SETUP CONFIRMED','PUT SETUP CONFIRMED') for x in briefs) == 1
         assert not db.prefix(c, 'position:')
         c.execute(leases.update().values(until=0))
-    restarted = BriefWorker(db, Config(local=True))
+    restarted = BriefWorker(db, Config(local=True, spy_morning_brief=True))
     assert restarted.tick(now+1) is None
     for m in range(minute+15, 61, 15):
         seed_checks(db, OPEN+m*60+7, {m: 758})
@@ -366,7 +366,7 @@ def test_later_confirmation_uses_current_candle_and_stops_after_first_setup(db, 
 
 def test_opening_confirmation_prevents_every_followup(db):
     seed(db)
-    worker = BriefWorker(db, Config(local=True))
+    worker = BriefWorker(db, Config(local=True, spy_morning_brief=True))
     assert worker.tick(NOW)['decision'] == 'CALL SETUP CONFIRMED'
     for minute in (30,45,60):
         seed_checks(db, OPEN+minute*60+7, {minute:759})
@@ -375,7 +375,7 @@ def test_opening_confirmation_prevents_every_followup(db):
 
 
 def test_all_waits_end_with_no_entry_and_share_one_drawing(db):
-    worker = BriefWorker(db, Config(local=True))
+    worker = BriefWorker(db, Config(local=True, spy_morning_brief=True))
     for minute in (15,30,45,60):
         now = OPEN+minute*60+7
         seed_checks(db, now)
@@ -398,7 +398,7 @@ def test_all_waits_end_with_no_entry_and_share_one_drawing(db):
 
 @pytest.mark.parametrize('touch', [759.5,760.5])
 def test_touching_frozen_boundary_does_not_confirm(db, touch):
-    worker = BriefWorker(db, Config(local=True))
+    worker = BriefWorker(db, Config(local=True, spy_morning_brief=True))
     seed_checks(db,NOW); worker.tick(NOW)
     seed_checks(db,OPEN+1807,{30:touch})
     assert worker.tick(OPEN+1807)['decision_state'] == 'waiting'
@@ -406,7 +406,7 @@ def test_touching_frozen_boundary_does_not_confirm(db, touch):
 
 def test_no_opening_record_means_no_followup_or_invented_confirmation(db):
     seed_checks(db,OPEN+1807,{30:761})
-    assert BriefWorker(db,Config(local=True)).tick(OPEN+1807) is None
+    assert BriefWorker(db,Config(local=True, spy_morning_brief=True)).tick(OPEN+1807) is None
     with db.tx() as c:
         assert not db.recent(c,'alert')
         preview=build(db,c,OPEN+1807)
@@ -415,7 +415,7 @@ def test_no_opening_record_means_no_followup_or_invented_confirmation(db):
 
 
 def test_missed_check_is_not_replayed_or_silently_skipped(db):
-    worker=BriefWorker(db,Config(local=True))
+    worker=BriefWorker(db,Config(local=True, spy_morning_brief=True))
     seed_checks(db,NOW); worker.tick(NOW)
     seed_checks(db,OPEN+1925,{30:761})
     for at in (OPEN+1799,OPEN+1804,OPEN+1925):
@@ -430,7 +430,7 @@ def test_missed_check_is_not_replayed_or_silently_skipped(db):
 
 @pytest.mark.parametrize('missing', [OPEN+600,OPEN+1740])
 def test_old_or_current_minute_gaps_remain_blocking_until_recovered(db,missing):
-    worker=BriefWorker(db,Config(local=True))
+    worker=BriefWorker(db,Config(local=True, spy_morning_brief=True))
     seed_checks(db,NOW); worker.tick(NOW)
     seed_checks(db,OPEN+1807,{30:761},missing=(missing,))
     first_attempt=worker.tick(OPEN+1807)
@@ -447,7 +447,7 @@ def test_old_or_current_minute_gaps_remain_blocking_until_recovered(db,missing):
 
 
 def test_followup_waits_briefly_for_late_closing_bar(db):
-    worker=BriefWorker(db,Config(local=True))
+    worker=BriefWorker(db,Config(local=True, spy_morning_brief=True))
     seed_checks(db,NOW); worker.tick(NOW)
     seed_checks(db,OPEN+1807,{30:761},missing=(OPEN+1740,))
     assert worker.tick(OPEN+1807) is None
@@ -457,7 +457,7 @@ def test_followup_waits_briefly_for_late_closing_bar(db):
 
 
 def test_premarket_coverage_can_recover_only_with_same_frozen_range(db):
-    worker=BriefWorker(db,Config(local=True))
+    worker=BriefWorker(db,Config(local=True, spy_morning_brief=True))
     seed_checks(db,NOW,pm_gap=58)
     first=worker.tick(NOW)
     assert 'premarket coverage incomplete' in first['data_blocks']
@@ -470,7 +470,7 @@ def test_premarket_coverage_can_recover_only_with_same_frozen_range(db):
 
 
 def test_data_block_keeps_breakout_price_evidence_and_exact_missing_minutes(db):
-    worker=BriefWorker(db,Config(local=True))
+    worker=BriefWorker(db,Config(local=True, spy_morning_brief=True))
     seed_checks(db,NOW,{15:761},pm_gap=34)
     first=worker.tick(NOW)
     assert first['decision'].startswith('WAIT')
@@ -495,7 +495,7 @@ def test_data_block_keeps_breakout_price_evidence_and_exact_missing_minutes(db):
 
 
 def test_recovered_range_discrepancy_blocks_confirmation_and_keeps_drawn_levels(db):
-    worker=BriefWorker(db,Config(local=True))
+    worker=BriefWorker(db,Config(local=True, spy_morning_brief=True))
     seed_checks(db,NOW,pm_gap=58); worker.tick(NOW)
     for minute in (30,45,60):
         now=OPEN+minute*60+7
@@ -513,7 +513,7 @@ def test_recovered_range_discrepancy_blocks_confirmation_and_keeps_drawn_levels(
 
 
 def test_legacy_opening_wait_can_continue_without_changing_saved_levels(db):
-    worker=BriefWorker(db,Config(local=True))
+    worker=BriefWorker(db,Config(local=True, spy_morning_brief=True))
     seed_checks(db,NOW); first=worker.tick(NOW)
     first.pop('frozen_premarket')
     with db.tx() as c: db.put(c,first['id'],first)
@@ -525,7 +525,7 @@ def test_legacy_opening_wait_can_continue_without_changing_saved_levels(db):
 
 def test_later_messages_preserve_expiry_bounds_and_separate_tracking(db):
     from compass.spy_chart import companion,prompt,delivery_payload as chart_payload
-    worker=BriefWorker(db,Config(local=True))
+    worker=BriefWorker(db,Config(local=True, spy_morning_brief=True))
     seed_checks(db,NOW); worker.tick(NOW)
     seed_checks(db,OPEN+1807,{30:761})
     r=worker.tick(OPEN+1807)
@@ -557,7 +557,7 @@ def test_followup_session_schedule_honors_dst_and_early_close_sessions():
 
 
 def test_opening_preview_cannot_bypass_a_changed_saved_premarket_range(db):
-    worker=BriefWorker(db,Config(local=True))
+    worker=BriefWorker(db,Config(local=True, spy_morning_brief=True))
     seed_checks(db,NOW); worker.tick(NOW)
     seed_checks(db,NOW+10,{15:761})
     with db.tx() as c:

@@ -49,7 +49,7 @@ def test_atr_scaled_threshold_rank_order_and_mapping(db):
 
 
 def test_routine_checks_send_one_drawing_and_preserve_every_plan(db):
-    worker=BriefWorker(db,Config(local=True))
+    worker=BriefWorker(db,Config(local=True, spy_morning_brief=True))
     seed_checks(db,OPEN-600)
     first=worker.tick(OPEN-600)
     assert first['drawing_update']['send']
@@ -62,7 +62,7 @@ def test_routine_checks_send_one_drawing_and_preserve_every_plan(db):
             db.put(c,'bar_window:SPY',rows)
             c.execute(leases.update().values(until=0))
         # Recreating the worker verifies persistence across restarts.
-        p=BriefWorker(db,Config(local=True)).tick(now)
+        p=BriefWorker(db,Config(local=True, spy_morning_brief=True)).tick(now)
         assert not p['drawing_update']['send'], p['drawing_update']
         rendered=delivery_payload(dict(id=1,payload=p),now)
         assert 'message 1 of 2' not in rendered['content']
