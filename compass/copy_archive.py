@@ -310,8 +310,10 @@ def run_copy_chunk(db, client, bucket, max_months=6):
     # 2026-10-15: Skip matrix_raw too - W11-W16 all 0 rows, same pattern.
     # Matrix_raw is vendor snapshots (TraderMatrix), not critical trading data.
     # Skipping saves hours of empty-chunk processing.
+    # 2026-10-15: Skip vendor_flow too - 2024-W25 to W30 all 0 rows, same pattern.
+    # Vendor_flow is TraderMatrix vendor flow snapshots, not in archive tables.
     kinds = [k for k in list(RETENTION.keys()) + list(AUDIT_KINDS) + ['alert_delivery']
-             if k not in ('chain_archive', 'matrix_raw')]
+             if k not in ('chain_archive', 'matrix_raw', 'vendor_flow')]
 
     chunks_left = max_months
     for kind in kinds:
