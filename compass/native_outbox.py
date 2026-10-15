@@ -129,7 +129,11 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
                         continue
                 else:
                     _,trade=publication.read_trade(db,c,decision['trade_id'])
-                    if not trade or not publication.entry_delivered(c,trade):
+                    # 2026-10-15: Repair bypass also skips the publication entry-delivered check.
+                    # Repaired alerts may not have their entry delivered, but the target
+                    # should still go out. Without this, the publication gate suppresses
+                    # repaired alerts before they reach the channel gate's bypass check.
+                    if not d.get('repair_bypass') and (not trade or not publication.entry_delivered(c,trade)):
                         c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',delivery=dict(d,error='Entry was not confirmed delivered')))
                         continue
                 if decision['category']!=row['program']:
