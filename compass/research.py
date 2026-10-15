@@ -285,10 +285,12 @@ async def collect(collector, now=None):
                 for level in apex['levels']:
                     level['known_at']=known.get((level['kind'],level['price']),received)
                 db.put(c,'apex:'+apex['symbol'],apex)
-                # 2026-10-14: Archive Apex levels + gamma flip daily for backtesting.
+                # 2026-10-14: Archive Apex levels + gamma flip + GEX/VEX daily for backtesting.
                 # The live apex:SYMBOL key is overwritten on each refresh, so
                 # historical levels are lost. Archive by date so we can reconstruct
                 # what the SPY morning plan saw on any given morning.
+                # GEX/VEX from exposure:SYMBOL (chain-derived) captures the
+                # dealer positioning context the morning plan uses for divergence.
                 try:
                     from datetime import datetime, timezone
                     day = datetime.fromtimestamp(received, tz=timezone.utc).strftime('%Y-%m-%d')
@@ -297,6 +299,9 @@ async def collect(collector, now=None):
                     # Only archive once per day (first write wins, it's the morning snapshot)
                     if not existing:
                         gamma_flip = next((r['price'] for r in apex.get('levels', []) if r.get('kind') == 'gamma_flip'), None)
+                        # GEX/VEX snapshot at archive time (morning)
+                        exposure = db.get(c, 'exposure:' + apex['symbol'], {}) or {}
+                        gamma_levels = db.get(c, 'gamma_levels:' + apex['symbol'], {}) or {}
                         db.put(c, archive_key, {
                             'symbol': apex['symbol'],
                             'day': day,
@@ -304,6 +309,10 @@ async def collect(collector, now=None):
                             'levels': apex.get('levels', []),
                             'gamma_flip': gamma_flip,
                             'source_ts': apex.get('source_ts'),
+                            'gex': exposure.get('gex'),
+                            'vex': exposure.get('vex'),
+                            'gex_vex_source_ts': exposure.get('source_ts') or exposure.get('ts'),
+                            'gamma_levels': gamma_levels.get('levels'),
                         })
                 except Exception:
                     pass  # archiving is best-effort, never block the live write
