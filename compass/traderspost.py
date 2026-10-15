@@ -34,11 +34,19 @@ SYMBOL_MAP = {
     'MNQ.c.0': 'MNQ',
     'MES.c.0': 'MES',
     'MGC.v.0': 'MGC',
-    'SIL.v.0': 'SIL',
     'MCL.v.0': 'MCL',
+    'MYM.c.0': 'MYM',
+    'M2K.c.0': 'M2K',
+    'M6A.c.0': 'M6A',
+    'M6E.c.0': 'M6E',
     'MNQ': 'MNQ',
     'MES': 'MES',
     'MGC': 'MGC',
+    'MCL': 'MCL',
+    'MYM': 'MYM',
+    'M2K': 'M2K',
+    'M6A': 'M6A',
+    'M6E': 'M6E',
 }
 
 
