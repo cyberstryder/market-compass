@@ -67,17 +67,29 @@ def build_payload(cfg, trade):
     For trailer legs (target=None), uses a far target (10R) so the position
     holds until stop or 15:45 flatten — matching the paper trailer behavior.
     Returns dict ready for JSON serialization, or None if invalid.
+
+    2026-10-15: First leg uses buy/sell to open position. Subsequent legs
+    (T2, Trail) use 'add' action. TradersPost rejects buy/sell if a position
+    is already open (unless "Allow add to position" is checked). Using 'add'
+    for legs 2+ ensures they execute. Controlled by trade['is_first_leg'].
     """
     symbol = trade.get('symbol', '')
     ticker = map_symbol(symbol)
 
     side = trade.get('side', '').lower()
-    if side == 'long':
-        action = 'buy'
-    elif side == 'short':
-        action = 'sell'
+    # 2026-10-15: Use 'add' for 2nd/3rd legs (T2, Trail) to avoid
+    # "position-already-open" rejection. First leg uses buy/sell to open.
+    is_first_leg = trade.get('is_first_leg', True)
+    if is_first_leg:
+        if side == 'long':
+            action = 'buy'
+        elif side == 'short':
+            action = 'sell'
+        else:
+            return None
     else:
-        return None
+        # Subsequent legs: add to existing position
+        action = 'add'
 
     entry = trade.get('entry')
     stop = trade.get('stop')

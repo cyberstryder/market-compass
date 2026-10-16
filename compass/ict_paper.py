@@ -290,9 +290,16 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
     # replicates the full 2/2/1 scale-out (5 contracts total), not just 1.
     try:
         from . import traderspost
-        for trade_id in submitted_ids:
+        # 2026-10-15: First leg uses buy/sell to open position. Subsequent legs
+        # (T2, Trail) use 'add' action. TradersPost rejects buy/sell if a
+        # position is already open (unless "Allow add to position" is checked).
+        # Using 'add' for legs 2+ ensures they execute even if that checkbox is off.
+        for idx, trade_id in enumerate(submitted_ids):
             leg_trade = db.get(c, 'trade:' + trade_id)
             if leg_trade:
+                # First leg opens, subsequent legs add to the position
+                leg_trade = dict(leg_trade)
+                leg_trade['is_first_leg'] = (idx == 0)
                 traderspost.send_signal(cfg, db, leg_trade)
     except Exception as e:
         try:
