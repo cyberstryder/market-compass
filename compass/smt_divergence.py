@@ -281,8 +281,12 @@ def scan(db, c, cfg, now):
                     'divergent_leg': best['divergent_leg'], 'at': now})
             n_signals += 1
         from .ict_paper import submit as _paper_submit
+        # Trade the DIVERGENT leg (the one that failed to confirm), not the
+        # confirming leg. Entry/stop/target prices come from the divergent
+        # leg's bars, so the symbol must match or we get e.g. an MES
+        # position with an MNQ price (30,172 instead of 7,738).
         _paper_submit(db, c, cfg, now, 'smt_divergence',
-                      best.get('confirming_leg'),
+                      best.get('divergent_leg'),
                       {k: v for k, v in row.items() if k != 'at'})
     db.put(c, 'ict_smt_divergence:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,
