@@ -290,17 +290,51 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
     # replicates the full 2/2/1 scale-out (5 contracts total), not just 1.
     try:
         from . import traderspost
-        # 2026-10-15: First leg uses buy/sell to open position. Subsequent legs
-        # (T2, Trail) use 'add' action. TradersPost rejects buy/sell if a
-        # position is already open (unless "Allow add to position" is checked).
-        # Using 'add' for legs 2+ ensures they execute even if that checkbox is off.
-        for idx, trade_id in enumerate(submitted_ids):
-            leg_trade = db.get(c, 'trade:' + trade_id)
-            if leg_trade:
-                # First leg opens, subsequent legs add to the position
-                leg_trade = dict(leg_trade)
-                leg_trade['is_first_leg'] = (idx == 0)
-                traderspost.send_signal(cfg, db, leg_trade)
+        # Skip entirely if TradersPost is disabled (avoid unnecessary db calls
+        # in tests and when TradersPost is not configured).
+        if not getattr(cfg, 'traderspost_enabled', False):
+            pass
+        else:
+            # 2026-10-15: Prevent duplicate ticker stacking. If another detector
+            # already has an open position for this symbol, skip TradersPost.
+            # TradersPost combines same-ticker positions, so two detectors firing
+            # on MYM would stack to 10 contracts (5+5) instead of 5. Paper trade
+            # is still recorded, but not sent to TradersPost.
+            # Use db.get for each detector (fast single-key lookup) instead of
+            # db.prefix scan (slow, can deadlock inside transaction).
+            first_trade = db.get(c, 'trade:' + submitted_ids[0])
+            symbol = first_trade.get('symbol', '') if first_trade else ''
+            has_open_for_symbol = False
+            if symbol:
+                # Check all active detectors for an open position on this symbol
+                for other_detector in ('aoi_fade', 'aoi_zones', 'bos_fvg', 'bos_gz_vwap', 'turtle_soup', 'continuation'):
+                    if other_detector == detector:
+                        continue
+                    # Check if other detector has open position for this symbol
+                    # Position keys: position:ict:{detector}:{symbol} or with :t1/:t2/:trail suffix
+                    for suffix in ('', ':t1', ':t2', ':trail'):
+                        pos_key = f'position:ict:{other_detector}:{symbol}{suffix}'
+                        pos = db.get(c, pos_key, {}) or {}
+                        if pos.get('status') == 'open':
+                            has_open_for_symbol = True
+                            break
+                    if has_open_for_symbol:
+                        break
+            if has_open_for_symbol:
+                db.health('traderspost_webhook', 'skipped',
+                         f"skip {symbol}: already open for another detector")
+            else:
+                # 2026-10-15: First leg uses buy/sell to open position. Subsequent legs
+                # (T2, Trail) use 'add' action. TradersPost rejects buy/sell if a
+                # position is already open (unless "Allow add to position" is checked).
+                # Using 'add' for legs 2+ ensures they execute even if that checkbox is off.
+                for idx, trade_id in enumerate(submitted_ids):
+                    leg_trade = db.get(c, 'trade:' + trade_id)
+                    if leg_trade:
+                        # First leg opens, subsequent legs add to the position
+                        leg_trade = dict(leg_trade)
+                        leg_trade['is_first_leg'] = (idx == 0)
+                        traderspost.send_signal(cfg, db, leg_trade)
     except Exception as e:
         try:
             db.health('traderspost_webhook', 'error', f"hook failed: {type(e).__name__}: {str(e)[:200]}")
