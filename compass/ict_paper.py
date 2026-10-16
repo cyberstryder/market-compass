@@ -295,34 +295,69 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
         if not getattr(cfg, 'traderspost_enabled', False):
             pass
         else:
-            # 2026-10-15: Prevent duplicate ticker stacking. If another detector
-            # already has an open position for this symbol, skip TradersPost.
-            # TradersPost combines same-ticker positions, so two detectors firing
-            # on MYM would stack to 10 contracts (5+5) instead of 5. Paper trade
-            # is still recorded, but not sent to TradersPost.
+            # 2026-10-15: Prevent duplicate ticker stacking AND hedging.
+            # 1. Duplicate: If another detector already has an open position
+            #    for this symbol, skip TradersPost. TradersPost combines
+            #    same-ticker positions, so two detectors firing on MYM would
+            #    stack to 10 contracts (5+5) instead of 5.
+            # 2. Hedging: If another detector has an open position on a
+            #    CORRELATED instrument in the OPPOSITE direction, skip
+            #    TradersPost. Tradeify flags opposing positions on correlated
+            #    instruments (e.g., MES short + MNQ long) as hedging.
+            #    Correlated groups: Equity indices (MES, MNQ, MYM, M2K),
+            #    Currencies (M6A, M6E). MGC and MCL are standalone.
+            # Paper trade is still recorded, but not sent to TradersPost.
             # Use db.get for each detector (fast single-key lookup) instead of
             # db.prefix scan (slow, can deadlock inside transaction).
             first_trade = db.get(c, 'trade:' + submitted_ids[0])
             symbol = first_trade.get('symbol', '') if first_trade else ''
-            has_open_for_symbol = False
-            if symbol:
-                # Check all active detectors for an open position on this symbol
+            side = first_trade.get('side', '').lower() if first_trade else ''
+            # Extract root symbol (e.g., "MES.c.0" -> "MES", "MNQ.c.0" -> "MNQ")
+            root = symbol.split('.')[0] if symbol else ''
+            # Correlated groups (Tradeify hedging rules)
+            CORRELATED = {
+                'MES': 'EQUITY', 'MNQ': 'EQUITY', 'MYM': 'EQUITY', 'M2K': 'EQUITY',
+                'M6A': 'CURRENCY', 'M6E': 'CURRENCY',
+            }
+            group = CORRELATED.get(root, None)
+            skip_reason = None
+            if symbol and side:
+                # Check all active detectors for open positions
                 for other_detector in ('aoi_fade', 'aoi_zones', 'bos_fvg', 'bos_gz_vwap', 'turtle_soup', 'continuation'):
                     if other_detector == detector:
                         continue
-                    # Check if other detector has open position for this symbol
-                    # Position keys: position:ict:{detector}:{symbol} or with :t1/:t2/:trail suffix
-                    for suffix in ('', ':t1', ':t2', ':trail'):
-                        pos_key = f'position:ict:{other_detector}:{symbol}{suffix}'
-                        pos = db.get(c, pos_key, {}) or {}
-                        if pos.get('status') == 'open':
-                            has_open_for_symbol = True
+                    # Check all symbols for this detector (need to check both
+                    # same-symbol and correlated-symbol positions)
+                    # Build list of symbols to check: same symbol + correlated group
+                    symbols_to_check = [symbol]
+                    if group:
+                        # Add all symbols in the same correlated group
+                        for sym_root, grp in CORRELATED.items():
+                            if grp == group and sym_root != root:
+                                # Convert root to Compass format (e.g., "MES" -> "MES.c.0")
+                                # Need to check both .c.0 and .v.0 formats
+                                for suffix in ('.c.0', '.v.0'):
+                                    symbols_to_check.append(f"{sym_root}{suffix}")
+                    for check_symbol in symbols_to_check:
+                        for suffix in ('', ':t1', ':t2', ':trail'):
+                            pos_key = f'position:ict:{other_detector}:{check_symbol}{suffix}'
+                            pos = db.get(c, pos_key, {}) or {}
+                            if pos.get('status') == 'open':
+                                pos_side = pos.get('side', '').lower()
+                                if check_symbol == symbol:
+                                    # Same symbol, any direction = duplicate stacking
+                                    skip_reason = f"skip {symbol}: already open for another detector"
+                                    break
+                                elif group and pos_side and pos_side != side:
+                                    # Correlated symbol, opposite direction = hedging
+                                    skip_reason = f"skip {symbol} {side}: hedging vs {check_symbol} {pos_side} ({group})"
+                                    break
+                        if skip_reason:
                             break
-                    if has_open_for_symbol:
+                    if skip_reason:
                         break
-            if has_open_for_symbol:
-                db.health('traderspost_webhook', 'skipped',
-                         f"skip {symbol}: already open for another detector")
+            if skip_reason:
+                db.health('traderspost_webhook', 'skipped', skip_reason)
             else:
                 # 2026-10-15: First leg uses buy/sell to open position. Subsequent legs
                 # (T2, Trail) use 'add' action. TradersPost rejects buy/sell if a
