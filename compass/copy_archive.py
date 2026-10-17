@@ -37,6 +37,21 @@ RETENTION = {
     'alert_delivery': 30,
 }
 
+# State table archiving (2026-10-17): The state table holds paper trades,
+# positions, health, scanner data, etc. It is NOT archived by the events
+# pump. This is why R2 is only 8GB — events has only quote data, but state
+# has years of accumulated data. Archive state by key prefix and updated week.
+# Retention: only archive rows where updated is older than cutoff (live data
+# stays in Postgres). Current positions/trades have recent updated timestamps,
+# so they are NOT archived.
+STATE_RETENTION = {
+    'trade:': 90,      # Paper trades: archive after 90 days
+    'health:': 30,     # Health data: archive after 30 days
+    'position:': 30,   # Positions: archive after 30 days (closed positions)
+    'scanner:': 14,    # Scanner data: archive after 14 days
+    'alert:': 30,      # Alerts: archive after 30 days
+}
+
 AUDIT_KINDS = ('alert', 'signal', 'paper_decision', 'breakout_event',
     'gap_measurement', 'gap_continuation', 'tape_confirmation',
     'apex_magnet_signal', 'apex_magnet_outcome', 'swing_candidate',
@@ -295,6 +310,77 @@ def _export_month_locked(db, client, bucket, kind, period_start, period_end,
     return row_count, file_size
 
 
+def export_state_chunk(db, client, bucket, prefix, period_start, period_end):
+    """Archive state table rows for a key prefix and week.
+
+    State table has key, value, updated. Partition by key prefix (e.g. 'trade:')
+    and updated week. Only archives rows where updated is in [period_start, period_end).
+    Returns (rows, bytes) or None if already done / locked.
+    """
+    period_str = _week_str(period_start)
+    # Progress key uses state: prefix to distinguish from events kinds
+    progress_key = f"copy-archive:state:{prefix}:{period_str}"
+    lock_key = f"copy-archive:lock:state:{prefix}:{period_str}"
+    with db.tx() as c:
+        if db.get(c, progress_key):
+            return 0, 0
+        lock = db.get(c, lock_key)
+        if lock and (time.time() - lock.get('at', 0)) < LOCK_TTL_S:
+            return None
+        db.put(c, lock_key, {'at': time.time()})
+    try:
+        import tempfile
+        tmpdir = os.path.expanduser("~/workspace/.tmp-archive")
+        os.makedirs(tmpdir, exist_ok=True)
+        row_count = 0
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.jsonl.gz',
+                                         dir=tmpdir, delete=False) as tmp:
+            tmp_path = tmp.name
+            with gzip.GzipFile(fileobj=tmp, mode='wb') as gz:
+                with db.engine.connect() as conn:
+                    raw = conn.connection.driver_connection
+                    with raw.cursor() as cur:
+                        cur.execute("SET SESSION transaction_timeout = '30min'")
+                        cur.execute("SET SESSION statement_timeout = '30min'")
+                        raw.commit()
+                        try:
+                            with cur.copy(
+                                f"COPY (SELECT row_to_json(t) FROM "
+                                f"(SELECT key, value, updated FROM state "
+                                f"WHERE key LIKE '{prefix}%' AND updated >= {period_start} "
+                                f"AND updated < {period_end}) t) TO STDOUT"
+                            ) as copy:
+                                for chunk in copy:
+                                    gz.write(chunk)
+                                    row_count += bytes(chunk).count(b'\n')
+                        finally:
+                            cur.execute("SET SESSION transaction_timeout = '60s'")
+                            cur.execute("SET SESSION statement_timeout = '60s'")
+                            raw.commit()
+        # Upload to R2
+        with open(tmp_path, 'rb') as f:
+            data = f.read()
+        file_size = len(data)
+        file_digest = hashlib.sha256(data).hexdigest()
+        key = f"state/{prefix.rstrip(':')}/{period_str}.jsonl.gz"
+        client.put_object(Bucket=bucket, Key=key, Body=data,
+                          ContentType='application/gzip')
+        os.unlink(tmp_path)
+        # Verify
+        resp = client.get_object(Bucket=bucket, Key=key)
+        body = resp['Body'].read()
+        resp['Body'].close()
+        if hashlib.sha256(body).hexdigest() != file_digest:
+            raise ValueError(f"Upload verification failed for {key}")
+        with db.tx() as c:
+            db.put(c, progress_key, {'rows': row_count, 'bytes': file_size,
+                                     'sha256': file_digest, 'at': time.time()})
+        return row_count, file_size
+    finally:
+        with db.tx() as c:
+            db.delete(c, lock_key)
+
+
 def run_copy_chunk(db, client, bucket, max_months=6):
     """Process up to max_months (kind, week) chunks. Returns summary.
     
@@ -379,6 +465,51 @@ def run_copy_chunk(db, client, bucket, max_months=6):
                 break
         if 'error' in summary:
             break
+
+    # State table archiving (2026-10-17): Archive state rows by key prefix
+    # and updated week. Only archive rows older than retention cutoff.
+    # This is where the bulk of Postgres data lives (paper trades, health, etc.)
+    if chunks_left > 0 and 'error' not in summary:
+        for prefix, retention_days in STATE_RETENTION.items():
+            if chunks_left <= 0:
+                summary['complete'] = False
+                break
+            cutoff = now - retention_days * DAY
+            # Archive weeks from 2024-01-01 to cutoff, in weekly chunks
+            # Start from oldest week, work forward
+            week_start = 1704067200  # 2024-01-01 00:00 UTC (Monday)
+            while week_start < cutoff and chunks_left > 0:
+                week_end = week_start + 7 * DAY
+                if week_end > cutoff:
+                    week_end = cutoff
+                period_str = _week_str(week_start)
+                progress_key = f"copy-archive:state:{prefix}:{period_str}"
+                with db.tx() as c:
+                    if db.get(c, progress_key):
+                        week_start = week_end
+                        continue
+                    lock = db.get(c, f"copy-archive:lock:state:{prefix}:{period_str}")
+                    if lock and (time.time() - lock.get('at', 0)) < LOCK_TTL_S:
+                        week_start = week_end
+                        continue
+                try:
+                    result = export_state_chunk(db, client, bucket, prefix, week_start, week_end)
+                    if result is None:
+                        week_start = week_end
+                        continue
+                    rows, nbytes = result
+                    summary['chunks_done'] += 1
+                    summary['rows'] += rows
+                    summary['bytes'] += nbytes
+                    summary['chunks'].append(f"state:{prefix}/{period_str}:{rows}rows")
+                    chunks_left -= 1
+                except Exception as e:
+                    summary['error'] = f"state:{prefix}/{period_str}: {str(e)[:500]}"
+                    summary['complete'] = False
+                    break
+                week_start = week_end
+            if 'error' in summary:
+                break
 
     # Check if there's more work
     if summary['complete']:
