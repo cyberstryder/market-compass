@@ -539,10 +539,10 @@ class Engine:
             raw=self.db.recent(c,"daily",symbol,limit=150)
             unique={day(r["ts"]):r for r in reversed(raw) if day(r["ts"])<day(now)}
             rows=sorted(unique.values(),key=lambda r:r["ts"])
-            if len(rows)<30: continue
+            if len(rows)<22: continue
             # Look for breakout in last 5 days
             for i in range(len(rows)-5, len(rows)):
-                if i < 21: continue
+                if i < 20: continue  # Need 20 prior bars for breakout check
                 breakout_bar = rows[i]
                 prior = rows[i-20:i]
                 breakout_high = max(b["payload"]["h"] for b in prior)

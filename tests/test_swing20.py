@@ -1,4 +1,9 @@
-"""swing20-v1: a completed daily close above the preceding 20 daily highs."""
+"""swing-options-v1: pullback after 20-day breakout, traded via options.
+
+Changed 2026-10-17: Was swing20-v1 (stock breakout, created stock positions).
+Now swing-options-v1 (options pullback-after-breakout, creates options signals).
+Stock positions are NOT created — options only per Josh's direction.
+"""
 from datetime import datetime
 import pytest
 from compass.config import Config
@@ -23,68 +28,88 @@ def db(tmp_path):
     yield s
     s.engine.dispose()
 
-def bars(last_close,last_ts=NOW-DAY,count=22):
-    """22 daily bars, oldest first; prior bars peak at 100."""
+def bars_with_pullback():
+    """24 daily bars: 20 flat, breakout on day 21, pullback on day 22-23."""
     rows=[]
-    for i in range(count):
-        ts=last_ts-(count-1-i)*DAY
-        if i==count-1:
-            rows.append(dict(ts=ts,payload=dict(o=100,h=last_close+1,l=99,c=last_close,v=1000)))
-        else:
-            rows.append(dict(ts=ts,payload=dict(o=94,h=100,l=90,c=95,v=1000)))
+    # Days 0-19: flat, high 100, close 95
+    for i in range(20):
+        ts=NOW-(24-1-i)*DAY
+        rows.append(dict(ts=ts,payload=dict(o=94,h=100,l=90,c=95,v=1000)))
+    # Day 20: breakout, close 101 above 20-day high 100
+    ts=NOW-(24-1-20)*DAY
+    rows.append(dict(ts=ts,payload=dict(o=100,h=102,l=99,c=101,v=1000)))
+    # Day 21: pullback to breakout level (100.5, within 1% of 100)
+    ts=NOW-(24-1-21)*DAY
+    rows.append(dict(ts=ts,payload=dict(o=101,h=101,l=100,c=100.5,v=1000)))
+    # Day 22: still near breakout level
+    ts=NOW-(24-1-22)*DAY
+    rows.append(dict(ts=ts,payload=dict(o=100.5,h=101,l=99.5,c=100.2,v=1000)))
+    # Day 23: today, price 100.3 (pullback continues)
+    ts=NOW-(24-1-23)*DAY
+    rows.append(dict(ts=ts,payload=dict(o=100.2,h=100.8,l=99.8,c=100.3,v=1000)))
+    return rows
+
+def bars_breakout_no_pullback():
+    """22 daily bars: 21 flat, breakout on last bar, no pullback after."""
+    rows=[]
+    for i in range(21):
+        ts=NOW-(22-1-i)*DAY
+        rows.append(dict(ts=ts,payload=dict(o=94,h=100,l=90,c=95,v=1000)))
+    # Last bar: breakout, close 101
+    ts=NOW
+    rows.append(dict(ts=ts,payload=dict(o=100,h=102,l=99,c=101,v=1000)))
     return rows
 
 def load(db,c,rows):
     for i,r in enumerate(rows):
         db.append(c,'daily','test','SPY',r['ts'],r['payload'],key='daily:%d'%i)
 
-def test_breakout_opens_swing_and_marks_seen(db,cfg):
+def test_breakout_without_pullback_no_signal(db,cfg):
+    """Breakout alone does not trigger — need pullback after breakout."""
     e=Engine(db,cfg)
     with db.tx() as c:
-        load(db,c,bars(101))
+        load(db,c,bars_breakout_no_pullback())
         db.put(c,'quote:SPY',dict(ts=NOW,bid=100,ask=100.10,bid_size=10,ask_size=10))
         e.swings(c,NOW)
-        p=db.get(c,'position:SPY')
-        assert p and p['status']=='open'
-        assert p['strategy']=='swing20-v1' and p['track']=='swing' and p['side']=='long'
-        assert p['signal_price']==101
+        # No stock position (options only)
+        assert db.get(c,'position:SPY') is None
+        # No signal marked as seen (no pullback yet)
+        assert db.prefix(c,'seen:')=={}
+
+def test_breakout_with_pullback_marks_seen(db,cfg):
+    """Breakout + pullback marks signal as seen (options signal, not stock position)."""
+    e=Engine(db,cfg)
+    with db.tx() as c:
+        load(db,c,bars_with_pullback())
+        db.put(c,'quote:SPY',dict(ts=NOW,bid=100,ask=100.10,bid_size=10,ask_size=10))
+        e.swings(c,NOW)
+        # No stock position (options only — signal goes through options(), not enter())
+        assert db.get(c,'position:SPY') is None
+        # Signal marked as seen
         seen=[k for k in db.prefix(c,'seen:')]
         assert len(seen)==1
         # A second sweep does not duplicate the signal.
         e.swings(c,NOW+60)
-        assert db.get(c,'position:SPY')['id']==p['id']
         assert len(db.prefix(c,'seen:'))==1
 
 def test_no_breakout_no_signal(db,cfg):
     e=Engine(db,cfg)
     with db.tx() as c:
-        load(db,c,bars(99))
+        # No breakout: all closes below 100
+        rows=[]
+        for i in range(22):
+            ts=NOW-(22-1-i)*DAY
+            rows.append(dict(ts=ts,payload=dict(o=94,h=100,l=90,c=95,v=1000)))
+        load(db,c,rows)
         db.put(c,'quote:SPY',dict(ts=NOW,bid=100,ask=100.10,bid_size=10,ask_size=10))
         e.swings(c,NOW)
         assert db.get(c,'position:SPY') is None
         assert db.prefix(c,'seen:')=={}
-
-def test_close_equal_to_prior_high_is_not_a_breakout(db,cfg):
-    e=Engine(db,cfg)
-    with db.tx() as c:
-        load(db,c,bars(100))
-        db.put(c,'quote:SPY',dict(ts=NOW,bid=100,ask=100.10,bid_size=10,ask_size=10))
-        e.swings(c,NOW)
-        assert db.get(c,'position:SPY') is None
 
 def test_insufficient_history_no_signal(db,cfg):
     e=Engine(db,cfg)
     with db.tx() as c:
-        load(db,c,bars(101)[:21])
+        load(db,c,bars_with_pullback()[:21])
         db.put(c,'quote:SPY',dict(ts=NOW,bid=100,ask=100.10,bid_size=10,ask_size=10))
         e.swings(c,NOW)
         assert db.get(c,'position:SPY') is None
-
-def test_stale_last_bar_no_signal(db,cfg):
-    e=Engine(db,cfg)
-    with db.tx() as c:
-        load(db,c,bars(101,last_ts=NOW-6*DAY))
-        db.put(c,'quote:SPY',dict(ts=NOW,bid=100,ask=100.10,bid_size=10,ask_size=10))
-        e.swings(c,NOW)
-        assert db.get(c,'position:SPY') is None
-        assert db.prefix(c,'seen:')=={}
