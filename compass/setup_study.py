@@ -37,7 +37,7 @@ class SetupStudy:
     def start(self, c, signal, now, spec, alerted=True, primary=True):
         if not self.cfg.setup_study or spec['asset'] not in ('future', 'stock', 'option') or signal.get('track') == 'swing':
             return None
-        if spec['asset']=='option' and not signal.get('strategy','').startswith('0dte-'):
+        if spec['asset']=='option' and not (signal.get('strategy','').startswith('0dte-') or signal.get('strategy','').startswith('swing-')):
             return None
         key = identity(VERSION, signal['id'])
         previous = c.execute(select(trials.c.id).where(trials.c.source_id == signal['id'])).first()

@@ -434,14 +434,20 @@ class Engine:
             return False
         kind="call" if signal["side"]=="long" else "put"
         today=day(now)
-        max_dte=self.cfg.option_0dte_max_dte
+        # Swings use 7-21 DTE (not 0DTE). 0DTE uses cfg.option_0dte_max_dte.
+        if signal.get('strategy','').startswith('swing-'):
+            max_dte = 21  # Swing options: up to 21 DTE
+            min_dte = 7   # At least 7 DTE to allow time for move
+        else:
+            max_dte = self.cfg.option_0dte_max_dte
+            min_dte = 0
         def eligible(o):
             # Same-day plus weekly expiries: names without daily expirations (e.g. MU)
             # still get 0DTE-style coverage on their nearest weekly.
             if o.get("type")!=kind or o.get("multiplier")!=100: return False
             try: dte=(date.fromisoformat(str(o.get("expiry")))-date.fromisoformat(today)).days
             except (ValueError,TypeError): return False
-            return 0<=dte<=max_dte
+            return min_dte<=dte<=max_dte
         opts=[o for o in chain.get("contracts",[]) if eligible(o)]
         # Nearest expiry first (most gamma for 0DTE-style moves), then closest strike.
         opts.sort(key=lambda o:(str(o.get("expiry")),abs(o["strike"]-signal["signal_price"])))
@@ -479,9 +485,23 @@ class Engine:
                             rejected.append({**evidence,'reason':saved.get('reason') or 'Unmeasurable research observation'})
                             continue
                         if eligible:
+                            # Publication metadata required for zero_dte_paper._open_scanner
+                            # to find this alert (filters on publication.category == "options_0dte").
+                            # Without it, scanner observations never become paper trades.
                             self.db.append(c,'alert','setup_study',o['symbol'],checked_at,
                                 {**saved,'status':'option_setup_new','last_quote':q,
-                                 'expires_at':checked_at+120,'underlying_invalidation':signal.get('invalidation')},
+                                 'expires_at':checked_at+120,'underlying_invalidation':signal.get('invalidation'),
+                                 'publication': {
+                                     'category': 'options_0dte',
+                                     'contract': {
+                                         'symbol': o['symbol'],
+                                         'underlying': signal['symbol'],
+                                         'strike': o.get('strike'),
+                                         'type': o.get('type'),
+                                         'expiry': o.get('expiry'),
+                                     },
+                                     'status': 'option_setup_new',
+                                 }},
                                 'option-setup-entry:'+trial)
                         audit.update(status='observed',reason='Independent 0DTE observation recorded',
                             selected_contract=o['symbol'],selected_quote_evidence=evidence,setup_trial_id=trial)
@@ -506,25 +526,77 @@ class Engine:
         return False
 
     def swings(self,c,now):
+        """Options swings: pullback after 20-day breakout.
+
+        Changed 2026-10-17: Was stock breakout (blocked by options-only rule).
+        Now generates options signals: detect breakout, wait for pullback to
+        breakout level or 20 EMA, then buy CALL (bullish) or PUT (bearish)
+        with 14 DTE. Uses options() to find contract and create alert.
+        """
         hours=session(day(now))
         if not hours or not hours[0]<=now<hours[1]-1800: return
         for symbol in self.cfg.stocks:
             raw=self.db.recent(c,"daily",symbol,limit=150)
             unique={day(r["ts"]):r for r in reversed(raw) if day(r["ts"])<day(now)}
             rows=sorted(unique.values(),key=lambda r:r["ts"])
-            if len(rows)<22: continue
-            last,prior=rows[-1],rows[-21:-1]
-            sid=identity("swing20-v1",symbol,last["ts"])
-            if self.db.get(c,"seen:"+sid) or now-last["ts"]>5*86400: continue
-            if last["payload"]["c"]<=max(b["payload"]["h"] for b in prior): continue
-            if self.cfg.paper_trading and not fresh(self.db.get(c,"quote:"+symbol),now): continue
-            signal={"id":sid,"strategy":"swing20-v1","symbol":symbol,"side":"long","signal_time":last["ts"]+86400,
-                "decided_at":now,"signal_price":last["payload"]["c"],"track":"swing","status":"candidate",
-                "stop_distance":max((max(b["payload"]["h"] for b in prior)-min(b["payload"]["l"] for b in prior))*.2,.1),
-                "reason":"Completed daily close above preceding 20 daily highs","bar_event":last["id"],
-                "daily":{"through":day(last['ts']),"close":last['payload']['c']}}
-            self.enter(c,signal,now)
-            self.db.put(c,"seen:"+sid,{"at":now})
+            if len(rows)<30: continue
+            # Look for breakout in last 5 days
+            for i in range(len(rows)-5, len(rows)):
+                if i < 21: continue
+                breakout_bar = rows[i]
+                prior = rows[i-20:i]
+                breakout_high = max(b["payload"]["h"] for b in prior)
+                breakout_low = min(b["payload"]["l"] for b in prior)
+                # Bullish breakout: close above 20-day high
+                is_bullish = breakout_bar["payload"]["c"] > breakout_high
+                # Bearish breakdown: close below 20-day low
+                is_bearish = breakout_bar["payload"]["c"] < breakout_low
+                if not (is_bullish or is_bearish):
+                    continue
+                # Check for pullback in subsequent bars (up to today)
+                for j in range(i+1, len(rows)):
+                    pullback_bar = rows[j]
+                    current_price = pullback_bar["payload"]["c"]
+                    # 20 EMA (approx from closes)
+                    ema20 = sum(r["payload"]["c"] for r in rows[max(0,j-20):j]) / min(20, j)
+                    # Pullback to breakout level (within 1%) or to 20 EMA (within 1%)
+                    if is_bullish:
+                        breakout_level = breakout_high
+                        pulled_back = abs(current_price - breakout_level) / breakout_level < 0.01 or \
+                                     abs(current_price - ema20) / ema20 < 0.01
+                        side = "long"
+                        kind = "call"
+                    else:
+                        breakout_level = breakout_low
+                        pulled_back = abs(current_price - breakout_level) / breakout_level < 0.01 or \
+                                     abs(current_price - ema20) / ema20 < 0.01
+                        side = "short"
+                        kind = "put"
+                    if not pulled_back:
+                        continue
+                    sid = identity("swing-options-v1", symbol, pullback_bar["ts"], side)
+                    if self.db.get(c, "seen:"+sid):
+                        continue
+                    if now - pullback_bar["ts"] > 5*86400:
+                        continue
+                    if self.cfg.paper_trading and not fresh(self.db.get(c, "quote:"+symbol), now):
+                        continue
+                    signal = {
+                        "id": sid, "strategy": "swing-options-v1", "symbol": symbol,
+                        "side": side, "signal_time": pullback_bar["ts"],
+                        "decided_at": now, "signal_price": current_price,
+                        "track": "swing", "status": "candidate",
+                        "stop_distance": max(abs(current_price - breakout_level) * 0.5, 0.1),
+                        "reason": f"Pullback after 20-day {'breakout' if is_bullish else 'breakdown'}",
+                        "bar_event": pullback_bar["id"],
+                        "daily": {"through": day(pullback_bar['ts']), "close": current_price},
+                        "swing_breakout_level": breakout_level,
+                        "swing_breakout_date": day(breakout_bar["ts"]),
+                    }
+                    # Use options() to find contract and create alert (not enter() which blocks stocks)
+                    self.options(c, signal, now)
+                    self.db.put(c, "seen:"+sid, {"at": now})
+                    break
 
     def tick(self,now=None):
         now=now or time.time()
