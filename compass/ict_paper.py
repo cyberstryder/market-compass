@@ -70,12 +70,17 @@ DETECTOR_FLAGS = {
 # - NEW 2026-10-15: MYM, M2K, M6A, M6E added for paper-trading evaluation
 #   (Tradeify allows these micros; no P&L history yet — prune after 20-30
 #   trades based on per-detector P&L, same mix/match process as 2026-10-14)
+# - 2026-10-17: Turtle Soup removed from MYM. Research: Turtle Soup on MYM
+#   lost -$1,793 (20 trades, avg -$90). MYM trends (real breakouts continue),
+#   Turtle Soup fades breakouts (mean-reversion). Method-symbol mismatch.
+#   MYM is profitable WITHOUT Turtle Soup (+$742 across AOI Zones, BOS+FVG,
+#   Rumers Box). Turtle Soup works on MCL (+$748, ranging market) — keep it there.
 DETECTOR_SYMBOL_ALLOWLIST = {
     'aoi_fade': {'MCL', 'MNQ', 'MYM', 'M2K', 'M6A', 'M6E'},
     'aoi_zones': {'MES', 'MYM', 'M2K', 'M6A', 'M6E'},
     'bos_fvg': {'MNQ', 'MYM', 'M2K', 'M6A', 'M6E'},
     'bos_gz_vwap': {'MCL', 'MYM', 'M2K', 'M6A', 'M6E'},
-    'turtle_soup': {'MCL', 'MYM', 'M2K', 'M6A', 'M6E'},
+    'turtle_soup': {'MCL', 'M2K', 'M6A', 'M6E'},  # MYM removed 2026-10-17
     'continuation': set(),  # disabled entirely
     # Detectors not listed here have no symbol restriction (they're
     # either disabled or not in the futures mix).

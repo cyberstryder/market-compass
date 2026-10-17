@@ -56,7 +56,7 @@ def _cfg(**kw):
 def test_detect_long_sweep_and_reclaim():
     bars = ts._bars_from_window(sweep_long_rows(OPEN))
     sig = ts.detect_sweep(bars, 100.0, 'long', sweep_ticks=0.25,
-                          opposing=[105.0])
+                          opposing=[105.0], buffer_mult=1.0)
     assert sig is not None
     assert sig['direction'] == 'long'
     assert sig['sweep_ts'] == OPEN + 2 * 60
@@ -78,7 +78,7 @@ def test_detect_short_sweep_and_reclaim():
         row(OPEN + 4 * 60, 99.6, 99.7, 99.0, 99.2),
     ])
     sig = ts.detect_sweep(bars, 100.0, 'short', sweep_ticks=0.25,
-                          opposing=[95.0])
+                          opposing=[95.0], buffer_mult=1.0)
     assert sig is not None
     assert sig['direction'] == 'short'
     # Sweep bar closes back below the level itself -> same-bar confirm.
@@ -136,7 +136,7 @@ def test_rr_filter_rejects_close_target():
 def test_two_r_fallback_when_no_opposing_extreme():
     bars = ts._bars_from_window(sweep_long_rows(OPEN))
     sig = ts.detect_sweep(bars, 100.0, 'long', sweep_ticks=0.25,
-                          opposing=[], min_rr=1.5)
+                          opposing=[], min_rr=1.5, buffer_mult=1.0)
     assert sig is not None
     assert sig['target_kind'] == 'two_r'
     assert sig['target'] == pytest.approx(100.2 + 2 * 0.95)

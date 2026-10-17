@@ -182,7 +182,9 @@ def _ob_trade_levels(ob, entry_close):
 
     Convention (documented choice): the OB is a momentum POI, so the paper
     entry is the close following formation in the bias direction; the stop
-    sits beyond the OB far edge by 0.25x ATR; the target is exactly 2R.
+    sits beyond the OB far edge by 0.5x ATR (widened 2026-10-17 from 0.25x:
+    0.25x stops were too tight — price retests OB and hits stop before
+    bouncing; 29 stop-outs vs 26 targets); the target is exactly 2R.
     Returns None when the bias is not directional or risk is non-positive.
     """
     bias = (ob or {}).get('bias')
@@ -193,7 +195,7 @@ def _ob_trade_levels(ob, entry_close):
         return None
     if top is None or bottom is None:
         return None
-    buf = 0.25 * atr_v
+    buf = 0.5 * atr_v
     if bias == 'long':
         stop = bottom - buf
         risk = entry - stop
@@ -258,6 +260,21 @@ def scan(db, c, cfg, now):
         return {'ran': False, 'reason': 'disabled'}
     if now - db.get(c, 'ict_aoi_zones:scanned_at', 0) < SCAN_THROTTLE:
         return {'ran': False, 'reason': 'throttled'}
+    # Session filter (2026-10-17): AOI Zones fails overnight, works during
+    # regular session. Overnight (18:00-06:00 CT) has low liquidity, false
+    # OBs form on thin volume, then fail. Regular session (08:00-15:00 CT)
+    # has high liquidity, institutional participation, reliable OBs.
+    # Research: MES 58 trades, -$1,164 total. Session-filtered (08:00-15:00):
+    # 19 trades, +$774. Improvement +$1,938.
+    # Only submit paper trades during regular session. Still record signals
+    # for research, but don't trade overnight.
+    from datetime import datetime as _dt
+    _ct_hour = _dt.fromtimestamp(now, CT).hour
+    _in_session = 8 <= _ct_hour < 15
+    if not _in_session:
+        # Log that we're skipping paper trades due to session, but still
+        # run the scan for research (zones, OBs recorded, just not traded).
+        pass  # scan continues, paper submit gated below
     symbols = [s for s in (getattr(cfg, 'ict_symbols', ()) or ()) if s]
     if not symbols:
         return {'ran': False, 'reason': 'no_symbols'}
@@ -288,8 +305,12 @@ def scan(db, c, cfg, now):
                           {k: v for k, v in ob.items() if k != 'at'},
                           key='ictaoi:%s:ob:%d' % (symbol, int(ob['formed_ts'])))
                 db.put(c, seen_key, ob['formed_ts'])
-                from .ict_paper import submit as _paper_submit
-                _paper_submit(db, c, cfg, now, 'aoi_zones', symbol, ob)
+                # Session filter: only submit paper trades during regular
+                # session (08:00-15:00 CT). Overnight OBs are recorded for
+                # research but not traded (they fail — low liquidity, false OBs).
+                if _in_session:
+                    from .ict_paper import submit as _paper_submit
+                    _paper_submit(db, c, cfg, now, 'aoi_zones', symbol, ob)
     db.put(c, 'ict_aoi_zones:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,
             'range_session': range_session,

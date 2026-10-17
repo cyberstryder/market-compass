@@ -13,10 +13,22 @@ from .ict_common import ict_bars
 
 SCAN_THROTTLE = 120
 TICK_FALLBACK_DEFAULT = 0.25
-CONFIRM_BARS_DEFAULT = 3
-ATR_FRAC_DEFAULT = 0.1
+# 2026-10-17: CONFIRM_BARS 3 -> 5. A 1-bar pullback counted as "confirmation"
+# with 3 bars. Real reversals need price to stay inside for 5+ bars.
+CONFIRM_BARS_DEFAULT = 5
+# 2026-10-17: ATR_FRAC 0.1 -> 0.3. 0.1x ATR = 10 points on MYM (noise, not
+# a real sweep). 0.3x ATR = 30 points filters out noise sweeps, only trades
+# significant liquidity grabs.
+ATR_FRAC_DEFAULT = 0.3
 MIN_RR_DEFAULT = 1.5
 ATR_PERIOD = 14
+# 2026-10-17: BUFFER_MULT 2.0. Stop = sweep extreme +/- 2x sweep_ticks
+# (was 1x). Price easily retests the extreme and stops out with 1x buffer.
+BUFFER_MULT_DEFAULT = 2.0
+# 2026-10-17: ADX_MAX 25. Only trade Turtle Soup when ADX < 25 (ranging).
+# Turtle Soup is mean-reversion; in a trending market (ADX >= 25), breakouts
+# are real, not false, and fading them loses. Research: 17 of 20 Turtle Soup
+# trades were shorts in an uptrend, all losing.
 
 
 def _bars_from_window(window):
@@ -69,15 +81,17 @@ def _sweep_ticks(bars, tick_fallback=TICK_FALLBACK_DEFAULT, atr_frac=ATR_FRAC_DE
 
 def detect_sweep(bars, level, direction, sweep_ticks=TICK_FALLBACK_DEFAULT,
                  confirm_bars=CONFIRM_BARS_DEFAULT, level_kind='level',
-                 opposing=(), min_rr=MIN_RR_DEFAULT, buffer_ticks=None):
+                 opposing=(), min_rr=MIN_RR_DEFAULT, buffer_ticks=None,
+                 buffer_mult=BUFFER_MULT_DEFAULT):
     """Find the most recent sweep+reclaim of `level` in ascending `bars`.
 
     direction 'long': a bar's low < level - sweep_ticks, then a close back
     above `level` within `confirm_bars` (the sweep bar itself may confirm).
     Mirror for 'short'. Entry = confirming close, stop = sweep extreme +/-
-    buffer, target = nearest opposing session extreme beyond entry, else
-    entry +/- 2R. Returns the signal dict, or None when there is no sweep,
-    no reclaim in time, or rr < min_rr.
+    buffer (buffer = buffer_mult * sweep_ticks, default 2x), target = nearest
+    opposing session extreme beyond entry, else entry +/- 2R. Returns the
+    signal dict, or None when there is no sweep, no reclaim in time, or
+    rr < min_rr.
     """
     level = number(level)
     if not bars or not level or direction not in ('long', 'short'):
@@ -89,7 +103,9 @@ def detect_sweep(bars, level, direction, sweep_ticks=TICK_FALLBACK_DEFAULT,
         confirm_bars = CONFIRM_BARS_DEFAULT
     buffer_ticks = number(buffer_ticks)
     if buffer_ticks is None:
-        buffer_ticks = sweep_ticks
+        # Default: buffer = buffer_mult * sweep_ticks (2x sweep)
+        buffer_mult = number(buffer_mult) or BUFFER_MULT_DEFAULT
+        buffer_ticks = buffer_mult * sweep_ticks
     min_rr = number(min_rr)
     if min_rr is None:
         min_rr = 0.0
@@ -204,6 +220,12 @@ def scan(db, c, cfg, now):
     min_rr = number(getattr(cfg, 'ict_soup_min_rr', MIN_RR_DEFAULT))
     if min_rr is None:
         min_rr = MIN_RR_DEFAULT
+    # 2026-10-17: Trend filter. Only trade Turtle Soup when ADX < 25 (ranging).
+    # Turtle Soup is mean-reversion; in a trending market (ADX >= 25),
+    # breakouts are real, not false, and fading them loses. Configurable via
+    # ICT_SOUP_ADX_MAX (default 25). Set to 999 to disable filter.
+    adx_max = number(getattr(cfg, 'ict_soup_adx_max', 25)) or 25
+    buffer_mult = number(getattr(cfg, 'ict_soup_buffer_mult', BUFFER_MULT_DEFAULT)) or BUFFER_MULT_DEFAULT
     # Defensive reads: either snapshot may be absent (modules not built yet).
     liq = db.get(c, 'ict_session_liquidity:latest', {}) or {}
     htf = db.get(c, 'ict_htf_levels:latest', {}) or {}
@@ -219,6 +241,19 @@ def scan(db, c, cfg, now):
             excluded['no_bars'] = excluded.get('no_bars', 0) + 1
             rows[symbol] = {'symbol': symbol, 'excluded': 'no_bars', 'at': now}
             continue
+        # Trend filter (2026-10-17): Skip Turtle Soup if ADX >= 25 (trending).
+        # Turtle Soup is mean-reversion; it fails in trending markets.
+        # Only trade when ranging (ADX < 25).
+        try:
+            from .regime import adx as _adx
+            _adx_val = _adx(bars, 14)
+            if _adx_val is not None and _adx_val >= adx_max:
+                excluded['trending'] = excluded.get('trending', 0) + 1
+                rows[symbol] = {'symbol': symbol, 'excluded': 'trending',
+                                'adx': round(_adx_val, 1), 'at': now}
+                continue
+        except Exception:
+            pass  # If ADX fails, proceed (don't block on missing data)
         levels = _levels_for_symbol(liq_levels, htf_levels, symbol)
         if not levels:
             excluded['no_levels'] = excluded.get('no_levels', 0) + 1
@@ -234,7 +269,7 @@ def scan(db, c, cfg, now):
                     bars, price, direction, sweep_ticks=sweep_ticks,
                     confirm_bars=confirm_bars, level_kind=kind,
                     opposing=opp_highs if direction == 'long' else opp_lows,
-                    min_rr=min_rr)
+                    min_rr=min_rr, buffer_mult=buffer_mult)
                 if sig and (best is None or sig['signal_ts'] > best['signal_ts']):
                     best = sig
         if best is None:
@@ -262,7 +297,8 @@ def scan(db, c, cfg, now):
     db.put(c, 'ict_turtle_soup:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,
             'params': {'confirm_bars': confirm_bars, 'atr_frac': atr_frac,
-                       'tick_fallback': tick_fb, 'min_rr': min_rr},
+                       'tick_fallback': tick_fb, 'min_rr': min_rr,
+                       'buffer_mult': buffer_mult, 'adx_max': adx_max},
             'status': 'running' if rows else 'idle'})
     db.put(c, 'ict_turtle_soup:scanned_at', now)
     return {'ran': True, 'symbols': len(rows), 'signals': n_signals,
