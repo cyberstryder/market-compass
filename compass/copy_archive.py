@@ -459,10 +459,10 @@ def run_copy_chunk(db, client, bucket, max_months=6):
     # processes quote, bar, mapping, etc. Many weeks are empty (0 rows).
     if chunks_left > 0 and 'error' not in summary:
         for kind in kinds:
-        if chunks_left <= 0:
-            summary['complete'] = False
-            break
-        # Skip the MIN(ts) query (times out on 135M rows without index).
+            if chunks_left <= 0:
+                summary['complete'] = False
+                break
+            # Skip the MIN(ts) query (times out on 135M rows without index).
         # Instead, start from retention window: we only archive data older
         # than the retention cutoff, so start there. The per-week progress
         # keys skip already-done weeks.
@@ -517,8 +517,8 @@ def run_copy_chunk(db, client, bucket, max_months=6):
                 except:
                     pass
                 break
-        if 'error' in summary:
-            break
+            if 'error' in summary:
+                break
 
     # Check if there's more work
     if summary['complete']:
