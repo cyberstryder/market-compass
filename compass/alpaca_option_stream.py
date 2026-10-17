@@ -1,14 +1,21 @@
 """Alpaca OPRA option stream, translated to the internal option-stream format.
 
-FALLBACK OPTION STREAM (2026-10-15, Audit P1):
+FALLBACK OPTION STREAM (2026-10-15, Audit P1; updated 2026-10-17):
 This is the FALLBACK, not the primary. The PRIMARY is compass/option_stream.py
 (Massive/Polygon). This Alpaca stream is disabled by default.
 - Enabled via: ALPACA_OPTION_STREAM_ENABLED=true AND Alpaca keys set
 - Health key: health:alpaca_option_stream
 - As of 2026-10-15, shows 0 subscribed (dark). This is EXPECTED when disabled.
   Do NOT treat 0-subscribed as a failure - it's the fallback, not the primary.
-- Only enable if Massive stream fails. Do not run both simultaneously in production
-  (would double-count quotes).
+- SAFE to run both simultaneously (2026-10-17): Dedup logic prevents
+  double-counting. Quotes are stored by symbol key, put_quote uses timestamp
+  check (only updates if new ts >= existing ts). If Massive and Alpaca both
+  deliver same contract at same timestamp, second write overwrites with
+  identical data — no double-counting. If Massive misses a contract, Alpaca's
+  quote fills the gap. Running both is RECOMMENDED for redundancy.
+- FALLBACK_SYMBOLS (2026-10-17): If option_symbols is empty for 30s, stream
+  subscribes to SPY/QQQ weeklies (liquid contracts) so OPRA still flows.
+  Previously FALLBACK_SYMBOLS was empty, stream looped forever.
 
 Runs side-by-side with the Massive stream during the migration evaluation.
 Every translated item carries 'src': 'alpaca' so downstream persistence can
@@ -179,29 +186,47 @@ async def consume(ws, collector, buffer=None):
         # of 20 symbols to stay under undocumented per-message limits.
         SUBSCRIBE_BATCH_SIZE = 20
         # Fallback: if dynamic selection yields nothing (e.g., chain fetch
-        # failing), subscribe to liquid SPY weeklies so OPRA still flows.
+        # failing), subscribe to liquid SPY/QQQ weeklies so OPRA still flows.
         # Without this, the stream authenticates but never subscribes (2026-10-14).
+        # These are the most liquid 0DTE contracts — SPY and QQQ weeklies.
+        # Format: O:SYMBOL_YYMMDD[C/P]STRIKE (internal form with O: prefix)
+        # Note: These expire weekly; the stream will need updated symbols
+        # after expiry. The dynamic selection (option_symbols) is preferred;
+        # this fallback only activates when dynamic selection fails.
+        # 2026-10-17: Populated with real symbols (was empty, stream looped
+        # forever). These are SPY/QQQ ATM weeklies for the current week.
         FALLBACK_SYMBOLS = [
-            # SPY weekly options - format: SPY_YYMMDD[C/P]STRIKE
-            # These are placeholders; the actual symbols come from chain data
-            # when available. This ensures the stream doesn't sit idle.
+            # SPY weeklies (Monday expiry)
+            "O:SPY261019C00770000", "O:SPY261019P00770000",
+            "O:SPY261019C00775000", "O:SPY261019P00775000",
+            "O:SPY261019C00780000", "O:SPY261019P00780000",
+            # QQQ weeklies (Monday expiry)
+            "O:QQQ261019C00715000", "O:QQQ261019P00715000",
+            "O:QQQ261019C00720000", "O:QQQ261019P00720000",
+            "O:QQQ261019C00725000", "O:QQQ261019P00725000",
         ]
         empty_cycles = 0
         while True:
             wanted = set(collector.option_symbols)
             # If wanted is empty, the symbol selector hasn't populated yet
             # (e.g., collector just restarted, or chain fetch failing).
-            # After 60 empty cycles (30s), log a warning via health.
+            # After 60 empty cycles (30s), use FALLBACK_SYMBOLS so the stream
+            # doesn't sit idle. The fallback is SPY/QQQ weeklies — liquid
+            # contracts that ensure OPRA flows even if chain selection fails.
+            # 2026-10-17: Previously looped forever with empty FALLBACK_SYMBOLS.
             if not wanted:
                 empty_cycles += 1
                 if empty_cycles == 60:
                     try:
                         collector.db.health('alpaca_option_stream', 'warning',
-                            'option_symbols empty for 30s - chain selection may be failing')
+                            'option_symbols empty for 30s - using FALLBACK_SYMBOLS (SPY/QQQ weeklies)')
                     except:
                         pass
-                await asyncio.sleep(0.5)
-                continue
+                    # Use fallback symbols after 30s of empty option_symbols
+                    wanted = set(FALLBACK_SYMBOLS)
+                else:
+                    await asyncio.sleep(0.5)
+                    continue
             empty_cycles = 0
             wire = sorted(to_alpaca_symbol(s) for s in wanted)
             have_wire = sorted(to_alpaca_symbol(s) for s in subscribed)
