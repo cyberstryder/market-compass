@@ -386,6 +386,10 @@ def run_copy_chunk(db, client, bucket, max_months=6):
     
     Changed 2026-10-11: Weekly chunks (was monthly), 6 per call (was 3).
     Each week is ~1/4 the size of a month, so 6 weeks ≈ 1.5 months of data.
+    Changed 2026-10-17: State archiving runs FIRST, before events. State has
+    the actual data (paper trades, positions, health). Events archiving was
+    using all 6 chunks on empty weeks (bar/2024-W13 through W30, all 0 rows),
+    so state never got a chance. State is prioritized now.
     """
     now = time.time()
     summary = {'chunks_done': 0, 'rows': 0, 'bytes': 0,
@@ -404,7 +408,57 @@ def run_copy_chunk(db, client, bucket, max_months=6):
              if k not in ('chain_archive', 'matrix_raw', 'vendor_flow', 'flow')]
 
     chunks_left = max_months
-    for kind in kinds:
+
+    # STATE FIRST (2026-10-17): Archive state rows by key prefix and updated
+    # week. Only archive rows older than retention cutoff. This is where the
+    # bulk of Postgres data lives (paper trades, health, etc.). Previously,
+    # state ran AFTER events, but events used all chunks on empty weeks, so
+    # state never ran. Now state gets priority.
+    for prefix, retention_days in STATE_RETENTION.items():
+        if chunks_left <= 0:
+            summary['complete'] = False
+            break
+        cutoff = now - retention_days * DAY
+        # Archive weeks from 2024-01-01 to cutoff, in weekly chunks
+        # Start from oldest week, work forward
+        week_start = 1704067200  # 2024-01-01 00:00 UTC (Monday)
+        while week_start < cutoff and chunks_left > 0:
+            week_end = week_start + 7 * DAY
+            if week_end > cutoff:
+                week_end = cutoff
+            period_str = _week_str(week_start)
+            progress_key = f"copy-archive:state:{prefix}:{period_str}"
+            with db.tx() as c:
+                if db.get(c, progress_key):
+                    week_start = week_end
+                    continue
+                lock = db.get(c, f"copy-archive:lock:state:{prefix}:{period_str}")
+                if lock and (time.time() - lock.get('at', 0)) < LOCK_TTL_S:
+                    week_start = week_end
+                    continue
+            try:
+                result = export_state_chunk(db, client, bucket, prefix, week_start, week_end)
+                if result is None:
+                    week_start = week_end
+                    continue
+                rows, nbytes = result
+                summary['chunks_done'] += 1
+                summary['rows'] += rows
+                summary['bytes'] += nbytes
+                summary['chunks'].append(f"state:{prefix}/{period_str}:{rows}rows")
+                chunks_left -= 1
+            except Exception as e:
+                summary['error'] = f"state:{prefix}/{period_str}: {str(e)[:500]}"
+                summary['complete'] = False
+                break
+            week_start = week_end
+        if 'error' in summary:
+            break
+
+    # EVENTS SECOND: Only if chunks left after state. Events archiving
+    # processes quote, bar, mapping, etc. Many weeks are empty (0 rows).
+    if chunks_left > 0 and 'error' not in summary:
+        for kind in kinds:
         if chunks_left <= 0:
             summary['complete'] = False
             break
@@ -466,54 +520,9 @@ def run_copy_chunk(db, client, bucket, max_months=6):
         if 'error' in summary:
             break
 
-    # State table archiving (2026-10-17): Archive state rows by key prefix
-    # and updated week. Only archive rows older than retention cutoff.
-    # This is where the bulk of Postgres data lives (paper trades, health, etc.)
-    if chunks_left > 0 and 'error' not in summary:
-        for prefix, retention_days in STATE_RETENTION.items():
-            if chunks_left <= 0:
-                summary['complete'] = False
-                break
-            cutoff = now - retention_days * DAY
-            # Archive weeks from 2024-01-01 to cutoff, in weekly chunks
-            # Start from oldest week, work forward
-            week_start = 1704067200  # 2024-01-01 00:00 UTC (Monday)
-            while week_start < cutoff and chunks_left > 0:
-                week_end = week_start + 7 * DAY
-                if week_end > cutoff:
-                    week_end = cutoff
-                period_str = _week_str(week_start)
-                progress_key = f"copy-archive:state:{prefix}:{period_str}"
-                with db.tx() as c:
-                    if db.get(c, progress_key):
-                        week_start = week_end
-                        continue
-                    lock = db.get(c, f"copy-archive:lock:state:{prefix}:{period_str}")
-                    if lock and (time.time() - lock.get('at', 0)) < LOCK_TTL_S:
-                        week_start = week_end
-                        continue
-                try:
-                    result = export_state_chunk(db, client, bucket, prefix, week_start, week_end)
-                    if result is None:
-                        week_start = week_end
-                        continue
-                    rows, nbytes = result
-                    summary['chunks_done'] += 1
-                    summary['rows'] += rows
-                    summary['bytes'] += nbytes
-                    summary['chunks'].append(f"state:{prefix}/{period_str}:{rows}rows")
-                    chunks_left -= 1
-                except Exception as e:
-                    summary['error'] = f"state:{prefix}/{period_str}: {str(e)[:500]}"
-                    summary['complete'] = False
-                    break
-                week_start = week_end
-            if 'error' in summary:
-                break
-
     # Check if there's more work
     if summary['complete']:
-        # Verify by checking if any period is not done
+        # Verify by checking if any period is not done (events + state)
         for kind in kinds:
             for ms, me in _periods_to_archive(kind, now):
                 period_str = _week_str(ms)
@@ -524,6 +533,26 @@ def run_copy_chunk(db, client, bucket, max_months=6):
                         break
             if not summary['complete']:
                 break
+        # Also check state prefixes
+        if summary['complete']:
+            for prefix, retention_days in STATE_RETENTION.items():
+                cutoff = now - retention_days * DAY
+                week_start = 1704067200
+                while week_start < cutoff:
+                    week_end = week_start + 7 * DAY
+                    if week_end > cutoff:
+                        week_end = cutoff
+                    period_str = _week_str(week_start)
+                    progress_key = f"copy-archive:state:{prefix}:{period_str}"
+                    with db.tx() as c:
+                        if not db.get(c, progress_key):
+                            summary['complete'] = False
+                            break
+                    week_start = week_end
+                    if not summary['complete']:
+                        break
+                if not summary['complete']:
+                    break
 
     summary['finished_at'] = time.time()
     summary['elapsed_s'] = summary['finished_at'] - now
