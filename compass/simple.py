@@ -754,9 +754,14 @@ def _detail_futures(db, c, now, name):
         any_open = any(l.get("status") == "open" for l in legs)
         all_closed = all(l.get("status") == "closed" for l in legs)
         status = "open" if any_open else ("closed" if all_closed else t.get("status") or "?")
-        # Group P&L: sum of closed legs' P&L (open legs have no P&L yet)
-        total_pnl = sum(_num(l.get("pnl")) or 0 for l in legs if l.get("status") == "closed")
-        has_closed = any(l.get("status") == "closed" for l in legs)
+        # Group P&L: sum of closed legs' P&L (open legs have no P&L yet).
+        # Exclude data_gap legs (same as _futures): their P&L is not valid
+        # because stops/targets were never verifiably managed. E.g. SMT
+        # phantom TRAIL leg had $112k fake P&L from MNQ-price bug.
+        total_pnl = sum(_num(l.get("pnl")) or 0 for l in legs
+                        if l.get("status") == "closed" and not l.get("data_gap"))
+        has_closed = any(l.get("status") == "closed" and not l.get("data_gap") for l in legs)
+        has_data_gap = any(l.get("data_gap") for l in legs)
         pnl = total_pnl if has_closed else None
         entry = _num(t.get("entry"))
         # Exit: use the latest exit among closed legs
@@ -774,7 +779,9 @@ def _detail_futures(db, c, now, name):
                 leg_name = leg.get("leg") or "?"
                 leg_st = leg.get("status") or "?"
                 leg_tgt = _num(leg.get("target"))
-                if leg_st == "closed":
+                if leg.get("data_gap"):
+                    leg_status.append("%s: ⚠️ data gap" % leg_name.upper())
+                elif leg_st == "closed":
                     leg_pnl = _num(leg.get("pnl"))
                     leg_status.append("%s: %s" % (leg_name.upper(), _m(leg_pnl) if leg_pnl is not None else "closed"))
                 elif leg_tgt is not None:
@@ -782,6 +789,8 @@ def _detail_futures(db, c, now, name):
                 else:
                     leg_status.append("%s: trailing" % leg_name.upper())
             sub += " · " + ", ".join(leg_status)
+        if has_data_gap:
+            sub += " · ⚠️ data gap (excluded from P&L)"
         reason = t.get("exit_reason")
         orows = [["Entry", "%.2f" % entry if entry is not None else "—"],
                  ["Exit", "%.2f" % exit if exit is not None else "—"]]
