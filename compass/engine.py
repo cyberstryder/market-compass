@@ -654,6 +654,37 @@ class Engine:
                     if symbol in self.cfg.stocks and self.cfg.paper_trading: self.options(c,s,now)
                 self.db.put(c,"cursor:"+symbol,bar["ts"])
             self.swings(c,now)
+            # Earnings plays: post-earnings gap momentum (runs 9:45-10:30 AM CT)
+            # Checks OPRA tickers for earnings gaps >3%, generates 0DTE signals
+            try:
+                from .earnings_play import scan_earnings_plays
+                from .tradermatrix_intel import OPRA_TICKERS
+                earnings_signals = scan_earnings_plays(self.db, c, self.cfg, now, list(OPRA_TICKERS))
+                for sig in earnings_signals:
+                    # Create alert for 0DTE paper trading (same as scanner signals)
+                    # Uses publication.category = options_0dte so zero_dte_paper picks it up
+                    self.db.append(c, 'alert', 'setup_study', sig['symbol'], now, {
+                        'strategy': 'earnings-play-v1',
+                        'symbol': sig['symbol'],
+                        'direction': sig['direction'],
+                        'option_type': sig['option_type'],
+                        'entry': sig['entry'],
+                        'stop': sig['stop'],
+                        'target': sig['target'],
+                        'gap_pct': sig['gap_pct'],
+                        'earnings_date': sig['earnings_date'],
+                        'publication': {
+                            'category': 'options_0dte',
+                            'contract': {
+                                'symbol': sig['symbol'],
+                                'underlying': sig['symbol'],
+                            },
+                            'status': 'option_setup_new',
+                        },
+                    }, f"earnings-{sig['symbol']}-{int(now)}")
+            except Exception as e:
+                import logging
+                logging.getLogger('uvicorn.error').warning(f"Earnings play scan failed: {e}")
             if self.cfg.scanner:
                 self.scanner.scan(c,now,self)
             else:
