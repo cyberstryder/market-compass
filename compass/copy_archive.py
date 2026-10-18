@@ -126,23 +126,30 @@ def _periods_to_archive(kind, now, earliest=None):
     on large quote months. Each chunk is ~1/4 the size.
     Changed 2026-10-12: Accept earliest timestamp to skip empty weeks before
     data actually exists (was hardcoded to 2024-01-01).
+    Changed 2026-10-18: Return NEWEST weeks first (reverse chronological).
+    The old forward-from-2024 order wasted hours on empty 2024 weeks while
+    177 GB of real data sat in recent weeks. Newest-first hits data immediately.
     """
     retention = _retention_days(kind)
     if retention is None:
         return []
     cutoff = now - retention * DAY
-    # Start from earliest data (or 2024-01-01 fallback) to avoid scanning
-    # hundreds of empty weeks before data collection began
+    # Start from the CUTOFF (newest archivable week) and work backwards.
+    # This hits weeks with actual data first, instead of wasting time on
+    # empty 2024 weeks.
     periods = []
-    ts = earliest if earliest else 1704067200  # 2024-01-01 UTC fallback
-    # Align to week boundary
-    ws, _ = _week_range(ts)
+    # Start from cutoff, align to week boundary
+    ws, _ = _week_range(cutoff)
     ts = ws
-    while ts < cutoff:
+    # Work backwards to earliest (or 2024-01-01 fallback)
+    earliest_ts = earliest if earliest else 1704067200
+    while ts >= earliest_ts:
         ws, we = _week_range(ts)
         if we <= cutoff:  # Only full weeks before cutoff
             periods.append((ws, we))
-        ts = we
+        ts = ws - 7 * DAY  # Move back one week
+        if ts < earliest_ts:
+            break
     return periods
 
 
