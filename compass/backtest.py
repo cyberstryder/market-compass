@@ -165,33 +165,28 @@ def backtest_turtle_soup(bars, symbol='MNQ.c.0', levels=None,
         levels = _session_levels(bars)
     trades = []
     signals = []
-    # Track open signals (signals that haven't been executed yet)
-    # We simulate one position at a time (no stacking) for simplicity.
-    # In production, the engine allows one position per detector+symbol.
-    in_position = False
-    for i in range(50, len(bars)):
-        # If in position, skip signal generation (one position at a time)
-        if in_position:
-            # Check if position exited (handled in _simulate_trade, but we
-            # need to track it here for the loop). For simplicity, we simulate
-            # trades immediately when signal fires (no overlapping positions).
-            # The _simulate_trade function handles the full trade lifecycle.
-            # So we only get here if we're not in a position.
-            pass
+    # Use while loop (not for) so we can skip ahead after trades.
+    # For loop reassignment of i doesn't work in Python.
+    i = 50
+    # Track last signal timestamp per level to avoid duplicates
+    last_signal = {}  # (level_price, direction) -> signal_ts
+    while i < len(bars):
         # Get bars up to current (for detector)
         window = bars[:i+1]
         # ADX filter (post-2026-10-17 fix): skip if trending
         try:
             adx_val = _adx(window, 14)
             if adx_val is not None and adx_val >= adx_max:
+                i += 1
                 continue
         except Exception:
-            pass
+            adx_val = None
         # Compute sweep_ticks from ATR (if not overridden)
         st = sweep_ticks
         if st is None:
             st = _sweep_ticks(window, 0.25, atr_frac)
         # Try each level
+        sig_found = None
         for price, kind in levels:
             # Determine direction from kind
             k = (kind or '').lower()
@@ -202,6 +197,11 @@ def backtest_turtle_soup(bars, symbol='MNQ.c.0', levels=None,
             else:
                 directions = ('long', 'short')
             for direction in directions:
+                # Deduplicate: skip if we already signaled this level+direction recently
+                # (within 1 hour). Prevents duplicate signals on same setup.
+                key = (price, direction)
+                if key in last_signal and bars[i]['ts'] - last_signal[key] < 3600:
+                    continue
                 # Opposite levels for target
                 if direction == 'long':
                     opposing = [p for p, k2 in levels if k2.startswith('session_high')]
@@ -212,48 +212,51 @@ def backtest_turtle_soup(bars, symbol='MNQ.c.0', levels=None,
                     confirm_bars=confirm_bars, level_kind=kind,
                     opposing=opposing, min_rr=min_rr, buffer_mult=buffer_mult)
                 if sig:
-                    # Record signal
-                    signals.append({
-                        'signal_ts': sig['signal_ts'],
-                        'direction': sig['direction'],
-                        'entry': sig['entry'],
-                        'stop': sig['stop'],
-                        'target': sig['target'],
-                        'level_price': sig['level_price'],
-                        'rr': sig['rr'],
-                        'adx': adx_val if 'adx_val' in locals() else None,
-                    })
-                    # Simulate trade: entry at next bar (i+1)
-                    # Find entry bar index (first bar with ts > signal_ts)
-                    entry_idx = None
-                    for j in range(i+1, len(bars)):
-                        if bars[j]['ts'] > sig['signal_ts']:
-                            entry_idx = j
-                            break
-                    if entry_idx is None:
-                        continue
-                    result = _simulate_trade(entry_idx, bars, sig, symbol)
-                    if result:
-                        trades.append({
-                            'entry_ts': sig['signal_ts'],
-                            'entry': sig['entry'],
-                            'stop': sig['stop'],
-                            'target': sig['target'],
-                            'direction': sig['direction'],
-                            'level_price': sig['level_price'],
-                            **result,
-                        })
-                    # Skip ahead to after this trade exits (no overlapping)
-                    # Find the exit bar index
-                    exit_idx = entry_idx + result['bars_held'] if result else entry_idx
-                    # Jump i to exit_idx (loop will increment)
-                    # Note: This is a simplification — in reality, the detector
-                    # keeps scanning while in a position. But for backtesting,
-                    # we assume one position at a time.
-                    i = exit_idx
+                    last_signal[key] = sig['signal_ts']
+                    sig_found = sig
                     break
-            if sig:
+            if sig_found:
                 break
+        if sig_found:
+            sig = sig_found
+            # Record signal
+            signals.append({
+                'signal_ts': sig['signal_ts'],
+                'direction': sig['direction'],
+                'entry': sig['entry'],
+                'stop': sig['stop'],
+                'target': sig['target'],
+                'level_price': sig['level_price'],
+                'rr': sig['rr'],
+                'adx': adx_val,
+            })
+            # Simulate trade: entry at next bar (i+1)
+            # Find entry bar index (first bar with ts > signal_ts)
+            entry_idx = None
+            for j in range(i+1, len(bars)):
+                if bars[j]['ts'] > sig['signal_ts']:
+                    entry_idx = j
+                    break
+            if entry_idx is None:
+                i += 1
+                continue
+            result = _simulate_trade(entry_idx, bars, sig, symbol)
+            if result:
+                trades.append({
+                    'entry_ts': sig['signal_ts'],
+                    'entry': sig['entry'],
+                    'stop': sig['stop'],
+                    'target': sig['target'],
+                    'direction': sig['direction'],
+                    'level_price': sig['level_price'],
+                    **result,
+                })
+                # Skip ahead to after this trade exits (no overlapping)
+                i = entry_idx + result['bars_held'] + 1
+            else:
+                i += 1
+        else:
+            i += 1
     # Calculate summary
     if not trades:
         summary = {'trades': 0, 'pnl': 0.0, 'win_rate': 0.0, 'wins': 0, 'losses': 0}
@@ -319,20 +322,32 @@ def backtest_aoi_zones(bars, symbol='MES.c.0', session_start_hour=8, session_end
         return {'trades': [], 'summary': {'error': 'insufficient bars'}, 'signals': []}
     trades = []
     signals = []
-    for i in range(30, len(bars)):
+    # Use while loop (not for) so we can skip ahead after trades.
+    i = 30
+    # Track last OB formed_ts to avoid duplicate signals on same OB
+    last_ob_ts = None
+    while i < len(bars):
         # Session filter (post-2026-10-17 fix): only trade 08:00-15:00 CT
         dt = datetime.fromtimestamp(bars[i]['ts'], CT)
         if not (session_start_hour <= dt.hour < session_end_hour):
+            i += 1
             continue
         window = bars[:i+1]
         # Find order block in last 400 bars
         ob = find_order_block(window[-400:], disp_atr_mult=disp_atr_mult)
         if not ob:
+            i += 1
             continue
+        # Deduplicate: skip if same OB as last signal
+        if ob.get('formed_ts') == last_ob_ts:
+            i += 1
+            continue
+        last_ob_ts = ob.get('formed_ts')
         # Get trade levels (with 0.5x ATR stop, post-fix)
         # Note: _ob_trade_levels uses 0.5x ATR after 2026-10-17 fix
         levels = _ob_trade_levels(ob, window[-1]['c'])
         if not levels:
+            i += 1
             continue
         signals.append({
             'signal_ts': bars[i]['ts'],
@@ -346,6 +361,7 @@ def backtest_aoi_zones(bars, symbol='MES.c.0', session_start_hour=8, session_end
         # Simulate trade: entry at next bar
         entry_idx = i + 1
         if entry_idx >= len(bars):
+            i += 1
             continue
         result = _simulate_trade(entry_idx, bars, levels, symbol)
         if result:
@@ -358,7 +374,9 @@ def backtest_aoi_zones(bars, symbol='MES.c.0', session_start_hour=8, session_end
                 **result,
             })
             # Skip ahead (one position at a time)
-            i = entry_idx + result['bars_held']
+            i = entry_idx + result['bars_held'] + 1
+        else:
+            i += 1
     # Summary (same as Turtle Soup)
     if not trades:
         summary = {'trades': 0, 'pnl': 0.0, 'win_rate': 0.0, 'wins': 0, 'losses': 0}
