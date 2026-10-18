@@ -1100,6 +1100,58 @@ a{color:#888}</style></head><body>
             logging.getLogger('uvicorn.error').exception('backtest-scalp failed')
             return {'ok': False, 'error': 'Backtest failed. Check server logs.'}
 
+    @app.post('/api/admin/backtest-futures')
+    @app.get('/api/admin/backtest-futures')
+    def backtest_futures(request: Request):
+        """Backtest ICT futures detectors on historical bars.
+
+        Runs detector pure functions on bars from the DB, simulates
+        execution, reports P&L. Used to validate fixes before deploying.
+
+        Query params:
+            detector: turtle_soup (default) or aoi_zones
+            symbol: MNQ.c.0 (default), MES.c.0, MCL.v.0, MYM.c.0, etc.
+            days: How many days back to test (default 30, max 90)
+            Use POST for longer runs (GET has URL length limits).
+
+        Returns: {ok, detector, symbol, days, summary, trades, signals}
+        """
+        try:
+            detector = request.query_params.get('detector', 'turtle_soup').lower()
+            symbol = request.query_params.get('symbol', 'MNQ.c.0')
+            days = int(request.query_params.get('days', 30))
+            days = max(1, min(days, 90))
+            # Load bars from DB (bar_window keys)
+            from .ict_common import ict_bars
+            from .backtest import backtest_turtle_soup, backtest_aoi_zones
+            with db.tx() as c:
+                bars = ict_bars(db, c, symbol, limit=10000)
+            if not bars:
+                return {'ok': False, 'error': f'No bars for {symbol}'}
+            # Filter to last N days
+            import time as _time
+            cutoff = _time.time() - days * 86400
+            bars = [b for b in bars if b['ts'] >= cutoff]
+            if len(bars) < 50:
+                return {'ok': False, 'error': f'Only {len(bars)} bars for {symbol} in last {days}d, need 50+'}
+            if detector == 'turtle_soup':
+                result = backtest_turtle_soup(bars, symbol=symbol)
+            elif detector == 'aoi_zones':
+                result = backtest_aoi_zones(bars, symbol=symbol)
+            else:
+                return {'ok': False, 'error': f'Unknown detector: {detector}. Use turtle_soup or aoi_zones.'}
+            return {
+                'ok': True, 'detector': detector, 'symbol': symbol, 'days': days,
+                'bars': len(bars), 'summary': result['summary'],
+                'trades': result['trades'][:100],  # Limit to 100 for response size
+                'n_trades': len(result['trades']),
+                'n_signals': len(result['signals']),
+            }
+        except Exception as e:
+            import logging
+            logging.getLogger('uvicorn.error').exception('backtest-futures failed')
+            return {'ok': False, 'error': 'Backtest failed. Check server logs.'}
+
     @app.post('/api/admin/archive-create-index')
     @app.get('/api/admin/archive-create-index')
     def post_archive_create_index():
