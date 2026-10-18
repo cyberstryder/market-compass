@@ -612,7 +612,8 @@ class Engine:
                     from .tradermatrix_intel import refresh_intel
                     refresh_intel(self.db, c)
             except Exception as e:
-                import logging
+                # NOTE: Do NOT import logging here - it shadows the module-level
+                # logging import and causes UnboundLocalError later in tick().
                 logging.getLogger('uvicorn.error').warning(f"Intel refresh failed: {e}")
             if self.cfg.paper_trading:
                 paper_risk.ledgers(self.db,c,now,persist=True)
@@ -683,7 +684,7 @@ class Engine:
                         },
                     }, f"earnings-{sig['symbol']}-{int(now)}")
             except Exception as e:
-                import logging
+                # NOTE: Do NOT import logging here - it shadows module-level import
                 logging.getLogger('uvicorn.error').warning(f"Earnings play scan failed: {e}")
             if self.cfg.scanner:
                 self.scanner.scan(c,now,self)
