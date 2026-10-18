@@ -187,7 +187,7 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
@@ -211,7 +211,7 @@ def create_app(cfg=None):
                 return JSONResponse({"detail":"Invalid origin"},status_code=403)
             try: size=int(request.headers.get("content-length","0"))
             except ValueError: return JSONResponse({"detail":"Invalid content length"},status_code=400)
-            if size>(131072 if path=="/api/native/smoothers/config" else 32768 if path.startswith("/hooks/native/morning") else 16384):
+            if size>(131072 if path=="/api/native/smoothers/config" else 65536 if path=="/api/tradermatrix-intel/web-scrape" else 32768 if path.startswith("/hooks/native/morning") else 16384):
                 return JSONResponse({"detail":"Request too large"},status_code=413)
         response=await call_next(request)
         response.headers["X-Content-Type-Options"]="nosniff"
@@ -1205,6 +1205,60 @@ a{color:#888}</style></head><body>
             import logging
             logging.getLogger('uvicorn.error').exception('tradermatrix-intel failed')
             return {"ok": False, "error": str(e)}
+
+    @app.post('/api/tradermatrix-intel/web-scrape')
+    async def tradermatrix_intel_web_scrape(request: Request):
+        """Store web-scraped TraderMatrix tool data (Sector Flow, Earnings Flow,
+        Reversal Finder).
+
+        Public for cron. Evidence-only store: the scheduled tradermatrix-web-scrape
+        worker (3x daily) POSTs the JSON it scraped from the three web-only tools
+        (no API endpoints exist for them). The engine and Simple page read it back
+        via GET /api/tradermatrix-intel. Nothing consumes it for order generation,
+        so a malformed or hostile payload cannot cause trades; schema-validated
+        anyway and malformed payloads are rejected.
+        """
+        try:
+            payload = await request.json()
+        except Exception:
+            return {"ok": False, "error": "Invalid JSON body"}
+        if not isinstance(payload, dict):
+            return {"ok": False, "error": "Body must be a JSON object"}
+        run = payload.get("run")
+        if run not in ("morning", "midday", "afternoon"):
+            return {"ok": False, "error": "run must be 'morning', 'midday' or 'afternoon'"}
+        errors = payload.get("errors", [])
+        if not isinstance(errors, list):
+            return {"ok": False, "error": "errors must be a list"}
+        record = {
+            "date": payload.get("date"),
+            "run": run,
+            "scraped_at": payload.get("scraped_at"),
+            "sector_flow": payload.get("sector_flow", []),
+            "earnings_flow": payload.get("earnings_flow", []),
+            "reversal_finder": payload.get("reversal_finder", []),
+            "errors": errors[:20],
+        }
+        for key in ("sector_flow", "earnings_flow", "reversal_finder"):
+            rows = record[key]
+            if not isinstance(rows, list):
+                return {"ok": False, "error": f"{key} must be a list"}
+            if len(rows) > 200:
+                return {"ok": False, "error": f"{key} too large (max 200 rows)"}
+            for row in rows:
+                if not isinstance(row, dict):
+                    return {"ok": False, "error": f"{key} rows must be objects"}
+        try:
+            with db.tx() as c:
+                db.put(c, "intel:web_scrape", record)
+            return {"ok": True, "stored": True, "run": run,
+                    "counts": {k: len(record[k])
+                               for k in ("sector_flow", "earnings_flow",
+                                         "reversal_finder")}}
+        except Exception:
+            import logging
+            logging.getLogger('uvicorn.error').exception('web-scrape store failed')
+            return {"ok": False, "error": "Store failed. Check server logs."}
 
     @app.post('/api/admin/archive-create-index')
     @app.get('/api/admin/archive-create-index')
