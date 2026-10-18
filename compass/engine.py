@@ -602,6 +602,18 @@ class Engine:
         now=now or time.time()
         with self.db.tx() as c:
             if not self.db.lease(c,"engine",self.owner,30): return
+            # TraderMatrix intel refresh (hourly): earnings, economic calendar, market health
+            # Used for: earnings ticker flags, news pause, regime filter
+            try:
+                last_refresh = self.db.get(c, "intel:last_refresh", {})
+                last_at = last_refresh.get("at", 0)
+                # Refresh if never refreshed or >1 hour ago
+                if now - last_at > 3600:
+                    from .tradermatrix_intel import refresh_intel
+                    refresh_intel(self.db, c)
+            except Exception as e:
+                import logging
+                logging.getLogger('uvicorn.error').warning(f"Intel refresh failed: {e}")
             if self.cfg.paper_trading:
                 paper_risk.ledgers(self.db,c,now,persist=True)
             active_policy=policy(self.cfg)

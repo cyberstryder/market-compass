@@ -135,6 +135,17 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
     sess = futures_session(now, symbol)
     if not sess['is_open']:
         return {'submitted': False, 'reason': 'market_closed'}
+    # News pause: Don't enter new futures positions during high-impact
+    # economic releases (CPI, NFP, FOMC, etc.). News chop kills entries.
+    # Check TraderMatrix Economic Calendar intel (refreshed hourly by engine).
+    try:
+        from .tradermatrix_intel import should_pause_for_news
+        pause, event = should_pause_for_news(db, c)
+        if pause:
+            return {'submitted': False, 'reason': 'news_pause',
+                    'event': event.get('title') if event else 'high-impact news'}
+    except Exception:
+        pass  # Intel not available, proceed without news filter
     flat = flatten_at if flatten_at is not None else sess['flatten_at']
     if now >= flat:
         return {'submitted': False, 'reason': 'past_flatten'}

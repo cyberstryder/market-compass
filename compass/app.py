@@ -187,7 +187,7 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
@@ -1151,6 +1151,42 @@ a{color:#888}</style></head><body>
             import logging
             logging.getLogger('uvicorn.error').exception('backtest-futures failed')
             return {'ok': False, 'error': 'Backtest failed. Check server logs.'}
+
+    @app.get('/api/tradermatrix-intel')
+    def tradermatrix_intel(request: Request):
+        """TraderMatrix intelligence: Earnings, Economic Calendar, Market Health.
+        
+        Returns cached intel data from DB (refreshed hourly by engine).
+        Also includes web-scraped data (Sector Flow, Reversal Finder, Earnings Flow)
+        if available from scheduled scrape job.
+        
+        Returns: {ok, earnings, economic, market_health, web_scrape, last_refresh}
+        """
+        try:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            CT = ZoneInfo("America/Chicago")
+            today_str = datetime.now(CT).strftime("%Y-%m-%d")
+            with db.tx() as c:
+                earnings = db.get(c, f"intel:earnings:{today_str}")
+                economic = db.get(c, f"intel:economic:{today_str}")
+                health = db.get(c, "intel:market_health")
+                last_refresh = db.get(c, "intel:last_refresh")
+                # Web-scraped data (from cron job)
+                web = db.get(c, "intel:web_scrape")
+            return {
+                "ok": True,
+                "date": today_str,
+                "earnings": earnings,
+                "economic": economic,
+                "market_health": health,
+                "web_scrape": web,
+                "last_refresh": last_refresh,
+            }
+        except Exception as e:
+            import logging
+            logging.getLogger('uvicorn.error').exception('tradermatrix-intel failed')
+            return {"ok": False, "error": str(e)}
 
     @app.post('/api/admin/archive-create-index')
     @app.get('/api/admin/archive-create-index')
