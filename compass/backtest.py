@@ -27,8 +27,9 @@ from .market import number
 def _session_levels(bars):
     """Compute session highs/lows from bars.
 
-    Groups bars by day (CT), returns [(price, kind)] for each day's high/low.
-    Used as levels for Turtle Soup.
+    Groups bars by day (CT), returns [(price, kind, day)] for each day's high/low.
+    Used as levels for Turtle Soup. Day is included so backtest can filter
+    to recent levels only (stale levels from 30 days ago are not traded).
     """
     from datetime import datetime
     from .market import CT
@@ -43,8 +44,8 @@ def _session_levels(bars):
             by_day[day]['low'] = min(by_day[day]['low'], b['l'])
     levels = []
     for day, hl in sorted(by_day.items()):
-        levels.append((hl['high'], 'session_high'))
-        levels.append((hl['low'], 'session_low'))
+        levels.append((hl['high'], 'session_high', day))
+        levels.append((hl['low'], 'session_low', day))
     return levels
 
 
@@ -185,9 +186,23 @@ def backtest_turtle_soup(bars, symbol='MNQ.c.0', levels=None,
         st = sweep_ticks
         if st is None:
             st = _sweep_ticks(window, 0.25, atr_frac)
-        # Try each level
+        # Try each level (only recent levels, last 5 days)
+        # Stale levels from 30 days ago are not meaningful support/resistance.
+        from datetime import datetime
+        from .market import CT as _CT
+        current_day = datetime.fromtimestamp(bars[i]['ts'], _CT).date()
+        recent_levels = []
+        for lvl in levels:
+            if len(lvl) == 3:
+                price, kind, day = lvl
+                # Only use levels from last 5 days
+                if (current_day - day).days <= 5:
+                    recent_levels.append((price, kind))
+            else:
+                # Backward compat: levels without day (shouldn't happen)
+                recent_levels.append((lvl[0], lvl[1]))
         sig_found = None
-        for price, kind in levels:
+        for price, kind in recent_levels:
             # Determine direction from kind
             k = (kind or '').lower()
             if 'low' in k:
@@ -202,11 +217,11 @@ def backtest_turtle_soup(bars, symbol='MNQ.c.0', levels=None,
                 key = (price, direction)
                 if key in last_signal and bars[i]['ts'] - last_signal[key] < 3600:
                     continue
-                # Opposite levels for target
+                # Opposite levels for target (also only recent)
                 if direction == 'long':
-                    opposing = [p for p, k2 in levels if k2.startswith('session_high')]
+                    opposing = [p for p, k2 in recent_levels if k2.startswith('session_high')]
                 else:
-                    opposing = [p for p, k2 in levels if k2.startswith('session_low')]
+                    opposing = [p for p, k2 in recent_levels if k2.startswith('session_low')]
                 sig = detect_sweep(
                     window, price, direction, sweep_ticks=st,
                     confirm_bars=confirm_bars, level_kind=kind,
