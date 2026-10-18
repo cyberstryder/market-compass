@@ -607,6 +607,17 @@ class Engine:
             try:
                 last_refresh = self.db.get(c, "intel:last_refresh", {})
                 last_at = last_refresh.get("at", 0)
+                # FIX (2026-10-18): Handle ISO string timestamps.
+                # refresh_intel writes at as ISO string (now.isoformat()),
+                # but now is a float timestamp. Parse the string.
+                if isinstance(last_at, str):
+                    try:
+                        from datetime import datetime
+                        # Parse ISO format with timezone
+                        dt = datetime.fromisoformat(last_at)
+                        last_at = dt.timestamp()
+                    except Exception:
+                        last_at = 0
                 # Refresh if never refreshed or >1 hour ago
                 if now - last_at > 3600:
                     from .tradermatrix_intel import refresh_intel
