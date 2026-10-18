@@ -24,15 +24,29 @@ endpoint. This module is pure — it doesn't touch the DB.
 from .market import number
 
 
-def _session_levels(bars):
+def _session_levels(bars, up_to_idx=None):
     """Compute session highs/lows from bars.
 
     Groups bars by day (CT), returns [(price, kind, day)] for each day's high/low.
     Used as levels for Turtle Soup. Day is included so backtest can filter
     to recent levels only (stale levels from 30 days ago are not traded).
+
+    Args:
+        bars: List of bar dicts.
+        up_to_idx: If provided, only use bars[:up_to_idx+1] (progressive mode).
+            This prevents LOOKAHEAD: the current day's FINAL high/low are not
+            knowable until the day ends. In progressive mode, the forming day
+            contributes its running high/low from bars seen so far only.
+
+    FIX (2026-10-18): Progressive levels eliminate lookahead. Previously
+    _session_levels(bars) was called once on the FULL array, so the current
+    day's final high/low were usable as targets — a target was taken from a
+    bar two days in the future.
     """
     from datetime import datetime
     from .market import CT
+    if up_to_idx is not None:
+        bars = bars[:up_to_idx+1]
     by_day = {}
     for b in bars:
         dt = datetime.fromtimestamp(b['ts'], CT)
@@ -176,18 +190,24 @@ def backtest_turtle_soup(bars, symbol='MNQ.c.0', levels=None,
     from .regime import adx as _adx
     if not bars or len(bars) < 50:
         return {'trades': [], 'summary': {'error': 'insufficient bars'}, 'signals': []}
-    if levels is None:
-        levels = _session_levels(bars)
+    # FIX (2026-10-18): Do NOT precompute levels from full array (LOOKAHEAD).
+    # Levels are computed progressively inside the loop via _session_levels(bars, up_to_idx=i).
     trades = []
     signals = []
     # Use while loop (not for) so we can skip ahead after trades.
     # For loop reassignment of i doesn't work in Python.
     i = 50
-    # Track last signal timestamp per level to avoid duplicates
-    last_signal = {}  # (level_price, direction) -> signal_ts
+    # FIX (2026-10-18): Track seen sweep events, not level+direction.
+    # Old: key=(level_price, direction) with stale ts → one setup re-fired 53 times
+    #   because nearby levels created different keys for the same price action.
+    # New: one physical sweep event → one trade. Keyed by (sweep_bar_ts, direction).
+    seen_sweeps = set()  # (sweep_bar_ts, direction) -> already traded
     while i < len(bars):
         # Get bars up to current (for detector)
         window = bars[:i+1]
+        # FIX (2026-10-18) LOOKAHEAD: Compute levels progressively from bars seen so far.
+        # The forming day contributes its RUNNING high/low, not its final high/low.
+        levels = _session_levels(bars, up_to_idx=i)
         # ADX filter (post-2026-10-17 fix): skip if trending
         try:
             adx_val = _adx(window, 14)
@@ -226,11 +246,6 @@ def backtest_turtle_soup(bars, symbol='MNQ.c.0', levels=None,
             else:
                 directions = ('long', 'short')
             for direction in directions:
-                # Deduplicate: skip if we already signaled this level+direction recently
-                # (within 1 hour). Prevents duplicate signals on same setup.
-                key = (price, direction)
-                if key in last_signal and bars[i]['ts'] - last_signal[key] < 3600:
-                    continue
                 # Opposite levels for target (also only recent)
                 if direction == 'long':
                     opposing = [p for p, k2 in recent_levels if k2.startswith('session_high')]
@@ -241,7 +256,18 @@ def backtest_turtle_soup(bars, symbol='MNQ.c.0', levels=None,
                     confirm_bars=confirm_bars, level_kind=kind,
                     opposing=opposing, min_rr=min_rr, buffer_mult=buffer_mult)
                 if sig:
-                    last_signal[key] = sig['signal_ts']
+                    # FIX (2026-10-18) STALE SIGNALS: Only accept freshly-confirmed signals.
+                    # Old code accepted signals hours after signal_ts, modeling fills
+                    # at hours-old prices. Require signal_ts == current bar's ts.
+                    if sig.get('signal_ts') != bars[i]['ts']:
+                        continue
+                    # FIX (2026-10-18) DUPLICATES: One sweep event → one trade.
+                    # Use sweep_ts (not level_price) so nearby levels swept by the
+                    # same price action don't each fire a separate signal.
+                    sweep_key = (sig.get('sweep_ts', sig['signal_ts']), sig['direction'])
+                    if sweep_key in seen_sweeps:
+                        continue
+                    seen_sweeps.add(sweep_key)
                     sig_found = sig
                     break
             if sig_found:
