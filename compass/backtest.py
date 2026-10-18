@@ -49,7 +49,7 @@ def _session_levels(bars):
     return levels
 
 
-def _simulate_trade(entry_bar_idx, bars, signal, symbol, flatten_hour=15, flatten_min=45):
+def _simulate_trade(entry_bar_idx, bars, signal, symbol, flatten_hour=15, flatten_min=45, max_bars_held=100):
     """Simulate one trade from entry to exit.
 
     Args:
@@ -58,6 +58,8 @@ def _simulate_trade(entry_bar_idx, bars, signal, symbol, flatten_hour=15, flatte
         signal: Dict with entry, stop, target, direction.
         symbol: Symbol for P&L calculation (needs spec).
         flatten_hour/min: Session flatten time (CT).
+        max_bars_held: Maximum bars to hold before forcing exit (prevents
+            runaway trades if flatten check fails, e.g., daily bars).
 
     Returns:
         Dict with exit price, exit reason, P&L, bars held, or None if
@@ -79,6 +81,18 @@ def _simulate_trade(entry_bar_idx, bars, signal, symbol, flatten_hour=15, flatte
     # Simulate: check each bar after entry for stop/target hit
     for j in range(entry_bar_idx, len(bars)):
         bar = bars[j]
+        # Max hold: force exit if trade held too long (prevents runaway)
+        # This catches cases where flatten check fails (e.g., daily bars,
+        # timestamp issues, or bars not in chronological order).
+        if j - entry_bar_idx >= max_bars_held:
+            exit_price = bar['c']
+            pnl = (exit_price - entry) * mult if direction == 'long' else (entry - exit_price) * mult
+            pnl -= 2 * fee
+            return {
+                'exit_price': exit_price, 'exit_reason': 'max_hold',
+                'pnl': pnl, 'bars_held': j - entry_bar_idx,
+                'exit_ts': bar['ts'],
+            }
         # Check flatten time (15:45 CT)
         from datetime import datetime
         from .market import CT

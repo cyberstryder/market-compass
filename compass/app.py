@@ -187,7 +187,7 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
@@ -1151,6 +1151,24 @@ a{color:#888}</style></head><body>
             import logging
             logging.getLogger('uvicorn.error').exception('backtest-futures failed')
             return {'ok': False, 'error': 'Backtest failed. Check server logs.'}
+
+    @app.post('/api/tradermatrix-intel/refresh')
+    @app.get('/api/tradermatrix-intel/refresh')
+    def tradermatrix_intel_refresh(request: Request):
+        """Force immediate refresh of TraderMatrix intel (bypass hourly timer).
+        
+        Fetches Earnings Calendar, Economic Calendar, Market Health from API
+        and stores in DB. Returns the fetched data.
+        """
+        try:
+            from .tradermatrix_intel import refresh_intel
+            with db.tx() as c:
+                result = refresh_intel(db, c)
+            return {"ok": True, "refreshed": result}
+        except Exception as e:
+            import logging
+            logging.getLogger('uvicorn.error').exception('intel refresh failed')
+            return {"ok": False, "error": str(e)}
 
     @app.get('/api/tradermatrix-intel')
     def tradermatrix_intel(request: Request):
