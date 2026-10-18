@@ -187,7 +187,7 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/backtest-scalp","/api/alpaca-stream-status","/api/option-stream-parity"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
