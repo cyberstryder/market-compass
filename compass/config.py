@@ -23,7 +23,7 @@ class Config:
     # from cfg.stocks which drives every scanner and trading path.
     sector_etfs: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("SECTOR_ETF_SYMBOLS","XLK,XLF,XLE,XLV,XLY,XLP,XLI,XLB,XLU,XLRE,XLC").split(",") if s.strip()))
     futures: tuple = field(default_factory=lambda: tuple(env("FUTURES_SYMBOLS","MES.c.0,MNQ.c.0").split(",")))
-    extra_futures: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("EXTRA_FUTURES_SYMBOLS","MGC.v.0,GC.v.0,SIL.v.0,SI.v.0,MCL.v.0,CL.v.0,YM.v.0,MYM.v.0").split(",") if s.strip()))
+    extra_futures: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("EXTRA_FUTURES_SYMBOLS","MGC.v.0,GC.v.0,MCL.v.0,CL.v.0,YM.v.0,MYM.v.0").split(",") if s.strip()))
     alpaca_key: str = field(default_factory=lambda: env("APCA_API_KEY_ID"))
     alpaca_secret: str = field(default_factory=lambda: env("APCA_API_SECRET_KEY"))
     # Dedicated OPRA stream keys (defaults to main keys if not set).

@@ -194,7 +194,7 @@ def _futures(db, c, now):
             for t in v), 2)
     return (_block(
         "futures", "Futures Micros",
-        "Paper-traded signals on micro futures. Mix/match (2026-10-14): only profitable detector+symbol combos — AOI Fade on MCL/MNQ, AOI Zones on MES, BOS+FVG on MNQ/SIL, BOS+GZ on MCL, Turtle Soup on MCL.",
+        "Paper-traded signals on micro futures. Mix/match (2026-10-14): only profitable detector+symbol combos — AOI Fade on MCL/MNQ, AOI Zones on MES, BOS+FVG on MNQ, BOS+GZ on MCL, Turtle Soup on MCL.",
         "Intraday, whenever a method's setup triggers. Everything closes by 3:45 PM CT.",
         "Win = the paper trade closed with a profit, in micro dollars after fees.",
         stats, drill), by_day)
