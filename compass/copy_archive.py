@@ -390,6 +390,9 @@ def run_copy_chunk(db, client, bucket, max_months=6):
     the actual data (paper trades, positions, health). Events archiving was
     using all 6 chunks on empty weeks (bar/2024-W13 through W30, all 0 rows),
     so state never got a chance. State is prioritized now.
+    Changed 2026-10-18: EVENTS FIRST. The events table is 177 GB (97% of DB).
+    State is 0.88 GB and its archiving finds 0 rows (key-format mismatch).
+    Events must be prioritized to prevent DB from hitting budget.
     """
     now = time.time()
     summary = {'chunks_done': 0, 'rows': 0, 'bytes': 0,
@@ -414,10 +417,14 @@ def run_copy_chunk(db, client, bucket, max_months=6):
     # bulk of Postgres data lives (paper trades, health, etc.). Previously,
     # state ran AFTER events, but events used all chunks on empty weeks, so
     # state never ran. Now state gets priority.
-    for prefix, retention_days in STATE_RETENTION.items():
-        if chunks_left <= 0:
-            summary['complete'] = False
-            break
+    # DISABLED 2026-10-18: State archiving finds 0 rows (key-format mismatch).
+    # Events (177 GB) must be prioritized. State will run after events complete.
+    # for prefix, retention_days in STATE_RETENTION.items():
+    if False:  # State archiving disabled until key-format fixed
+        for prefix, retention_days in STATE_RETENTION.items():
+            if chunks_left <= 0:
+                summary['complete'] = False
+                break
         cutoff = now - retention_days * DAY
         # Archive weeks from 2024-01-01 to cutoff, in weekly chunks
         # Start from oldest week, work forward
@@ -452,10 +459,10 @@ def run_copy_chunk(db, client, bucket, max_months=6):
                 summary['complete'] = False
                 break
             week_start = week_end
-        if 'error' in summary:
-            break
+            if 'error' in summary:
+                break
 
-    # EVENTS SECOND: Only if chunks left after state. Events archiving
+    # EVENTS FIRST (2026-10-18): The events table is 177 GB, 97% of DB.
     # processes quote, bar, mapping, etc. Many weeks are empty (0 rows).
     if chunks_left > 0 and 'error' not in summary:
         for kind in kinds:
