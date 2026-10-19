@@ -187,7 +187,7 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
@@ -747,6 +747,63 @@ a{color:#888}</style></head><body>
             import logging
             logging.getLogger('uvicorn.error').exception('copy-archive-chunk failed')
             return {'ok': False, 'error': 'Archive chunk failed. Check server logs.'}
+
+    @app.get('/api/admin/archive-coverage')
+    def get_archive_coverage():
+        """Per-kind copy-archive coverage + prune progress. Public for cron."""
+        from . import archive_prune_copy
+        try:
+            return {'ok': True, **archive_prune_copy.coverage(db)}
+        except Exception:
+            import logging
+            logging.getLogger('uvicorn.error').exception('archive-coverage failed')
+            return {'ok': False, 'error': 'Coverage check failed. Check server logs.'}
+
+    @app.post('/api/admin/archive-verify-samples')
+    @app.get('/api/admin/archive-verify-samples')
+    def post_archive_verify_samples():
+        """Independent R2 readback: re-download sampled archived objects and
+        recompute sha256 against the archive progress records. Public for cron."""
+        from .copy_archive import _s3_client
+        from . import archive_prune_copy
+        import os
+        try:
+            result = archive_prune_copy.verify_sample(
+                db, _s3_client(), os.environ['ARCHIVE_BUCKET'])
+            return {'ok': result['ok'], **result}
+        except Exception:
+            import logging
+            logging.getLogger('uvicorn.error').exception('archive-verify-samples failed')
+            return {'ok': False, 'error': 'Verify failed. Check server logs.'}
+
+    @app.post('/api/admin/archive-prune-chunk')
+    def post_archive_prune_chunk():
+        """Delete ONE batch of the oldest week whose R2 copy re-verifies at
+        prune time (sha256 + exact row count). Refusals are sticky per week
+        and reported, never silently skipped. Public for cron like the other
+        archive endpoints; safety lives in the gate, not the route."""
+        from .copy_archive import _s3_client
+        from . import archive_prune_copy
+        import os
+        try:
+            result = archive_prune_copy.prune_next(
+                db, _s3_client(), os.environ['ARCHIVE_BUCKET'])
+            return {'ok': result.get('ok', False), **result}
+        except Exception:
+            import logging
+            logging.getLogger('uvicorn.error').exception('archive-prune-chunk failed')
+            return {'ok': False, 'error': 'Prune chunk failed. Check server logs.'}
+
+    @app.get('/api/admin/archive-prune-status')
+    def get_archive_prune_status():
+        """Prune totals: weeks done, rows deleted, refusals. Public for cron."""
+        from . import archive_prune_copy
+        try:
+            return {'ok': True, **archive_prune_copy.prune_status(db)}
+        except Exception:
+            import logging
+            logging.getLogger('uvicorn.error').exception('archive-prune-status failed')
+            return {'ok': False, 'error': 'Prune status failed. Check server logs.'}
 
     @app.post('/api/admin/archive-trigger')
     @app.get('/api/admin/archive-trigger')
