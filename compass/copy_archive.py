@@ -414,8 +414,11 @@ def run_copy_chunk(db, client, bucket, max_months=6):
     # Vendor_flow is TraderMatrix vendor flow snapshots, not in archive tables.
     # 2026-10-15: Skip flow too - 2024-W01 to W06 all 0 rows, same pattern.
     # Flow is Flow Pulse data, not populated in archive tables.
-    kinds = [k for k in list(RETENTION.keys()) + list(AUDIT_KINDS) + ['alert_delivery']
-             if k not in ('chain_archive', 'matrix_raw', 'vendor_flow', 'flow')]
+    # 2026-10-19: Skip alert_delivery too - 45+ runs (150-195) of 0-row empty
+    # weeks, walking 2025-W47 to 2024-W28 with no data. It's blocking the
+    # worker from cycling back to heavy tables (quote, bar). Postgres at 91%.
+    kinds = [k for k in list(RETENTION.keys()) + list(AUDIT_KINDS)
+             if k not in ('chain_archive', 'matrix_raw', 'vendor_flow', 'flow', 'alert_delivery')]
 
     chunks_left = max_months
 
