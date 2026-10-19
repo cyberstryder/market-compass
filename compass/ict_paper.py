@@ -375,16 +375,18 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
             if skip_reason:
                 db.health('traderspost_webhook', 'skipped', skip_reason)
             else:
-                # 2026-10-15: First leg uses buy/sell to open position. Subsequent legs
-                # (T2, Trail) use 'add' action. TradersPost rejects buy/sell if a
-                # position is already open (unless "Allow add to position" is checked).
-                # Using 'add' for legs 2+ ensures they execute even if that checkbox is off.
-                for idx, trade_id in enumerate(submitted_ids):
-                    leg_trade = db.get(c, 'trade:' + trade_id)
+                # 2026-10-18: TradersPost gets ONLY the first leg (T1, 2 contracts).
+                # The 2/2/1 leg structure (T1+T2+Trail = 5 contracts) is for paper
+                # tracking only. TradersPost cannot handle multi-leg "add" orders —
+                # it stacks positions instead of creating brackets. Sending T2/Trail
+                # as "add" caused 4-contract stacking on MYM (2026-10-18).
+                # TradersPost now receives a single clean bracket: 2 contracts with
+                # the detector's target and stop. Paper keeps the full 2/2/1.
+                if submitted_ids:
+                    leg_trade = db.get(c, 'trade:' + submitted_ids[0])
                     if leg_trade:
-                        # First leg opens, subsequent legs add to the position
                         leg_trade = dict(leg_trade)
-                        leg_trade['is_first_leg'] = (idx == 0)
+                        leg_trade['is_first_leg'] = True
                         traderspost.send_signal(cfg, db, leg_trade)
     except Exception as e:
         try:
