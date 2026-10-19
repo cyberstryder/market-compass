@@ -55,6 +55,22 @@ def is_enabled(cfg):
     return bool(getattr(cfg, 'traderspost_enabled', False))
 
 
+def _webhook_urls(cfg):
+    """Return list of configured TradersPost webhook URLs.
+    
+    Supports a second webhook for a different prop firm (2026-10-18).
+    Both get the same signals with the same rules.
+    """
+    urls = []
+    url1 = getattr(cfg, 'traderspost_webhook_url', '')
+    if url1:
+        urls.append(url1)
+    url2 = getattr(cfg, 'traderspost_webhook_url_2', '')
+    if url2:
+        urls.append(url2)
+    return urls
+
+
 def map_symbol(compass_symbol):
     """Map Compass symbol to TradersPost root symbol."""
     return SYMBOL_MAP.get(compass_symbol, compass_symbol)
@@ -159,8 +175,8 @@ def send_close_signal(cfg, db, symbol):
     if not is_enabled(cfg):
         return (False, 'TradersPost disabled')
 
-    webhook_url = getattr(cfg, 'traderspost_webhook_url', '')
-    if not webhook_url:
+    urls = _webhook_urls(cfg)
+    if not urls:
         return (False, 'TRADERSPOST_WEBHOOK_URL not set')
 
     ticker = map_symbol(symbol)
@@ -173,43 +189,50 @@ def send_close_signal(cfg, db, symbol):
     }
 
     data = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(
-        webhook_url,
-        data=data,
-        headers={'Content-Type': 'application/json'},
-        method='POST'
-    )
+    results = []
+    for webhook_url in urls:
+        req = urllib.request.Request(
+            webhook_url,
+            data=data,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
 
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            body = resp.read().decode('utf-8', errors='ignore')[:500]
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read().decode('utf-8', errors='ignore')[:500]
+                try:
+                    with db.tx() as c:
+                        db.health('traderspost_webhook', 'ok',
+                                  f"Flatten {ticker}",
+                                  at=time.time(), ticker=ticker, action='close')
+                except Exception:
+                    pass
+                results.append((True, f"Flatten sent for {ticker}: {body[:100]}"))
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode('utf-8', errors='ignore')[:500]
             try:
                 with db.tx() as c:
-                    db.health('traderspost_webhook', 'ok',
-                              f"Flatten {ticker}",
-                              at=time.time(), ticker=ticker, action='close')
+                    db.health('traderspost_webhook', 'error',
+                              f"Flatten HTTP {e.code}: {err_body[:200]}",
+                              at=time.time(), ticker=ticker)
             except Exception:
                 pass
-            return (True, f"Flatten sent for {ticker}: {body[:100]}")
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode('utf-8', errors='ignore')[:500]
-        try:
-            with db.tx() as c:
-                db.health('traderspost_webhook', 'error',
-                          f"Flatten HTTP {e.code}: {err_body[:200]}",
-                          at=time.time(), ticker=ticker)
-        except Exception:
-            pass
-        return (False, f"Flatten HTTP {e.code}: {err_body[:200]}")
-    except Exception as e:
-        try:
-            with db.tx() as c:
-                db.health('traderspost_webhook', 'error',
-                          f"Flatten failed: {str(e)[:200]}",
-                          at=time.time(), ticker=ticker)
-        except Exception:
-            pass
-        return (False, f"Flatten failed: {str(e)[:200]}")
+            results.append((False, f"Flatten HTTP {e.code}: {err_body[:200]}"))
+        except Exception as e:
+            try:
+                with db.tx() as c:
+                    db.health('traderspost_webhook', 'error',
+                              f"Flatten failed: {str(e)[:200]}",
+                              at=time.time(), ticker=ticker)
+            except Exception:
+                pass
+            results.append((False, f"Flatten failed: {str(e)[:200]}"))
+    
+    # Return combined result: success if at least one succeeded
+    ok = any(r[0] for r in results)
+    msg = "; ".join(r[1] for r in results)
+    return (ok, msg)
 
 
 def send_signal(cfg, db, trade):
@@ -220,53 +243,60 @@ def send_signal(cfg, db, trade):
     if not is_enabled(cfg):
         return (False, 'TradersPost disabled')
 
-    webhook_url = getattr(cfg, 'traderspost_webhook_url', '')
-    if not webhook_url:
+    urls = _webhook_urls(cfg)
+    if not urls:
         return (False, 'TRADERSPOST_WEBHOOK_URL not set')
 
     payload = build_payload(cfg, trade)
     if not payload:
         return (False, 'Invalid trade (detector/side/prices)')
 
-    # POST to TradersPost webhook
+    # POST to TradersPost webhook(s) - same signal to both prop firms
     data = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(
-        webhook_url,
-        data=data,
-        headers={'Content-Type': 'application/json'},
-        method='POST'
-    )
+    results = []
+    for webhook_url in urls:
+        req = urllib.request.Request(
+            webhook_url,
+            data=data,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
 
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            body = resp.read().decode('utf-8', errors='ignore')[:500]
-            # Log success (never log webhook URL)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read().decode('utf-8', errors='ignore')[:500]
+                # Log success (never log webhook URL)
+                try:
+                    with db.tx() as c:
+                        db.health('traderspost_webhook', 'ok',
+                                  f"Sent {payload['ticker']} {payload['action']} qty=1",
+                                  at=time.time(), ticker=payload['ticker'],
+                                  action=payload['action'],
+                                  response=body[:200])
+                except Exception:
+                    pass
+                results.append((True, f"Sent to TradersPost: {body[:100]}"))
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode('utf-8', errors='ignore')[:500]
             try:
                 with db.tx() as c:
-                    db.health('traderspost_webhook', 'ok',
-                              f"Sent {payload['ticker']} {payload['action']} qty=1",
-                              at=time.time(), ticker=payload['ticker'],
-                              action=payload['action'],
-                              response=body[:200])
+                    db.health('traderspost_webhook', 'error',
+                              f"HTTP {e.code}: {err_body[:200]}",
+                              at=time.time(), ticker=payload.get('ticker'))
             except Exception:
                 pass
-            return (True, f"Sent to TradersPost: {body[:100]}")
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode('utf-8', errors='ignore')[:500]
-        try:
-            with db.tx() as c:
-                db.health('traderspost_webhook', 'error',
-                          f"HTTP {e.code}: {err_body[:200]}",
-                          at=time.time(), ticker=payload.get('ticker'))
-        except Exception:
-            pass
-        return (False, f"TradersPost HTTP {e.code}: {err_body[:200]}")
-    except Exception as e:
-        try:
-            with db.tx() as c:
-                db.health('traderspost_webhook', 'error',
-                          f"Send failed: {str(e)[:200]}",
-                          at=time.time(), ticker=payload.get('ticker'))
-        except Exception:
-            pass
-        return (False, f"TradersPost send failed: {str(e)[:200]}")
+            results.append((False, f"TradersPost HTTP {e.code}: {err_body[:200]}"))
+        except Exception as e:
+            try:
+                with db.tx() as c:
+                    db.health('traderspost_webhook', 'error',
+                              f"Send failed: {str(e)[:200]}",
+                              at=time.time(), ticker=payload.get('ticker'))
+            except Exception:
+                pass
+            results.append((False, f"TradersPost send failed: {str(e)[:200]}"))
+    
+    # Return combined: success if at least one webhook accepted
+    ok = any(r[0] for r in results)
+    msg = "; ".join(r[1] for r in results)
+    return (ok, msg)
