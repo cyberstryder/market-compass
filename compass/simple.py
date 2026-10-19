@@ -215,7 +215,7 @@ def _futures(db, c, now):
             for t in v), 2)
     return (_block(
         "futures", "Futures Micros",
-        "Paper-traded signals on micro futures. Mix/match (2026-10-14): only profitable detector+symbol combos — AOI Fade on MCL/MNQ, AOI Zones on MES, BOS+FVG on MNQ, BOS+GZ on MCL, Turtle Soup on MCL. (2026-10-18) Live = sent to TradersPost/Tradeify (T1 leg only, 2 contracts). Paper-only = tracked in Compass but not sent live (2/2/1 T2/Trail legs, or skipped for hedging/duplicate).",
+        "Paper-traded signals on micro futures. Mix/match (2026-10-14): only profitable detector+symbol combos — AOI Fade on MCL/MNQ, AOI Zones on MES, BOS+FVG on MNQ, BOS+GZ on MCL, Turtle Soup on MCL. (2026-10-18) Single position: 2 contracts at detector target. Live = sent to TradersPost/Tradeify. Paper-only = tracked but skipped for hedging/duplicate.",
         "Intraday, whenever a method's setup triggers. Everything closes by 3:45 PM CT.",
         "Win = the paper trade closed with a profit, in micro dollars after fees.",
         stats, drill), by_day)

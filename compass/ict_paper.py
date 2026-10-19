@@ -227,23 +227,14 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
         2 * spec['tick'] * spec['multiplier']
     if per_unit <= 0:
         return {'submitted': False, 'reason': 'bad_risk'}
-    # 2/2/1 scale-out (Josh 2026-10-08): 5 contracts total
-    # - Leg 1: 2 contracts, target = 2R (signal target)
-    # - Leg 2: 2 contracts, target = 3R (1.5x the 2R distance)
-    # - Leg 3: 1 contract, no fixed target (trailer via ict_trail.py)
-    # Variant B (Josh 2026-10-08): progressive staircase scale-out.
-    # 2 contracts at 1R, 2 at 2R, 1 runner. Stops ratchet up as targets hit:
-    # T1 hit → T2 and runner stops → breakeven. T2 hit → runner stop → 1R.
-    # Backtest showed this beats plain 2/2/1 and single-position at realistic
-    # continuation rates (+0.45R/trade vs -1.26R for plain 2/2/1).
-    # Each leg is a separate position so the engine's exits() loop manages them.
+    # 2026-10-18: Simplified to single position (Josh). The 2/2/1 scaling
+    # (T1 2ct + T2 2ct + Trail 1ct = 5ct) was net losers — Oct 15: T1 +$47,
+    # T2 -$116, Trail -$58 = net -$127. T1 hits, T2/Trail reverse and lose more.
+    # Paper and live both trade 2 contracts at the detector's target.
+    # No scaling, no trailer. One position per signal.
     direction_mult = 1 if side == 'long' else -1
-    risk_dist = (target - entry) * direction_mult  # positive 2R distance
-    target_1r = entry + direction_mult * risk_dist * 0.5
     legs = [
-        {'leg': 't1', 'qty': 2, 'target': target_1r, 'is_trailer': False},
-        {'leg': 't2', 'qty': 2, 'target': target, 'is_trailer': False},
-        {'leg': 'trail', 'qty': 1, 'target': None, 'is_trailer': True},
+        {'leg': 't1', 'qty': 2, 'target': target, 'is_trailer': False},
     ]
     base_trade_id = 'ict-%s-%s-%d' % (detector, symbol.replace('.', '-'),
                                       int(number(sig.get('signal_ts')) or now))
@@ -394,30 +385,23 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                         t['traderspost_skip_reason'] = skip_reason
                         db.put(c, 'trade:' + trade_id, t)
             else:
-                # 2026-10-18: TradersPost gets ONLY the first leg (T1, 2 contracts).
-                # The 2/2/1 leg structure (T1+T2+Trail = 5 contracts) is for paper
-                # tracking only. TradersPost cannot handle multi-leg "add" orders —
-                # it stacks positions instead of creating brackets. Sending T2/Trail
-                # as "add" caused 4-contract stacking on MYM (2026-10-18).
-                # TradersPost now receives a single clean bracket: 2 contracts with
-                # the detector's target and stop. Paper keeps the full 2/2/1.
+                # 2026-10-18: Single position (2 contracts) sent to TradersPost.
+                # No 2/2/1 scaling — paper and live both trade the detector's
+                # target with 2 contracts.
                 if submitted_ids:
-                    leg_trade = db.get(c, 'trade:' + submitted_ids[0])
-                    if leg_trade:
-                        leg_trade = dict(leg_trade)
-                        leg_trade['is_first_leg'] = True
-                        success, msg = traderspost.send_signal(cfg, db, leg_trade)
-                        # Mark T1 as sent (if successful), T2/Trail as paper-only
-                        for idx, trade_id in enumerate(submitted_ids):
-                            t = db.get(c, 'trade:' + trade_id)
-                            if t:
-                                t = dict(t)
-                                t['traderspost_sent'] = (idx == 0 and success)
-                                if idx == 0 and not success:
-                                    t['traderspost_skip_reason'] = f"send_failed: {msg}"
-                                elif idx > 0:
-                                    t['traderspost_skip_reason'] = "paper_only: 2/2/1 legs not sent to TradersPost"
-                                db.put(c, 'trade:' + trade_id, t)
+                    trade = db.get(c, 'trade:' + submitted_ids[0])
+                    if trade:
+                        trade = dict(trade)
+                        trade['is_first_leg'] = True
+                        success, msg = traderspost.send_signal(cfg, db, trade)
+                        # Mark as sent (or failed)
+                        t = db.get(c, 'trade:' + submitted_ids[0])
+                        if t:
+                            t = dict(t)
+                            t['traderspost_sent'] = success
+                            if not success:
+                                t['traderspost_skip_reason'] = f"send_failed: {msg}"
+                            db.put(c, 'trade:' + submitted_ids[0], t)
     except Exception as e:
         try:
             db.health('traderspost_webhook', 'error', f"hook failed: {type(e).__name__}: {str(e)[:200]}")
@@ -427,7 +411,7 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
     risk['entries'] = risk.get('entries', 0) + 1
     db.put(c, paper_risk.key(now, 'future'), risk)
     return {'submitted': True, 'reason': 'entered', 'trade_id': group_id,
-            'qty': 5, 'strategy': STRATEGY_TAGS[detector],
+            'qty': 2, 'strategy': STRATEGY_TAGS[detector],
             'legs': submitted_ids}
 
 

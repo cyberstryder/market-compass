@@ -114,8 +114,8 @@ def test_submission_tags_strategy_and_levels(db, cfg):
     assert p['side'] == 'long'
     assert p['entry'] == pytest.approx(100.0)
     assert p['stop'] == pytest.approx(98.0)
-    assert p['target'] == pytest.approx(102.0)  # t1 at 1R  # detector target preserved
-    assert p['qty'] == 2  # t1 leg of 2/2/1 scale-out
+    assert p['target'] == pytest.approx(104.0)  # detector target (2R), single position 2026-10-18
+    assert p['qty'] == 2  # single 2-contract position (2026-10-18 simplified from 2/2/1)
     assert p['status'] == 'open'
     assert p['fill_version']  # same fill conventions as legacy paper
     assert p['flatten_at']  # session flatten still applies
@@ -155,7 +155,7 @@ def test_each_detector_submits_with_own_tag(db, cfg):
             assert p['strategy'] == tag
             assert p['entry'] == pytest.approx(100.0)
             assert p['stop'] == pytest.approx(98.0)
-            assert p['target'] == pytest.approx(102.0)  # t1 at 1R
+            assert p['target'] == pytest.approx(104.0)  # detector target (2026-10-18 simplified)
 
 
 # --- exits / P&L ---
@@ -173,7 +173,7 @@ def test_target_hit_records_win(db, cfg):
     p = exit_with(e, db, NOW + 120, quote(NOW + 120, 104.1, 104.11))
     assert p['status'] == 'closed'
     assert p['exit_reason'] == 'target'
-    assert p['exit'] == pytest.approx(102.0)  # t1 exits at 1R target
+    assert p['exit'] == pytest.approx(104.0)  # exits at detector target (2026-10-18 simplified)
     assert p['pnl'] > 0
 
 
@@ -183,35 +183,16 @@ def test_quiet_quote_leaves_position_open(db, cfg):
     assert p['status'] == 'open'
 
 
-def test_variant_b_t2_hit_ratchets_runner_to_1r(db, cfg):
-    # Variant B progressive stops: t1 (1R=102) hit -> t2/runner stops to
-    # breakeven (100); t2 (2R=104) hit -> runner stop to 1R profit (102).
-    # Regression: the old code derived 1R from t2's *current* stop, which is
-    # already breakeven by then, so the runner never locked 1R.
-    e = open_position(db, cfg)
-    t2_key = 'position:ict:golden_zone:' + SYM + ':t2'
-    trail_key = 'position:ict:golden_zone:' + SYM + ':trail'
-    exit_with(e, db, NOW + 120, quote(NOW + 120, 102.5, 102.51))
-    with db.tx() as c:
-        t2 = db.get(c, t2_key)
-        tr = db.get(c, trail_key)
-    assert t2['status'] == 'open' and t2['stop'] == pytest.approx(100.0)
-    assert tr['status'] == 'open' and tr['stop'] == pytest.approx(100.0)
-    exit_with(e, db, NOW + 240, quote(NOW + 240, 104.1, 104.11), pos_key=t2_key)
-    with db.tx() as c:
-        t2b = db.get(c, t2_key)
-        trb = db.get(c, trail_key)
-    assert t2b['status'] == 'closed' and t2b['exit_reason'] == 'target'
-    assert trb['status'] == 'open'
-    assert trb['stop'] == pytest.approx(102.0)
-    assert trb.get('locked_1r') is True
+# 2026-10-18: Variant B 2/2/1 test removed. The 2/2/1 scaling (T1/T2/Trail)
+# was simplified to single-position (2 contracts at detector target).
+# T2/Trail legs no longer exist.
 
 
 def test_attribution_splits_pnl_by_detector(db, cfg):
     cfg.ict_bos_fvg = True
     e = open_position(db, cfg, 'golden_zone')
-    # Quote at 102.5 hits t1 (1R=102.0) but not t2 (2R=104.0)
-    exit_with(e, db, NOW + 120, quote(NOW + 120, 102.5, 102.51))
+    # Quote at 104.1 hits the 104.0 target (2026-10-18: single position, no 2/2/1)
+    exit_with(e, db, NOW + 120, quote(NOW + 120, 104.1, 104.11))
     e2 = open_position(db, cfg, 'bos_fvg',
                        direction='short', entry=100.0, stop=102.0, target=96.0)
     # bos_fvg allowlist uses MNQ (first allowed), not SYM (NQ)
@@ -222,10 +203,9 @@ def test_attribution_splits_pnl_by_detector(db, cfg):
     with db.tx() as c:
         attr = ict_paper.attribution(db, c)
     gz, bf = attr['ict-golden-zone'], attr['ict-bos-fvg']
-    # Variant B: gz t1 hits 1R target (t2/trail open); bf short stop-out
-    # hits all 3 legs (same stop)
+    # 2026-10-18: Single position (no 2/2/1). gz 1 trade win; bf 1 trade loss.
     assert gz['trades'] == 1 and gz['wins'] == 1 and gz['realized'] > 0
-    assert bf['trades'] == 3 and bf['losses'] == 3 and bf['realized'] < 0
+    assert bf['trades'] == 1 and bf['losses'] == 1 and bf['realized'] < 0
 
 
 def test_exits_log_no_alerts_only_paper_decisions(db, cfg):
@@ -411,69 +391,21 @@ def test_reset_paper_book(db, cfg):
 
 
 def test_scale_out_221_creates_three_legs(db, cfg):
-    """2/2/1 scale-out: submit creates 3 legs with correct qty/targets."""
+    """2026-10-18: Simplified to single position (2 contracts at detector target).
+    The 2/2/1 scaling was removed — T2/Trail were net losers."""
     with db.tx() as c:
         r = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', SYM, sig())
         assert r['submitted'], r
-        assert r['qty'] == 5
-        assert len(r['legs']) == 3
+        assert r['qty'] == 2
+        assert len(r['legs']) == 1
     with db.tx() as c:
-        # Leg 1: 2 contracts at 1R (102.0)
+        # Single leg: 2 contracts at detector target (104.0)
         t1 = db.get(c, 'trade:' + r['legs'][0])
-        assert t1['qty'] == 2 and t1['target'] == 102.0
+        assert t1['qty'] == 2 and t1['target'] == 104.0
         assert t1['leg'] == 't1' and not t1['is_trailer']
-        # Leg 2: 2 contracts at 2R (104.0 = detector target)
-        t2 = db.get(c, 'trade:' + r['legs'][1])
-        assert t2['qty'] == 2 and t2['target'] == 104.0
-        assert t2['leg'] == 't2' and not t2['is_trailer']
-        # Leg 3: 1 contract, no fixed target (trailer)
-        tr = db.get(c, 'trade:' + r['legs'][2])
-        assert tr['qty'] == 1 and tr['target'] is None
-        assert tr['leg'] == 'trail' and tr['is_trailer']
-        # All share the same stop and group
-        assert t1['stop'] == t2['stop'] == tr['stop'] == 98.0
-        assert t1['group_id'] == t2['group_id'] == tr['group_id']
 
 
-def test_trailer_leg_has_no_target_exit(db, cfg):
-    """Trailer leg with target=None does not exit on target; only stop/flatten."""
-    e = open_position(db, cfg)
-    with db.tx() as c:
-        # Find the trailer position
-        positions = [p for k, p in db.prefix(c, 'position:ict:').items()
-                     if p.get('is_trailer')]
-        assert len(positions) == 1
-        pos = positions[0]
-        assert pos['target'] is None
-        # Price well above 2R target should NOT trigger target exit
-        # (exits() checks target only if not None)
-        db.put(c, 'quote:' + SYM, quote(NOW, 110.0, 110.1))
-    # Engine exits should not crash on None target
-    with db.tx() as c:
-        e.exits(c, NOW)  # should not raise
 
-
-def test_trailer_leg_bar_does_not_crash_on_none_target(db, cfg):
-    """Regression: bar loop in exits() must guard None target for trailer legs.
-
-    The quote path already guarded None (tgt is not None), but the completed-bar
-    scan did payload['h'] >= p['target'] directly, raising TypeError when a bar
-    was written while a trailer leg (target=None) was open — aborting the whole
-    tick. This test writes a bar after entry and runs exits().
-    """
-    e = open_position(db, cfg)
-    bar_ts = NOW + 120
-    with db.tx() as c:
-        # Completed 1-min bar after entry; high would touch a target if one existed
-        db.append(c, 'bar', 'test', SYM, bar_ts,
-                  {'o': 100.0, 'h': 106.0, 'l': 99.5, 'c': 105.0, 'v': 100})
-        db.put(c, 'quote:' + SYM, quote(NOW + 300, 105.0, 105.1))
-    # Must not raise TypeError on None target in the bar scan
-    with db.tx() as c:
-        e.exits(c, NOW + 300)  # should not raise
-    # Trailer leg must still be open (no target exit, no stop hit)
-    with db.tx() as c:
-        positions = [p for k, p in db.prefix(c, 'position:ict:').items()
-                     if p.get('is_trailer')]
-        assert len(positions) == 1
-        assert positions[0]['target'] is None
+# 2026-10-18: Trailer leg tests removed. The 2/2/1 scaling (including the
+# trailer leg with target=None) was simplified to single-position.
+# No trailer legs exist anymore.
