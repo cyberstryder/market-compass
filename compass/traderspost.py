@@ -186,6 +186,12 @@ def send_close_signal(cfg, db, symbol):
         'ticker': ticker,
         'action': 'exit',
         'strategy': 'compass-flatten',
+        # Cancel resting bracket orders with the exit so no orphan stop or
+        # target survives the flatten (TradersPost signal reference: the
+        # cancel property combines order-cancelling with the action).
+        # Note: 'strategy' is not a TradersPost routing field (ignored per
+        # their docs) — scoping is by webhook URL, same as the entries.
+        'cancel': True,
     }
 
     data = json.dumps(payload).encode('utf-8')
