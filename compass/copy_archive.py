@@ -153,6 +153,65 @@ def _periods_to_archive(kind, now, earliest=None):
     return periods
 
 
+def _oldest_archivable_ts(db, kind, lo, hi):
+    """Oldest event ts for kind in [lo, hi), or None — one indexed query.
+
+    ORDER BY ts + LIMIT 1 lets Postgres answer from the (kind, ...) index
+    instead of aggregating the whole partition.
+    """
+    from sqlalchemy import select
+    from .store import events
+    with db.tx() as c:
+        return c.execute(select(events.c.ts).where(
+            events.c.kind == kind, events.c.ts >= lo, events.c.ts < hi)
+            .order_by(events.c.ts.asc()).limit(1)).scalar()
+
+
+def _fast_forward_empty_tail(db, kind, periods, now):
+    """Bulk-mark periods that provably contain no data for this kind.
+
+    The week-by-week walk spent 45+ hourly runs marking 0-row
+    alert_delivery weeks one chunk at a time, and ~25 audit kinds queued
+    ~2,300 more mostly-empty weeks behind it. One probe per kind per run
+    finds the kind's oldest archivable event; every period older than
+    that event's week is empty by definition, so it is marked done in a
+    single transaction (same {'rows': 0} progress record the slow walk
+    would have written). If the kind has NO archivable events at all,
+    all its periods are marked. Periods at or newer than the oldest-data
+    week are untouched and still exported (and hash-verified) normally.
+
+    Returns the number of periods marked. Best-effort: any probe failure
+    leaves the normal walk in charge.
+    """
+    if not periods:
+        return 0
+    retention = _retention_days(kind)
+    if retention is None:
+        return 0
+    cutoff = now - retention * DAY
+    floor = periods[-1][0]  # periods are newest-first; last is the oldest
+    oldest = _oldest_archivable_ts(db, kind, floor, cutoff)
+    if oldest is None:
+        targets = periods
+    else:
+        oldest_ws, _ = _week_range(oldest)
+        targets = [p for p in periods if p[0] < oldest_ws]
+    marked = 0
+    with db.tx() as c:
+        for ms, _me in targets:
+            period_str = _week_str(ms)
+            progress_key = f"copy-archive:{kind}:{period_str}"
+            if db.get(c, progress_key):
+                continue
+            lock = db.get(c, f"copy-archive:lock:{kind}:{period_str}")
+            if lock and (time.time() - lock.get('at', 0)) < LOCK_TTL_S:
+                continue  # another run is exporting this chunk right now
+            db.put(c, progress_key,
+                   {'rows': 0, 'at': time.time(), 'probe': 'no_data_in_week'})
+            marked += 1
+    return marked
+
+
 def export_month(db, client, bucket, kind, period_start, period_end):
     """Export one period (week) of one kind via COPY.
 
@@ -479,12 +538,24 @@ def run_copy_chunk(db, client, bucket, max_months=6):
             if chunks_left <= 0:
                 summary['complete'] = False
                 break
-            # Skip the MIN(ts) query (times out on 135M rows without index).
-        # Instead, start from retention window: we only archive data older
-        # than the retention cutoff, so start there. The per-week progress
-        # keys skip already-done weeks.
+            # Periods start from the retention cutoff (only full weeks older
+        # than retention are archivable) and work backwards; per-week
+        # progress keys skip already-done weeks. The probe below replaces
+        # the old blanket ban on MIN(ts)-style queries: an indexed
+        # ORDER BY/LIMIT 1 per kind is cheap and bulk-clears empty tails.
         earliest = None
-        for ms, me in _periods_to_archive(kind, now, earliest):
+        periods = _periods_to_archive(kind, now, earliest)
+        # Probe-first (2026-10-19): bulk-mark this kind's provably-empty
+        # tail weeks in one transaction so sparse kinds can't monopolise
+        # hourly runs with 0-row chunks. Best-effort — on any probe error
+        # the week-by-week walk below still makes progress.
+        try:
+            probed = _fast_forward_empty_tail(db, kind, periods, now)
+            if probed:
+                summary['probed_done'] = summary.get('probed_done', 0) + probed
+        except Exception:
+            pass
+        for ms, me in periods:
             if chunks_left <= 0:
                 summary['complete'] = False
                 break
@@ -550,26 +621,11 @@ def run_copy_chunk(db, client, bucket, max_months=6):
                         break
             if not summary['complete']:
                 break
-        # Also check state prefixes
-        if summary['complete']:
-            for prefix, retention_days in STATE_RETENTION.items():
-                cutoff = now - retention_days * DAY
-                week_start = 1704067200
-                while week_start < cutoff:
-                    week_end = week_start + 7 * DAY
-                    if week_end > cutoff:
-                        week_end = cutoff
-                    period_str = _week_str(week_start)
-                    progress_key = f"copy-archive:state:{prefix}:{period_str}"
-                    with db.tx() as c:
-                        if not db.get(c, progress_key):
-                            summary['complete'] = False
-                            break
-                    week_start = week_end
-                    if not summary['complete']:
-                        break
-                if not summary['complete']:
-                    break
+        # State prefixes are NOT part of completeness: state archiving is
+        # disabled above (if False) and its progress keys can never be
+        # written, so requiring them made 'complete' unreachable and the
+        # pump's true state unreadable. State is 0.88 GB vs 177 GB of
+        # events; if it is ever re-enabled, re-add its check then.
 
     summary['finished_at'] = time.time()
     summary['elapsed_s'] = summary['finished_at'] - now
