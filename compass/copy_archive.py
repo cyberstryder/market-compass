@@ -543,70 +543,70 @@ def run_copy_chunk(db, client, bucket, max_months=6):
         # progress keys skip already-done weeks. The probe below replaces
         # the old blanket ban on MIN(ts)-style queries: an indexed
         # ORDER BY/LIMIT 1 per kind is cheap and bulk-clears empty tails.
-        earliest = None
-        periods = _periods_to_archive(kind, now, earliest)
-        # Probe-first (2026-10-19): bulk-mark this kind's provably-empty
-        # tail weeks in one transaction so sparse kinds can't monopolise
-        # hourly runs with 0-row chunks. Best-effort — on any probe error
-        # the week-by-week walk below still makes progress.
-        try:
-            probed = _fast_forward_empty_tail(db, kind, periods, now)
-            if probed:
-                summary['probed_done'] = summary.get('probed_done', 0) + probed
-        except Exception:
-            pass
-        for ms, me in periods:
-            if chunks_left <= 0:
-                summary['complete'] = False
-                break
-            # Use ISO week format for progress key (must match export_month)
-            period_str = _week_str(ms)
-            progress_key = f"copy-archive:{kind}:{period_str}"
-            with db.tx() as c:
-                if db.get(c, progress_key):
-                    continue  # Already done
-                # Skip chunks a concurrent pump run is exporting (fresh lock)
-                lock = db.get(c, f"copy-archive:lock:{kind}:{period_str}")
-                if lock and (time.time() - lock.get('at', 0)) < LOCK_TTL_S:
-                    continue
-            # Not done - export it
+            earliest = None
+            periods = _periods_to_archive(kind, now, earliest)
+            # Probe-first (2026-10-19): bulk-mark this kind's provably-empty
+            # tail weeks in one transaction so sparse kinds can't monopolise
+            # hourly runs with 0-row chunks. Best-effort — on any probe error
+            # the week-by-week walk below still makes progress.
             try:
-                # Heartbeat: log which chunk we're starting so silent deaths are visible
+                probed = _fast_forward_empty_tail(db, kind, periods, now)
+                if probed:
+                    summary['probed_done'] = summary.get('probed_done', 0) + probed
+            except Exception:
+                pass
+            for ms, me in periods:
+                if chunks_left <= 0:
+                    summary['complete'] = False
+                    break
+                # Use ISO week format for progress key (must match export_month)
+                period_str = _week_str(ms)
+                progress_key = f"copy-archive:{kind}:{period_str}"
+                with db.tx() as c:
+                    if db.get(c, progress_key):
+                        continue  # Already done
+                    # Skip chunks a concurrent pump run is exporting (fresh lock)
+                    lock = db.get(c, f"copy-archive:lock:{kind}:{period_str}")
+                    if lock and (time.time() - lock.get('at', 0)) < LOCK_TTL_S:
+                        continue
+                # Not done - export it
                 try:
-                    with db.tx() as c:
-                        db.put(c, 'copy-archive:heartbeat', {
-                            'at': time.time(),
-                            'chunk': f"{kind}/{period_str}",
-                            'phase': 'starting'
-                        })
-                except:
-                    pass
-                result = export_month(db, client, bucket, kind, ms, me)
-                if result is None:
-                    continue  # Lost the race to another run; try next chunk
-                rows, nbytes = result
-                summary['chunks_done'] += 1
-                summary['rows'] += rows
-                summary['bytes'] += nbytes
-                summary['chunks'].append(f"{kind}/{period_str}:{rows}rows")
-                chunks_left -= 1
-            except Exception as e:
-                summary['error'] = f"{kind}/{period_str}: {str(e)[:500]}"
-                summary['complete'] = False
-                # Heartbeat the error too
-                try:
-                    with db.tx() as c:
-                        db.put(c, 'copy-archive:heartbeat', {
-                            'at': time.time(),
-                            'chunk': f"{kind}/{period_str}",
-                            'phase': 'error',
-                            'error': str(e)[:500]
-                        })
-                except:
-                    pass
-                break
-            if 'error' in summary:
-                break
+                    # Heartbeat: log which chunk we're starting so silent deaths are visible
+                    try:
+                        with db.tx() as c:
+                            db.put(c, 'copy-archive:heartbeat', {
+                                'at': time.time(),
+                                'chunk': f"{kind}/{period_str}",
+                                'phase': 'starting'
+                            })
+                    except:
+                        pass
+                    result = export_month(db, client, bucket, kind, ms, me)
+                    if result is None:
+                        continue  # Lost the race to another run; try next chunk
+                    rows, nbytes = result
+                    summary['chunks_done'] += 1
+                    summary['rows'] += rows
+                    summary['bytes'] += nbytes
+                    summary['chunks'].append(f"{kind}/{period_str}:{rows}rows")
+                    chunks_left -= 1
+                except Exception as e:
+                    summary['error'] = f"{kind}/{period_str}: {str(e)[:500]}"
+                    summary['complete'] = False
+                    # Heartbeat the error too
+                    try:
+                        with db.tx() as c:
+                            db.put(c, 'copy-archive:heartbeat', {
+                                'at': time.time(),
+                                'chunk': f"{kind}/{period_str}",
+                                'phase': 'error',
+                                'error': str(e)[:500]
+                            })
+                    except:
+                        pass
+                    break
+                if 'error' in summary:
+                    break
 
     # Check if there's more work
     if summary['complete']:
