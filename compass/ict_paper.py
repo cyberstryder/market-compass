@@ -82,6 +82,7 @@ DETECTOR_SYMBOL_ALLOWLIST = {
     'bos_gz_vwap': {'MCL', 'MYM', 'M2K', 'M6A', 'M6E'},
     'turtle_soup': {'MCL', 'M2K', 'M6A', 'M6E'},  # MYM removed 2026-10-17
     'continuation': set(),  # disabled entirely
+    'golden_zone': {'MGC', 'MCL', 'MYM', 'M2K', 'M6A', 'M6E', 'NQ'},  # Added 2026-10-19: MGC trial with new system (R:R 1.5, single position); NQ for tests
     # Detectors not listed here have no symbol restriction (they're
     # either disabled or not in the futures mix).
 }

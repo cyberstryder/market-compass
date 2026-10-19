@@ -54,8 +54,10 @@ def open_position(db, cfg, detector='golden_zone', **kw):
     allowed = ict_paper.DETECTOR_SYMBOL_ALLOWLIST.get(detector)
     sym = SYM
     if allowed:
-        root = sorted(allowed)[0]
-        sym = f"{root}.c.0"
+        root = SYM.split('.')[0].upper()
+        if root not in allowed:
+            root = sorted(allowed)[0]
+            sym = f"{root}.c.0"
     with db.tx() as c:
         r = ict_paper.submit(db, c, cfg, NOW, detector, sym, sig(**kw))
         assert r['submitted'], r
