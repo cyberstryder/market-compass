@@ -92,13 +92,20 @@ class Config:
     gap_push_enabled: bool = field(default_factory=lambda: env("GAP_PUSH_ENABLED","true")=="true")
     day_board_push_enabled: bool = field(default_factory=lambda: env("DAY_BOARD_PUSH_ENABLED","true")=="true")
     futures_scanner_push_enabled: bool = field(default_factory=lambda: env("FUTURES_SCANNER_PUSH_ENABLED","false")=="true")
-    # ICT futures concept detectors (Phase 1: evidence-only, all default OFF).
+    # ICT futures detectors. Defaults mirror PRODUCTION (verified
+    # 2026-10-19 against /api/simple drill stats: every detector listed
+    # default-true below has live paper trades this epoch; the env var
+    # remains as an override — set it to "false" to disable. Continuation
+    # and trend_rider stay default-OFF deliberately (Josh, 2026-10-14 /
+    # 2026-10-08). Before this cleanup every default read "false" while
+    # production ran them all via env vars — a lost env var would have
+    # silently disabled live detectors on redeploy.
     ict_session_liquidity: bool = field(default_factory=lambda: env("ICT_SESSION_LIQUIDITY_ENABLED","true")=="true")
     ict_htf_levels: bool = field(default_factory=lambda: env("ICT_HTF_LEVELS_ENABLED","true")=="true")
-    ict_turtle_soup: bool = field(default_factory=lambda: env("ICT_TURTLE_SOUP_ENABLED","false")=="true")
-    ict_smt_divergence: bool = field(default_factory=lambda: env("ICT_SMT_DIVERGENCE_ENABLED","false")=="true")
-    ict_aoi_zones: bool = field(default_factory=lambda: env("ICT_AOI_ZONES_ENABLED","false")=="true")
-    ict_aoi_fade: bool = field(default_factory=lambda: env("ICT_AOI_FADE_ENABLED","false")=="true")
+    ict_turtle_soup: bool = field(default_factory=lambda: env("ICT_TURTLE_SOUP_ENABLED","true")=="true")
+    ict_smt_divergence: bool = field(default_factory=lambda: env("ICT_SMT_DIVERGENCE_ENABLED","true")=="true")
+    ict_aoi_zones: bool = field(default_factory=lambda: env("ICT_AOI_ZONES_ENABLED","true")=="true")
+    ict_aoi_fade: bool = field(default_factory=lambda: env("ICT_AOI_FADE_ENABLED","true")=="true")
     ict_continuation: bool = field(default_factory=lambda: env("ICT_CONTINUATION_ENABLED","false")=="true")
     ict_trend_rider: bool = field(default_factory=lambda: env("ICT_TREND_RIDER_ENABLED","false")=="true")
     # Gap fade detector (futures): fade overnight gaps at RTH open
@@ -117,19 +124,19 @@ class Config:
     vwap_fade_session: str = field(default_factory=lambda: env("VWAP_FADE_SESSION","ny"))
     mu_scalp: bool = field(default_factory=lambda: env("MU_SCALP_ENABLED","true")=="true")
     ict_tier_a_b: bool = field(default_factory=lambda: env("ICT_TIER_A_B_ENABLED","false")=="true")
-    ict_golden_zone: bool = field(default_factory=lambda: env("ICT_GOLDEN_ZONE_ENABLED","false")=="true")
+    ict_golden_zone: bool = field(default_factory=lambda: env("ICT_GOLDEN_ZONE_ENABLED","true")=="true")
     ict_gz_ema_fast: int = field(default_factory=lambda: int(env("ICT_GZ_EMA_FAST","9")))
     ict_gz_ema_slow: int = field(default_factory=lambda: int(env("ICT_GZ_EMA_SLOW","21")))
     ict_gz_ema_cross_lookback: int = field(default_factory=lambda: int(env("ICT_GZ_EMA_CROSS_LOOKBACK","5")))
     ict_gz_ema_cross: bool = field(default_factory=lambda: env("ICT_GZ_EMA_CROSS_ENABLED","false")=="true")
-    ict_bos_fvg: bool = field(default_factory=lambda: env("ICT_BOS_FVG_ENABLED","false")=="true")
-    ict_bos_gz_vwap: bool = field(default_factory=lambda: env("ICT_BOS_GZ_VWAP_ENABLED","false")=="true")
+    ict_bos_fvg: bool = field(default_factory=lambda: env("ICT_BOS_FVG_ENABLED","true")=="true")
+    ict_bos_gz_vwap: bool = field(default_factory=lambda: env("ICT_BOS_GZ_VWAP_ENABLED","true")=="true")
     ict_morning_drive: bool = field(default_factory=lambda: env("ICT_MORNING_DRIVE_ENABLED","false")=="true")
     ict_icc: bool = field(default_factory=lambda: env("ICT_ICC_ENABLED","false")=="true")
-    ict_rumers_box: bool = field(default_factory=lambda: env("ICT_RUMERS_BOX_ENABLED","false")=="true")
+    ict_rumers_box: bool = field(default_factory=lambda: env("ICT_RUMERS_BOX_ENABLED","true")=="true")
     ict_trend_bias: bool = field(default_factory=lambda: env("ICT_TREND_BIAS_ENABLED","false")=="true")
     ict_trend_bias_sma_len: int = field(default_factory=lambda: int(env("ICT_TREND_BIAS_SMA_LEN","50")))
-    ict_futures_paper: bool = field(default_factory=lambda: env("ICT_FUTURES_PAPER_ENABLED","false")=="true")
+    ict_futures_paper: bool = field(default_factory=lambda: env("ICT_FUTURES_PAPER_ENABLED","true")=="true")
     ict_paper_min_stop_atr: float = field(default_factory=lambda: float(env("ICT_PAPER_MIN_STOP_ATR","0.5")))
     ict_paper_cooldown_min: float = field(default_factory=lambda: float(env("ICT_PAPER_COOLDOWN_MIN","15")))
     ict_symbols: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("ICT_SYMBOLS","MNQ.c.0,MES.c.0,MGC.v.0,MCL.v.0,MYM.c.0,M2K.c.0,M6A.c.0,M6E.c.0").split(",") if s.strip()))
