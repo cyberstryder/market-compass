@@ -78,6 +78,26 @@ def _set_prune_state(db, kind, period_str, value):
         db.put(c, f"{PRUNE_PREFIX}{kind}:{period_str}", value)
 
 
+def _hash_object(client, bucket, key):
+    """Stream an R2 object through sha256 — never load it whole. Archived
+    quote weeks are ~1.5 GB; the first live verify attempt read one into
+    memory and the request died without a response (2026-10-19)."""
+    resp = client.get_object(Bucket=bucket, Key=key)
+    body = resp['Body']
+    hasher = hashlib.sha256()
+    total = 0
+    try:
+        while True:
+            chunk = body.read(8 * 1024 * 1024)
+            if not chunk:
+                break
+            hasher.update(chunk)
+            total += len(chunk)
+    finally:
+        body.close()
+    return hasher.hexdigest(), total
+
+
 def _count_rows(db, kind, lo, hi):
     with db.tx() as c:
         return c.execute(select(func.count()).select_from(events).where(
@@ -153,13 +173,10 @@ def verify_sample(db, client, bucket, per_kind=2):
             seen.add(pstr)
             entry = {'kind': kind, 'period': pstr, 'ok': False}
             try:
-                resp = client.get_object(
-                    Bucket=bucket, Key=f"copy-archive/{kind}/{pstr}.jsonl.gz")
-                body = resp['Body'].read()
-                resp['Body'].close()
-                entry['ok'] = (
-                    hashlib.sha256(body).hexdigest() == rec['sha256']
-                    and len(body) == rec.get('bytes', len(body)))
+                digest, size = _hash_object(
+                    client, bucket, f"copy-archive/{kind}/{pstr}.jsonl.gz")
+                entry['ok'] = (digest == rec['sha256']
+                               and size == rec.get('bytes', size))
                 if not entry['ok']:
                     entry['error'] = 'sha256_or_size_mismatch'
             except Exception as e:
@@ -224,19 +241,16 @@ def prune_next(db, client, bucket, now=None, row_budget=50000):
     if not st:
         # Verify against R2 NOW — not trusting the upload-time check.
         try:
-            resp = client.get_object(
-                Bucket=bucket, Key=f"copy-archive/{kind}/{pstr}.jsonl.gz")
-            body = resp['Body'].read()
-            resp['Body'].close()
+            digest, size = _hash_object(
+                client, bucket, f"copy-archive/{kind}/{pstr}.jsonl.gz")
         except Exception as e:
             return _refuse(db, kind, pstr, 'r2_read_failed', str(e)[:300])
-        digest = hashlib.sha256(body).hexdigest()
-        if digest != rec['sha256'] or len(body) != rec.get('bytes', -1):
+        if digest != rec['sha256'] or size != rec.get('bytes', -1):
             return _refuse(db, kind, pstr, 'sha_mismatch',
                            {'record_sha256': rec['sha256'],
                             'r2_sha256': digest,
                             'record_bytes': rec.get('bytes'),
-                            'r2_bytes': len(body)})
+                            'r2_bytes': size})
         live = _count_rows(db, kind, ws, we)
         if live != rec['rows']:
             return _refuse(db, kind, pstr, 'count_mismatch',
