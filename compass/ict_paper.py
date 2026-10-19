@@ -315,10 +315,13 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
             pass
         else:
             # 2026-10-15: Prevent duplicate ticker stacking AND hedging.
-            # 1. Duplicate: If another detector already has an open position
-            #    for this symbol, skip TradersPost. TradersPost combines
-            #    same-ticker positions, so two detectors firing on MYM would
-            #    stack to 10 contracts (5+5) instead of 5.
+            # 2026-10-19: FIX - check SAME detector too, not just "another".
+            # 3x aoi_zones MES buys in 4 min stacked to 6 contracts because
+            # the loop skipped the current detector.
+            # 1. Duplicate: If ANY detector (including this one) already has
+            #    an open position for this symbol, skip TradersPost.
+            #    TradersPost combines same-ticker positions, so two signals
+            #    on MES would stack to 4 contracts (2+2) instead of 2.
             # 2. Hedging: If another detector has an open position on a
             #    CORRELATED instrument in the OPPOSITE direction, skip
             #    TradersPost. Tradeify flags opposing positions on correlated
@@ -342,9 +345,12 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
             skip_reason = None
             if symbol and side:
                 # Check all active detectors for open positions
-                for other_detector in ('aoi_fade', 'aoi_zones', 'bos_fvg', 'bos_gz_vwap', 'turtle_soup', 'continuation'):
-                    if other_detector == detector:
-                        continue
+                # 2026-10-19: FIX - also check the CURRENT detector, not just
+                # "another" detector. Same-detector re-entry was stacking:
+                # 3x aoi_zones MES buys in 4 min (13:07, 13:09, 13:11) created
+                # 6 contracts instead of 2. The loop used to skip the current
+                # detector, so it never saw its own open position.
+                for other_detector in ('aoi_fade', 'aoi_zones', 'bos_fvg', 'bos_gz_vwap', 'turtle_soup', 'continuation', 'golden_zone'):
                     # Check all symbols for this detector (need to check both
                     # same-symbol and correlated-symbol positions)
                     # Build list of symbols to check: same symbol + correlated group
@@ -365,7 +371,7 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                                 pos_side = pos.get('side', '').lower()
                                 if check_symbol == symbol:
                                     # Same symbol, any direction = duplicate stacking
-                                    skip_reason = f"skip {symbol}: already open for another detector"
+                                    skip_reason = f"skip {symbol}: already open for {other_detector}"
                                     break
                                 elif group and pos_side and pos_side != side:
                                     # Correlated symbol, opposite direction = hedging
