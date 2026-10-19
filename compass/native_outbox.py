@@ -92,7 +92,21 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
                     c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='ambiguous',delivery=dict(d,error='interrupted_send_requires_reconciliation')))
                 continue
             ownership=owner(db,c,row['program'],now)
-            if not ownership or ownership['epoch']!=d.get('owner_epoch') or d.get('next_attempt',0)>now:continue
+            # 2026-10-19: Fix for repaired alerts going stale after engine restart.
+            # The repair endpoint sets owner_epoch, but if the engine restarts
+            # (deploy), the epoch changes and repaired alerts are skipped forever.
+            # For repair_bypass alerts, update the epoch instead of skipping.
+            if not ownership:
+                continue
+            if ownership['epoch'] != d.get('owner_epoch'):
+                if d.get('repair_bypass'):
+                    # Repaired alert with stale epoch - update to current
+                    d['owner_epoch'] = ownership['epoch']
+                    c.execute(outbox.update().where(outbox.c.id==row['id']).values(delivery=d))
+                else:
+                    continue
+            if d.get('next_attempt',0)>now:
+                continue
             url=webhooks.get(row['program'],'')
             if not re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',url):continue
             # Secondary fallback URL (used if primary returns 404/401)
