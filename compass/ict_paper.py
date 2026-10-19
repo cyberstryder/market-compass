@@ -385,6 +385,14 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                         break
             if skip_reason:
                 db.health('traderspost_webhook', 'skipped', skip_reason)
+                # 2026-10-18: Mark all legs as NOT sent to TradersPost
+                for trade_id in submitted_ids:
+                    t = db.get(c, 'trade:' + trade_id)
+                    if t:
+                        t = dict(t)
+                        t['traderspost_sent'] = False
+                        t['traderspost_skip_reason'] = skip_reason
+                        db.put(c, 'trade:' + trade_id, t)
             else:
                 # 2026-10-18: TradersPost gets ONLY the first leg (T1, 2 contracts).
                 # The 2/2/1 leg structure (T1+T2+Trail = 5 contracts) is for paper
@@ -398,7 +406,18 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                     if leg_trade:
                         leg_trade = dict(leg_trade)
                         leg_trade['is_first_leg'] = True
-                        traderspost.send_signal(cfg, db, leg_trade)
+                        success, msg = traderspost.send_signal(cfg, db, leg_trade)
+                        # Mark T1 as sent (if successful), T2/Trail as paper-only
+                        for idx, trade_id in enumerate(submitted_ids):
+                            t = db.get(c, 'trade:' + trade_id)
+                            if t:
+                                t = dict(t)
+                                t['traderspost_sent'] = (idx == 0 and success)
+                                if idx == 0 and not success:
+                                    t['traderspost_skip_reason'] = f"send_failed: {msg}"
+                                elif idx > 0:
+                                    t['traderspost_skip_reason'] = "paper_only: 2/2/1 legs not sent to TradersPost"
+                                db.put(c, 'trade:' + trade_id, t)
     except Exception as e:
         try:
             db.health('traderspost_webhook', 'error', f"hook failed: {type(e).__name__}: {str(e)[:200]}")

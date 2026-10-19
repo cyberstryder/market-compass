@@ -124,6 +124,9 @@ def _futures(db, c, now):
         trades = {}
     per_method = defaultdict(list)
     per_method_gaps = defaultdict(list)
+    # 2026-10-18: Track Live (TradersPost) vs Paper-only separately
+    per_method_live = defaultdict(list)
+    per_method_paper = defaultdict(list)
     by_day = defaultdict(lambda: {"pnl": 0.0, "count": 0})
     open_count = 0
     for t in trades.values():
@@ -147,6 +150,11 @@ def _futures(db, c, now):
             pnl = _num(t.get("pnl"))
             won = pnl is not None and pnl > 0
             per_method[method].append((won, pnl))
+            # 2026-10-18: Split by TradersPost sent vs paper-only
+            if t.get("traderspost_sent"):
+                per_method_live[method].append((won, pnl))
+            else:
+                per_method_paper[method].append((won, pnl))
             # by_day tracks all detectors (2026-10-14: filter removed)
             if pnl is not None:
                 d = _day(t.get("exited_at"))
@@ -170,20 +178,33 @@ def _futures(db, c, now):
         return st
     # 2026-10-14: Show ALL detectors on the page (filter removed).
     # All detectors that have trades appear in the roster.
+    # 2026-10-18: Each detector drill now shows Live (TradersPost) vs Paper-only split.
     ALL_TAGS = sorted(per_method.keys())
     for tag in ALL_TAGS:
         name = ICT_SETUP_NAMES.get(tag, tag)
         if tag in seen:
             continue
         seen.add(tag)
-        drill.append(_drill(name, "Paper-traded micro futures signals.",
-                            with_gaps(tag, per_method.get(tag, []))))
+        st = with_gaps(tag, per_method.get(tag, []))
+        # Add Live vs Paper-only breakdown
+        live_trades = per_method_live.get(tag, [])
+        paper_trades = per_method_paper.get(tag, [])
+        if live_trades or paper_trades:
+            st["live"] = _stats(live_trades)
+            st["paper_only"] = _stats(paper_trades)
+        drill.append(_drill(name, "Paper-traded micro futures signals. Live = sent to TradersPost (Tradeify). Paper-only = tracked but not sent (hedging/duplicate skip or 2/2/1 T2/Trail legs).",
+                            st))
     # 2026-10-14: Stats include ALL detectors (filter removed).
     # All trades across all detectors count toward totals.
     all_trades_list = [t for method, trades in per_method.items()
                        for t in trades]
     stats = _stats(all_trades_list)
     stats["open"] = open_count
+    # 2026-10-18: Add Live (TradersPost) vs Paper-only totals
+    all_live = [t for method, trades in per_method_live.items() for t in trades]
+    all_paper = [t for method, trades in per_method_paper.items() for t in trades]
+    stats["live"] = _stats(all_live)
+    stats["paper_only"] = _stats(all_paper)
     # Count all data gaps across all detectors (2026-10-14: filter removed)
     total_gaps = sum(len(v) for v in per_method_gaps.values())
     if total_gaps:
@@ -194,7 +215,7 @@ def _futures(db, c, now):
             for t in v), 2)
     return (_block(
         "futures", "Futures Micros",
-        "Paper-traded signals on micro futures. Mix/match (2026-10-14): only profitable detector+symbol combos — AOI Fade on MCL/MNQ, AOI Zones on MES, BOS+FVG on MNQ, BOS+GZ on MCL, Turtle Soup on MCL.",
+        "Paper-traded signals on micro futures. Mix/match (2026-10-14): only profitable detector+symbol combos — AOI Fade on MCL/MNQ, AOI Zones on MES, BOS+FVG on MNQ, BOS+GZ on MCL, Turtle Soup on MCL. (2026-10-18) Live = sent to TradersPost/Tradeify (T1 leg only, 2 contracts). Paper-only = tracked in Compass but not sent live (2/2/1 T2/Trail legs, or skipped for hedging/duplicate).",
         "Intraday, whenever a method's setup triggers. Everything closes by 3:45 PM CT.",
         "Win = the paper trade closed with a profit, in micro dollars after fees.",
         stats, drill), by_day)
