@@ -187,7 +187,7 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         if integration and cfg.role not in {"all","web"}:
@@ -1204,6 +1204,65 @@ a{color:#888}</style></head><body>
         except Exception as e:
             import logging
             logging.getLogger('uvicorn.error').exception('tradermatrix-intel failed')
+            return {"ok": False, "error": str(e)}
+
+    @app.get('/api/traderspost-skips')
+    def traderspost_skips(request: Request):
+        """Recent TradersPost send/skip activity.
+
+        Returns paper trades with traderspost_sent flag, showing which went
+        live vs were skipped (with reasons). For Josh 2026-10-19: figure out
+        why only 2 of 15 overnight paper trades went to TradersPost.
+
+        Returns: {ok, sent: [...], skipped: [...], total}
+        """
+        try:
+            import time
+            now = time.time()
+            # Last 24 hours
+            since = now - 86400
+            sent = []
+            skipped = []
+            with db.tx() as c:
+                trades = db.prefix(c, "trade:ict-")
+                for tid, t in trades.items():
+                    if not isinstance(t, dict):
+                        continue
+                    # Only closed or recent trades
+                    decided = t.get("decided_at") or t.get("signal_time") or 0
+                    if decided < since:
+                        continue
+                    # Only trades that have the flag (newer trades)
+                    if "traderspost_sent" not in t:
+                        continue
+                    entry = {
+                        "trade_id": tid,
+                        "detector": t.get("detector"),
+                        "symbol": t.get("symbol"),
+                        "side": t.get("side"),
+                        "entry": t.get("entry"),
+                        "pnl": t.get("pnl"),
+                        "status": t.get("status"),
+                        "decided_at": decided,
+                    }
+                    if t.get("traderspost_sent"):
+                        sent.append(entry)
+                    else:
+                        entry["skip_reason"] = t.get("traderspost_skip_reason", "unknown")
+                        skipped.append(entry)
+            # Sort by decided_at descending
+            sent.sort(key=lambda x: x["decided_at"], reverse=True)
+            skipped.sort(key=lambda x: x["decided_at"], reverse=True)
+            return {
+                "ok": True,
+                "sent": sent[:50],
+                "skipped": skipped[:50],
+                "sent_count": len(sent),
+                "skipped_count": len(skipped),
+            }
+        except Exception as e:
+            import logging
+            logging.getLogger('uvicorn.error').exception('traderspost-skips failed')
             return {"ok": False, "error": str(e)}
 
     @app.post('/api/tradermatrix-intel/web-scrape')
