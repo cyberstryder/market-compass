@@ -327,3 +327,25 @@ def scan(db, c, cfg, now=None):
     except Exception:
         closed = 0
     return {"ran": True, "opened": opened, "closed": closed}
+
+
+def active_contracts(db, c, now):
+    """Return option contract symbols for open 0DTE paper trades.
+    
+    Used by providers.refresh_option_subscriptions to ensure OPRA feed
+    subscribes to contracts with open positions (fixes observation_gap).
+    """
+    symbols = []
+    try:
+        trades = db.prefix(c, "trade:0dte-")
+        for tid, t in trades.items():
+            if not isinstance(t, dict):
+                continue
+            if t.get("status") != "open":
+                continue
+            sym = t.get("symbol")
+            if sym:
+                symbols.append(sym)
+    except Exception:
+        pass
+    return symbols

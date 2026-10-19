@@ -595,14 +595,16 @@ class Collectors:
         from .spy_timeframes import stream_requests as timeframe_requests
         from .obsidian import contracts as watchlist_contracts
         from .setup_study import option_requests
+        from .zero_dte_paper import active_contracts as zdte_active
         def reconcile():
             now=time.time()
             with self.db.tx() as c:
                 from .active_observations import inventory, select_contracts
                 active=inventory(self.db,c,now)
-                requested=(option_requests(self.db,c,now)+stream_requests(c,now,'pending')
+                requested=(option_requests(self.db,c,now)+stream_requests(c,now)
                     +swing_requests(c,now,'pending')+spy_requests(c,now,'pending')
-                    +timeframe_requests(c,now,'pending')+watchlist_contracts(c,now))
+                    +timeframe_requests(c,now,'pending')+watchlist_contracts(c,now)
+                    +zdte_active(self.db,c,now))
                 previous=self.db.get(c,'options:subscriptions',{}).get('symbols',[])
                 selected,missing=select_contracts(active['options'],previous,requested,
                     self.background_option_symbols,self.cfg.stream_limit)
