@@ -115,6 +115,48 @@ def test_no_progress_record_means_no_prune(db, s3):
     assert count_kind(db, 'bar') == 1
 
 
+def test_slow_verify_returns_verifying_then_deletes(db, s3, monkeypatch):
+    """Live W38 (2026-10-19): hash+count outlasted the HTTP connection
+    twice and restarted from zero. A verify that exceeds the inline
+    budget must bank its result in state instead of dying with the
+    request; the next call then deletes without re-verifying."""
+    import time as _time
+    ts = NOW - 400 * DAY
+    for i in range(3):
+        add_event(db, 'bar', ts + i * 60)
+    archive_week(db, s3, 'bar', ts, rows=3)
+    real_hash = apc._hash_object
+
+    def slow_hash(client, bucket, key):
+        _time.sleep(1.0)
+        return real_hash(client, bucket, key)
+
+    monkeypatch.setattr(apc, '_hash_object', slow_hash)
+    monkeypatch.setattr(apc, '_VERIFY_INLINE_SECONDS', 0.2)
+    r1 = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r1['action'] == 'verifying'
+    assert count_kind(db, 'bar') == 3  # nothing deleted pre-verification
+    deadline = _time.time() + 10
+    while apc._VERIFY_THREADS and _time.time() < deadline:
+        _time.sleep(0.05)
+    assert not apc._VERIFY_THREADS
+    states = apc._prune_states(apc._all_copy_state(db))
+    pstr = ca._week_str(ts)
+    assert states[('bar', pstr)]['status'] == 'verified'
+    r2 = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r2['deleted_this_call'] == 3 and r2['status'] == 'done'
+    assert count_kind(db, 'bar') == 0
+
+
+def test_concurrent_chunk_returns_busy(db, s3):
+    assert apc._CHUNK_LOCK.acquire(blocking=False)
+    try:
+        r = apc.prune_next(db, s3, BUCKET, now=NOW)
+    finally:
+        apc._CHUNK_LOCK.release()
+    assert r['action'] == 'busy'
+
+
 def test_verify_sample_detects_tamper(db, s3):
     ts = NOW - 400 * DAY
     archive_week(db, s3, 'bar', ts, rows=3)

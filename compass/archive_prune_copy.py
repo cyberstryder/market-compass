@@ -18,6 +18,8 @@ Gate design (Josh's rule, 2026-10-19: verify R2 has the data, THEN prune):
   mid-delete or double-counts.
 """
 import hashlib
+import os
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -28,6 +30,19 @@ from .store import events
 
 PRUNE_PREFIX = 'copy-archive:prune:'
 DAY = 86400
+# Verification (streaming ~2 GB R2 hash + exact count over tens of
+# millions of rows) can outlast any HTTP connection — the first live W38
+# attempts died at the connection timeout twice, restarting from zero
+# each time because 'verified' saved only at the very end (2026-10-19).
+# prune_next therefore runs verification on a daemon thread: it waits
+# inline up to PRUNE_VERIFY_INLINE_SECONDS (small weeks behave exactly
+# as before), then returns action='verifying' while the thread banks
+# the outcome in prune state. The chunk lock keeps concurrent calls
+# from double-verifying or double-deleting; contenders get 'busy'.
+_CHUNK_LOCK = threading.Lock()
+_VERIFY_THREADS = {}
+_VERIFY_INLINE_SECONDS = float(
+    os.environ.get('PRUNE_VERIFY_INLINE_SECONDS', '120'))
 # Kinds the copy-archive pump deliberately does not walk (see run_copy_chunk).
 # They can never become prunable (no progress records), which coverage shows.
 PUMP_SKIPPED_KINDS = ('chain_archive', 'matrix_raw', 'vendor_flow', 'flow',
@@ -200,7 +215,7 @@ def prune_status(db):
                'deleted': s.get('deleted', 0),
                'expected_rows': s.get('expected_rows')}
               for (k, p), s in pruned.items()
-              if s.get('status') in ('verified', 'deleting')]
+              if s.get('status') in ('verified', 'deleting', 'verifying')]
     return {'periods_done': len(done),
             'rows_deleted': sum(s.get('deleted', 0) for _k, _p, s in done),
             'refused': refused, 'active': active}
@@ -214,11 +229,64 @@ def _refuse(db, kind, pstr, reason, detail):
             'reason': reason, 'detail': detail}
 
 
+def _verify_week(db, client, bucket, kind, pstr, rec, ws, we, now):
+    """The prune gate, unchanged: re-hash the R2 object NOW (not trusting
+    the upload-time check) and require the live row count to equal the
+    archived count exactly. Banks 'verified' or a sticky refusal.
+    Returns True iff verified."""
+    try:
+        digest, size = _hash_object(
+            client, bucket, f"copy-archive/{kind}/{pstr}.jsonl.gz")
+    except Exception as e:
+        _refuse(db, kind, pstr, 'r2_read_failed', str(e)[:300])
+        return False
+    if digest != rec['sha256'] or size != rec.get('bytes', -1):
+        _refuse(db, kind, pstr, 'sha_mismatch',
+                {'record_sha256': rec['sha256'], 'r2_sha256': digest,
+                 'record_bytes': rec.get('bytes'), 'r2_bytes': size})
+        return False
+    live = _count_rows(db, kind, ws, we)
+    if live != rec['rows']:
+        _refuse(db, kind, pstr, 'count_mismatch',
+                {'db_rows': live, 'archived_rows': rec['rows']})
+        return False
+    _set_prune_state(db, kind, pstr,
+                     {'status': 'verified', 'expected_rows': rec['rows'],
+                      'verified_sha256': digest, 'deleted': 0,
+                      'verified_at': now})
+    return True
+
+
+def _verify_worker(db, client, bucket, kind, pstr, rec, ws, we, now):
+    try:
+        _verify_week(db, client, bucket, kind, pstr, rec, ws, we, now)
+    except Exception as e:  # never leave a week stuck in 'verifying'
+        try:
+            _refuse(db, kind, pstr, 'verify_error', str(e)[:300])
+        except Exception:
+            pass
+    finally:
+        _VERIFY_THREADS.pop((kind, pstr), None)
+
+
 def prune_next(db, client, bucket, now=None, row_budget=50000):
     """Verify (once) and delete one batch of the oldest prunable week.
 
     Returns a summary dict; 'idle' when nothing prunable remains. Refusals
-    are sticky per week and never block other weeks."""
+    are sticky per week and never block other weeks. Verification runs on
+    a background thread (see module note): a call that kicks one off
+    waits inline briefly, then returns action='verifying'; a call that
+    finds another chunk in flight returns action='busy'."""
+    if not _CHUNK_LOCK.acquire(blocking=False):
+        return {'ok': True, 'action': 'busy'}
+    try:
+        return _prune_next_locked(db, client, bucket, now=now,
+                                  row_budget=row_budget)
+    finally:
+        _CHUNK_LOCK.release()
+
+
+def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
     now = now or time.time()
     state = _all_copy_state(db)
     progress = _progress_records(state)
@@ -238,26 +306,31 @@ def prune_next(db, client, bucket, now=None, row_budget=50000):
     ws = _week_start(pstr)
     we = ws + 7 * DAY
 
-    if not st:
-        # Verify against R2 NOW — not trusting the upload-time check.
-        try:
-            digest, size = _hash_object(
-                client, bucket, f"copy-archive/{kind}/{pstr}.jsonl.gz")
-        except Exception as e:
-            return _refuse(db, kind, pstr, 'r2_read_failed', str(e)[:300])
-        if digest != rec['sha256'] or size != rec.get('bytes', -1):
-            return _refuse(db, kind, pstr, 'sha_mismatch',
-                           {'record_sha256': rec['sha256'],
-                            'r2_sha256': digest,
-                            'record_bytes': rec.get('bytes'),
-                            'r2_bytes': size})
-        live = _count_rows(db, kind, ws, we)
-        if live != rec['rows']:
-            return _refuse(db, kind, pstr, 'count_mismatch',
-                           {'db_rows': live, 'archived_rows': rec['rows']})
-        st = {'status': 'verified', 'expected_rows': rec['rows'],
-              'verified_sha256': digest, 'deleted': 0, 'verified_at': now}
-        _set_prune_state(db, kind, pstr, st)
+    if not st or st.get('status') == 'verifying':
+        thread = _VERIFY_THREADS.get((kind, pstr))
+        if thread is not None and thread.is_alive():
+            return {'ok': True, 'action': 'verifying',
+                    'kind': kind, 'period': pstr}
+        # No state yet, or an orphaned 'verifying' whose thread died
+        # with a previous process: (re-)kick verification.
+        _set_prune_state(db, kind, pstr,
+                         {'status': 'verifying', 'started_at': now,
+                          'expected_rows': rec['rows']})
+        thread = threading.Thread(
+            target=_verify_worker,
+            args=(db, client, bucket, kind, pstr, rec, ws, we, now),
+            daemon=True)
+        _VERIFY_THREADS[(kind, pstr)] = thread
+        thread.start()
+        thread.join(timeout=_VERIFY_INLINE_SECONDS)
+        if thread.is_alive():
+            return {'ok': True, 'action': 'verifying',
+                    'kind': kind, 'period': pstr}
+        st = _prune_states(_all_copy_state(db)).get((kind, pstr))
+        if not st or st.get('status') != 'verified':
+            return {'ok': False, 'action': 'refused', 'kind': kind,
+                    'period': pstr, 'reason': (st or {}).get('reason'),
+                    'detail': (st or {}).get('detail')}
 
     with db.tx() as c:
         sub = (select(events.c.id)
