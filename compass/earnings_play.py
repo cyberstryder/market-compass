@@ -46,6 +46,23 @@ ENTRY_DELAY_MIN = 15  # Enter at 9:45 AM CT (15 min after 9:30 open)
 # Max simultaneous earnings plays
 MAX_POSITIONS = 3
 
+def _bars_ascending(db, c, symbol, limit, since):
+    """Plain bar dicts in ascending time order.
+
+    db.recent() returns newest-first event rows with the bar nested under
+    'payload' — reading b['c']/b['o'] off the row itself raises KeyError,
+    which crashed this scan silently on every tick (engine catches it) so
+    the strategy never fired (found 2026-10-19).
+    """
+    bars = []
+    for r in db.recent(c, "bar", symbol, limit=limit, since=since):
+        p = r.get('payload') or {}
+        if not isinstance(p, dict):
+            continue
+        bars.append(dict(p, ts=r.get('ts', p.get('ts'))))
+    bars.sort(key=lambda b: b.get('ts') or 0)
+    return bars
+
 def get_earnings_gap(db, c, symbol, now):
     """
     Check if symbol had earnings in last 24 hours and calculate gap.
@@ -84,9 +101,9 @@ def get_earnings_gap(db, c, symbol, now):
     if not earnings_event:
         return None
     
-    # Get previous close and today's open from bars
-    # Use daily bars if available, else use first bar of today
-    bars = db.recent(c, "bar", symbol, limit=5, since=now - 3*86400)
+    # Get previous close and today's open from bars (ascending plain dicts;
+    # enough rows to span the prior session, not just the newest few)
+    bars = _bars_ascending(db, c, symbol, limit=2000, since=now - 3*86400)
     if len(bars) < 2:
         return None
     
@@ -193,6 +210,57 @@ def build_earnings_signal(symbol, gap_info, bars, now):
         'signal_ts': now,
     }
 
+def resolve_0dte_contract(db, c, symbol, option_type, spot, now, max_dte=7):
+    """
+    Resolve the real listed option contract for an earnings signal.
+
+    Mirrors engine.options() eligibility: fresh chain snapshot (<=120s old),
+    matching call/put type, multiplier 100, expiry within [0, max_dte] days.
+    Nearest expiry first (most gamma), then strike nearest spot (ATM).
+
+    Returns {'symbol', 'underlying', 'strike', 'type', 'expiry'} or None.
+    The earnings alert MUST carry this contract: putting the bare underlying
+    ticker in publication.contract.symbol made zero_dte_paper book the stock
+    itself as the option (entry = stock ask, exit needs a +-50% stock move)
+    and OPRA subscribed a non-contract (2026-10-19 audit finding).
+    """
+    try:
+        chain = db.get(c, "chain:" + symbol) or {}
+    except Exception:
+        return None
+    if not chain or now - (chain.get("asof") or 0) > 120:
+        return None
+    kind = "call" if option_type == "CALL" else "put"
+    today = datetime.fromtimestamp(now, CT).date()
+    eligible = []
+    for o in chain.get("contracts", []):
+        if not isinstance(o, dict):
+            continue
+        if str(o.get("type") or "").lower() != kind:
+            continue
+        if o.get("multiplier") != 100:
+            continue
+        try:
+            expiry = datetime.strptime(str(o.get("expiry")), "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            continue
+        if not 0 <= (expiry - today).days <= max_dte:
+            continue
+        if not o.get("symbol") or o.get("strike") is None:
+            continue
+        eligible.append(o)
+    if not eligible:
+        return None
+    eligible.sort(key=lambda o: (str(o.get("expiry")), abs(float(o["strike"]) - spot)))
+    best = eligible[0]
+    return {
+        'symbol': best['symbol'],
+        'underlying': symbol,
+        'strike': float(best['strike']),
+        'type': kind,
+        'expiry': str(best.get('expiry')),
+    }
+
 def scan_earnings_plays(db, c, cfg, now, symbols):
     """
     Scan all OPRA tickers for earnings gap opportunities.
@@ -253,14 +321,25 @@ def scan_earnings_plays(db, c, cfg, now, symbols):
             log.debug(f"Earnings play {symbol}: {reason}")
             continue
         
-        # Get current bars for entry price
-        bars = db.recent(c, "bar", symbol, limit=30, since=now - 3600)
+        # Get current bars for entry price (ascending; bars[-1] is latest)
+        bars = _bars_ascending(db, c, symbol, limit=30, since=now - 3600)
         if not bars:
             continue
         
         # Build signal
         signal = build_earnings_signal(symbol, gap_info, bars, now)
         if signal:
+            # Resolve the actual listed contract BEFORE marking the ticker
+            # traded: without a contract the 0DTE book would trade the stock
+            # ticker itself. If the chain is not ready yet, leave the ticker
+            # unmarked so the next engine tick retries inside the window.
+            contract = resolve_0dte_contract(
+                db, c, symbol, signal['option_type'], signal['entry'], now,
+                max_dte=getattr(cfg, 'option_0dte_max_dte', 7))
+            if not contract:
+                log.info(f"Earnings play {symbol}: no eligible 0DTE contract in fresh chain, will retry")
+                continue
+            signal['contract'] = contract
             signals.append(signal)
             # Mark as traded (prevent re-entry today)
             db.put(c, traded_key, {"at": now, "signal": signal})

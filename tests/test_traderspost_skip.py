@@ -1,0 +1,112 @@
+"""TradersPost skip-logic regression tests.
+
+2026-10-19 audit findings covered here:
+1. Commit 8bb36d6 (same-detector stacking fix) made every signal skip
+   ITSELF: the duplicate check runs after the new position is written and
+   did not exclude it, so TradersPost received nothing from that deploy on.
+   There were zero tests exercising the TradersPost path.
+2. The duplicate/hedging scan used a hand-maintained detector list that
+   missed 5 of the 12 detectors in STRATEGY_TAGS.
+3. Unmapped symbols (e.g. NQ.c.0, absent from traderspost.SYMBOL_MAP) would
+   have been POSTed verbatim to TradersPost as an unknown ticker.
+"""
+from datetime import datetime, timezone
+
+import pytest
+
+from compass.store import Store
+from compass.config import Config
+from compass import ict_paper
+import compass.traderspost as traderspost
+
+NOW = datetime(2026, 9, 28, 17, 0, tzinfo=timezone.utc).timestamp()  # Mon 12:00 CT
+
+
+@pytest.fixture
+def db(tmp_path):
+    s = Store('sqlite:///' + str(tmp_path / 'tp.db'))
+    s.initialize()
+    yield s
+    s.engine.dispose()
+
+
+@pytest.fixture
+def cfg():
+    c = Config(local=True, risk=100)
+    c.ict_futures_paper = True
+    c.ict_golden_zone = True
+    c.ict_aoi_fade = True
+    c.ict_aoi_zones = True
+    c.ict_bos_fvg = True
+    c.traderspost_enabled = True
+    return c
+
+
+@pytest.fixture
+def sent(monkeypatch):
+    calls = []
+
+    def fake_send(cfg, db, trade):
+        calls.append(trade)
+        return True, 'ok'
+
+    monkeypatch.setattr(traderspost, 'send_signal', fake_send)
+    return calls
+
+
+def sig(**kw):
+    base = {'direction': 'long', 'entry': 100.0, 'stop': 98.0,
+            'target': 104.0, 'rr': 2.0, 'signal_ts': NOW - 60,
+            'level_kind': 'test'}
+    base.update(kw)
+    return base
+
+
+def submit(db, cfg, detector, symbol, **kw):
+    with db.tx() as c:
+        r = ict_paper.submit(db, c, cfg, NOW, detector, symbol, sig(**kw))
+        assert r['submitted'], r
+        trade = db.get(c, 'trade:' + r['trade_id'] + '-t1')
+    return r, trade
+
+
+def test_first_signal_is_sent_not_self_skipped(db, cfg, sent):
+    _, trade = submit(db, cfg, 'golden_zone', 'MCL.v.0')
+    assert len(sent) == 1
+    assert trade['traderspost_sent'] is True
+
+
+def test_second_detector_same_symbol_is_skipped(db, cfg, sent):
+    submit(db, cfg, 'aoi_fade', 'MCL.v.0')
+    _, trade2 = submit(db, cfg, 'golden_zone', 'MCL.v.0', signal_ts=NOW - 30)
+    assert len(sent) == 1  # only the first signal went out
+    assert trade2['traderspost_sent'] is False
+    assert 'already open for aoi_fade' in trade2['traderspost_skip_reason']
+
+
+def test_same_detector_reentry_blocked_at_paper_layer(db, cfg, sent):
+    submit(db, cfg, 'golden_zone', 'MCL.v.0')
+    with db.tx() as c:
+        r = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', 'MCL.v.0',
+                             sig(signal_ts=NOW - 30))
+    assert r['submitted'] is False
+    assert r['reason'] == 'existing_position'
+    assert len(sent) == 1
+
+
+def test_correlated_opposite_direction_is_hedging_skip(db, cfg, sent):
+    submit(db, cfg, 'aoi_zones', 'MES.c.0')  # long, equity group
+    _, trade2 = submit(db, cfg, 'bos_fvg', 'MNQ.c.0', signal_ts=NOW - 30,
+                       direction='short', entry=100.0, stop=102.0, target=96.0)
+    assert len(sent) == 1
+    assert trade2['traderspost_sent'] is False
+    assert 'hedging' in trade2['traderspost_skip_reason']
+
+
+def test_unmapped_symbol_fails_closed(db, cfg, sent):
+    # golden_zone allowlist includes NQ, but SYMBOL_MAP has no NQ.c.0 entry:
+    # the raw Compass symbol must never be POSTed to TradersPost.
+    _, trade = submit(db, cfg, 'golden_zone', 'NQ.c.0')
+    assert sent == []
+    assert trade['traderspost_sent'] is False
+    assert 'no TradersPost symbol mapping' in trade['traderspost_skip_reason']

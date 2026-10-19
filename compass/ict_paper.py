@@ -305,8 +305,7 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
     # TradersPost webhook for live automation (2026-10-14)
     # Fires after successful paper submit. Disabled by default
     # (TRADERSPOST_ENABLED=true + TRADERSPOST_WEBHOOK_URL to enable).
-    # Sends ALL 3 legs (T1, T2, Trail) as separate webhooks so TradersPost
-    # replicates the full 2/2/1 scale-out (5 contracts total), not just 1.
+    # Sends the single 2-contract position (2/2/1 removed 2026-10-18, fb54017).
     try:
         from . import traderspost
         # Skip entirely if TradersPost is disabled (avoid unnecessary db calls
@@ -350,7 +349,11 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                 # 3x aoi_zones MES buys in 4 min (13:07, 13:09, 13:11) created
                 # 6 contracts instead of 2. The loop used to skip the current
                 # detector, so it never saw its own open position.
-                for other_detector in ('aoi_fade', 'aoi_zones', 'bos_fvg', 'bos_gz_vwap', 'turtle_soup', 'continuation', 'golden_zone'):
+                # Derived from STRATEGY_TAGS so every detector that can
+                # submit is covered automatically — the hand-maintained list
+                # missed smt_divergence, morning_drive, icc, rumers_box and
+                # trend_rider, leaving their open positions invisible here.
+                for other_detector in STRATEGY_TAGS:
                     # Check all symbols for this detector (need to check both
                     # same-symbol and correlated-symbol positions)
                     # Build list of symbols to check: same symbol + correlated group
@@ -367,6 +370,15 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                         for suffix in ('', ':t1', ':t2', ':trail'):
                             pos_key = f'position:ict:{other_detector}:{check_symbol}{suffix}'
                             pos = db.get(c, pos_key, {}) or {}
+                            # Never count the position THIS submit() just
+                            # wrote: the check runs after the legs are stored,
+                            # so without this exclusion every signal finds
+                            # itself and skips. That bug (8bb36d6) silently
+                            # stopped ALL live sends from its deploy until
+                            # this fix — paper kept trading, so nothing
+                            # looked wrong on the dashboard.
+                            if pos.get('id') in submitted_ids:
+                                continue
                             if pos.get('status') == 'open':
                                 pos_side = pos.get('side', '').lower()
                                 if check_symbol == symbol:
@@ -381,9 +393,18 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                             break
                     if skip_reason:
                         break
+            if not skip_reason and symbol:
+                # Fail closed on unmapped symbols: map_symbol() falls back
+                # to the raw Compass format ("NQ.c.0"), which TradersPost
+                # would treat as an unknown ticker. Never POST that.
+                mapped = traderspost.map_symbol(symbol)
+                if mapped == symbol and '.' in symbol:
+                    skip_reason = f"skip {symbol}: no TradersPost symbol mapping"
             if skip_reason:
-                db.health('traderspost_webhook', 'skipped', skip_reason)
-                # 2026-10-18: Mark all legs as NOT sent to TradersPost
+                # Mark the trades FIRST: db.health() opens its own
+                # transaction, and if it fails (e.g. SQLite lock in tests)
+                # it must not abort the marking — the marks are what the
+                # dashboard and /api/traderspost-skips read back.
                 for trade_id in submitted_ids:
                     t = db.get(c, 'trade:' + trade_id)
                     if t:
@@ -391,6 +412,10 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                         t['traderspost_sent'] = False
                         t['traderspost_skip_reason'] = skip_reason
                         db.put(c, 'trade:' + trade_id, t)
+                try:
+                    db.health('traderspost_webhook', 'skipped', skip_reason)
+                except Exception:
+                    pass
             else:
                 # 2026-10-18: Single position (2 contracts) sent to TradersPost.
                 # No 2/2/1 scaling — paper and live both trade the detector's

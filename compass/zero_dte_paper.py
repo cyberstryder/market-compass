@@ -15,6 +15,7 @@ overnight. No new entries inside the last hour of the session.
 Trade keys: trade:0dte-*. Read-only aggregations live in compass/simple.py.
 """
 
+import re
 import time
 
 from sqlalchemy import select
@@ -28,6 +29,11 @@ SCAN_THROTTLE = 60
 ENTRY_CUTOFF_SEC = 3600  # no new 0DTE paper trades in the last hour
 
 _p = events.c.payload
+
+# Listed option contracts only (OCC, optional Massive "O:" prefix). A bare
+# underlying ticker here means the alert producer was buggy; booking it would
+# create a phantom trade priced off the stock (earnings play, 2026-10-19).
+_OPTION_SYMBOL = re.compile(r"^(?:O:)?[A-Z.]+\d{6}[CP]\d{8}$")
 
 
 def _num(x):
@@ -198,8 +204,10 @@ def _open_scanner(db, c, now, flatten_at):
         pub = (r.get("payload") or {}).get("publication") or {}
         contract = pub.get("contract") or {}
         symbol = contract.get("symbol")
-        if not symbol:
-            # Fall back to a chain lookup for older publications without it.
+        if not (symbol and _OPTION_SYMBOL.match(str(symbol))):
+            # Missing OR not an option contract (e.g. a bare underlying from
+            # a buggy producer): fall back to a chain lookup by strike/type.
+            # Fail closed — never book a non-option symbol as an option.
             o = _find_0dte_contract(db, c, contract.get("underlying"),
                                     contract.get("strike"), contract.get("type"), now)
             symbol = (o or {}).get("symbol")

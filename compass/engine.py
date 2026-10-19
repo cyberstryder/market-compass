@@ -673,6 +673,15 @@ class Engine:
                 from .tradermatrix_intel import OPRA_TICKERS
                 earnings_signals = scan_earnings_plays(self.db, c, self.cfg, now, list(OPRA_TICKERS))
                 for sig in earnings_signals:
+                    # The publication contract must be the resolved listed
+                    # option (OCC symbol), never the bare underlying ticker:
+                    # zero_dte_paper books whatever symbol is here, and a stock
+                    # symbol produced a phantom stock-priced "option" trade.
+                    contract = sig.get('contract') or {}
+                    if not contract.get('symbol'):
+                        logging.getLogger('uvicorn.error').warning(
+                            f"Earnings play {sig['symbol']}: signal has no resolved contract, skipping alert")
+                        continue
                     # Create alert for 0DTE paper trading (same as scanner signals)
                     # Uses publication.category = options_0dte so zero_dte_paper picks it up
                     self.db.append(c, 'alert', 'setup_study', sig['symbol'], now, {
@@ -688,8 +697,11 @@ class Engine:
                         'publication': {
                             'category': 'options_0dte',
                             'contract': {
-                                'symbol': sig['symbol'],
+                                'symbol': contract['symbol'],
                                 'underlying': sig['symbol'],
+                                'strike': contract.get('strike'),
+                                'type': contract.get('type'),
+                                'expiry': contract.get('expiry'),
                             },
                             'status': 'option_setup_new',
                         },
