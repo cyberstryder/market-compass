@@ -196,6 +196,17 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
     if atr_v and risk_pts < min_stop_atr * atr_v:
         return {'submitted': False, 'reason': 'stop_too_tight',
                 'risk_pts': round(risk_pts, 4), 'atr': round(atr_v, 4)}
+    # 2026-10-18: Global minimum R:R filter. Rejects signals with
+    # risk:reward below 1.5. AOI Fade was firing R:R 0.17 signals
+    # (25pt reward, 146pt risk) causing -$1,482 losses across 2/2/1 legs.
+    # Bos Fvg has its own min_rr; this is the backstop for all detectors.
+    reward_pts = abs(target - entry)
+    rr = reward_pts / risk_pts if risk_pts > 0 else 0
+    min_rr = number(getattr(cfg, 'ict_paper_min_rr', 1.5)) or 1.5
+    if rr < min_rr:
+        return {'submitted': False, 'reason': 'rr_too_low',
+                'rr': round(rr, 2), 'min_rr': min_rr,
+                'risk_pts': round(risk_pts, 2), 'reward_pts': round(reward_pts, 2)}
     # Regime filter (Quill Trend Kit): trend-continuation detectors are
     # blocked in range/squeeze (they chop); fade/reversion detectors are
     # blocked in strong trends (they get run over). Skipped when bars are
