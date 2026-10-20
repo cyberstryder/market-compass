@@ -67,8 +67,6 @@ def test_smoothers_and_futures_aggregation(db):
     # 2026-10-14: BOS+GZ/VWAP not in drill (no trades in test DB, filter removed)
     fp = out['types']['flow_pulse']
     assert fp['stats']['pnl'] == 48.7 and fp['stats']['peak_50_plus'] == 1
-    fl = out['types']['flash']
-    assert fl['stats']['tracked'] == 1 and fl['stats']['pnl'] is None
     zd = out['types']['0dte']
     assert zd['stats']['plans'] == 1
 
@@ -87,7 +85,7 @@ def test_calendar_groups_by_chicago_day(db):
 def test_empty_db_returns_empty_blocks(db):
     with db.tx() as c:
         out = simple.summary(db, c, 1_000_000_000.0)
-    assert set(out['types']) == {'smoothers', 'futures', 'flow_pulse', 'flash', 'tape', '0dte', 'swings'}
+    assert set(out['types']) == {'smoothers', 'futures', 'flow_pulse', 'tape', '0dte', 'swings'}
     assert all(t['stats']['tracked'] == 0 for t in out['types'].values())
 
 
@@ -224,17 +222,6 @@ def test_detail_futures_trades(db):
     assert it['title'] == 'MNQ long'
     assert it['result'] == '+$40' and it['result_cls'] == 'pos'
     assert any(r[0] == 'Exit reason' and r[1] == 'Target hit' for r in it['rows'])
-
-
-def test_detail_flash_setups(db):
-    now = NOW
-    _detail_fixtures(db, now)
-    with db.tx() as c:
-        d = simple.detail(db, c, now, 'flash', 'FLOOR BOUNCE #4')
-    assert len(d['items']) == 1
-    it = d['items'][0]
-    assert it['title'] == 'MU long'
-    assert any(r[0] == 'Invalidation' for r in it['rows'])
 
 
 def test_detail_0dte_plans_and_alerts(db):

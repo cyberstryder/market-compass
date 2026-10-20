@@ -91,7 +91,7 @@ def test_futures_opened_closed_and_pnl(db):
     assert 'Realized today: -$63.00' in text
 
 
-def test_flow_pulse_and_flash(db):
+def test_flow_pulse_section(db):
     now = _now_today()
     pulse = {'symbol': 'MRK', 'direction': 'bearish', 'directional_premium': 1700000,
              'suggested_contract': {'strike': 140, 'type': 'PUT', 'expiration': '2026-10-30'}}
@@ -104,8 +104,9 @@ def test_flow_pulse_and_flash(db):
         out = day_digest.assemble(db, c, now + 3600)
     fp = next(s for s in out['sections'] if s['key'] == 'flow_pulse')
     assert any('MRK BEARISH' in l and '$1.7M' in l for l in fp['lines'])
-    fl = next(s for s in out['sections'] if s['key'] == 'flash_agentic')
-    assert any('FLOOR BOUNCE #4 (1)' in l and 'AAPL' in l for l in fl['lines'])
+    # Flash Agentic was removed 2026-10-20: no flash section is assembled
+    # even when flash-sourced checks exist in the store.
+    assert all(s['key'] != 'flash_agentic' for s in out['sections'])
 
 
 def test_empty_day_has_no_lines(db):

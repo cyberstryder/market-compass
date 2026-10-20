@@ -4,7 +4,6 @@ Assembles, for the America/Chicago calendar date:
 - Smoothers entries/exits (native outbox)
 - Futures ICT paper trades opened/closed today, realized day P&L, open positions
 - Flow Pulse pulses fired today + running paper track record
-- Flash Agentic setups logged today, grouped by pattern, + running by-pattern hit rates
 - 0DTE: SPY morning plan (queried by source+day, not a blunt recent() that
   drops morning rows on high-volume days) with plan outcome vs minute bars
   (target hit / stopped / open), plus options_0dte scanner alerts
@@ -215,44 +214,6 @@ def _flow_pulse(db, c, start):
     return _section("flow_pulse", "Flow Pulse", lines)
 
 
-# ---------------------------------------------------------------- flash agentic
-
-
-def _flash(db, c, start, now):
-    lines = []
-    try:
-        rows = db.recent(c, "pick_check", limit=500, since=start)
-    except Exception:
-        rows = []
-    by_pat = {}
-    for r in rows:
-        p = r.get("payload") or {}
-        if p.get("source") != "flash_agentic":
-            continue
-        by_pat.setdefault(p.get("pattern") or "unknown", []).append(p)
-    for pat in sorted(by_pat):
-        items = by_pat[pat]
-        parts = []
-        for p in items:
-            parts.append("%s %s · score %s · %s→%s · inval %s · ev %s" % (
-                p.get("ticker") or "?", p.get("direction") or "?",
-                _f(p.get("setup_score")), _f(p.get("entry")), _f(p.get("target")),
-                _f(p.get("invalidation")), _f(p.get("evidence_score"))))
-        lines.append("%s (%d): %s" % (pat, len(items), " | ".join(parts)))
-    try:
-        from .pick_scorecard import scorecard
-        sc = scorecard(db, c, now, limit=200)
-        for row in sc.get("by_pattern") or []:
-            if row.get("source") != "flash_agentic":
-                continue
-            lines.append("Running %s: %d tracked · %dW-%dL · %s" % (
-                row.get("pattern"), row.get("checks", 0), row.get("wins", 0),
-                row.get("losses", 0), row.get("hit_rate", "n/a")))
-    except Exception:
-        pass
-    return _section("flash_agentic", "Flash Agentic", lines)
-
-
 # ---------------------------------------------------------------- 0dte
 
 
@@ -351,7 +312,6 @@ def assemble(db, c, now):
             _smoothers(db, c, start),
             _futures(db, c, start),
             _flow_pulse(db, c, start),
-            _flash(db, c, start, now),
             _spy_0dte(db, c, start, date),
         ],
     }

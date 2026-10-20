@@ -7,7 +7,7 @@ Each type block carries plain-English copy:
 - scored: how a win/loss is measured
 
 Dollar P&L exists for smoothers (paper options), futures (paper micros), and
-flow pulse (paper tracks). Flash Agentic and 0DTE are scored by hit rate /
+flow pulse (paper tracks). 0DTE is scored by hit rate /
 counts — no dollars, and the UI must say so.
 """
 
@@ -278,67 +278,6 @@ def _flow_pulse(db, c, now):
         "Unusually large directional option flow ($1M+ in 30 minutes).",
         "Whenever big money prints. Each pulse paper-tracks one suggested contract for two weeks.",
         "Win = the paper contract was worth more at the two-week exit than at entry, after fees.",
-        stats, drill), by_day)
-
-
-# ---------------------------------------------------------------- flash agentic
-
-
-def _flash(db, c, now):
-    try:
-        rows = db.recent(c, "pick_check", limit=5000)
-    except Exception:
-        rows = []
-    per_pattern = defaultdict(int)
-    by_day = defaultdict(lambda: {"count": 0})
-    for r in rows:
-        p = r.get("payload") or {}
-        if p.get("source") != "flash_agentic":
-            continue
-        per_pattern[p.get("pattern") or "unknown"] += 1
-        d = _day(p.get("at") or r.get("ts"))
-        if d:
-            by_day[d]["count"] += 1
-    hit = {}
-    try:
-        from .pick_scorecard import scorecard
-        sc = scorecard(db, c, now, limit=500)
-        for row in sc.get("by_pattern") or []:
-            if row.get("source") == "flash_agentic":
-                hit[row.get("pattern")] = row
-    except Exception:
-        pass
-    drill = []
-    total_r, r_n = 0.0, 0
-    for pattern in sorted(per_pattern):
-        h = hit.get(pattern) or {}
-        checks = h.get("checks", 0)
-        if h.get("total_r") is not None:
-            total_r += h["total_r"]
-            r_n += h.get("r_count") or 0
-        drill.append(_drill(
-            pattern,
-            "Flash Agentic chart setups of this pattern type.",
-            {"tracked": per_pattern[pattern],
-             "wins": h.get("wins", 0),
-             "win_rate": h.get("hit_rate"),
-             "resolved": checks,
-             "pnl": h.get("total_pnl"),
-             "expectancy_r": h.get("expectancy_r")}))
-    total_tracked = sum(per_pattern.values())
-    total_wins = sum((hit.get(p) or {}).get("wins", 0) for p in per_pattern)
-    total_resolved = sum((hit.get(p) or {}).get("checks", 0) for p in per_pattern)
-    total_pnl = sum((hit.get(p) or {}).get("total_pnl") or 0 for p in per_pattern)
-    stats = {"tracked": total_tracked, "wins": total_wins,
-             "win_rate": round(100.0 * total_wins / total_resolved, 1) if total_resolved else None,
-             "resolved": total_resolved, "pnl": round(total_pnl, 2) if total_pnl else None,
-             "expectancy_r": round(total_r / r_n, 2) if r_n else None}
-    return (_block(
-        "flash", "Flash Agentic",
-        "Chart setups from the Obsidian Cipher scanner.",
-        "Whenever a setup triggers intraday. Tracked silently; one summary a day.",
-        "Win = price hit the target before the invalidation level, within five sessions. "
-        "Paper-traded at 100 shares for dollar P&L.",
         stats, drill), by_day)
 
 
@@ -924,49 +863,6 @@ def _detail_flow(db, c, now, name):
             "items": items[:100]}
 
 
-def _detail_flash(db, c, now, name):
-    try:
-        from .pick_scorecard import scorecard
-        sc = scorecard(db, c, now, limit=500)
-        checks = sc.get("checks") or []
-    except Exception:
-        checks = []
-    items = []
-    for ch in checks:
-        if ch.get("source") != "flash_agentic":
-            continue
-        if (ch.get("pattern") or "unknown") != name:
-            continue
-        out = ch.get("outcome") or {}
-        st = out.get("status") or "unknown"
-        olabel = {"win": "Target hit", "loss": "Invalidated",
-                  "open": "Still open"}.get(st, "—")
-        ticker = ch.get("ticker") or "?"
-        direction = ch.get("direction") or "?"
-        at = _num(ch.get("at"))
-        sub = "Logged %s" % _ts(at)
-        if ch.get("setup_score") is not None:
-            sub += " · score %g" % ch["setup_score"]
-        def _f(x):
-            v = _num(x)
-            return "%.2f" % v if v is not None else "—"
-        orows = [["Entry", _f(ch.get("entry"))],
-                 ["Target", _f(ch.get("target"))],
-                 ["Invalidation", _f(ch.get("invalidation"))],
-                 ["Outcome", olabel]]
-        items.append({
-            "tag": ticker[:6], "title": "%s %s" % (ticker, direction),
-            "sub": sub, "rows": orows, "_sort": at or 0,
-            "result": olabel,
-            "result_cls": "pos" if st == "win" else ("neg" if st == "loss" else ""),
-        })
-    items.sort(key=lambda i: i.pop("_sort"), reverse=True)
-    return {"type": "flash", "name": name,
-            "title": "%s — setup by setup" % name,
-            "sub": "Every logged setup of this pattern, newest first. Target before invalidation wins.",
-            "items": items[:100]}
-
-
 def _detail_tape(db, c, now, name):
     try:
         from .pick_scorecard import scorecard
@@ -1214,7 +1110,6 @@ def detail(db, c, now, dtype, name):
         "smoothers": _detail_smoothers,
         "futures": _detail_futures,
         "flow_pulse": _detail_flow,
-        "flash": _detail_flash,
         "tape": _detail_tape,
         "0dte": _detail_0dte,
         "swings": _detail_swings,
@@ -1234,7 +1129,7 @@ def detail(db, c, now, dtype, name):
 
 def summary(db, c, now):
     blocks = {}
-    for fn in (_smoothers, _futures, _flow_pulse, _flash, _tape, _0dte, _swings):
+    for fn in (_smoothers, _futures, _flow_pulse, _tape, _0dte, _swings):
         try:
             block, _ = fn(db, c, now)
         except Exception:
@@ -1245,7 +1140,7 @@ def summary(db, c, now):
 
 def calendar(db, c, now, year, month):
     days = defaultdict(lambda: defaultdict(lambda: {"pnl": 0.0, "count": 0}))
-    fns = (_smoothers, _futures, _flow_pulse, _flash, _tape, _0dte, _swings)
+    fns = (_smoothers, _futures, _flow_pulse, _tape, _0dte, _swings)
     for fn in fns:
         try:
             block, by_day = fn(db, c, now)
