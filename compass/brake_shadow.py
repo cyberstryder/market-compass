@@ -22,6 +22,28 @@ Records live under `brake_shadow:<trade_id>` (the t1 leg id). Scoring
 joins each record to its trade's realized outcome: a would-blocked trade
 that was taken anyway and lost is a loss the brake would have avoided;
 one that won is a win it would have missed.
+
+Two further candidates are scored from each closed trade's stored bar
+path (added 2026-10-20 at Josh's direction, after a trade-by-trade
+replay showed the proposed live-send gate would have changed almost
+nothing on 2026-10-19/20 — the losses were genuine stops and stacking,
+not stale sends):
+
+  3. breakeven — a stop moved to entry once the trade has run +1R.
+     Scored by walking the trade's bars: once a bar's favorable extreme
+     reaches +1R the stop is armed; a later bar whose adverse extreme
+     returns to entry would have exited at 0R instead of the realized
+     outcome. Saved = losses that armed then retraced; cost = winners
+     that armed, retraced to entry, and only then went on to target.
+  4. first_bar — the delayed-send check: was the trade already decided
+     (target reached or stop reached) by the first bar boundary at or
+     after entry+30s? A 30s hold-and-recheck before sending would have
+     skipped those. Bar granularity makes this a ~1-minute proxy; it is
+     a measurement of the class, not a tick-exact replay.
+
+Both are measurement only, like the brakes. Bar windows are rolling, so
+trades whose bars have aged out score as unevaluable rather than being
+guessed at.
 """
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -214,6 +236,92 @@ def record(db, c, shadow, trade_id, traderspost_sent=None):
     return shadow
 
 
+def path_eval(db, c, trade, bars=None):
+    """Bar-path counterfactuals for one closed trade.
+
+    Returns {'mfe_r', 'be_armed', 'be_exit_zero', 'first_bar_done'} or
+    None when the path cannot be evaluated (missing levels/timestamps or
+    no bars left in the rolling window covering the trade). Bar extremes
+    are direction-aware; within a bar, arming is only credited at the
+    bar's close for the NEXT bar's adverse move (conservative: a single
+    wide bar that both reaches +1R and returns to entry does not count
+    as a breakeven save).
+    """
+    entry = number(trade.get('entry'))
+    stop = number(trade.get('stop'))
+    target = number(trade.get('target'))
+    t0 = number(trade.get('entered_at'))
+    t1 = number(trade.get('exited_at'))
+    if not entry or stop is None or not t0 or not t1 or entry == stop:
+        return None
+    if bars is None:
+        from .ict_common import ict_bars
+        try:
+            bars = ict_bars(db, c, trade.get('symbol'))
+        except Exception:
+            return None
+    long_side = str(trade.get('side') or '').lower() == 'long'
+    dirn = 1 if long_side else -1
+    risk = abs(entry - stop)
+    target_r = (dirn * (target - entry) / risk) if target else None
+    win = [b for b in (bars or [])
+           if t0 - 60 <= (number(b.get('ts')) or 0) <= t1]
+    if not win:
+        return None
+    win.sort(key=lambda b: number(b.get('ts')) or 0)
+
+    def fav_r(b):
+        px = number(b.get('h')) if long_side else number(b.get('l'))
+        return dirn * (px - entry) / risk if px is not None else None
+
+    def adv_r(b):
+        px = number(b.get('l')) if long_side else number(b.get('h'))
+        return dirn * (px - entry) / risk if px is not None else None
+
+    # First-bar (delayed-send) classification: cumulative extremes up to
+    # and including the first bar at/after entry+30s. Independent of the
+    # breakeven walk below. When no bar reaches entry+30s (trade closed
+    # faster than the recheck), only an already-decided path classifies.
+    first_bar_done = None
+    cum_fav = 0.0
+    cum_adv = 0.0
+    saw_recheck_bar = False
+    for b in win:
+        f = fav_r(b)
+        a = adv_r(b)
+        if f is not None:
+            cum_fav = max(cum_fav, f)
+        if a is not None:
+            cum_adv = min(cum_adv, a)
+        if (number(b.get('ts')) or 0) >= t0 + 30:
+            saw_recheck_bar = True
+            break
+    if target_r and cum_fav >= target_r:
+        first_bar_done = 'target'
+    elif cum_adv <= -1.0:
+        first_bar_done = 'stop'
+    elif saw_recheck_bar:
+        first_bar_done = 'open'
+
+    mfe = 0.0
+    armed = False
+    be_exit_zero = False
+    for b in win:
+        f = fav_r(b)
+        a = adv_r(b)
+        if armed and a is not None and a <= 0:
+            be_exit_zero = True
+            break
+        if f is not None:
+            mfe = max(mfe, f)
+            if target_r and f >= target_r:
+                break  # reached target on the path; BE never gets a say
+            if f >= 1.0:
+                armed = True
+    return {'mfe_r': round(mfe, 3), 'be_armed': armed,
+            'be_exit_zero': be_exit_zero, 'first_bar_done': first_bar_done}
+
+
 def summarize(db, c, since_ts):
     """Aggregate shadow records against realized trade outcomes.
 
@@ -225,7 +333,13 @@ def summarize(db, c, since_ts):
                 'losses_avoided': 0.0, 'pending': 0}
     out = {'since': since_ts, 'records': 0, 'trades_closed': 0,
            'baseline_pnl': 0.0,
-           'strike3_0830': _blank(), 'corr_cap1': _blank()}
+           'strike3_0830': _blank(), 'corr_cap1': _blank(),
+           'breakeven': {'evaluated': 0, 'armed': 0, 'exits_at_zero': 0,
+                         'saved': 0.0, 'cost': 0.0, 'net': 0.0,
+                         'unevaluable': 0},
+           'first_bar': {'evaluated': 0, 'would_skip': 0,
+                         'skipped_pnl': 0.0, 'net': 0.0, 'unevaluable': 0}}
+    bars_cache = {}
     for key, rec in db.prefix(c, 'brake_shadow:').items():
         if not isinstance(rec, dict) or (number(rec.get('ts')) or 0) < since_ts:
             continue
@@ -236,6 +350,41 @@ def summarize(db, c, since_ts):
         if status == 'closed' and pnl is not None:
             out['trades_closed'] += 1
             out['baseline_pnl'] += pnl
+            if not trade.get('data_gap'):
+                sym = trade.get('symbol')
+                if sym not in bars_cache:
+                    from .ict_common import ict_bars
+                    try:
+                        bars_cache[sym] = ict_bars(db, c, sym)
+                    except Exception:
+                        bars_cache[sym] = []
+                ev = None
+                try:
+                    ev = path_eval(db, c, trade, bars_cache[sym])
+                except Exception:
+                    ev = None
+                be = out['breakeven']
+                fb = out['first_bar']
+                if ev is None:
+                    be['unevaluable'] += 1
+                    fb['unevaluable'] += 1
+                else:
+                    be['evaluated'] += 1
+                    if ev['be_armed']:
+                        be['armed'] += 1
+                    if ev['be_exit_zero']:
+                        be['exits_at_zero'] += 1
+                        if pnl < 0:
+                            be['saved'] += -pnl
+                        elif pnl > 0:
+                            be['cost'] += pnl
+                    if ev['first_bar_done'] is None:
+                        fb['unevaluable'] += 1
+                    else:
+                        fb['evaluated'] += 1
+                        if ev['first_bar_done'] in ('target', 'stop'):
+                            fb['would_skip'] += 1
+                            fb['skipped_pnl'] += pnl
         for brake in ('strike3_0830', 'corr_cap1'):
             b = rec.get(brake) or {}
             if not b.get('would_block'):
@@ -255,5 +404,12 @@ def summarize(db, c, since_ts):
         agg['wins_missed'] = round(agg['wins_missed'], 2)
         agg['losses_avoided'] = round(agg['losses_avoided'], 2)
         agg['net'] = round(agg['losses_avoided'] - agg['wins_missed'], 2)
+    be = out['breakeven']
+    be['saved'] = round(be['saved'], 2)
+    be['cost'] = round(be['cost'], 2)
+    be['net'] = round(be['saved'] - be['cost'], 2)
+    fb = out['first_bar']
+    fb['skipped_pnl'] = round(fb['skipped_pnl'], 2)
+    fb['net'] = round(-fb['skipped_pnl'], 2)
     out['baseline_pnl'] = round(out['baseline_pnl'], 2)
     return out

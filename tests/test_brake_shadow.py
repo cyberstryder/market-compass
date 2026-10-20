@@ -4,7 +4,8 @@ measured, never enforced.
 Covers strike counting (08:30 CT anchor scope, win resets the streak,
 data_gap never counts), correlation-group state, the submit() hook
 (a shadow record is written and the trade still submits), and outcome
-scoring in summarize().
+scoring in summarize() — including the bar-path counterfactuals
+(breakeven-after-+1R and the first-bar delayed-send check).
 """
 from datetime import datetime, timezone
 import pytest
