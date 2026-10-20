@@ -42,6 +42,7 @@ def test_smoothers_and_futures_aggregation(db):
         db.put(c, 'trade:ict-1', {'id': 'ict-1', 'symbol': 'SIL.v.0', 'direction': 'long',
                                   'qty': 1, 'strategy': 'ict-aoi-fade', 'entry': 61.3,
                                   'exit': 61.24, 'pnl': -63.0, 'exit_reason': 'stop',
+                                  'traderspost_sent': True,
                                   'entered_at': now - 3600, 'exited_at': now})
         db.put(c, 'flow_pulse_track:k1', {'symbol': 'MRK', 'direction': 'bearish',
                                           'status': 'closed', 'entry': 2.0, 'exit': 2.5,
@@ -77,6 +78,7 @@ def test_calendar_groups_by_chicago_day(db):
     with db.tx() as c:
         db.put(c, 'trade:ict-9', {'id': 'ict-9', 'symbol': 'MCL.v.0', 'direction': 'short',
                                   'qty': 1, 'strategy': 'ict-aoi-fade', 'pnl': 25.0,
+                                  'traderspost_sent': True,
                                   'entered_at': now - 7200, 'exited_at': now})
         out = simple.calendar(db, c, now, d.year, d.month)
     assert out['days'][d.isoformat()]['futures']['pnl'] == 25.0
@@ -137,6 +139,7 @@ def _detail_fixtures(db, now):
                                    'qty': 2, 'strategy': 'ict-golden-zone', 'entry': 25000.0,
                                    'exit': 25010.0, 'pnl': 40.0, 'exit_reason': 'target',
                                    'status': 'closed', 'stop': 24990.0, 'target': 25010.0,
+                                   'traderspost_sent': True,
                                    'entered_at': now - 7200, 'exited_at': now - 3600})
         db.put(c, 'flow_pulse_track:kd', {'symbol': 'TSLA', 'direction': 'bullish',
                                           'status': 'closed', 'entry': 3.0, 'exit': 2.0,
@@ -192,11 +195,12 @@ def test_futures_data_gap_excluded(db):
                                    'qty': 1, 'strategy': 'ict-aoi-fade', 'entry': 7800.0,
                                    'exit': 7810.0, 'pnl': 50.0, 'exit_reason': 'session_flatten',
                                    'status': 'closed', 'data_gap': True,
+                                   'traderspost_sent': True,
                                    'entered_at': now - 7200, 'exited_at': now - 3600})
         db.put(c, 'trade:ict-g2', {'id': 'ict-g2', 'symbol': 'MES.c.0', 'side': 'long',
                                    'qty': 1, 'strategy': 'ict-aoi-fade', 'entry': 7800.0,
                                    'exit': 7810.0, 'pnl': 50.0, 'exit_reason': 'target',
-                                   'status': 'closed',
+                                   'status': 'closed', 'traderspost_sent': True,
                                    'entered_at': now - 7200, 'exited_at': now - 3600})
         out = simple.summary(db, c, now)
     fu = out['types']['futures']
@@ -210,6 +214,32 @@ def test_futures_data_gap_excluded(db):
     gapped = [i for i in d['items'] if '⚠️' in i['result']]
     assert len(gapped) == 1
     assert any(r[0] == 'Data' for r in gapped[0]['rows'])
+
+
+def test_futures_shows_only_traderspost_sent(db):
+    # Josh 2026-10-20: the webpage futures view shows ONLY trades
+    # TradersPost took. Paper-only trades (skipped or flagless) are
+    # excluded from stats, drill, open count, and the detail view.
+    now = NOW
+    base = {'symbol': 'MNQ.c.0', 'side': 'long', 'qty': 2,
+            'strategy': 'ict-golden-zone', 'entry': 25000.0, 'exit': 25010.0,
+            'status': 'closed', 'entered_at': now - 7200, 'exited_at': now - 3600}
+    with db.tx() as c:
+        db.put(c, 'trade:ict-s1', dict(base, id='ict-s1', pnl=40.0,
+                                       traderspost_sent=True))
+        db.put(c, 'trade:ict-s2', dict(base, id='ict-s2', pnl=999.0,
+                                       traderspost_sent=False,
+                                       traderspost_skip_reason='hedging'))
+        db.put(c, 'trade:ict-s3', dict(base, id='ict-s3', pnl=999.0))
+        out = simple.summary(db, c, now)
+    fu = out['types']['futures']
+    assert fu['stats']['tracked'] == 1
+    assert fu['stats']['pnl'] == 40.0
+    assert 'live' not in fu['stats'] and 'paper_only' not in fu['stats']
+    with db.tx() as c:
+        d = simple.detail(db, c, now, 'futures', 'Golden Zone + VWAP')
+    assert len(d['items']) == 1
+    assert d['items'][0]['result'] == '+$40'
 
 
 def test_detail_futures_trades(db):
