@@ -744,6 +744,19 @@ class Collectors:
                 await alpaca_consume(ws,self)
             except OptionStreamError as error:
                 raise FeedError(str(error)) from None
+            except Exception as error:
+                # 2026-10-20: a bare ValueError put this lane into a
+                # silent 120s retry loop — supervise() reduces
+                # non-FeedError failures via database_error(), which
+                # keeps only the type name, so the health row read
+                # 'ValueError' with the actual message discarded.
+                # Preserve it (redacted) through the FeedError path,
+                # like OptionStreamError above.
+                from .diagnostics import redacted_detail
+                raise FeedError(
+                    f'Alpaca OPRA {type(error).__name__}: '
+                    f'{redacted_detail(str(error), (self.cfg.alpaca_key, self.cfg.alpaca_secret), 300)}'
+                ) from None
 
     def subscription_batch(self,items):
         with self.db.tx() as c:
