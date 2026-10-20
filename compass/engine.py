@@ -415,6 +415,26 @@ class Engine:
                     ict_push.maybe_queue_exit(self.db, c, self.cfg, p)
                 except Exception:
                     pass
+            # Fail-closed TradersPost stop protection (Josh 2026-10-20):
+            # when a live-sent ICT trade stops out in paper, fire the
+            # TradersPost exit for the ticker even though the broker
+            # bracket stop should already have closed it. A bracket stop
+            # can be REJECTED at the broker when the live fill slips to
+            # or past the stop price (2026-10-20 07:06 CT: MNQ fill
+            # 29511.25 vs stop 29512.75 — stop leg rejected, live
+            # position left naked while paper stopped out). TradersPost
+            # 'exit' on an already-flat ticker is a no-op, so this costs
+            # nothing when the bracket worked and closes a naked
+            # position seconds after the cross when it did not.
+            if p.get("status") == "closed" and p["id"].startswith("ict-") \
+                    and p["id"].endswith("-t1") \
+                    and p.get("traderspost_sent") \
+                    and p.get("exit_reason") in ("stop", "stop_detected_in_bar"):
+                try:
+                    from . import traderspost
+                    traderspost.send_close_signal(self.cfg, self.db, p["symbol"])
+                except Exception:
+                    pass
 
     def options(self,c,signal,now,quiet=False,diagnostics=None,research_only=False):
         research_only = research_only or not self.cfg.paper_trading
