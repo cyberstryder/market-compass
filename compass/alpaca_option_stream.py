@@ -135,7 +135,12 @@ def translate(item):
     stamp = ts(item.get("t"))
     if not sym or stamp is None:
         return None
-    out = {"sym": sym, "t": item.get("t"), "src": "alpaca"}
+    # Store the parsed epoch, NOT the raw wire value: for trades the raw
+    # 't' is a msgpack Timestamp object, which is not JSON serializable and
+    # killed the commit path on the first trade print of 2026-10-20 even
+    # after ts() learned to parse it. Downstream re-runs ts() on 't',
+    # which accepts epoch floats, so the epoch is equivalent everywhere.
+    out = {"sym": sym, "t": stamp, "src": "alpaca"}
     if kind == "t":
         # Trade: price, size, trade id. 'q' (quantity) has no Alpaca
         # equivalent; downstream uses it only for identity, size suffices.

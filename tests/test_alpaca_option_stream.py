@@ -63,6 +63,12 @@ def test_translate_trade_with_msgpack_timestamp():
     assert out is not None
     assert out["ev"] == "T"
     assert out["sym"] == "O:SPY261020C00745000"
+    # The raw msgpack Timestamp must NOT ride along in the output: the
+    # commit path JSON-serializes the payload, and a Timestamp object
+    # raises TypeError there (the second 2026-10-20 Alpaca failure).
+    import json
+    assert out["t"] == 1792503033 + 335444196 / 1e9
+    json.dumps(out)
 
 
 def test_ts_accepts_datetime_and_iso():
