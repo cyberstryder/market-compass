@@ -9,7 +9,7 @@ from sqlalchemy import select,update
 from .store import spy_checks as checks,spy_options as observations,spy_marks as marks,state,identity,events,discord_jobs
 from .market import day,session,number
 from .spy_confirmation import CHECKS,CONFIRMED,report_key
-from .option_ideas import OptionIdeas,current,liquid,OPTION,FEE,SLIPPAGE,MAX_GAP
+from .option_ideas import OptionIdeas,current,liquid,OPTION,FEE,SLIPPAGE,MAX_GAP,COLLECTION_VERSION
 
 VERSION='spy-plan-0dte-v1'
 KEY=VERSION
@@ -260,7 +260,7 @@ class Paper(OptionIdeas):
             last_option_ts=oq['ts'],last_underlying_ts=uq['ts'],last_quote=dict(oq),last_underlying_quote=dict(uq),
             observation_model='paired-recorded-quotes-v2',collection_version=oq.get('collection_version','unversioned'),
             underlying_collection_version=uq.get('collection_version','unversioned'),waiting_reason=None)
-        if p['collection_version'] in ('option-reliability-v5','option-reliability-v6','option-reliability-v7','option-reliability-v8'):recovery.enable(p)
+        if p['collection_version'] == COLLECTION_VERSION:recovery.enable(p)
         self.mark(c,p,now,oq,uq,'entry')
         self.save(c,p,now)
 
@@ -289,10 +289,13 @@ class Paper(OptionIdeas):
         oq=oq if oq is not None else observed_quote(c,p['contract']['symbol'],now)
         uq=uq if uq is not None else observed_quote(c,'SPY',now)
         ot=p.get('seen_option_ts',p['last_option_ts']);ut=p.get('seen_underlying_ts',p['last_underlying_ts'])
-        if (now-ot>MAX_GAP and (not current(oq,now) or oq['ts']-ot>MAX_GAP)
-                or now-ut>MAX_GAP and (not current(uq,now) or uq['ts']-ut>MAX_GAP)):
+        opt_tol=p.get('opt_gap_tol') or MAX_GAP
+        und_tol=p.get('und_gap_tol') or MAX_GAP
+        if (now-ot>opt_tol and (not current(oq,now) or oq['ts']-ot>opt_tol)
+                or now-ut>und_tol and (not current(uq,now) or uq['ts']-ut>und_tol)):
             p['gap_detail']=dict(at=now,option_last=ot,underlying_last=ut,
-                option_next=(oq or {}).get('ts'),underlying_next=(uq or {}).get('ts'))
+                option_next=(oq or {}).get('ts'),underlying_next=(uq or {}).get('ts'),
+                opt_tol=opt_tol,und_tol=und_tol)
             return self.finish(c,p,now,'observation_gap')
         if now>p['flatten_at']+5:return self.finish(c,p,now,'session_exit_quote_missing')
         if current(oq,now) and oq['ts']>=ot:p.update(seen_option_ts=oq['ts'],seen_option_quote=oq)

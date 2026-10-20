@@ -265,6 +265,10 @@ def _spy_touched(db, c, trade, now):
     return None
 
 
+STALE_EXIT_AGE = 120  # exit marks older than this are data gaps, not measurements
+FORCE_CLOSE_AFTER_FLATTEN = 900  # quoteless trades close as data gaps this long past flatten
+
+
 def _update_open(db, c, now):
     try:
         trades = db.prefix(c, "trade:0dte-")
@@ -274,6 +278,13 @@ def _update_open(db, c, now):
     for key, t in trades.items():
         if not isinstance(t, dict) or t.get("status") != "open":
             continue
+        # Track the freshest quote seen for this contract (<=300s old). The
+        # stamp distinguishes a measured exit from a blind one at close time.
+        q = _fresh_quote(db, c, t.get("symbol"), now, max_age=300)
+        if q and (_num(q.get("ts")) or 0) > (_num(t.get("last_quote_ts")) or 0):
+            t["last_quote_ts"] = _num(q.get("ts"))
+            t["last_bid"] = _num(q.get("bid"))
+            db.put(c, key, t)
         reason = None
         flatten_at = _num(t.get("flatten_at"))
         if flatten_at and now >= flatten_at:
@@ -285,7 +296,6 @@ def _update_open(db, c, now):
             elif hit == "stop":
                 reason = "stopped"
         else:
-            q = _fresh_quote(db, c, t.get("symbol"), now, max_age=300)
             bid = _num((q or {}).get("bid"))
             entry = _num(t.get("entry"))
             if bid and entry:
@@ -295,14 +305,34 @@ def _update_open(db, c, now):
                     reason = "stopped (-50%)"
         if not reason:
             continue
-        q = _fresh_quote(db, c, t.get("symbol"), now, max_age=300) or {}
-        exit_px = (_num(q.get("bid")) or 0) - SLIPPAGE
+        exit_px = (_num((q or {}).get("bid")) or 0) - SLIPPAGE
         if exit_px <= 0:
-            continue  # no quote: stay open, retry next scan
+            # No usable quote: stay open and retry next scan — but bound the
+            # wait. A trade still quoteless 15 min past its flatten would
+            # otherwise hang open forever; close it as a data gap at the last
+            # known mark (never a measured result).
+            if reason == "session flatten" and flatten_at and now >= flatten_at + FORCE_CLOSE_AFTER_FLATTEN:
+                last_bid = _num(t.get("last_bid")) or 0
+                gap_px = round(last_bid - SLIPPAGE, 2) if last_bid > SLIPPAGE else None
+                entry = _num(t.get("entry")) or 0
+                pnl = (round((gap_px - entry) * 100 - 2 * FEE, 2)
+                       if gap_px is not None and entry else None)
+                t.update(status="closed", exit=gap_px, exited_at=now,
+                         exit_reason="session flatten (data gap)", pnl=pnl,
+                         data_gap=True)
+                db.put(c, key, t)
+                closed += 1
+            continue
         entry = _num(t.get("entry")) or 0
         pnl = round((exit_px - entry) * 100 - 2 * FEE, 2)
+        # A close priced off a stale mark, or on a contract that never quoted
+        # again after entry, flew blind: flag it data_gap so Simple excludes
+        # it from measured wins/losses/P&L (Josh's rule), as futures does.
+        quote_age = now - (_num((q or {}).get("ts")) or 0)
+        saw_after_entry = (_num(t.get("last_quote_ts")) or 0) > (_num(t.get("entered_at")) or 0)
+        data_gap = quote_age > STALE_EXIT_AGE or not saw_after_entry
         t.update(status="closed", exit=round(exit_px, 2), exited_at=now,
-                 exit_reason=reason, pnl=pnl)
+                 exit_reason=reason, pnl=pnl, data_gap=data_gap)
         db.put(c, key, t)
         closed += 1
     return closed

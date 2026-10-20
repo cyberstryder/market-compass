@@ -30,6 +30,13 @@ def inventory(db,c,now,include_followups=True):
         if p.get('status')!='open':continue
         if p.get('asset')=='option':options.append(p['symbol'])
         if p.get('underlying'):stocks.append(p['underlying'])
+    # 0DTE paper trades live under trade:0dte-, not position:, so the loops
+    # above never pinned them: their contracts rode last in the request queue
+    # under the subscription cap and could sit uncovered while open.
+    for t in db.prefix(c,'trade:0dte-').values():
+        if isinstance(t,dict) and t.get('status')=='open' and t.get('symbol'):
+            options.append(t['symbol'])
+            if t.get('underlying'):stocks.append(t['underlying'])
     from .universe import INDEX_UNDERLYINGS
     return dict(options=list(dict.fromkeys(options)),
                 stocks=list(dict.fromkeys(s for s in stocks if s not in INDEX_UNDERLYINGS)))

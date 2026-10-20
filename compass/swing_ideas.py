@@ -13,6 +13,8 @@ from .option_ideas import current, liquid, eligible_contracts, FEE, SLIPPAGE
 from .swing_signals import stored_daily_context, minute_context, technical_setups, summarize_flow, confirms, trading_seconds, hold_deadline
 from .daily_history import RECOVERY_CACHE, current_context
 from .flow_recovery import freshness as flow_freshness
+from .quote_collection import VERSION as COLLECTION_VERSION
+from .gap_tolerance import scaled_tolerance
 
 VERSION = 'swing-ideas-v1'
 MAX_GAP = 60  # Seconds of open exchange time, excluding scheduled closures.
@@ -137,7 +139,7 @@ class SwingIdeas:
                 sessions_observed=[day(now)],waiting_reason=None,observation_state='market_open',
                 holding_rule=f'Maximum {self.cfg.swing_hold_sessions} trading sessions, including entry; exit before expiry')
             p['collection_version']=oq.get('collection_version','unversioned')
-            if p['collection_version'] in ('option-reliability-v5','option-reliability-v6','option-reliability-v7','option-reliability-v8'):recovery.enable(p)
+            if p['collection_version'] == COLLECTION_VERSION:recovery.enable(p)
             self.notify(c,p,now,'new')
             break
         self.save(c,p,now)
@@ -180,8 +182,13 @@ class SwingIdeas:
         now = self.now(now)
         hours = session(day(now))
         opened = bool(hours and hours[0] <= now < hours[1])
-        gap = max(trading_seconds(p['last_option_ts'],now),trading_seconds(p['last_underlying_ts'],now))
-        if gap > MAX_GAP:
+        gap_opt = trading_seconds(p['last_option_ts'],now)
+        gap_und = trading_seconds(p['last_underlying_ts'],now)
+        gap = max(gap_opt,gap_und)
+        # Per-leg tolerance scaled to each symbol's own print cadence
+        # (rolling trading-second intervals), floored at the legacy 60s.
+        if (gap_opt > scaled_tolerance(p.get('opt_quote_gaps'),floor=MAX_GAP)
+                or gap_und > scaled_tolerance(p.get('und_quote_gaps'),floor=MAX_GAP)):
             return self.finish(c,p,now,'open_session_observation_gap')
         if now > p['exit_deadline']+5:
             return self.finish(c,p,now,'holding_deadline_quote_missing')
@@ -216,6 +223,10 @@ class SwingIdeas:
                 previous_underlying_ts=prior_stock['ts'],underlying_ts=uq['ts'],
                 underlying_mid_change=(uq['bid']+uq['ask']-prior_stock['bid']-prior_stock['ask'])/2))
             p['sessions_observed'].append(day(now))
+        if oq['ts']>p['last_option_ts']:
+            gaps=p.setdefault('opt_quote_gaps',[]);gaps.append(trading_seconds(p['last_option_ts'],oq['ts']));del gaps[:-32]
+        if uq['ts']>p['last_underlying_ts']:
+            gaps=p.setdefault('und_quote_gaps',[]);gaps.append(trading_seconds(p['last_underlying_ts'],uq['ts']));del gaps[:-32]
         p.update(last_quote=oq,last_underlying_quote=uq,last_option_ts=oq['ts'],last_underlying_ts=uq['ts'],
             observation_state='market_open',samples=p['samples']+1)
         mark = round(max(0,oq['bid']-SLIPPAGE),2)

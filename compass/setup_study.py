@@ -14,6 +14,7 @@ from .futures import futures_session, research_session
 from .instruments import tick_price
 from .simulation import bracket, exit_price, FILL_VERSION, FILL_DESCRIPTION
 from .quote_path import recorded_path
+from .gap_tolerance import scaled_tolerance
 from . import futures_variants, futures_assessment, futures_feed_study, futures_feed_reporting
 from .setup_reporting import summaries, WINDOW_DAYS
 
@@ -228,18 +229,25 @@ class SetupStudy:
                 else:
                     self.finish(c, p, observed, 'session_flatten')
                 return
-            if observed-last > MAX_GAP and not recorded:
+            if observed-last > scaled_tolerance(p.get('quote_gaps')) and not recorded:
                 p['gap_detail'] = {'last_quote_ts':last, 'checked_at':observed,
-                                   'latest_quote_ts':(q or {}).get('ts'), 'reason':'no_usable_quote'}
+                                   'latest_quote_ts':(q or {}).get('ts'), 'reason':'no_usable_quote',
+                                   'gap_tol':scaled_tolerance(p.get('quote_gaps'))}
                 self.finish(c, p, observed, 'observation_gap')
             return
         gap = q['ts']-last
         p['max_gap_seconds'] = max(p['max_gap_seconds'], gap)
-        if gap > MAX_GAP or q['ts'] > p['flatten_at']+5:
+        # Judge this hole against the symbol's own print cadence (rolling
+        # gaps between accepted quotes), not the flat 15s index standard.
+        tol = scaled_tolerance(p.get('quote_gaps'))
+        if gap > tol or q['ts'] > p['flatten_at']+5:
             p['gap_detail'] = {'last_quote_ts':last, 'next_quote_ts':q['ts'],
-                               'checked_at':observed, 'gap_seconds':gap, 'reason':'missing_recorded_path'}
+                               'checked_at':observed, 'gap_seconds':gap, 'gap_tol':tol, 'reason':'missing_recorded_path'}
             self.finish(c, p, observed, 'session_quote_missing' if observed >= p['flatten_at'] else 'observation_gap')
             return
+        gaps = p.setdefault('quote_gaps', [])
+        gaps.append(gap)
+        del gaps[:-32]
         p['last_quote_ts'] = q['ts']
         p['samples'] += 1
         long = p['side']=='long'

@@ -980,12 +980,18 @@ def _detail_0dte(db, c, now, name):
                 orows.append(["Exit", "$%.2f" % exit_px])
             if pnl is not None:
                 orows.append(["P&L", "$%.2f" % pnl])
+            reason = t.get("exit_reason") or ""
+            if reason:
+                orows.append(["Exit reason", reason])
+            gap = t.get("data_gap")
+            if gap:
+                orows.append(["Data", "⚠️ flew blind — excluded from wins/losses"])
             won = pnl is not None and pnl > 0
             items.append({
                 "tag": underlying[:6], "title": "%s scanner" % underlying,
                 "sub": _ts(exited_at), "rows": orows,
-                "result": "win" if won else "loss",
-                "result_cls": "pos" if won else "neg",
+                "result": "⚠️ data gap" if gap else ("win" if won else "loss"),
+                "result_cls": "" if gap else ("pos" if won else "neg"),
                 "_sort": exited_at,
             })
         items.sort(key=lambda i: i.pop("_sort"), reverse=True)

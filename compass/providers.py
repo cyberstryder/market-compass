@@ -602,8 +602,9 @@ class Collectors:
                 from .active_observations import inventory, select_contracts
                 active=inventory(self.db,c,now)
                 requested=(option_requests(self.db,c,now)+stream_requests(c,now)
-                    +swing_requests(c,now,'pending')+spy_requests(c,now,'pending')
-                    +timeframe_requests(c,now,'pending')+watchlist_contracts(c,now)
+                    +swing_requests(c,now)+spy_requests(c,now,'pending')+spy_requests(c,now,'open')
+                    +timeframe_requests(c,now,'pending')+timeframe_requests(c,now,'open')
+                    +watchlist_contracts(c,now)
                     +zdte_active(self.db,c,now))
                 previous=self.db.get(c,'options:subscriptions',{}).get('symbols',[])
                 selected,missing=select_contracts(active['options'],previous,requested,

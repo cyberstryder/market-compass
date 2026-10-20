@@ -6,6 +6,8 @@ from datetime import date
 from sqlalchemy import Table, Column, String, Float, JSON, Index, select, update, func
 from .store import meta, identity
 from .market import fresh, number, day, session
+from .quote_collection import VERSION as COLLECTION_VERSION
+from .gap_tolerance import intervals_between, scaled_tolerance
 
 VERSION = 'option-ideas-v2'
 MAX_GAP = 15
@@ -209,7 +211,17 @@ class OptionIdeas:
                 pagination_complete=chain.get('complete'),last_quote=oq,last_underlying_quote=q,
                 observation_model='paired-recorded-quotes-v2',collection_version=oq.get('collection_version','pre-option-reliability'),
                 underlying_collection_version=q.get('collection_version','unversioned'))
-            if p['collection_version'] in ('option-reliability-v5','option-reliability-v6','option-reliability-v7','option-reliability-v8'):recovery.enable(p)
+            if p['collection_version'] == COLLECTION_VERSION:recovery.enable(p)
+            # Seed gap tolerances from the entry lookback: the contract's
+            # cadence was just verified for entry, so its rhythm is evidence,
+            # not a guess. Too few prints -> tolerance stays unset (legacy).
+            from .quote_path import recorded_path
+            from .option_continuity import LOOKBACK
+            for symbol,key in ((o['symbol'],'opt_gap_tol'),(p['underlying'],'und_gap_tol')):
+                path,_,_=recorded_path(self.db,c,symbol,now-LOOKBACK,now)
+                if path:
+                    tol=scaled_tolerance(intervals_between([q['ts'] for q in path]))
+                    if tol>MAX_GAP:p[key]=tol
             self.notify(c,p,now,'new')
         self.save(c,p,now)
 
@@ -221,6 +233,15 @@ class OptionIdeas:
         option_path,ot,oc=recorded_path(self.db,c,p['contract']['symbol'],max(p.get('seen_option_ts',p['last_option_ts']),p['opened_at']),now)
         stock_path,ut,uc=recorded_path(self.db,c,p['underlying'],max(p.get('seen_underlying_ts',p['last_underlying_ts']),p['opened_at']),now)
         p['archive_check']={'option':oc,'underlying':uc}
+        # Cadence-scaled gap tolerance per leg, from the recent end of this
+        # replay's own path: a hole counts as a gap only when it is long for
+        # how this symbol actually prints (flat MAX_GAP killed slow printers).
+        if option_path:
+            stamps=[p.get('seen_option_ts',p['last_option_ts'])]+[q['ts'] for q in option_path]
+            p['opt_gap_tol']=scaled_tolerance(intervals_between(stamps[-13:]))
+        if stock_path:
+            stamps=[p.get('seen_underlying_ts',p['last_underlying_ts'])]+[q['ts'] for q in stock_path]
+            p['und_gap_tol']=scaled_tolerance(intervals_between(stamps[-13:]))
         # Do not consume beyond either stream's loaded prefix.
         frontier=min([now]+([option_path[-1]['ts']] if ot and option_path else [])+
             ([stock_path[-1]['ts']] if ut and stock_path else []))
@@ -251,11 +272,14 @@ class OptionIdeas:
         independent=p.get('observation_model')=='paired-recorded-quotes-v2'
         option_last=p.get('seen_option_ts',p['last_option_ts']) if independent else p['last_option_ts']
         underlying_last=p.get('seen_underlying_ts',p['last_underlying_ts']) if independent else p['last_underlying_ts']
-        if (now-option_last>MAX_GAP and (not current(oq,now) or oq['ts']-option_last>MAX_GAP)
-                or now-underlying_last>MAX_GAP and (not current(uq,now) or uq['ts']-underlying_last>MAX_GAP)):
+        opt_tol=p.get('opt_gap_tol') or MAX_GAP
+        und_tol=p.get('und_gap_tol') or MAX_GAP
+        if (now-option_last>opt_tol and (not current(oq,now) or oq['ts']-option_last>opt_tol)
+                or now-underlying_last>und_tol and (not current(uq,now) or uq['ts']-underlying_last>und_tol)):
             p['gap_detail']={'checked_at':now,'option_last':option_last,
                 'underlying_last':underlying_last,'option_next':(oq or {}).get('ts'),
-                'underlying_next':(uq or {}).get('ts'),'reason':'missing_continuous_paired_quotes'}
+                'underlying_next':(uq or {}).get('ts'),'reason':'missing_continuous_paired_quotes',
+                'opt_tol':opt_tol,'und_tol':und_tol}
             self.finish(c,p,now,'observation_gap')
             return
         if independent:
