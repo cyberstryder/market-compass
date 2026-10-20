@@ -397,6 +397,14 @@ async def consume(ws, collector, buffer=None):
         # Wait for the auth confirmation; returning early would trigger
         # FIRST_COMPLETED and tear down the whole consumer.
         await authenticated.wait()
+        # ROOT CAUSE of the zero-trades Alpaca stream (found 2026-10-19):
+        # this task RETURNED as soon as auth succeeded, and consume()
+        # ends when the FIRST worker completes — so every successful
+        # auth tore the stream down. subscriptions() raced the teardown
+        # and lost; the stream re-authed every ~15s forever with
+        # subscribed=0 and no error anywhere. Park instead: if auth
+        # fails, read() raises and ends the consumer properly.
+        await asyncio.Event().wait()
 
     workers = [asyncio.create_task(fn())
                for fn in (authenticate, read, subscriptions, health)]

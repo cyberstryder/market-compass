@@ -126,6 +126,76 @@ def test_fallback_symbols_bar_spot_and_no_spot():
     assert fallback_symbols(_FakeDB(), now=WED_OPEN) == []
 
 
+def test_consume_survives_auth_and_subscribes():
+    """Regression for the zero-trades root cause (2026-10-19): the
+    authenticate() worker returned the moment auth succeeded, and
+    consume() ends on FIRST_COMPLETED — so every successful auth tore
+    the stream down before subscriptions could land. The stream
+    re-authed every ~15s forever: subscribed=0, zero trades, no error.
+    This drives the real consume() over a fake websocket: after auth
+    it must send subscribes AND still be running."""
+    import asyncio
+
+    import msgpack
+
+    from compass.alpaca_option_stream import consume
+
+    class FakeWS:
+        def __init__(self):
+            self.sent = []
+            self.incoming = asyncio.Queue()
+
+        async def send(self, data):
+            self.sent.append(msgpack.unpackb(data, raw=False))
+
+        async def recv(self):
+            return await self.incoming.get()
+
+    class FakeDB:
+        def health(self, *a, **k):
+            pass
+
+    class FakeCollector:
+        class cfg:
+            alpaca_opra_key = "k"
+            alpaca_opra_secret = "s"
+
+        def __init__(self):
+            self.option_symbols = {"O:SPY261021C00600000"}
+            self.db = FakeDB()
+
+        def quote_batch(self, src, rows):
+            pass
+
+        def option_trade_batch(self, rows):
+            pass
+
+    async def main():
+        ws = FakeWS()
+        task = asyncio.create_task(consume(ws, FakeCollector()))
+        await ws.incoming.put(
+            msgpack.packb([{"T": "success", "msg": "connected"}]))
+        await ws.incoming.put(
+            msgpack.packb([{"T": "success", "msg": "authenticated"}]))
+        for _ in range(100):
+            if any(m.get("action") == "subscribe" for m in ws.sent):
+                break
+            await asyncio.sleep(0.05)
+        subs = [m for m in ws.sent if m.get("action") == "subscribe"]
+        assert subs, f"no subscribe sent; sent={ws.sent}"
+        assert "SPY261021C00600000" in subs[0]["trades"]
+        assert not task.done()  # pre-fix: returned right after auth
+        await asyncio.sleep(1.0)
+        assert not task.done()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(main())
+
+
 def test_translate_flows_through_buffer():
     """Translated items must satisfy OptionBuffer.offer's expectations."""
     from compass.option_stream import OptionBuffer
