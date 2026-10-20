@@ -1515,25 +1515,26 @@ a{color:#888}</style></head><body>
 
     @app.get('/api/alpaca-stream-status')
     def get_alpaca_stream_status():
-        # Diagnostic: what the collector's option stream tasks are doing.
-        # 2026-10-14: There are TWO streams:
-        # - health:alpaca_option_stream (alpaca_option_stream.py) - may be 0
-        # - health:option_stream (option_stream.py) - the working one with 92 subs
-        # Return the one with actual data, preferring the working stream.
+        # Diagnostic: BOTH option streams, always present and labeled.
+        # The old version returned Massive's row alone whenever Massive
+        # had subscriptions — a healthy Massive row masked a dead Alpaca
+        # stream for weeks (audit #11, 2026-10-19). Never substitute one
+        # stream's health for the other's.
         try:
             with db.tx() as c:
                 h_alpaca = db.get(c, "health:alpaca_option_stream", {})
                 h_option = db.get(c, "health:option_stream", {})
-            # Prefer the stream with subscribed > 0
-            if h_option.get('subscribed', 0) > 0:
-                h_option['_source'] = 'option_stream (working)'
-                return {"health": h_option}
-            if h_alpaca.get('subscribed', 0) > 0:
-                h_alpaca['_source'] = 'alpaca_option_stream'
-                return {"health": h_alpaca}
-            # Neither has data, return both for debugging
-            return {"health": h_alpaca, "health_option_stream": h_option,
-                    "_note": "Both streams show 0 subscribed"}
+            now = time.time()
+
+            def shaped(h, source):
+                out = dict(h)
+                out['_source'] = source
+                checked = h.get('checked_at')
+                out['age_seconds'] = round(now - checked, 1) if checked else None
+                return out
+
+            return {"alpaca": shaped(h_alpaca, 'alpaca_option_stream'),
+                    "massive": shaped(h_option, 'option_stream')}
         except Exception as e:
             import traceback
             return {"error": str(e), "traceback": traceback.format_exc(limit=5)}

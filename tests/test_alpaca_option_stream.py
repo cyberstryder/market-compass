@@ -1,11 +1,14 @@
 """Tests for compass/alpaca_option_stream.py (Alpaca OPRA translation)."""
 import os
 import sys
+from contextlib import contextmanager
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from compass.alpaca_option_stream import (
-    translate, to_alpaca_symbol, to_internal_symbol)
+    fallback_symbols, subscription_diff, translate, to_alpaca_symbol,
+    to_internal_symbol)
 
 
 def test_symbol_conversion():
@@ -55,6 +58,72 @@ def test_translate_rejects():
     # Missing bid/ask on quote
     assert translate({"T": "q", "S": "SPY251004C00745000",
                       "t": "2026-10-05T13:30:00Z"}) is None
+
+
+def test_subscription_diff():
+    wanted = {"O:SPY261019C00770000", "O:QQQ261019P00720000"}
+    have = {"O:SPY261019C00770000", "O:AAPL261019C00342500"}
+    added, removed = subscription_diff(wanted, have)
+    assert added == ["QQQ261019P00720000"]
+    assert removed == ["AAPL261019C00342500"]
+    assert subscription_diff(wanted, wanted) == ([], [])
+
+
+class _FakeDB:
+    """Minimal Store stand-in for fallback_symbols: tx/get/recent."""
+
+    def __init__(self, quotes=None, bars=None):
+        self._quotes = quotes or {}
+        self._bars = bars or {}
+
+    @contextmanager
+    def tx(self):
+        yield object()
+
+    def get(self, c, key, default=None):
+        return self._quotes.get(key, default)
+
+    def recent(self, c, kind, symbol, limit=1):
+        return self._bars.get(symbol, [])
+
+
+# Wed 2026-10-21 18:00 UTC = 14:00 ET (market open).
+WED_OPEN = datetime(2026, 10, 21, 18, 0, tzinfo=timezone.utc).timestamp()
+# Fri 2026-10-23 21:30 UTC = 17:30 ET (after the close).
+FRI_LATE = datetime(2026, 10, 23, 21, 30, tzinfo=timezone.utc).timestamp()
+
+
+def test_fallback_symbols_dynamic_ladder():
+    db = _FakeDB(quotes={
+        "quote:SPY": {"bid": 600.0, "ask": 602.0, "ts": WED_OPEN},
+        "quote:QQQ": {"bid": 500.0, "ask": 502.0, "ts": WED_OPEN},
+    })
+    syms = fallback_symbols(db, now=WED_OPEN)
+    assert len(syms) == 20  # 5 strikes x C/P x 2 roots
+    # Expiry is today (Wednesday) for both roots.
+    assert all("261021" in s for s in syms)
+    # SPY spot 601 -> ATM 600; ladder 590..610.
+    assert "O:SPY261021C00600000" in syms
+    assert "O:SPY261021P00590000" in syms
+    assert "O:SPY261021C00610000" in syms
+    # QQQ spot 501 -> ATM 500.
+    assert "O:QQQ261021C00500000" in syms
+
+
+def test_fallback_symbols_rolls_past_friday_close():
+    db = _FakeDB(quotes={
+        "quote:SPY": {"bid": 600.0, "ask": 602.0, "ts": FRI_LATE},
+    })
+    syms = fallback_symbols(db, now=FRI_LATE)
+    assert syms and all("261026" in s for s in syms)  # Monday 2026-10-26
+
+
+def test_fallback_symbols_bar_spot_and_no_spot():
+    db = _FakeDB(bars={"SPY": [{"payload": {"c": 604.0}, "ts": WED_OPEN}]})
+    syms = fallback_symbols(db, now=WED_OPEN)
+    assert syms and all(s.startswith("O:SPY") for s in syms)  # QQQ skipped
+    assert "O:SPY261021C00605000" in syms  # ATM rounds 604 -> 605
+    assert fallback_symbols(_FakeDB(), now=WED_OPEN) == []
 
 
 def test_translate_flows_through_buffer():

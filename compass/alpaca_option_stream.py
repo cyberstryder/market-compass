@@ -13,9 +13,10 @@ This is the FALLBACK, not the primary. The PRIMARY is compass/option_stream.py
   deliver same contract at same timestamp, second write overwrites with
   identical data — no double-counting. If Massive misses a contract, Alpaca's
   quote fills the gap. Running both is RECOMMENDED for redundancy.
-- FALLBACK_SYMBOLS (2026-10-17): If option_symbols is empty for 30s, stream
-  subscribes to SPY/QQQ weeklies (liquid contracts) so OPRA still flows.
-  Previously FALLBACK_SYMBOLS was empty, stream looped forever.
+- FALLBACK (dynamic since 2026-10-19): If option_symbols is empty for
+  30s, the stream subscribes to a generated SPY/QQQ ladder for the
+  current expiry (fallback_symbols). The earlier hard-coded list
+  expired 2026-10-19 and would have subscribed dead contracts forever.
 
 Runs side-by-side with the Massive stream during the migration evaluation.
 Every translated item carries 'src': 'alpaca' so downstream persistence can
@@ -61,6 +62,66 @@ def to_internal_symbol(alpaca_sym):
     """Alpaca wire form -> internal 'O:...' form."""
     sym = str(alpaca_sym or "")
     return sym if sym.startswith("O:") else "O:" + sym
+
+
+def subscription_diff(wanted, have):
+    """(added, removed) wire-form symbols between two internal sets."""
+    wire = {to_alpaca_symbol(s) for s in wanted}
+    have_wire = {to_alpaca_symbol(s) for s in have}
+    return sorted(wire - have_wire), sorted(have_wire - wire)
+
+
+def _occ(root, expiry, right, strike):
+    return "O:%s%s%s%08d" % (root, expiry.strftime("%y%m%d"), right,
+                             int(round(strike * 1000)))
+
+
+def _spot(db, symbol):
+    """Last usable spot for a fallback ladder: fresh quote mid, else last
+    bar close (mirrors the providers chain-reference logic)."""
+    try:
+        with db.tx() as c:
+            q = db.get(c, "quote:" + symbol)
+            if q and 0 < q.get("bid", 0) <= q.get("ask", 0) \
+                    and time.time() - q.get("ts", 0) < 7 * 86400:
+                return (q["bid"] + q["ask"]) / 2
+            bars = db.recent(c, "bar", symbol, limit=1)
+            if bars:
+                return number(bars[0]["payload"].get("c"))
+    except Exception:
+        return None
+    return None
+
+
+def fallback_symbols(db, now=None):
+    """Dynamic SPY/QQQ fallback ladder.
+
+    Replaces the hard-coded contracts that expired 2026-10-19 (audit
+    #10): from the next day the old list subscribed only dead contracts.
+    SPY/QQQ list options expiring every weekday, so the expiry is today
+    (ET) before the 16:15 ET close, else the next weekday. Strikes are
+    a 5-point ladder centered on the last known spot. Empty when no spot
+    is known — a blind ladder would subscribe dead strikes and fake
+    coverage."""
+    from datetime import datetime, timedelta
+    from .market import NY
+    now = now or time.time()
+    et = datetime.fromtimestamp(now, NY)
+    expiry = et.date()
+    if expiry.weekday() >= 5 or (et.hour, et.minute) >= (16, 15):
+        expiry += timedelta(days=1)
+        while expiry.weekday() >= 5:
+            expiry += timedelta(days=1)
+    out = []
+    for root in ("SPY", "QQQ"):
+        spot = _spot(db, root)
+        if not spot:
+            continue
+        atm = round(spot / 5.0) * 5
+        for off in (-10, -5, 0, 5, 10):
+            for right in ("C", "P"):
+                out.append(_occ(root, expiry, right, atm + off))
+    return out
 
 
 def translate(item):
@@ -166,8 +227,21 @@ async def consume(ws, collector, buffer=None):
                     }
                     continue
                 if msg.get("T") == "error":
-                    raise OptionStreamError(
-                        "Alpaca OPRA " + redacted_detail(str(msg.get("msg", "error"))))
+                    # Always record the error first — the old code raised
+                    # without keeping the code/message, discarding the
+                    # single most useful diagnostic.
+                    diag["last_error"] = {
+                        "at": now, "code": msg.get("code"),
+                        "msg": str(msg.get("msg", "error"))[:200]}
+                    if not authenticated.is_set():
+                        raise OptionStreamError(
+                            "Alpaca OPRA " + redacted_detail(str(msg.get("msg", "error"))))
+                    # Post-auth errors are usually symbol-level (unknown
+                    # or over-limit symbols in one batch). Tearing the
+                    # whole stream down for one bad symbol is how a feed
+                    # stays dark; record it in diag (visible in the
+                    # health row) and keep streaming.
+                    continue
                 item = translate(msg)
                 if item is None:
                     continue
@@ -185,69 +259,67 @@ async def consume(ws, collector, buffer=None):
         # Alpaca silently drops large subscribe payloads. Batch into chunks
         # of 20 symbols to stay under undocumented per-message limits.
         SUBSCRIBE_BATCH_SIZE = 20
-        # Fallback: if dynamic selection yields nothing (e.g., chain fetch
-        # failing), subscribe to liquid SPY/QQQ weeklies so OPRA still flows.
-        # Without this, the stream authenticates but never subscribes (2026-10-14).
-        # These are the most liquid 0DTE contracts — SPY and QQQ weeklies.
-        # Format: O:SYMBOL_YYMMDD[C/P]STRIKE (internal form with O: prefix)
-        # Note: These expire weekly; the stream will need updated symbols
-        # after expiry. The dynamic selection (option_symbols) is preferred;
-        # this fallback only activates when dynamic selection fails.
-        # 2026-10-17: Populated with real symbols (was empty, stream looped
-        # forever). These are SPY/QQQ ATM weeklies for the current week.
-        FALLBACK_SYMBOLS = [
-            # SPY weeklies (Monday expiry)
-            "O:SPY261019C00770000", "O:SPY261019P00770000",
-            "O:SPY261019C00775000", "O:SPY261019P00775000",
-            "O:SPY261019C00780000", "O:SPY261019P00780000",
-            # QQQ weeklies (Monday expiry)
-            "O:QQQ261019C00715000", "O:QQQ261019P00715000",
-            "O:QQQ261019C00720000", "O:QQQ261019P00720000",
-            "O:QQQ261019C00725000", "O:QQQ261019P00725000",
-        ]
         empty_cycles = 0
         while True:
             wanted = set(collector.option_symbols)
             # If wanted is empty, the symbol selector hasn't populated yet
             # (e.g., collector just restarted, or chain fetch failing).
-            # After 60 empty cycles (30s), use FALLBACK_SYMBOLS so the stream
-            # doesn't sit idle. The fallback is SPY/QQQ weeklies — liquid
-            # contracts that ensure OPRA flows even if chain selection fails.
-            # 2026-10-17: Previously looped forever with empty FALLBACK_SYMBOLS.
+            # After 60 empty cycles (30s), fall back to a dynamic SPY/QQQ
+            # ladder (fallback_symbols) so the stream doesn't sit idle.
             if not wanted:
                 empty_cycles += 1
-                if empty_cycles == 60:
-                    try:
-                        collector.db.health('alpaca_option_stream', 'warning',
-                            'option_symbols empty for 30s - using FALLBACK_SYMBOLS (SPY/QQQ weeklies)')
-                    except:
-                        pass
-                    # Use fallback symbols after 30s of empty option_symbols
-                    wanted = set(FALLBACK_SYMBOLS)
+                if empty_cycles >= 60:
+                    if empty_cycles == 60:
+                        try:
+                            collector.db.health('alpaca_option_stream', 'warning',
+                                'option_symbols empty for 30s - using dynamic fallback ladder (SPY/QQQ)')
+                        except:
+                            pass
+                    # Recomputed each cycle: a spot that appears later
+                    # (or the next day's expiry) is picked up, unlike
+                    # the old one-shot static list.
+                    wanted = set(fallback_symbols(collector.db))
+                    if not wanted:
+                        await asyncio.sleep(0.5)
+                        continue
                 else:
                     await asyncio.sleep(0.5)
                     continue
             empty_cycles = 0
-            wire = sorted(to_alpaca_symbol(s) for s in wanted)
-            have_wire = sorted(to_alpaca_symbol(s) for s in subscribed)
-            if wire != have_wire:
-                trace.request("subscribe", wanted, time.time())
-                # Send in batches to avoid silent drops on large payloads
-                for i in range(0, len(wire), SUBSCRIBE_BATCH_SIZE):
-                    batch = wire[i:i + SUBSCRIBE_BATCH_SIZE]
-                    await ws.send(msgpack.packb({"action": "subscribe",
-                                                 "trades": batch, "quotes": batch}))
-                    # Small delay between batches to avoid rate limiting
-                    if i + SUBSCRIBE_BATCH_SIZE < len(wire):
-                        await asyncio.sleep(0.1)
-                trace.sent("subscribe", wanted, time.time())
-                # Log what we actually sent for diagnostics
+            added, removed = subscription_diff(wanted, subscribed)
+            if added or removed:
+                if added:
+                    trace.request("subscribe",
+                                  {to_internal_symbol(s) for s in added},
+                                  time.time())
+                    for i in range(0, len(added), SUBSCRIBE_BATCH_SIZE):
+                        batch = added[i:i + SUBSCRIBE_BATCH_SIZE]
+                        await ws.send(msgpack.packb({"action": "subscribe",
+                                                     "trades": batch, "quotes": batch}))
+                        # Small delay between batches to avoid rate limiting
+                        if i + SUBSCRIBE_BATCH_SIZE < len(added):
+                            await asyncio.sleep(0.1)
+                    trace.sent("subscribe",
+                               {to_internal_symbol(s) for s in added},
+                               time.time())
+                if removed:
+                    # Alpaca holds server-side subscriptions until told;
+                    # the old code never unsubscribed, so the server-side
+                    # set drifted from ours and stale symbols kept flowing.
+                    for i in range(0, len(removed), SUBSCRIBE_BATCH_SIZE):
+                        batch = removed[i:i + SUBSCRIBE_BATCH_SIZE]
+                        await ws.send(msgpack.packb({"action": "unsubscribe",
+                                                     "trades": batch, "quotes": batch}))
+                        if i + SUBSCRIBE_BATCH_SIZE < len(removed):
+                            await asyncio.sleep(0.1)
                 diag["last_subscribe_sent"] = {
                     "at": time.time(),
-                    "count": len(wire),
-                    "sample": wire[:3] if wire else [],
-                    "batches": (len(wire) + SUBSCRIBE_BATCH_SIZE - 1) // SUBSCRIBE_BATCH_SIZE,
-                    "deploy_marker": "BATCH_FIX_V2_20261008",
+                    "added": len(added),
+                    "removed": len(removed),
+                    "count": len(wanted),
+                    "sample": sorted(to_alpaca_symbol(s) for s in wanted)[:3],
+                    "batches": (len(added) + SUBSCRIBE_BATCH_SIZE - 1) // SUBSCRIBE_BATCH_SIZE,
+                    "deploy_marker": "DIFF_SUB_V3_20261019",
                 }
             subscribed.clear()
             subscribed.update(wanted)
