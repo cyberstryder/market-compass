@@ -46,6 +46,32 @@ def test_translate_quote():
     assert out["src"] == "alpaca"
 
 
+def test_translate_trade_with_msgpack_timestamp():
+    """Live failure 2026-10-20: Alpaca OPRA TRADE messages carry 't'
+    as a msgpack Timestamp object (quotes use ISO strings). ts() fed
+    str(Timestamp) into fromisoformat -> ValueError, killing the
+    stream on the first trade print after the open. The exact value
+    from the production error: Timestamp(seconds=1792503033,
+    nanoseconds=335444196) = 2026-10-20 13:30:33 UTC (the open)."""
+    import msgpack
+    from compass.market import ts
+    stamp = msgpack.Timestamp(1792503033, 335444196)
+    assert ts(stamp) == 1792503033 + 335444196 / 1e9
+    msg = {"T": "t", "S": "SPY261020C00745000", "x": "Q", "p": 1.25,
+           "s": 10, "t": stamp, "c": ["@"], "i": 999}
+    out = translate(msg)
+    assert out is not None
+    assert out["ev"] == "T"
+    assert out["sym"] == "O:SPY261020C00745000"
+
+
+def test_ts_accepts_datetime_and_iso():
+    from compass.market import ts
+    dt = datetime(2026, 10, 20, 13, 30, 33, tzinfo=timezone.utc)
+    assert ts(dt) == dt.timestamp()
+    assert ts("2026-10-20T13:30:33Z") == dt.timestamp()
+
+
 def test_translate_rejects():
     assert translate(None) is None
     assert translate({}) is None

@@ -13,6 +13,17 @@ def ts(v):
     if v is None: return None
     if isinstance(v,(float,int)):
         return float(v)/(1e9 if v>1e17 else 1e6 if v>1e14 else 1e3 if v>1e11 else 1)
+    if isinstance(v,datetime):
+        return v.timestamp()
+    # msgpack Timestamp objects (Alpaca OPRA trade messages carry 't' as
+    # a MessagePack timestamp extension, not an ISO string — quotes use
+    # strings, trades do not). Duck-typed seconds/nanoseconds; str() of
+    # one is 'Timestamp(seconds=..., nanoseconds=...)', which killed the
+    # Alpaca stream on the first trade print of 2026-10-20 via
+    # fromisoformat ValueError.
+    seconds=getattr(v,"seconds",None)
+    if isinstance(seconds,(int,float)):
+        return float(seconds)+(getattr(v,"nanoseconds",0) or 0)/1e9
     return datetime.fromisoformat(str(v).replace("Z","+00:00")).timestamp()
 
 def number(v):
