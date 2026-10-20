@@ -9,12 +9,10 @@ var TYPES = [
   { id:'futures',   label:'Futures',     api:'futures' },
   { id:'zeroDte',   label:'0DTE',        api:'0dte' },
   { id:'swings',    label:'Swings',      api:'swings' },
-  { id:'flowPulse', label:'Flow Pulse',  api:'flow_pulse' },
-  { id:'flash',     label:'Flash',       api:'flash' }
+  { id:'flowPulse', label:'Flow Pulse',  api:'flow_pulse' }
 ];
-var TYPE_LABEL = { smoothers:'Smoothers', futures:'Futures', zeroDte:'0DTE', swings:'Swings', flowPulse:'Flow Pulse', flash:'Flash' };
+var TYPE_LABEL = { smoothers:'Smoothers', futures:'Futures', zeroDte:'0DTE', swings:'Swings', flowPulse:'Flow Pulse' };
 var DOLLAR = ['smoothers','futures','flowPulse','zeroDte','swings']; /* mockup ids that carry P&L */
-var COUNT  = ['flash'];
 
 var activeFilter = 'all';
 var selectedDay = null;
@@ -65,7 +63,7 @@ function dayPnl(key){
 }
 function daySetups(key){
   var d = calDays[key]; if(!d) return 0;
-  return (d.flash ? d.flash.count : 0) + (d['0dte'] ? d['0dte'].count : 0);
+  return (d['0dte'] ? d['0dte'].count : 0);
 }
 function renderToday(){
   var t = todayKey();
@@ -113,7 +111,7 @@ function renderToday(){
 function renderCards(){
   function set(id, html){ document.getElementById('res-'+id).innerHTML = html; }
   var T = SUMMARY.types;
-  var sm = T.smoothers.stats, fu = T.futures.stats, zd = T['0dte'].stats, fl2 = T.flow_pulse.stats, fl = T.flash.stats;
+  var sm = T.smoothers.stats, fu = T.futures.stats, zd = T['0dte'].stats, fl2 = T.flow_pulse.stats;
   set('smoothers', 'All time <b class="' + signCls(sm.pnl) + '">' + money(sm.pnl) + '</b>');
   set('futures',   'All time <b class="' + signCls(fu.pnl) + '">' + money(fu.pnl) + '</b>');
   if(zd.tracked > 0){
@@ -126,11 +124,6 @@ function renderCards(){
     set('flow', 'All time <b class="' + signCls(fl2.pnl) + '">' + money(fl2.pnl) + '</b>');
   } else {
     set('flow', 'No tracks closed yet');
-  }
-  if((fl.resolved||0) > 0){
-    set('flash', 'Clean targets <b>' + num(fl.wins) + ' of ' + num(fl.resolved) + ' · ' + pct(fl.win_rate) + '</b>' + expR(fl.expectancy_r));
-  } else {
-    set('flash', '<b>' + num(fl.tracked) + '</b> setups logged');
   }
   /* digest: next weekday ~4pm CT */
   var d = new Date(); var day = d.getDay();
@@ -151,9 +144,6 @@ var DRILL = {
   flowPulse: { title:'Flow Pulse, by direction',
     sub:'Split by which way the big money bet. Tap a direction to see the actual pulses — each opens a two-week paper track when a contract can be suggested.',
     pill:'Paper tracking', pillCls:'test', hit:false, deeper:'View pulses ›' },
-  flash: { title:'Flash Agentic, pattern by pattern',
-    sub:'Setups grouped by pattern type, scored like the pick checker: target touched before invalidation wins, over five sessions.',
-    pill:'Evidence only', pillCls:'test', hit:true, deeper:'View setups ›' },
   swings: { title:'Swings, idea by idea',
     sub:'Every swing idea (1-21 DTE), newest first. Paper-tracked, 1 contract each.',
     pill:'Paper / proving', pillCls:'test', hit:false, deeper:'View ideas ›' }
@@ -166,7 +156,7 @@ function tagFor(name, id){
   var tag = words.slice(0,2).map(function(w){ return w[0]; }).join('').toUpperCase();
   return tag || '?';
 }
-var DOT_CLASS = { smoothers:'d-smooth', futures:'d-futures', zeroDte:'d-0dte', swings:'d-swings', flowPulse:'d-flow', flash:'d-flash' };
+var DOT_CLASS = { smoothers:'d-smooth', futures:'d-futures', zeroDte:'d-0dte', swings:'d-swings', flowPulse:'d-flow' };
 
 function drillCard(it, id, cfg){
   var st = it.stats || {};
@@ -314,8 +304,7 @@ var BOARD = [
   { id:'smoothers', api:'smoothers',  status:'Live',           pill:'live' },
   { id:'futures',   api:'futures',    status:'Paper / proving',pill:'test' },
   { id:'zeroDte',   api:'0dte',       status:'Paper / proving',pill:'test' },
-  { id:'flowPulse', api:'flow_pulse', status:'Paper tracking', pill:'test' },
-  { id:'flash',     api:'flash',      status:'Evidence only',  pill:'test', hit:true }
+  { id:'flowPulse', api:'flow_pulse', status:'Paper tracking', pill:'test' }
 ];
 
 function renderBoard(){
@@ -362,7 +351,6 @@ function apiKey(id){ return TYPES.filter(function(x){ return x.id === id; })[0].
 
 function dayTotal(d, filter){
   if(!d) return 0;
-  if(filter === 'flash') return 0;
   if(filter === 'all') return DOLLAR.reduce(function(t,id){ var k=apiKey(id); return t + (d[k] ? d[k].pnl||0 : 0); }, 0);
   var k = apiKey(filter);
   return d[k] ? d[k].pnl||0 : 0;
@@ -415,25 +403,17 @@ function renderCalendar(){
   /* summary */
   var label = activeFilter === 'all' ? 'All trackers' : TYPE_LABEL[activeFilter];
   var win = monthName() + ' ' + calYear;
-  var sumHtml;
-  if(activeFilter === 'flash'){
-    var fh = 0;
-    monthDays().forEach(function(k){ fh += dayCount(calDays[k], 'flash'); });
-    sumHtml = '<span>' + win + ' · ' + label + ': <b>' + num(fh) + '</b> setups logged</span>'
-      + '<span>Scored on target-before-invalidation — no dollars attached</span>';
-  } else {
-    var total = 0, best = null, worst = null, days = 0;
-    monthDays().forEach(function(k){
-      var v = dayTotal(calDays[k], activeFilter);
-      total += v; days++;
-      if(best === null || v > best.v) best = { k:k, v:v };
-      if(worst === null || v < worst.v) worst = { k:k, v:v };
-    });
-    sumHtml = '<span>' + win + ' · ' + label + ': <b class="' + signCls(total) + '">' + money(total) + '</b></span>'
-      + '<span>Best day <b>' + (best ? money(best.v) : '—') + '</b></span>'
-      + '<span>Roughest day <b>' + (worst ? money(worst.v) : '—') + '</b></span>'
-      + '<span>' + days + ' trading days with data</span>';
-  }
+  var total = 0, best = null, worst = null, days = 0;
+  monthDays().forEach(function(k){
+    var v = dayTotal(calDays[k], activeFilter);
+    total += v; days++;
+    if(best === null || v > best.v) best = { k:k, v:v };
+    if(worst === null || v < worst.v) worst = { k:k, v:v };
+  });
+  var sumHtml = '<span>' + win + ' · ' + label + ': <b class="' + signCls(total) + '">' + money(total) + '</b></span>'
+    + '<span>Best day <b>' + (best ? money(best.v) : '—') + '</b></span>'
+    + '<span>Roughest day <b>' + (worst ? money(worst.v) : '—') + '</b></span>'
+    + '<span>' + days + ' trading days with data</span>';
   document.getElementById('calSummary').innerHTML = sumHtml;
   renderDetail();
 }
@@ -452,11 +432,8 @@ function dayCell(key, dnum, isLead){
       + '<span class="d">' + dnum + (isToday ? ' · today' : '') + '</span>'
       + '<span class="sub">' + (isWeekend ? 'Market closed' : (isFuture ? '—' : 'No trades logged')) + '</span></button>';
   }
-  var mid = (activeFilter === 'flash')
-    ? '<span class="total">' + num(dayCount(d, activeFilter)) + '</span>'
-    : '<span class="total ' + signCls(dayTotal(d, activeFilter)) + '">' + money(dayTotal(d, activeFilter)) + '</span>';
+  var mid = '<span class="total ' + signCls(dayTotal(d, activeFilter)) + '">' + money(dayTotal(d, activeFilter)) + '</span>';
   var sub = (activeFilter === 'all') ? 'all trackers'
-    : (activeFilter === 'flash') ? 'Flash setups'
     : TYPE_LABEL[activeFilter] + ' only';
   var dots = '';
   TYPES.forEach(function(t){
@@ -480,7 +457,7 @@ function renderDetail(){
   }
   var total = dayTotal(d, 'all');
   var html = '<h3>' + esc(fmtDayLong(selectedDay)) + ' — <span class="' + signCls(total) + '">' + money(total) + '</span> total</h3>'
-    + '<p>Smoothers, futures, Flow Pulse, and 0DTE are scored in dollars; Flash is scored by counts, not dollars.</p>'
+    + '<p>Every tracker below is scored in dollars.</p>'
     + '<div class="detail-grid">';
   DOLLAR.forEach(function(id){
     var k = apiKey(id), rec = d[k] || { pnl:0, count:0 };
@@ -489,9 +466,6 @@ function renderDetail(){
       + '<strong class="' + signCls(v) + '">' + money(v) + '</strong>'
       + '<span>' + (v > 0 ? 'Made money' : (v < 0 ? 'Lost money' : 'No trades / flat')) + '</span></div>';
   });
-  var fc = (d.flash && d.flash.count) || 0;
-  html += '<div class="mini"><label><i class="m-flash"></i>Flash</label>'
-    + '<strong>' + num(fc) + ' logged</strong><span>Setups — evidence, not P&amp;L</span></div>';
   html += '</div>';
   el.innerHTML = html;
 }
