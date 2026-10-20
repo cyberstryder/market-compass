@@ -20,7 +20,7 @@ import statistics
 FLOOR = 15.0        # never tolerate less than the legacy flat rule
 CAP = 300.0         # never tolerate more than 5 minutes of silence
 MIN_SAMPLES = 3     # intervals required before cadence scaling engages
-FACTOR = 4.0        # a gap must exceed 4x the median interval to count
+FACTOR = 3.0        # a gap = 3 missed prints at the proven cadence
 
 
 def intervals_between(timestamps):

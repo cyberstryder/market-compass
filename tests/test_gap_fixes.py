@@ -51,7 +51,7 @@ def test_scaled_tolerance_liquid_contract_stays_at_floor():
 
 
 def test_scaled_tolerance_sparse_contract_scales_and_caps():
-    assert scaled_tolerance([60, 60, 60]) == 240
+    assert scaled_tolerance([60, 60, 60]) == 180
     assert scaled_tolerance([200, 200, 200]) == 300  # capped
 
 
@@ -305,7 +305,7 @@ def test_idea_sparse_option_prints_survive_but_long_silence_gaps(db, ideas_cfg):
         service.tick(c, NOW + 185)
         p = rows(c)[0]
         assert p['status'] == 'open'
-        assert p['opt_gap_tol'] == 240  # median 60s cadence x4
+        assert p['opt_gap_tol'] == 180  # median 60s cadence x3
 
         # A genuine 520s silence still closes it as a gap.
         service.tick(c, NOW + 700)
