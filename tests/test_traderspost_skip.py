@@ -103,6 +103,29 @@ def test_correlated_opposite_direction_is_hedging_skip(db, cfg, sent):
     assert 'hedging' in trade2['traderspost_skip_reason']
 
 
+def test_sent_flag_survives_exits_copy_over(db, cfg, sent):
+    """2026-10-20 visibility bug: engine.exits() closes a trade by
+    copying the POSITION record over the TRADE record. The position
+    copy is written at submit time, before the TradersPost hook runs
+    — a flag stored only on the trade record was erased at close, so
+    /api/traderspost-skips and the Simple live split showed zero
+    sends while live trades filled. The hook must mark both copies."""
+    r, trade = submit(db, cfg, 'golden_zone', 'MCL.v.0')
+    assert trade['traderspost_sent'] is True
+    pos_key = 'position:ict:golden_zone:MCL.v.0:t1'
+    with db.tx() as c:
+        pos = db.get(c, pos_key)
+        assert pos['traderspost_sent'] is True
+        # Simulate exits(): management writes the position object back
+        # over BOTH keys when the trade closes.
+        pos = dict(pos)
+        pos['status'] = 'closed'
+        db.put(c, pos_key, pos)
+        db.put(c, 'trade:' + r['trade_id'] + '-t1', pos)
+        after = db.get(c, 'trade:' + r['trade_id'] + '-t1')
+    assert after['traderspost_sent'] is True
+
+
 def test_unmapped_symbol_fails_closed(db, cfg, sent):
     # golden_zone allowlist includes NQ, but SYMBOL_MAP has no NQ.c.0 entry:
     # the raw Compass symbol must never be POSTed to TradersPost.

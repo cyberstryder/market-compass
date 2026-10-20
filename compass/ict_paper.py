@@ -243,9 +243,11 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
         return {'submitted': False, 'reason': 'duplicate'}
     group_id = base_trade_id
     submitted_ids = []
+    leg_pos_keys = {}
     for leg in legs:
         trade_id = '%s-%s' % (base_trade_id, leg['leg'])
         leg_pos_key = '%s:%s' % (pos_key, leg['leg'])
+        leg_pos_keys[trade_id] = leg_pos_key
         trade = {
             'id': trade_id, 'strategy': STRATEGY_TAGS[detector],
             'detector': detector, 'symbol': symbol, 'side': side,
@@ -405,13 +407,23 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                 # transaction, and if it fails (e.g. SQLite lock in tests)
                 # it must not abort the marking — the marks are what the
                 # dashboard and /api/traderspost-skips read back.
+                # Mark BOTH copies (trade + position): engine.exits()
+                # closes a trade by copying the position record over
+                # the trade record, so a flag written only to the trade
+                # record is erased at close (2026-10-20: three live
+                # trades filled while /api/traderspost-skips and the
+                # Simple live split showed zero sends).
                 for trade_id in submitted_ids:
-                    t = db.get(c, 'trade:' + trade_id)
-                    if t:
-                        t = dict(t)
-                        t['traderspost_sent'] = False
-                        t['traderspost_skip_reason'] = skip_reason
-                        db.put(c, 'trade:' + trade_id, t)
+                    for key in ('trade:' + trade_id,
+                                leg_pos_keys.get(trade_id)):
+                        if not key:
+                            continue
+                        t = db.get(c, key)
+                        if t:
+                            t = dict(t)
+                            t['traderspost_sent'] = False
+                            t['traderspost_skip_reason'] = skip_reason
+                            db.put(c, key, t)
                 try:
                     db.health('traderspost_webhook', 'skipped', skip_reason)
                 except Exception:
@@ -426,14 +438,21 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                         trade = dict(trade)
                         trade['is_first_leg'] = True
                         success, msg = traderspost.send_signal(cfg, db, trade)
-                        # Mark as sent (or failed)
-                        t = db.get(c, 'trade:' + submitted_ids[0])
-                        if t:
-                            t = dict(t)
-                            t['traderspost_sent'] = success
-                            if not success:
-                                t['traderspost_skip_reason'] = f"send_failed: {msg}"
-                            db.put(c, 'trade:' + submitted_ids[0], t)
+                        # Mark as sent (or failed) on BOTH copies — see
+                        # the skip branch: exits() overwrites the trade
+                        # record from the position record at close.
+                        for key in ('trade:' + submitted_ids[0],
+                                    leg_pos_keys.get(submitted_ids[0])):
+                            if not key:
+                                continue
+                            t = db.get(c, key)
+                            if t:
+                                t = dict(t)
+                                t['traderspost_sent'] = success
+                                if not success:
+                                    t['traderspost_skip_reason'] = \
+                                        f"send_failed: {msg}"
+                                db.put(c, key, t)
     except Exception as e:
         try:
             db.health('traderspost_webhook', 'error', f"hook failed: {type(e).__name__}: {str(e)[:200]}")
