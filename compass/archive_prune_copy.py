@@ -23,7 +23,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 
 from . import copy_archive as ca
 from .store import events
@@ -115,6 +115,14 @@ def _hash_object(client, bucket, key):
 
 def _count_rows(db, kind, lo, hi):
     with db.tx() as c:
+        engine = getattr(db, 'engine', None)
+        if engine is not None and engine.dialect.name == 'postgresql':
+            # The exact count over a big week (21M+ rows) exceeds the
+            # default statement timeout on the loaded production box —
+            # W38's first background verify died on QueryCanceled
+            # (2026-10-19). The prune gate is an admin operation; give
+            # its count room inside this transaction only.
+            c.execute(text("SET LOCAL statement_timeout = '1800s'"))
         return c.execute(select(func.count()).select_from(events).where(
             events.c.kind == kind, events.c.ts >= lo,
             events.c.ts < hi)).scalar() or 0
@@ -221,10 +229,22 @@ def prune_status(db):
             'refused': refused, 'active': active}
 
 
+# Transient infrastructure failures (a canceled count, an R2 read blip)
+# are NOT evidence about the archive's integrity, so they may be
+# re-verified — up to a cap, after which the refusal sticks like any
+# other. Evidence refusals (sha_mismatch, count_mismatch,
+# final_count_mismatch) are sticky from the first occurrence.
+RETRYABLE_REFUSALS = ('verify_error', 'r2_read_failed')
+MAX_VERIFY_ATTEMPTS = 3
+
+
 def _refuse(db, kind, pstr, reason, detail):
+    prev = _prune_states(_all_copy_state(db)).get((kind, pstr), {})
+    attempts = int(prev.get('attempts', 0)) + 1
     _set_prune_state(db, kind, pstr,
                      {'status': 'refused', 'reason': reason,
-                      'detail': detail, 'at': time.time()})
+                      'detail': detail, 'attempts': attempts,
+                      'at': time.time()})
     return {'ok': False, 'action': 'refused', 'kind': kind, 'period': pstr,
             'reason': reason, 'detail': detail}
 
@@ -296,7 +316,11 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
         if rec.get('rows', 0) <= 0 or not rec.get('sha256'):
             continue
         st = pruned.get((kind, pstr))
-        if st and st.get('status') in ('done', 'refused'):
+        if st and st.get('status') == 'done':
+            continue
+        if st and st.get('status') == 'refused' and not (
+                st.get('reason') in RETRYABLE_REFUSALS
+                and int(st.get('attempts', 1)) < MAX_VERIFY_ATTEMPTS):
             continue
         candidates.append((pstr, kind, rec, st))
     if not candidates:
@@ -306,15 +330,19 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
     ws = _week_start(pstr)
     we = ws + 7 * DAY
 
-    if not st or st.get('status') == 'verifying':
+    if not st or st.get('status') in ('verifying', 'refused'):
+        # 'refused' here means a retryable refusal under its attempt cap
+        # (the candidate filter already excluded the sticky ones).
         thread = _VERIFY_THREADS.get((kind, pstr))
         if thread is not None and thread.is_alive():
             return {'ok': True, 'action': 'verifying',
                     'kind': kind, 'period': pstr}
         # No state yet, or an orphaned 'verifying' whose thread died
-        # with a previous process: (re-)kick verification.
+        # with a previous process: (re-)kick verification. The attempt
+        # count carries over so retryable refusals can exhaust their cap.
         _set_prune_state(db, kind, pstr,
                          {'status': 'verifying', 'started_at': now,
+                          'attempts': int(st.get('attempts', 0)) if st else 0,
                           'expected_rows': rec['rows']})
         thread = threading.Thread(
             target=_verify_worker,

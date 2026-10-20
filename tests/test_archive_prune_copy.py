@@ -148,6 +148,49 @@ def test_slow_verify_returns_verifying_then_deletes(db, s3, monkeypatch):
     assert count_kind(db, 'bar') == 0
 
 
+def test_transient_verify_error_is_retried_then_recovers(db, s3, monkeypatch):
+    """W38 live (2026-10-19): the exact count was canceled by Postgres
+    statement_timeout and banked as a sticky refusal. A transient
+    verify_error is not evidence about the archive — it must retry."""
+    ts = NOW - 400 * DAY
+    for i in range(3):
+        add_event(db, 'bar', ts + i * 60)
+    archive_week(db, s3, 'bar', ts, rows=3)
+    real_count = apc._count_rows
+    calls = {'n': 0}
+
+    def flaky_count(db_, kind, lo, hi):
+        calls['n'] += 1
+        if calls['n'] == 1:
+            raise RuntimeError('canceling statement due to statement timeout')
+        return real_count(db_, kind, lo, hi)
+
+    monkeypatch.setattr(apc, '_count_rows', flaky_count)
+    r1 = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r1['ok'] is False and r1['reason'] == 'verify_error'
+    assert count_kind(db, 'bar') == 3  # nothing deleted
+    r2 = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r2['deleted_this_call'] == 3 and r2['status'] == 'done'
+    assert count_kind(db, 'bar') == 0
+
+
+def test_transient_refusal_sticks_after_attempt_cap(db, s3, monkeypatch):
+    ts = NOW - 400 * DAY
+    add_event(db, 'bar', ts)
+    archive_week(db, s3, 'bar', ts, rows=1)
+
+    def always_fail(db_, kind, lo, hi):
+        raise RuntimeError('database is gone')
+
+    monkeypatch.setattr(apc, '_count_rows', always_fail)
+    for _ in range(apc.MAX_VERIFY_ATTEMPTS):
+        r = apc.prune_next(db, s3, BUCKET, now=NOW)
+        assert r['ok'] is False and r['reason'] == 'verify_error'
+    r = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r['action'] == 'idle'  # cap reached: sticky, no more retries
+    assert count_kind(db, 'bar') == 1
+
+
 def test_concurrent_chunk_returns_busy(db, s3):
     assert apc._CHUNK_LOCK.acquire(blocking=False)
     try:
