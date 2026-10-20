@@ -241,6 +241,24 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                                       int(number(sig.get('signal_ts')) or now))
     if db.get(c, 'trade:' + base_trade_id + '-t1'):
         return {'submitted': False, 'reason': 'duplicate'}
+    # Brake shadow evaluation (2026-10-20): measure the candidate brakes
+    # (3-strike stand-down to the next 08:30 CT, correlation cap 1) against
+    # the live book WITHOUT enforcing them — Josh approved shadow logging
+    # only; live brakes wait for the shadow evidence. Evaluated here, after
+    # every real gate has passed and before this trade's legs are written,
+    # so correlation state never includes the trade itself. A failure here
+    # must never affect the submission.
+    shadow = None
+    if getattr(cfg, 'ict_brake_shadow', True):
+        try:
+            from . import brake_shadow as _bs
+            shadow = _bs.evaluate(db, c, now, detector, symbol, side, atr_v)
+        except Exception as e:
+            try:
+                db.health('brake_shadow', 'error',
+                          f"evaluate failed: {type(e).__name__}: {str(e)[:200]}")
+            except Exception:
+                pass
     group_id = base_trade_id
     submitted_ids = []
     leg_pos_keys = {}
@@ -458,6 +476,21 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
             db.health('traderspost_webhook', 'error', f"hook failed: {type(e).__name__}: {str(e)[:200]}")
         except:
             pass
+    # Brake shadow: persist the evaluation now that the trade (and its
+    # TradersPost outcome) exists, so realized outcomes can be scored
+    # against what the brakes would have done. Bookkeeping only.
+    if shadow is not None and submitted_ids:
+        try:
+            from . import brake_shadow as _bs
+            _t = db.get(c, 'trade:' + submitted_ids[0]) or {}
+            _bs.record(db, c, shadow, submitted_ids[0],
+                       _t.get('traderspost_sent'))
+        except Exception as e:
+            try:
+                db.health('brake_shadow', 'error',
+                          f"record failed: {type(e).__name__}: {str(e)[:200]}")
+            except Exception:
+                pass
     risk = paper_risk.account(db, c, now, 'future', persist=True)
     risk['entries'] = risk.get('entries', 0) + 1
     db.put(c, paper_risk.key(now, 'future'), risk)
