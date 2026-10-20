@@ -23,7 +23,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select
 
 from . import copy_archive as ca
 from .store import events
@@ -93,42 +93,65 @@ def _set_prune_state(db, kind, period_str, value):
         db.put(c, f"{PRUNE_PREFIX}{kind}:{period_str}", value)
 
 
+_HASH_CHUNK = 64 * 1024 * 1024  # 64 MiB ranged reads
+
+
 def _hash_object(client, bucket, key):
-    """Stream an R2 object through sha256 — never load it whole. Archived
-    quote weeks are ~1.5 GB; the first live verify attempt read one into
-    memory and the request died without a response (2026-10-19)."""
-    resp = client.get_object(Bucket=bucket, Key=key)
-    body = resp['Body']
+    """Hash an R2 object via ranged GETs with per-chunk retries.
+
+    Failure history: a whole-object read OOM'd the request
+    (2026-10-19); plain streaming then truncated mid-object on the
+    2.58 GB W39 week ('863894364 read, but total bytes expected is
+    2580627842'). Ranged chunks bound the blast radius — a dropped
+    connection loses one 64 MiB chunk, which is retried, never the
+    whole object."""
+    size = int(client.head_object(Bucket=bucket, Key=key)['ContentLength'])
     hasher = hashlib.sha256()
-    total = 0
-    try:
-        while True:
-            chunk = body.read(8 * 1024 * 1024)
-            if not chunk:
+    offset = 0
+    while offset < size:
+        end = min(size - 1, offset + _HASH_CHUNK - 1)
+        want = end - offset + 1
+        data = None
+        for _attempt in range(3):
+            resp = client.get_object(Bucket=bucket, Key=key,
+                                     Range=f'bytes={offset}-{end}')
+            body = resp['Body']
+            try:
+                buf = body.read()
+            finally:
+                body.close()
+            if len(buf) == want:
+                data = buf
                 break
-            hasher.update(chunk)
-            total += len(chunk)
-    finally:
-        body.close()
-    return hasher.hexdigest(), total
+        if data is None:
+            raise IOError(f'ranged read failed at {offset}-{end} of {key}')
+        hasher.update(data)
+        offset += want
+    return hasher.hexdigest(), size
+
+
+_COUNT_SLICE_SECONDS = 6 * 3600  # 28 slices per week
 
 
 def _count_rows(db, kind, lo, hi):
-    with db.tx() as c:
-        engine = getattr(db, 'engine', None)
-        if engine is not None and engine.dialect.name == 'postgresql':
-            # The exact count over a big week (21M+ rows) outlives the
-            # production box's timeouts — W38's verifies died first on
-            # statement_timeout (QueryCanceled), then, with that
-            # lifted, on transaction_timeout, Postgres 17's separate
-            # whole-transaction cap (2026-10-19). The prune gate is
-            # an admin operation; give its count room on BOTH limits,
-            # inside this transaction only.
-            c.execute(text("SET LOCAL statement_timeout = '1800s'"))
-            c.execute(text("SET LOCAL transaction_timeout = '1800s'"))
-        return c.execute(select(func.count()).select_from(events).where(
-            events.c.kind == kind, events.c.ts >= lo,
-            events.c.ts < hi)).scalar() or 0
+    """Exact count as a sum of per-slice counts, each in its own
+    transaction. A single COUNT over a big week (21M+ rows) outlived
+    every timeout production enforces — statement_timeout first, then
+    transaction_timeout, and SET LOCAL lifts of both did not take
+    effect in the deployed service (2026-10-19/20). Six-hour slices
+    scan ~750k rows each (seconds per transaction); the sum is
+    exactly the week's count, so the gate loses no strictness."""
+    total = 0
+    t = lo
+    while t < hi:
+        nxt = min(hi, t + _COUNT_SLICE_SECONDS)
+        with db.tx() as c:
+            total += c.execute(
+                select(func.count()).select_from(events).where(
+                    events.c.kind == kind, events.c.ts >= t,
+                    events.c.ts < nxt)).scalar() or 0
+        t = nxt
+    return total
 
 
 def coverage(db, now=None):

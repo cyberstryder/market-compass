@@ -23,8 +23,15 @@ class FakeS3:
     def __init__(self):
         self.objects = {}
 
-    def get_object(self, Bucket, Key):
-        return {'Body': io.BytesIO(self.objects[Key])}
+    def head_object(self, Bucket, Key):
+        return {'ContentLength': len(self.objects[Key])}
+
+    def get_object(self, Bucket, Key, Range=None):
+        data = self.objects[Key]
+        if Range:
+            start, end = Range[len('bytes='):].split('-')
+            data = data[int(start):int(end) + 1]
+        return {'Body': io.BytesIO(data)}
 
     def put_object(self, Bucket, Key, Body, **kw):
         self.objects[Key] = Body.read() if hasattr(Body, 'read') else Body
@@ -146,6 +153,42 @@ def test_slow_verify_returns_verifying_then_deletes(db, s3, monkeypatch):
     r2 = apc.prune_next(db, s3, BUCKET, now=NOW)
     assert r2['deleted_this_call'] == 3 and r2['status'] == 'done'
     assert count_kind(db, 'bar') == 0
+
+
+def test_hash_object_retries_truncated_ranged_reads():
+    """W39 live (2026-10-20): the R2 stream truncated at 863 MB of
+    2.58 GB and the whole verify died. Ranged chunks must retry a
+    short read and still produce the exact digest."""
+    body = b'x' * 1000 + b'y' * 1000
+    flaky = FakeS3()
+    flaky.objects['k'] = body
+    real_get = flaky.get_object
+    calls = {'n': 0}
+
+    def truncated_first(Bucket, Key, Range=None):
+        calls['n'] += 1
+        out = real_get(Bucket, Key, Range=Range)
+        if calls['n'] == 1:
+            return {'Body': io.BytesIO(out['Body'].read()[:-10])}
+        return out
+
+    flaky.get_object = truncated_first
+    digest, size = apc._hash_object(flaky, BUCKET, 'k')
+    assert size == len(body)
+    assert digest == hashlib.sha256(body).hexdigest()
+    assert calls['n'] == 2
+
+
+def test_count_rows_slices_sum_exactly(db, monkeypatch):
+    """The week count is a sum of 6h slice counts; boundary rows must
+    be counted exactly once."""
+    monkeypatch.setattr(apc, '_COUNT_SLICE_SECONDS', 3600)
+    lo = 1759000000.0
+    hi = lo + 3 * 3600
+    for ts in (lo, lo + 3599, lo + 3600, hi - 1, hi, lo - 1):
+        add_event(db, 'bar', ts)
+    assert apc._count_rows(db, 'bar', lo, hi) == 4
+    assert apc._count_rows(db, 'bar', lo, lo + 3600) == 2
 
 
 def test_transient_verify_error_is_retried_then_recovers(db, s3, monkeypatch):
