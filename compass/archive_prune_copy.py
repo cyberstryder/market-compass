@@ -117,12 +117,15 @@ def _count_rows(db, kind, lo, hi):
     with db.tx() as c:
         engine = getattr(db, 'engine', None)
         if engine is not None and engine.dialect.name == 'postgresql':
-            # The exact count over a big week (21M+ rows) exceeds the
-            # default statement timeout on the loaded production box —
-            # W38's first background verify died on QueryCanceled
-            # (2026-10-19). The prune gate is an admin operation; give
-            # its count room inside this transaction only.
+            # The exact count over a big week (21M+ rows) outlives the
+            # production box's timeouts — W38's verifies died first on
+            # statement_timeout (QueryCanceled), then, with that
+            # lifted, on transaction_timeout, Postgres 17's separate
+            # whole-transaction cap (2026-10-19). The prune gate is
+            # an admin operation; give its count room on BOTH limits,
+            # inside this transaction only.
             c.execute(text("SET LOCAL statement_timeout = '1800s'"))
+            c.execute(text("SET LOCAL transaction_timeout = '1800s'"))
         return c.execute(select(func.count()).select_from(events).where(
             events.c.kind == kind, events.c.ts >= lo,
             events.c.ts < hi)).scalar() or 0
@@ -235,7 +238,7 @@ def prune_status(db):
 # other. Evidence refusals (sha_mismatch, count_mismatch,
 # final_count_mismatch) are sticky from the first occurrence.
 RETRYABLE_REFUSALS = ('verify_error', 'r2_read_failed')
-MAX_VERIFY_ATTEMPTS = 3
+MAX_VERIFY_ATTEMPTS = 5
 
 
 def _refuse(db, kind, pstr, reason, detail):
