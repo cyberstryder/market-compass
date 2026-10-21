@@ -91,6 +91,26 @@ def test_prune_deletes_in_batches_after_reverification(db, s3):
     assert status['periods_done'] == 1 and status['rows_deleted'] == 5
 
 
+def test_prune_deletes_in_sub_batches_within_one_call(db, s3, monkeypatch):
+    """Regression (2026-10-20): production's single-transaction 50k
+    delete outlived the 60s session transaction_timeout and rolled
+    back forever (verified weeks stuck at deleted=0). Deletion now runs
+    in sub-batch transactions; one call must span several of them and
+    bank the cumulative progress."""
+    monkeypatch.setattr(apc, '_DELETE_SUB_BATCH', 2)
+    ts = NOW - 400 * DAY
+    for i in range(5):
+        add_event(db, 'bar', ts + i * 60)
+    archive_week(db, s3, 'bar', ts, rows=5)
+    r1 = apc.prune_next(db, s3, BUCKET, now=NOW, row_budget=3)
+    assert r1['deleted_this_call'] == 3 and r1['status'] == 'deleting'
+    active = apc.prune_status(db)['active']
+    assert len(active) == 1 and active[0]['deleted'] == 3  # banked mid-call
+    r2 = apc.prune_next(db, s3, BUCKET, now=NOW, row_budget=50)
+    assert r2['deleted_this_call'] == 2 and r2['status'] == 'done'
+    assert count_kind(db, 'bar') == 0
+
+
 def test_prune_refuses_when_r2_object_was_tampered(db, s3):
     ts = NOW - 400 * DAY
     for i in range(3):

@@ -43,6 +43,12 @@ _CHUNK_LOCK = threading.Lock()
 _VERIFY_THREADS = {}
 _VERIFY_INLINE_SECONDS = float(
     os.environ.get('PRUNE_VERIFY_INLINE_SECONDS', '120'))
+# Deletion runs in small sub-batches, one transaction each (see the
+# delete loop in _prune_next_locked for why a single batch transaction
+# cannot survive production's session timeouts).
+_DELETE_SUB_BATCH = int(os.environ.get('PRUNE_DELETE_SUB_BATCH', '5000'))
+_DELETE_CALL_SECONDS = float(
+    os.environ.get('PRUNE_DELETE_CALL_SECONDS', '40'))
 # Kinds the copy-archive pump deliberately does not walk (see run_copy_chunk).
 # They can never become prunable (no progress records), which coverage shows.
 PUMP_SKIPPED_KINDS = ('chain_archive', 'matrix_raw', 'vendor_flow', 'flow',
@@ -386,15 +392,35 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
                     'period': pstr, 'reason': (st or {}).get('reason'),
                     'detail': (st or {}).get('detail')}
 
-    with db.tx() as c:
-        sub = (select(events.c.id)
-               .where(events.c.kind == kind, events.c.ts >= ws,
-                      events.c.ts < we)
-               .order_by(events.c.id).limit(row_budget))
-        n = c.execute(delete(events).where(events.c.id.in_(sub))).rowcount or 0
+    # Delete in sub-batches, one transaction each, banking progress to
+    # prune state after every sub-batch. The previous single-transaction
+    # 50k delete could not survive the session limits store.py sets on
+    # every connection (statement_timeout 30s, transaction_timeout 60s)
+    # against the 164M-row events table: each call was killed and rolled
+    # back, verified weeks sat at deleted=0 for hours, and the chunk lock
+    # the doomed call held made every other caller see 'busy'
+    # (diagnosed 2026-10-20). A few-thousand-row delete lands in
+    # seconds, like the sliced counts in _count_rows.
     st = dict(st)
-    st['deleted'] = st.get('deleted', 0) + n
-    st['updated_at'] = time.time()
+    deleted_before = st.get('deleted', 0)
+    n_all = 0
+    deadline = time.time() + _DELETE_CALL_SECONDS
+    while n_all < row_budget and time.time() < deadline:
+        take = min(_DELETE_SUB_BATCH, row_budget - n_all)
+        with db.tx() as c:
+            sub = (select(events.c.id)
+                   .where(events.c.kind == kind, events.c.ts >= ws,
+                          events.c.ts < we)
+                   .order_by(events.c.id).limit(take))
+            n = c.execute(
+                delete(events).where(events.c.id.in_(sub))).rowcount or 0
+        if n <= 0:
+            break
+        n_all += n
+        st['deleted'] = deleted_before + n_all
+        st['updated_at'] = time.time()
+        st['status'] = 'deleting'
+        _set_prune_state(db, kind, pstr, st)
     if st['deleted'] >= st['expected_rows']:
         remaining = _count_rows(db, kind, ws, we)
         if remaining == 0 and st['deleted'] == st['expected_rows']:
@@ -405,10 +431,8 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
             st['detail'] = {'deleted': st['deleted'],
                             'expected_rows': st['expected_rows'],
                             'remaining': remaining}
-    else:
-        st['status'] = 'deleting'
-    _set_prune_state(db, kind, pstr, st)
+        _set_prune_state(db, kind, pstr, st)
     return {'ok': st['status'] != 'refused', 'action': 'pruned_batch',
-            'kind': kind, 'period': pstr, 'deleted_this_call': n,
+            'kind': kind, 'period': pstr, 'deleted_this_call': n_all,
             'deleted_total': st['deleted'],
             'expected_rows': st['expected_rows'], 'status': st['status']}
