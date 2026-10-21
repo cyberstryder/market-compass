@@ -538,11 +538,10 @@ class Collectors:
                     chain={"contracts":contracts,"complete":complete,"asof":now,"source":source,
                         "selection_reference":reference,"selection_reference_ts":reference_ts,
                         "selection_note":"Historical references seed subscriptions only; execution needs fresh quotes"}
-                    # Full chains remain in latest state; compressed archives
-                    # retain research inputs without repeating huge JSON blocks.
-                    import base64,gzip
-                    archive={"encoding":"gzip+base64-json","data":base64.b64encode(gzip.compress(json.dumps(chain).encode())).decode(),"contracts":len(contracts)}
-                    self.db.append(c,"chain_archive",source,symbol,now,archive)
+                    # Full chains remain in latest state only. The historical
+                    # chain_archive event copy was write-only (no reader in
+                    # the codebase; audited 2026-10-21) and is no longer
+                    # stored — it was the bulkiest unused payload in events.
                     self.db.put(c,"chain:"+symbol,chain)
                     self.db.put(c,'chain_inventory:'+symbol,{'contracts':len(contracts),'at':now})
                     self.db.put(c,'chain_retry:'+symbol,{'retry_at':0})
@@ -770,11 +769,10 @@ class Collectors:
             for symbol,t,x in items:
                 src=x.get('src','massive') if isinstance(x,dict) else 'massive'
                 key=identity("option_trade",symbol,t,x.get("i"),x.get("q"),x)
-                added=self.db.append(c,"option_trade",src,symbol,t,x,key)
-                premium=float(x.get("p",0))*float(x.get("s",0))*100
-                if added and premium>=100000:
-                    self.db.append(c,"flow",src,symbol,t,{"premium":premium,"size":x.get("s"),"price":x.get("p"),
-                        "classification":"Large print; opening/closing and intent unknown","scope":"Selected contracts only","raw":x},"flow:"+key)
+                # Large prints used to be mirrored into 'flow' events here;
+                # that log had no production reader (audited 2026-10-21) —
+                # live flow features read flow_records/state, not events.
+                self.db.append(c,"option_trade",src,symbol,t,x,key)
 
     async def matrix_request(self,path,label):
         # A shared lock spaces request starts across flow, matrices and research.

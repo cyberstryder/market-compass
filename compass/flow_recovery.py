@@ -5,7 +5,7 @@ import logging
 from datetime import date,timedelta
 from sqlalchemy import select,func
 from .market import day
-from .store import flow_records,identity
+from .store import flow_records
 from .vendor import flow_page
 from .vendor_freshness import confirmation, progress, log_observation
 
@@ -45,8 +45,8 @@ def ingest(db,label,page,part,now):
                 source_ts=row["source_ts"],payload=row,first_seen=now,last_seen=now)
             c.execute(q.on_conflict_do_update(index_elements=["day","vendor_id"],
                 set_={"source_ts":row["source_ts"],"payload":row,"last_seen":now}))
-            db.append(c,"vendor_flow","tradermatrix",row["symbol"],row["source_ts"],row,
-                key=identity("tradermatrix-flow",label,row["vendor_id"],{k:v for k,v in row.items() if k!="received"}))
+            # flow_records is the consumed artifact; the former vendor_flow
+            # event side-log had no production reader (audited 2026-10-21).
         ceiling=max(1,math.ceil(part["total"]/part["page_size"]))
         cp.update(total=part["total"],page_size=part["page_size"],page_ceiling=ceiling,
             at=now,last_page=page,rejected_observations=cp["rejected_observations"]+part["rejected"])

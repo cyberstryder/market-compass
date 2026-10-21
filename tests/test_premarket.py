@@ -103,7 +103,7 @@ def test_flow_paging_deduplicates_overlaps_and_repeated_polls(db):
         finally: await collector.close()
         assert len(requested) == 4
         with db.tx() as c:
-            assert len(db.recent(c, "vendor_flow")) == 3
+            assert len(db.recent(c, "vendor_flow")) == 0
             summary = db.get(c, "matrix:unusual_activity")
             assert summary["unique_rows"] == 3 and summary["fetched_rows"] == 4
             assert summary["limited"] is False
@@ -202,6 +202,6 @@ def test_discord_requires_saved_message_and_retains_queue_on_ambiguous_response(
     with db.tx() as c:
         assert outbox_status(db, c, NOW)["pending"] == 0
         assert db.get(c, "outbox:discord:confirmation")["message_id"] == "987654321"
-        assert len(db.recent(c, "alert_delivery")) == 1
+        assert len(db.recent(c, "alert_delivery")) == 0
 
 

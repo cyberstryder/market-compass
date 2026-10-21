@@ -15,7 +15,7 @@ from .store import Store, events
 
 # Simple retention: keep this many days live, archive older
 RETENTION = {
-    'quote': 14,           # market quotes: biggest table
+    'quote': 7,            # market quotes: biggest table
     'chain_archive': 30,   # option chains
     'matrix_raw': 90,      # vendor snapshots
     'vendor_flow': 180,    # flow prints

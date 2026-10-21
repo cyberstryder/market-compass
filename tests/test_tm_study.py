@@ -102,7 +102,7 @@ def test_receipt_freeze_survives_vendor_correction_and_repeated_polls(storage,mo
         record=detail(c,first['id'])
         assert record['first_snapshot']['score']==90 and record['latest_vendor_snapshot']['score']==30
         assert record['vendor_changed_since_assessment'] is True
-        assert c.execute(select(func.count()).select_from(events).where(events.c.kind=='vendor_flow')).scalar_one()==2
+        assert c.execute(select(func.count()).select_from(events).where(events.c.kind=='vendor_flow')).scalar_one()==0
         assert not storage.recent(c,'alert')
 
 

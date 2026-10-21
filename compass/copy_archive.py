@@ -25,7 +25,7 @@ from sqlalchemy import text
 
 # Retention: keep this many days live, archive older
 RETENTION = {
-    'quote': 14,
+    'quote': 7,
     'chain_archive': 30,
     'matrix_raw': 90,
     'vendor_flow': 180,

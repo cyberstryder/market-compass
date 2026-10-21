@@ -140,7 +140,9 @@ async def dispatch(client, db, webhook, row, route=None):
         db.put(c, 'outbox:discord:confirmation', confirmation)
         if p.get('status') == 'notification_test':
             db.put(c, 'outbox:discord:test_confirmation', confirmation)
-        db.append(c, 'alert_delivery', 'discord', row['symbol'], now, confirmation, key='discord:' + message_id)
+        # No alert_delivery event is written: that log's only consumer was
+        # the dashboard alerts page (audited 2026-10-21); the authoritative
+        # receipts are the discord_jobs/outbox confirmation keys above.
     db.health('discord:' + route if route else 'discord', 'delivered',
               'Discord confirmed a saved message; event IDs identify possible retries', now)
 
