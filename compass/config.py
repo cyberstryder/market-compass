@@ -171,6 +171,17 @@ class Config:
     swing_target_dte: int = field(default_factory=lambda: int(env("SWING_TARGET_DTE","30")))
     swing_hold_sessions: int = field(default_factory=lambda: int(env("SWING_MAX_HOLD_SESSIONS","10")))
     stream_limit: int = field(default_factory=lambda: min(900,max(10,int(env("OPTION_STREAM_CONTRACTS","500")))))
+    # Massive's OWN subscription cap, independent of the shared selection
+    # size above: both streams subscribe the shared set, so the
+    # OPTION_STREAM_CONTRACTS raise aimed at Alpaca (500 -> 900 on
+    # 2026-10-20) oversubscribed Massive past its vendor limit and it
+    # errored instead of streaming; it had already died once at the 500
+    # cap when intraday pinned demand peaked the set. Default 500 = the
+    # level Massive last verifiably delivered at (2026-10-20 morning
+    # parity run); lower MASSIVE_OPTION_STREAM_CONTRACTS if the vendor
+    # limit trips again. Massive takes its subset in selection priority
+    # order (see option_stream.massive_wanted).
+    massive_stream_limit: int = field(default_factory=lambda: min(900,max(10,int(env("MASSIVE_OPTION_STREAM_CONTRACTS","500")))))
     history_budget: float = field(default_factory=lambda: float(env("FUTURES_HISTORY_BUDGET_USD","0.10")))
     watchlist: tuple = field(default_factory=lambda: symbols(env("WATCH_SYMBOLS")))
     discovery: bool = field(default_factory=lambda: env("DISCOVERY_RESEARCH_ENABLED","false")=="true")

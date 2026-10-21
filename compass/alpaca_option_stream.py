@@ -47,7 +47,7 @@ import msgpack
 
 from .market import ts, number
 from .diagnostics import redacted_detail
-from .option_stream import OptionBuffer, OptionStreamError
+from .option_stream import OptionBuffer, OptionStreamError, persist_batch
 
 ALPACA_OPRA_WS = "wss://stream.data.alpaca.markets/v1beta1/opra"
 
@@ -332,6 +332,13 @@ async def consume(ws, collector, buffer=None):
             trace.prune(wanted)
             await asyncio.sleep(0.5)
 
+    # Batches dropped after persist_batch exhausted its retries. The
+    # pre-fix writer let a persistence exception kill the writer task,
+    # which (via FIRST_COMPLETED) tore down the whole stream; combined
+    # with the buffer raising on a full queue, a slow database converted
+    # directly into a zero-data flap loop on 2026-10-21.
+    dropped = {"quotes": 0, "trades": 0}
+
     async def write(kind):
         queue = buffer.quotes if kind == "quotes" else buffer.trades
         while True:
@@ -340,37 +347,51 @@ async def consume(ws, collector, buffer=None):
             batch = list(queue)[:64]
             if batch:
                 if kind == "quotes":
-                    # Split by source so rows are tagged correctly.
+                    # Split by source so rows are tagged correctly. Each
+                    # group resolves independently: committed or dropped,
+                    # never fatal to the stream.
                     by_src = {}
                     for row in batch:
                         sym, q, record = row
                         src = (q.get("src") if isinstance(q, dict) else None) or "alpaca"
                         by_src.setdefault(src, []).append(row)
                     for src, rows in by_src.items():
-                        work = asyncio.create_task(
-                            asyncio.to_thread(collector.quote_batch, src, rows))
                         try:
-                            await asyncio.shield(work)
+                            ok = await persist_batch(
+                                collector.quote_batch, src, rows,
+                                label="Alpaca quote persistence")
                         except asyncio.CancelledError:
-                            await work
+                            # persist_batch awaited the thread: committed.
                             for _ in rows:
                                 queue.popleft()
                             committed[kind] += len(rows)
                             raise
+                        if ok:
+                            committed[kind] += len(rows)
+                        else:
+                            dropped[kind] += len(rows)
+                            logging.getLogger("uvicorn.error").warning(
+                                "Alpaca %s persistence batch dropped after "
+                                "retries (%s rows)", kind, len(rows))
                 else:
-                    work = asyncio.create_task(
-                        asyncio.to_thread(collector.option_trade_batch, batch))
                     try:
-                        await asyncio.shield(work)
+                        ok = await persist_batch(
+                            collector.option_trade_batch, batch,
+                            label="Alpaca trade persistence")
                     except asyncio.CancelledError:
-                        await work
                         for _ in batch:
                             queue.popleft()
                         committed[kind] += len(batch)
                         raise
+                    if ok:
+                        committed[kind] += len(batch)
+                    else:
+                        dropped[kind] += len(batch)
+                        logging.getLogger("uvicorn.error").warning(
+                            "Alpaca %s persistence batch dropped after "
+                            "retries (%s rows)", kind, len(batch))
                 for _ in batch:
                     queue.popleft()
-                committed[kind] += len(batch)
             else:
                 await asyncio.sleep(0.05)
 
@@ -389,7 +410,11 @@ async def consume(ws, collector, buffer=None):
                     "receiving" if latest else "waiting",
                     "Alpaca OPRA parallel run; source-tagged rows for parity check",
                     latest, subscribed=len(subscribed),
-                    committed=dict(committed), diag=dict(diag))
+                    committed=dict(committed),
+                    diag={**diag,
+                          "persistence_dropped_batches": dict(dropped),
+                          "buffer_dropped_quotes": buffer.dropped_quotes,
+                          "buffer_dropped_trades": buffer.dropped_trades})
             except Exception as e:
                 logging.getLogger('uvicorn.error').warning(
                     'OPRA health write failed: %s', type(e).__name__)

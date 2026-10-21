@@ -37,6 +37,21 @@ class OptionBuffer:
         self.quotes, self.trades = deque(), deque()
         self.pending = {}
         self.last_sample, self.sources, self.diagnostics = {}, {}, {}
+        # Bounded-degradation counters (2026-10-21 incident fix): a full
+        # persistence queue drops and counts instead of raising — see offer().
+        self.dropped_quotes, self.dropped_trades = 0, 0
+        self._drop_warned = set()
+
+    def _note_drop(self, kind):
+        if kind == 'quotes':
+            self.dropped_quotes += 1
+        else:
+            self.dropped_trades += 1
+        if kind not in self._drop_warned:
+            self._drop_warned.add(kind)
+            logging.getLogger('uvicorn.error').warning(
+                'Option %s persistence queue full; dropping samples with an '
+                'explicit observation gap (counted in stream health)', kind)
 
     def offer(self, item, wanted, now, monotonic):
         symbol, kind, stamp = item.get('sym'), item.get('ev'), ts(item.get('t'))
@@ -56,19 +71,41 @@ class OptionBuffer:
                 return
             self.pending.pop(symbol,None)
             if len(self.quotes) >= self.capacity:
-                raise OptionStreamError('Option quote persistence queue full; explicit observation gap')
+                # NEVER raise here (2026-10-21 incident): the raise fired in
+                # the socket read task, consume() ends on FIRST_COMPLETED, so
+                # one full queue tore the whole stream down; the supervisor
+                # restarted it into the same slow database and the queue
+                # refilled before any meaningful batch landed — both option
+                # streams committed ~zero all morning while flapping.
+                # Quotes are latest-state samples: dropping the new sample
+                # loses one history row, the next sample a second later
+                # supersedes it, and sources[symbol] already advanced so
+                # coverage self-heals. The drop is counted, not silent —
+                # the gap stays explicit in stream health.
+                self._note_drop('quotes')
+                return
             self.quotes.append(value)
             self.last_sample[symbol] = monotonic
         else:
             if len(self.trades) >= self.capacity:
-                raise OptionStreamError('Option trade persistence queue full; explicit observation gap')
+                # Same rule for trade prints: a bounded, counted drop beats
+                # tearing down the stream and losing everything in the
+                # reconnect gap plus the resubscribe storm.
+                self._note_drop('trades')
+                return
             self.trades.append((symbol,stamp,item))
 
     def flush(self, monotonic):
         for symbol,value in list(self.pending.items()):
             if monotonic-self.last_sample.get(symbol,float('-inf')) < 1: continue
             if len(self.quotes)>=self.capacity:
-                raise OptionStreamError('Option quote persistence queue full; explicit observation gap')
+                # Drop the coalesced sample instead of raising (see offer):
+                # it occupies this second's sampling slot, and the next
+                # offer for the symbol replaces it.
+                self._note_drop('quotes')
+                del self.pending[symbol]
+                self.last_sample[symbol]=monotonic
+                continue
             self.quotes.append(value)
             del self.pending[symbol]
             self.last_sample[symbol]=monotonic
@@ -79,11 +116,71 @@ class OptionBuffer:
                 del mapping[symbol]
 
 
+async def persist_batch(fn, *args, attempts=3, label='option persistence'):
+    """Run one blocking persistence call off-loop for a stream writer.
+
+    Returns True when the batch committed. A failed batch (statement or
+    lock timeout against a loaded Postgres, a dropped connection) is
+    retried with backoff; after the final attempt it returns False so the
+    caller can DROP the batch and continue. The pre-fix writers let the
+    exception propagate: it killed the writer task, consume() ends on
+    FIRST_COMPLETED, and one transient database error cost a full stream
+    teardown + resubscribe cycle while helping nothing — the database,
+    not the batch, was the problem (2026-10-21 incident).
+
+    Cancellation keeps the old contract: the underlying thread cannot be
+    cancelled, so it is awaited to completion and CancelledError then
+    propagates; callers treat the batch as committed in that path.
+    """
+    delay = 0.25
+    for attempt in range(attempts):
+        work = asyncio.create_task(asyncio.to_thread(fn, *args))
+        try:
+            await asyncio.shield(work)
+            return True
+        except asyncio.CancelledError:
+            await work
+            raise
+        except Exception as error:
+            logging.getLogger('uvicorn.error').warning(
+                '%s batch failed (attempt %s/%s): %s',
+                label, attempt + 1, attempts, type(error).__name__)
+            if attempt + 1 < attempts:
+                await asyncio.sleep(delay)
+                delay *= 2
+    return False
+
+
+def massive_wanted(collector):
+    """The Massive stream's subscription set: its own capped subset of the
+    shared selection.
+
+    Both streams used to subscribe the full shared set, so
+    OPTION_STREAM_CONTRACTS — a knob aimed at Alpaca capacity — also sized
+    Massive. The 500 -> 900 raise pushed Massive past its vendor
+    subscription limit and it errored instead of streaming; even at 500
+    it died on 2026-10-20 when intraday pinned demand peaked the shared
+    set (active observations are never dropped, so peak composition is
+    the fattest). cfg.massive_stream_limit (MASSIVE_OPTION_STREAM_CONTRACTS)
+    caps Massive independently, taking symbols in selection priority
+    order (pinned/active first) so a cap never drops the contracts that
+    matter most."""
+    wanted = set(collector.option_symbols)
+    cap = getattr(collector.cfg, 'massive_stream_limit', None)
+    if not cap or len(wanted) <= cap:
+        return wanted
+    ordered = [s for s in getattr(collector, 'option_symbols_ordered', None) or []
+               if s in wanted]
+    rest = sorted(wanted - set(ordered))
+    return set((ordered + rest)[:cap])
+
+
 async def consume(ws, collector):
     buffer = OptionBuffer()
     authenticated = asyncio.Event()
     subscribed = set()
     committed = {'quotes':0,'trades':0}
+    dropped_batches = {'quotes':0,'trades':0}
     stored = {}
     trace=SubscriptionTrace(time.time(),collector.cfg.massive)
 
@@ -114,7 +211,7 @@ async def consume(ws, collector):
         except asyncio.TimeoutError:
             raise OptionStreamError('Massive authentication acknowledgement timed out; reconnecting') from None
         while True:
-            wanted = set(collector.option_symbols)
+            wanted = massive_wanted(collector)
             for action,symbols in [('unsubscribe',subscribed-wanted),('subscribe',wanted-subscribed)]:
                 if symbols:
                     trace.request(action,symbols,time.time())
@@ -156,23 +253,36 @@ async def consume(ws, collector):
             if kind=='quotes': buffer.flush(time.monotonic())
             batch = list(queue)[:64]
             if batch:
-                if kind=='quotes':
-                    work = asyncio.create_task(asyncio.to_thread(collector.quote_batch,'massive',batch))
-                else:
-                    work = asyncio.create_task(asyncio.to_thread(collector.option_trade_batch,batch))
+                # persist_batch owns retry/backoff and the cancellation
+                # contract (it awaits the thread, then re-raises
+                # CancelledError with the batch committed). A batch that
+                # still fails is dropped and counted — never a teardown,
+                # never a permanently blocked queue head.
+                receipts = {}
+                def capture(source, rows):
+                    receipts['value'] = collector.quote_batch(source, rows)
                 try:
-                    receipts=await asyncio.shield(work)
+                    if kind=='quotes':
+                        ok = await persist_batch(capture, 'massive', batch,
+                                                 label='Massive quote persistence')
+                    else:
+                        ok = await persist_batch(collector.option_trade_batch, batch,
+                                                 label='Massive trade persistence')
                 except asyncio.CancelledError:
-                    # A cancelled to_thread await does not stop the transaction.
-                    await work
                     for _ in batch: queue.popleft()
                     committed[kind] += len(batch)
                     raise
                 for _ in batch: queue.popleft()
+                if not ok:
+                    dropped_batches[kind] += len(batch)
+                    logging.getLogger('uvicorn.error').warning(
+                        'Massive %s persistence batch dropped after retries (%s rows)',
+                        kind, len(batch))
+                    continue
                 committed[kind] += len(batch)
                 if kind=='quotes':
                     committed_at=time.time()
-                    for symbol,q,at in (receipts if receipts is not None else
+                    for symbol,q,at in (receipts.get('value') if receipts.get('value') is not None else
                             [(symbol,q,committed_at) for symbol,q,_ in batch]):
                         stored[symbol]=dict(last_stored_source_ts=q['ts'],last_commit_at=at,
                             socket_to_commit_seconds=at-q['socket_read_at'],source_to_commit_seconds=at-q['ts'])
@@ -190,6 +300,8 @@ async def consume(ws, collector):
             latest = max((r['last_source_ts'] for r in rows.values() if 'last_source_ts' in r),default=None)
             report = dict(at=now,collection_version=COLLECTION_VERSION,subscribed=len(subscribed),quote_queue=len(buffer.quotes),
                 trade_queue=len(buffer.trades),pending_quotes=len(buffer.pending),committed=dict(committed),symbols=rows,
+                persistence_dropped_quotes=buffer.dropped_quotes,persistence_dropped_trades=buffer.dropped_trades,
+                persistence_dropped_batches=dict(dropped_batches),
                 basis='Socket read is local application receipt, not wire arrival; source clocks unchanged')
             report.update(connection_id=trace.connection_id,
                 acknowledged_quote_contracts=sum(bool(trace.snapshot(s)['Q'].get('acknowledged_at')) for s in subscribed),

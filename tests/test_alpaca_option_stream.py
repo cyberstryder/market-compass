@@ -228,6 +228,92 @@ def test_consume_survives_auth_and_subscribes():
     asyncio.run(main())
 
 
+def test_consume_survives_persistent_quote_batch_failure():
+    """2026-10-21 incident: a quote_batch that always raises (statement
+    timeouts against a loaded Postgres) killed the writer task, and
+    consume() ending on FIRST_COMPLETED tore the whole stream down into
+    a reconnect flap that committed ~zero all morning. The writer must
+    now retry, drop the batch, and keep processing later batches."""
+    import asyncio
+
+    import msgpack
+
+    from compass.alpaca_option_stream import consume
+
+    class FakeWS:
+        def __init__(self):
+            self.sent = []
+            self.incoming = asyncio.Queue()
+
+        async def send(self, data):
+            self.sent.append(msgpack.unpackb(data, raw=False))
+
+        async def recv(self):
+            return await self.incoming.get()
+
+    class FakeDB:
+        def health(self, *a, **k):
+            pass
+
+    class FakeCollector:
+        class cfg:
+            alpaca_opra_key = "k"
+            alpaca_opra_secret = "s"
+
+        def __init__(self):
+            self.option_symbols = {"O:SPY261021C00600000"}
+            self.db = FakeDB()
+            self.quote_calls = 0
+
+        def quote_batch(self, src, rows):
+            self.quote_calls += 1
+            raise RuntimeError("statement timeout")
+
+        def option_trade_batch(self, rows):
+            pass
+
+    async def main():
+        ws = FakeWS()
+        collector = FakeCollector()
+        task = asyncio.create_task(consume(ws, collector))
+        await ws.incoming.put(
+            msgpack.packb([{"T": "success", "msg": "connected"}]))
+        await ws.incoming.put(
+            msgpack.packb([{"T": "success", "msg": "authenticated"}]))
+        for _ in range(100):
+            if any(m.get("action") == "subscribe" for m in ws.sent):
+                break
+            await asyncio.sleep(0.05)
+        assert any(m.get("action") == "subscribe" for m in ws.sent)
+        await ws.incoming.put(msgpack.packb(
+            [{"T": "q", "S": "SPY261021C00600000", "bp": 2.4, "ap": 2.6,
+              "t": "2026-10-21T14:30:00Z"}]))
+        # First batch: 3 attempts, all fail, batch dropped, stream alive.
+        for _ in range(120):
+            if collector.quote_calls >= 3:
+                break
+            await asyncio.sleep(0.05)
+        assert collector.quote_calls >= 3
+        assert not task.done()
+        # A later batch is still attempted — the queue head did not wedge.
+        await ws.incoming.put(msgpack.packb(
+            [{"T": "q", "S": "SPY261021C00600000", "bp": 2.5, "ap": 2.7,
+              "t": "2026-10-21T14:32:00Z"}]))
+        for _ in range(120):
+            if collector.quote_calls >= 6:
+                break
+            await asyncio.sleep(0.05)
+        assert collector.quote_calls >= 6
+        assert not task.done()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(main())
+
+
 def test_translate_flows_through_buffer():
     """Translated items must satisfy OptionBuffer.offer's expectations."""
     from compass.option_stream import OptionBuffer

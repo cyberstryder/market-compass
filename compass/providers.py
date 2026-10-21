@@ -38,6 +38,11 @@ class Collectors:
     def __init__(self,db,cfg):
         self.db,self.cfg=db,cfg
         self.option_symbols=set()
+        # Selection-priority order for option_symbols (pinned/active
+        # first), kept alongside the set: capped consumers (Massive)
+        # take their subset from the front instead of an arbitrary
+        # set-order slice.
+        self.option_symbols_ordered=[]
         self.background_option_symbols=[]
         self.client=httpx.AsyncClient(timeout=20,follow_redirects=False,trust_env=False)
         self.live=None
@@ -609,6 +614,7 @@ class Collectors:
                 selected,missing=select_contracts(active['options'],previous,requested,
                     self.background_option_symbols,self.cfg.stream_limit)
                 self.option_symbols=set(selected)
+                self.option_symbols_ordered=list(selected)
                 report=dict(at=now,symbols=selected,active_contracts=len(active['options']),active_symbols=active['options'],
                     active_missing=missing,capacity=self.cfg.stream_limit,
                     requested_ideas=len(set(requested)),waiting_ideas=len(set(requested)-set(selected)))
