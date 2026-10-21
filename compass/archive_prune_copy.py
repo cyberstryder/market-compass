@@ -322,6 +322,52 @@ def _verify_worker(db, client, bucket, kind, pstr, rec, ws, we, now):
         _VERIFY_THREADS.pop((kind, pstr), None)
 
 
+def _row_at_or_after(db, id_floor):
+    with db.tx() as c:
+        row = c.execute(select(events.c.id, events.c.ts)
+                        .where(events.c.id >= id_floor)
+                        .order_by(events.c.id).limit(1)).first()
+    return (row[0], row[1]) if row else None
+
+
+def _first_id_with_ts(db, target_ts, lo, hi):
+    """Smallest id in [lo, hi] whose ts >= target_ts, or hi+1 if none.
+
+    Binary search over the PK; each step is one indexed single-row
+    probe. Assumes ts is near-monotonic in id (insert order) — late or
+    backfilled stragglers violate it locally, which the caller's
+    full-pass fallback and the exact final count absorb."""
+    ans = hi + 1
+    l, r = lo, hi
+    while l <= r:
+        mid = (l + r) // 2
+        row = _row_at_or_after(db, mid)
+        if row is None:
+            break
+        rid, rts = row
+        if rid > hi:
+            r = mid - 1
+        elif (rts or 0) >= target_ts:
+            ans = rid
+            r = rid - 1
+        else:
+            l = rid + 1
+    return ans
+
+
+def _id_band(db, ws, we):
+    """[lo, hi) id range holding the week's rows: lo is the first id
+    with ts >= ws, hi the first id with ts >= we (hi = max_id+1 when
+    the week runs to the table's end)."""
+    with db.tx() as c:
+        lo = c.execute(select(func.min(events.c.id))).scalar()
+        hi = c.execute(select(func.max(events.c.id))).scalar()
+    if lo is None or hi is None:
+        return (0, 0)
+    return (_first_id_with_ts(db, ws, lo, hi),
+            _first_id_with_ts(db, we, lo, hi))
+
+
 def prune_next(db, client, bucket, now=None, row_budget=50000):
     """Verify (once) and delete one batch of the oldest prunable week.
 
@@ -409,16 +455,40 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
     st = dict(st)
     deleted_before = st.get('deleted', 0)
     cursor = int(st.get('delete_cursor') or 0)
+    # Start the walk at the week's id band, not the table's first row:
+    # a cursor from 0 spends whole calls traversing older weeks' id
+    # space before reaching a single matching row (observed live
+    # 2026-10-21: full 40s calls deleting 0). The band is computed once
+    # and banked; when it is exhausted short of the expected count the
+    # walk falls back to a full pass from 0 for stragglers.
+    band_hi = st.get('band_hi')
+    band_done = bool(st.get('band_done'))
+    if band_hi is None and not band_done and not cursor:
+        band_lo, band_hi = _id_band(db, ws, we)
+        st['band_lo'] = band_lo
+        st['band_hi'] = band_hi
+        cursor = max(0, band_lo - 1)
     n_all = 0
     deadline = time.time() + _DELETE_CALL_SECONDS
     probe_exhausted = False
     while n_all < row_budget and time.time() < deadline:
+        probe_q = (select(events.c.id, events.c.kind, events.c.ts)
+                   .where(events.c.id > cursor)
+                   .order_by(events.c.id).limit(_DELETE_PROBE))
+        if band_hi and not band_done:
+            probe_q = probe_q.where(events.c.id < band_hi)
         with db.tx() as c:
-            rows = c.execute(
-                select(events.c.id, events.c.kind, events.c.ts)
-                .where(events.c.id > cursor)
-                .order_by(events.c.id).limit(_DELETE_PROBE)).all()
+            rows = c.execute(probe_q).all()
         if not rows:
+            if band_hi and not band_done:
+                if st['deleted'] >= st['expected_rows']:
+                    break
+                band_done = True
+                st['band_done'] = True
+                cursor = 0
+                st['delete_cursor'] = 0
+                _set_prune_state(db, kind, pstr, st)
+                continue
             probe_exhausted = True
             break
         last_probe_id = rows[-1][0]

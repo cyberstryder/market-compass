@@ -111,6 +111,41 @@ def test_prune_deletes_in_sub_batches_within_one_call(db, s3, monkeypatch):
     assert count_kind(db, 'bar') == 0
 
 
+def test_prune_walks_the_weeks_id_band_not_the_whole_table(db, s3):
+    """The delete walk starts at the week's id band (binary-searched
+    from timestamps) instead of id 0, and leaves other weeks' rows —
+    before and after the band — untouched."""
+    old = NOW - 500 * DAY
+    for i in range(3):
+        add_event(db, 'bar', old + i * 60)  # an older week, lower ids
+    ts = NOW - 400 * DAY
+    for i in range(4):
+        add_event(db, 'bar', ts + i * 60)   # the archived week
+    add_event(db, 'bar', NOW - DAY)         # newer week, higher ids
+    pstr = archive_week(db, s3, 'bar', ts, rows=4)
+    r = apc.prune_next(db, s3, BUCKET, now=NOW, row_budget=50)
+    assert r['deleted_this_call'] == 4 and r['status'] == 'done'
+    assert count_kind(db, 'bar') == 4  # 3 old + 1 new survive
+    states = apc._prune_states(apc._all_copy_state(db))
+    assert states[('bar', pstr)].get('band_lo') is not None
+
+
+def test_prune_band_straggler_is_caught_by_full_pass_fallback(db, s3):
+    """A row carrying an in-week ts at an id ABOVE the band (a late
+    backfill) is missed by the band walk; the fallback full pass must
+    still find it so the week completes instead of refusing."""
+    ts = NOW - 400 * DAY
+    for i in range(3):
+        add_event(db, 'bar', ts + i * 60)
+    for i in range(3):
+        add_event(db, 'bar', NOW - DAY + i * 60)  # newer rows push ids up
+    add_event(db, 'bar', ts + 30)  # straggler: in-week ts, highest id
+    archive_week(db, s3, 'bar', ts, rows=4)
+    r = apc.prune_next(db, s3, BUCKET, now=NOW, row_budget=50)
+    assert r['deleted_this_call'] == 4 and r['status'] == 'done'
+    assert count_kind(db, 'bar') == 3
+
+
 def test_prune_refuses_when_r2_object_was_tampered(db, s3):
     ts = NOW - 400 * DAY
     for i in range(3):
