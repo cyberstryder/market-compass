@@ -16,7 +16,13 @@ var SYMBOLS = [
   { key: 'META', label: 'META', lvl: 'META' },
   { key: 'MSFT', label: 'MSFT', lvl: 'MSFT' },
   { key: 'MNQ.c.0', label: 'MNQ', lvl: 'NQ' },
-  { key: 'MES.c.0', label: 'MES', lvl: 'ES' }
+  { key: 'MES.c.0', label: 'MES', lvl: 'ES' },
+  { key: 'MGC.v.0', label: 'MGC', lvl: null },
+  { key: 'MCL.v.0', label: 'MCL', lvl: null },
+  { key: 'MYM.c.0', label: 'MYM', lvl: null },
+  { key: 'M2K.c.0', label: 'M2K', lvl: null },
+  { key: 'M6A.c.0', label: 'M6A', lvl: null },
+  { key: 'M6E.c.0', label: 'M6E', lvl: null }
 ];
 
 var TZ = 'America/Chicago';
@@ -108,7 +114,10 @@ function addLine(price, color, style, title) {
 }
 
 function loadLevels() {
-  if (!current.lvl) { legendEl.textContent = ''; return; }
+  if (!current.lvl) {
+    legendEl.textContent = 'Gamma levels are computed for equities, NQ and ES only — ' + current.label + ' shows bars alone for now.';
+    return;
+  }
   var lvl = encodeURIComponent(current.lvl);
   Promise.all([
     fetchJSON('/api/gamma-levels?symbol=' + lvl).catch(function () { return null; }),
@@ -121,10 +130,11 @@ function loadLevels() {
     var parts = [];
     var cw = num(levels.call_wall), pw = num(levels.put_wall),
         conc = num(levels.concentration), flip = num(gf && gf.flip);
-    if (cw) { addLine(cw, '#2ebd85', LightweightCharts.LineStyle.Solid, 'Call wall'); parts.push('<span><b style="color:#2ebd85">Call wall</b> ' + cw + '</span>'); }
-    if (pw) { addLine(pw, '#e5534b', LightweightCharts.LineStyle.Solid, 'Put wall'); parts.push('<span><b style="color:#e5534b">Put wall</b> ' + pw + '</span>'); }
-    if (conc) { addLine(conc, '#d29922', LightweightCharts.LineStyle.Dotted, 'GEX concentration'); parts.push('<span><b style="color:#d29922">Concentration</b> ' + conc + '</span>'); }
-    if (flip) { addLine(flip, '#b083f0', LightweightCharts.LineStyle.Dashed, 'Gamma flip'); parts.push('<span><b style="color:#b083f0">Gamma flip</b> ' + flip + (gf.regime ? ' (' + gf.regime + ')' : '') + '</span>'); }
+    var fmt = function (v) { return v == null ? '' : (Math.round(v * 100) / 100).toFixed(2); };
+    if (cw) { addLine(cw, '#2ebd85', LightweightCharts.LineStyle.Solid, 'Call wall'); parts.push('<span><b style="color:#2ebd85">Call wall</b> ' + fmt(cw) + '</span>'); }
+    if (pw) { addLine(pw, '#e5534b', LightweightCharts.LineStyle.Solid, 'Put wall'); parts.push('<span><b style="color:#e5534b">Put wall</b> ' + fmt(pw) + '</span>'); }
+    if (conc) { addLine(conc, '#d29922', LightweightCharts.LineStyle.Dotted, 'GEX concentration'); parts.push('<span><b style="color:#d29922">Concentration</b> ' + fmt(conc) + '</span>'); }
+    if (flip) { addLine(flip, '#b083f0', LightweightCharts.LineStyle.Dashed, 'Gamma flip'); parts.push('<span><b style="color:#b083f0">Gamma flip</b> ' + fmt(flip) + (gf.regime ? ' (' + gf.regime + ')' : '') + '</span>'); }
     legendEl.innerHTML = parts.length
       ? parts.join('')
       : 'Levels: waiting (no gamma data for ' + current.lvl + ' yet)';

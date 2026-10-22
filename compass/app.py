@@ -843,13 +843,26 @@ a{color:#888}</style></head><body>
         import threading
         import time
 
-        # Prevent concurrent runs (check DB, not just memory)
+        # Prevent concurrent runs (check DB, not just memory). A worker
+        # thread killed mid-run (e.g. by a service redeploy) never reaches
+        # the finally that clears this flag, orphaning it forever — so a
+        # "running" flag whose copy heartbeat is stale (or absent well
+        # past startup) is treated as dead and cleared here. Bit
+        # 2026-10-22: the 16:17 CT redeploy killed the W41 copy thread
+        # and the orphaned flag blocked every hourly trigger for hours.
         with db.tx() as c:
             running = db.get(c, 'archive:worker:running', False)
             if running:
                 last_run = db.get(c, 'archive:worker:last_run', None)
-                return {'ok': False, 'error': 'Archive worker already running',
-                        'last_run': last_run}
+                heartbeat = db.get(c, 'copy-archive:heartbeat', None) or {}
+                hb_at = heartbeat.get('at') if isinstance(heartbeat, dict) else None
+                now_ts = time.time()
+                fresh = (isinstance(hb_at, (int, float)) and now_ts - hb_at < 900) or \
+                        (isinstance(last_run, (int, float)) and now_ts - last_run < 900)
+                if fresh:
+                    return {'ok': False, 'error': 'Archive worker already running',
+                            'last_run': last_run}
+                db.put(c, 'archive:worker:running', False)
             db.put(c, 'archive:worker:running', True)
             db.put(c, 'archive:worker:last_run', time.time())
             db.put(c, 'archive:worker:log', [f"{time.strftime('%Y-%m-%d %H:%M:%S')}: Triggered via API"])
@@ -2093,8 +2106,22 @@ a{color:#888}</style></head><body>
 
     @app.get("/api/bars")
     def get_bars(symbol:str,limit:int=120):
+        limit=min(max(limit,1),1000)
         with db.tx() as c:
-            return db.recent(c,"bar",symbol,limit=min(max(limit,1),1000))
+            rows=db.recent(c,"bar",symbol,limit=limit)
+            if not rows and "@" not in symbol:
+                # Futures bars land under "<alias>@<instrument_id>" keys
+                # (the Databento live writer keys OHLCV by alias@iid, the
+                # same pattern as futures quotes). Resolve a bare alias to
+                # its newest variant, mirroring ict_common.resolve_bar_key,
+                # so /api/bars?symbol=MES.c.0 works for chart consumers.
+                from sqlalchemy import text as sql_text
+                variant=c.execute(sql_text(
+                    "SELECT symbol FROM events WHERE kind='bar' AND symbol LIKE :pat "
+                    "ORDER BY ts DESC LIMIT 1"),{"pat":symbol+"@%"}).scalar()
+                if variant:
+                    rows=db.recent(c,"bar",variant,limit=limit)
+            return rows
 
     @app.get("/api/events")
     def get_events(kind:str="alert",limit:int=100):
