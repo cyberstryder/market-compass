@@ -123,11 +123,18 @@ def test_engine_transaction_rolls_back_signal_position_and_cursor(db,cfg,monkeyp
         db.put(c,"quote:SPY",quote())
     def fail(*args): raise RuntimeError("crash fixture")
     monkeypatch.setattr(e,"options",fail)
-    with pytest.raises(RuntimeError): e.tick(NOW)
+    # 2026-10-22: the levels pass is isolated per symbol (the single-tick
+    # transaction froze the whole evaluation layer for 34h when one
+    # symbol's bar query hit the transaction timeout). A crash inside one
+    # symbol's processing now rolls back THAT symbol only and is recorded
+    # at health:levels_error; the tick itself completes.
+    e.tick(NOW)
     with db.tx() as c:
         assert db.get(c,"position:SPY") is None
         assert db.get(c,"cursor:SPY") is None
         assert not db.recent(c,"signal")
+        err=db.get(c,"health:levels_error")
+        assert err and err["symbol"]=="SPY"
     monkeypatch.setattr(e,"options",lambda *args,**kwargs:None)
     e.tick(NOW)
     e.tick(NOW)

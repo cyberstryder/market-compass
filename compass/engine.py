@@ -636,6 +636,67 @@ class Engine:
                     self.db.put(c, "seen:"+sid, {"at": now})
                     break
 
+
+    def _levels_pass(self,now):
+        """Per-symbol levels/entry pass, isolated per symbol.
+
+        2026-10-22 root-cause fix: this loop used to run inside tick's
+        single transaction, re-fetching up to 8000 bars per active
+        symbol. When Postgres slowed (post volume-full bloat plus
+        archive contention), the transaction hit the transaction
+        timeout mid-loop, the connection was terminated, and every
+        later tick section (swings, scanner, 0DTE, ICT detectors,
+        end-of-day flatten) starved. Cursors never advanced, so each
+        tick retried the full backlog and died again \u2014 the
+        evaluation layer froze at 2026-10-21 08:13 CT and never
+        recovered across restarts. Now the pass runs between tick's
+        two transaction segments, each symbol in its own transaction
+        with its own failure boundary: one slow symbol loses only its
+        own levels update for this tick."""
+        with self.db.tx() as c:
+            active={p["raw_symbol"] for p in active_selection(self.db,c,self.cfg,now)}
+            future_symbols={k[6:] for k in self.db.prefix(c,"quote:") if "@" in k and k[6:].split("@")[0] in active}
+            future_symbols|={k[10:] for k in self.db.prefix(c,"latestbar:") if "@" in k and k[10:].split("@")[0] in active}
+            symbols=list(self.cfg.stocks)+sorted(future_symbols)
+        for symbol in symbols:
+            try:
+                self._levels_symbol(symbol,now)
+            except Exception as e:
+                logging.getLogger('uvicorn.error').error(
+                    f'Levels pass failed for {symbol}: {e}')
+                try:
+                    with self.db.tx() as c:
+                        self.db.put(c,'health:levels_error',
+                                    {'symbol':symbol,'error':str(e)[:300],'at':now})
+                except Exception:
+                    pass
+
+    def _levels_symbol(self,symbol,now):
+        with self.db.tx() as c:
+            latest=self.db.get(c,"latestbar:"+symbol)
+            if latest is not None and latest<=self.db.get(c,"cursor:"+symbol,0): return
+            rows=dedup(self.db.recent(c,"bar",symbol,limit=8000,since=now-8*86400),now)
+            if len(rows)<2: return
+            bar=rows[-1]
+            if bar["ts"]<=self.db.get(c,"cursor:"+symbol,0): return
+            future=spec(symbol)["asset"]=="future"
+            coverage=self.db.get(c,"historycoverage:"+symbol+":"+prior_rth(risk_day(now))[0]) if future else None
+            context=future_levels(rows,now,coverage,symbol) if future else levels(rows,bar["ts"]+60)
+            self.db.put(c,"levels:"+symbol,context)
+            if future and self.cfg.setup_study:
+                from .scanner import features
+                from .futures_variants import observe_bar
+                f=features(symbol,rows,now,coverage=coverage)
+                observe_bar(self.db,c,symbol,f,now)
+                from .futures_research import observe
+                observe(self.db,c,symbol,f,now,self.study,spec(symbol),orb_enabled=self.cfg.orb_setups)
+            s=candidate(symbol,rows[-2],bar,context,now) if self.cfg.orb_setups else None
+            if s:
+                self.db.append(c,"signal","engine",symbol,s["signal_time"],s,s["id"])
+                self.enter(c,s,now)
+                if symbol in self.cfg.stocks and self.cfg.paper_trading: self.options(c,s,now)
+            self.db.put(c,"cursor:"+symbol,bar["ts"])
+
     def tick(self,now=None):
         now=now or time.time()
         with self.db.tx() as c:
@@ -675,34 +736,8 @@ class Engine:
                 self.policy_logged=True
             self.study.tick(c,now)
             self.exits(c,now)
-            active={p["raw_symbol"] for p in active_selection(self.db,c,self.cfg,now)}
-            future_symbols={k[6:] for k in self.db.prefix(c,"quote:") if "@" in k and k[6:].split("@")[0] in active}
-            future_symbols|={k[10:] for k in self.db.prefix(c,"latestbar:") if "@" in k and k[10:].split("@")[0] in active}
-            symbols=list(self.cfg.stocks)+sorted(future_symbols)
-            for symbol in symbols:
-                latest=self.db.get(c,"latestbar:"+symbol)
-                if latest is not None and latest<=self.db.get(c,"cursor:"+symbol,0): continue
-                rows=dedup(self.db.recent(c,"bar",symbol,limit=8000,since=now-8*86400),now)
-                if len(rows)<2: continue
-                bar=rows[-1]
-                if bar["ts"]<=self.db.get(c,"cursor:"+symbol,0): continue
-                future=spec(symbol)["asset"]=="future"
-                coverage=self.db.get(c,"historycoverage:"+symbol+":"+prior_rth(risk_day(now))[0]) if future else None
-                context=future_levels(rows,now,coverage,symbol) if future else levels(rows,bar["ts"]+60)
-                self.db.put(c,"levels:"+symbol,context)
-                if future and self.cfg.setup_study:
-                    from .scanner import features
-                    from .futures_variants import observe_bar
-                    f=features(symbol,rows,now,coverage=coverage)
-                    observe_bar(self.db,c,symbol,f,now)
-                    from .futures_research import observe
-                    observe(self.db,c,symbol,f,now,self.study,spec(symbol),orb_enabled=self.cfg.orb_setups)
-                s=candidate(symbol,rows[-2],bar,context,now) if self.cfg.orb_setups else None
-                if s:
-                    self.db.append(c,"signal","engine",symbol,s["signal_time"],s,s["id"])
-                    self.enter(c,s,now)
-                    if symbol in self.cfg.stocks and self.cfg.paper_trading: self.options(c,s,now)
-                self.db.put(c,"cursor:"+symbol,bar["ts"])
+        self._levels_pass(now)
+        with self.db.tx() as c:
             self.swings(c,now)
             # Earnings plays: post-earnings gap momentum (runs 9:45-10:30 AM CT)
             # Checks OPRA tickers for earnings gaps >3%, generates 0DTE signals
