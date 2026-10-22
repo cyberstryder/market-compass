@@ -1007,6 +1007,29 @@ a{color:#888}</style></head><body>
             'skipped_count': len(skipped),
         }
 
+    @app.post('/api/admin/repair-outbox')
+    @app.get('/api/admin/repair-outbox')
+    def repair_outbox(request: Request):
+        """Revive epoch-stale native outbox rows under current ownership.
+
+        Generalizes /api/admin/repair-smoothers-alerts (current-week
+        ':target' rows only) to every row the audit #5 jam sweep resolved
+        solely for a stale owner epoch — including Friday ':close' exits,
+        which previously had no repair path and were skipped forever.
+        Idempotent: already-armed or delivered rows are untouched, so a
+        repeat call never double-sends. Optional ?program= filter.
+        """
+        from .native_outbox import repair_stale
+        import time
+
+        program = (request.query_params.get('program') or '').strip() or None
+        repaired = repair_stale(db, now=time.time(), program=program)
+        return {
+            'ok': True,
+            'repaired': [r['event_key'] for r in repaired],
+            'repaired_count': len(repaired),
+        }
+
     @app.post('/api/admin/archive-worker-reset')
     @app.get('/api/admin/archive-worker-reset')
     def reset_archive_worker():

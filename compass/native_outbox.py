@@ -78,9 +78,121 @@ def mirror_smoothers(db,c,row,delivery,webhooks,now):
         program='smoothers_shared',event_key=row['event_key'],created=now,status='pending',
         payload=row['payload'],delivery=d).on_conflict_do_nothing(index_elements=['id']))
 
+def _undeliverable(c,row,ownership):
+    """Why a pending row can never be delivered, or None if it still can be.
+
+    Two permanent classes (audit #5). Both were plain `continue` skips in
+    deliver_one, re-scanned on every pass forever and never recorded:
+
+    - parent_not_delivered / parent_missing: the row edits a parent message
+      (parent_event) whose row is terminally non-delivered (or gone), so the
+      parent Discord message id it must PATCH can never exist.
+    - stale_owner_epoch: the row was queued under an ownership epoch that is
+      no longer current. The epoch binds an intent to the ownership grant
+      that covered it, and this module's rule is that old intents are never
+      promoted across a grant change — so the row is only revivable by an
+      explicit repair (repair_stale), never by the drainer itself.
+    """
+    d=row['delivery'] or {}
+    parent_event=d.get('parent_event')
+    if parent_event:
+        parent=c.execute(select(outbox.c.status).where(
+            outbox.c.id==identity('native-outbox-v1',row['program'],parent_event))).scalar()
+        if parent is None:return 'parent_missing'
+        if parent not in ('pending','sending','delivered'):return 'parent_not_delivered'
+    if ownership and not d.get('repair_bypass') and ownership.get('epoch')!=d.get('owner_epoch'):
+        return 'stale_owner_epoch'
+    return None
+
+
+def sweep_jammed(db,c,now,disabled_programs=(),limit=200):
+    """Terminally resolve pending rows that can never be delivered (audit #5).
+
+    Resolved rows land in 'suppressed' — the existing terminal vocabulary —
+    with the reason (and, for epoch staleness, both epochs) recorded on the
+    delivery, so a jam shows up in status counts and the native_outbox_jam
+    health row instead of silently consuming candidate slots forever.
+    Epoch-stale rows stay revivable through repair_stale(); parent-dead
+    rows are final, because the message they would edit can never exist.
+    """
+    rows=c.execute(select(outbox).where(outbox.c.status=='pending',
+        outbox.c.program.not_in(disabled_programs)).order_by(outbox.c.created).limit(limit)).mappings().all()
+    owners={}
+    resolved=[]
+    for row in rows:
+        program=row['program']
+        if program not in owners:owners[program]=owner(db,c,program,now)
+        reason=_undeliverable(c,row,owners[program])
+        if not reason:continue
+        d=dict(row['delivery'] or {})
+        d.update(error=reason,resolved_at=now)
+        if reason=='stale_owner_epoch':
+            d['stale_owner_epoch']=d.get('owner_epoch')
+            d['current_owner_epoch']=owners[program]['epoch']
+        c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',delivery=d))
+        resolved.append(dict(id=row['id'],program=program,event_key=row['event_key'],reason=reason))
+    return resolved
+
+
+def repair_stale(db,now=None,program=None,limit=100):
+    """Explicitly revive epoch-stale outbox rows under current ownership.
+
+    The repair pattern established by 7f9e750 and
+    /api/admin/repair-smoothers-alerts, generalized: that endpoint only
+    covers current-week smoothers ':target' rows, so jammed rows of every
+    other kind — notably Friday ':close' exits — had no repair path at all.
+    Any row the jam sweep resolved (or would resolve) solely for a stale
+    owner epoch is re-armed exactly the way the endpoint arms its rows
+    (repair_bypass + current owner_epoch, status 'pending') and then flows
+    through deliver_one's normal gates and lease claim, so it is sent at
+    most once.
+
+    Idempotent: a row already armed (repair_bypass under the current
+    epoch), already delivered, gated for any non-jam reason, or blocked by
+    a dead parent is left untouched, so running repair twice never
+    double-sends. Rows for a program without current Compass ownership
+    cannot be armed.
+    """
+    now=time.time() if now is None else now
+    repaired=[]
+    with delivery_guard(db) as c:
+        q=select(outbox).where(outbox.c.status.in_(['pending','suppressed']))
+        if program:q=q.where(outbox.c.program==program)
+        rows=c.execute(q.order_by(outbox.c.created).limit(limit)).mappings().all()
+        owners={}
+        for row in rows:
+            d=dict(row['delivery'] or {})
+            if d.get('repair_bypass'):continue
+            if row['status']=='suppressed' and d.get('error')!='stale_owner_epoch':continue
+            prog=row['program']
+            if prog not in owners:owners[prog]=owner(db,c,prog,now)
+            ownership=owners[prog]
+            if not ownership:continue
+            # Recompute the jam class now: only purely epoch-stale rows are
+            # revivable. A parent-dead row stays terminal even if its epoch
+            # also went stale.
+            if _undeliverable(c,row,ownership)!='stale_owner_epoch':continue
+            d.update(repair_bypass=True,repaired_at=now,owner_epoch=ownership['epoch'],error=None)
+            d['repair_count']=d.get('repair_count',0)+1
+            for key in ('next_attempt','lease','lease_until'):d.pop(key,None)
+            c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='pending',delivery=d))
+            repaired.append(dict(id=row['id'],program=prog,event_key=row['event_key']))
+    return repaired
+
+
 def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
     if not enabled:return False
     now=time.time() if now is None else now
+    # Audit #5: terminally resolve permanently undeliverable rows before
+    # scanning, so they stop being silently skipped (and stop consuming
+    # candidate slots) on every pass.
+    with delivery_guard(db) as c:
+        resolved=sweep_jammed(db,c,now,disabled_programs)
+    if resolved:
+        db.health('native_outbox_jam','resolved',
+            '%d undeliverable outbox row(s) terminally suppressed (%s); epoch-stale rows can be revived via repair'%(
+                len(resolved),', '.join(sorted({r['reason'] for r in resolved}))),
+            resolved=len(resolved),event_keys=[r['event_key'] for r in resolved][:20])
     with delivery_guard(db,shared=True) as c:
         candidates=c.execute(select(outbox).where(outbox.c.status.in_(['pending','sending']),outbox.c.program.not_in(disabled_programs))
             .order_by(outbox.c.created).limit(50).with_for_update(skip_locked=True)).mappings().all()
