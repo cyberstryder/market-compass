@@ -167,6 +167,9 @@ def test_simple_0dte_excludes_data_gap_trades(db):
                                         'symbol': SYM, 'status': 'closed',
                                         'entry': 1.00, 'exit': 1.51, 'pnl': 49.7,
                                         'data_gap': False, 'exit_reason': 'target hit (+50%)',
+                                        # Post-enrichment era (audit #8): a measured
+                                        # scanner trade carries an evidence snapshot.
+                                        'evidence': {'version': '0dte-evidence-v1'},
                                         'entered_at': now - 7200, 'exited_at': now - 3500})
         out = simple.summary(db, c, now)
         d = simple.detail(db, c, now, '0dte', '0DTE BABA')

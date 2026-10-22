@@ -444,6 +444,8 @@ def _0dte(db, c, now):
     per_underlying = defaultdict(list)
     data_gap_count = 0
     data_gap_pnl = 0.0
+    pre_evidence_count = 0
+    pre_evidence_pnl = 0.0
     open_count = 0
     for t in paper.values():
         if not isinstance(t, dict):
@@ -455,6 +457,18 @@ def _0dte(db, c, now):
                 data_gap_count += 1
                 if _num(t.get("pnl")) is not None:
                     data_gap_pnl += _num(t.get("pnl"))
+                continue
+            if t.get("kind") == "scanner" and not isinstance(t.get("evidence"), dict):
+                # Stats reset (audit #8, 2026-10-21): scanner trades opened
+                # before evidence enrichment carry no snapshot. They stay in
+                # the DB and in the trade-by-trade detail views, but the
+                # scorecard (scanner section, per-underlying drills, and the
+                # scanner share of the headline total / P&L calendar, which
+                # are computed in this same loop) counts only trades that
+                # carry an evidence snapshot.
+                pre_evidence_count += 1
+                if _num(t.get("pnl")) is not None:
+                    pre_evidence_pnl += _num(t.get("pnl"))
                 continue
             pnl = _num(t.get("pnl"))
             won = pnl is not None and pnl > 0
@@ -474,6 +488,11 @@ def _0dte(db, c, now):
                 if d:
                     by_day[d]["pnl"] += pnl
         else:
+            if t.get("kind") == "scanner" and not isinstance(t.get("evidence"), dict):
+                # Pre-enrichment scanner trade still open at the reset: not
+                # part of the fresh book (it remains in the detail views).
+                pre_evidence_count += 1
+                continue
             open_count += 1
     all_trades = [t for v in per_kind.values() for t in v]
     stats = _stats(all_trades)
@@ -483,6 +502,9 @@ def _0dte(db, c, now):
     if data_gap_count:
         stats["data_gaps"] = data_gap_count
         stats["data_gap_pnl"] = round(data_gap_pnl, 2)
+    if pre_evidence_count:
+        stats["pre_evidence"] = pre_evidence_count
+        stats["pre_evidence_pnl"] = round(pre_evidence_pnl, 2)
     drill = [_drill("SPY morning plan (wall target)",
                     "Paper buys 1 contract at the ask on confirmation; exits at the wall-aware target, stop, or 2:55pm CT. The default since 2026-10-06.",
                     _stats(per_rule.get("wall", []))),
@@ -490,7 +512,8 @@ def _0dte(db, c, now):
                     "Same entry, blind 2R target instead. Paper-traded side by side for comparison.",
                     _stats(per_rule.get("2r", []))),
              _drill("0DTE scanner",
-                    "Same-day-expiry setups on the liquid watchlist. Paper buys 1 contract at the ask; exits at +50%/-50% or 2:55pm CT.",
+                    "Same-day-expiry setups on the liquid watchlist. Paper buys 1 contract at the ask; exits at +50%/-50% or 2:55pm CT. "
+                    "Scorecard reset 2026-10-21: only trades carrying a Compass evidence snapshot count; earlier trades remain in the trade-by-trade history.",
                     _stats(per_kind.get("scanner", []))),
              _drill("Stock scalp (all)",
                     "Gap fade (premarket) and spike fade (9:45-11am ET) on volatile stocks. 100 shares, underlying P&L net of costs.",

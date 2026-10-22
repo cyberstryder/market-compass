@@ -239,6 +239,14 @@ def format_message(row):
         lines.append(f"Spread: ${q['ask']-q['bid']:.2f} · Ask cost per standard contract: ${q['ask']*100:.2f}")
     for key,label in [('entry','Modeled entry premium'),('premium_stop','Premium stop'),('premium_target','Premium target'),('underlying_stop','Underlying invalidation'),('underlying_invalidation','Underlying invalidation'),('underlying_target','Underlying target'),('exit','Modeled exit premium')]:
         if numeric(p.get(key)):lines.append(f"{label}: ${p[key]:.2f}")
+    # Compass evidence block (audit #8): appended to the verbose 0DTE alert,
+    # which stays as the feed canary per Josh's 2026-10-09 decision.
+    if pub.get('category')=='options_0dte' and isinstance(p.get('evidence_snapshot'),dict):
+        try:
+            from .entry_evidence import alert_lines
+            lines.extend(alert_lines(p['evidence_snapshot']))
+        except Exception:
+            pass
     if not p.get('premium_stop') and numeric(p.get('stop')):lines.append(f"Premium stop: ${p['stop']:.2f}")
     if not p.get('premium_target') and numeric(p.get('target')):lines.append(f"Premium target: ${p['target']:.2f}")
     deadline=p.get('exit_deadline') or p.get('flatten_at')

@@ -229,6 +229,15 @@ def _open_scanner(db, c, now, flatten_at):
             "status": "open", "fee": FEE, "flatten_at": flatten_at,
             **_gex_vex_at_entry(db, c, contract.get("underlying") or "SPY"),
         }
+        # Compass evidence snapshot at entry (audit #8): gamma regime, walls,
+        # IV rank, VWAP, squeeze, calendar flags. The snapshot's presence on
+        # the record is also the stats-reset epoch marker in simple.py — a
+        # failed build must never block the booking, so it degrades to None.
+        try:
+            from .entry_evidence import build as _build_evidence
+            rec["evidence"] = _build_evidence(db, c, contract.get("underlying"), now)
+        except Exception:
+            rec["evidence"] = None
         if _open(db, c, key, rec):
             opened += 1
     return opened

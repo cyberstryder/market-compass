@@ -512,12 +512,23 @@ class Engine:
                             rejected.append({**evidence,'reason':saved.get('reason') or 'Unmeasurable research observation'})
                             continue
                         if eligible:
+                            # Compass evidence snapshot (audit #8): rendered
+                            # into the Discord alert by alert_ownership and
+                            # mirrored onto the paper trade at booking time
+                            # (zero_dte_paper rebuilds it fresh at entry).
+                            try:
+                                from .entry_evidence import build as _entry_evidence
+                                evidence_snapshot=_entry_evidence(self.db,c,signal['symbol'],checked_at,
+                                    price=signal.get('signal_price'))
+                            except Exception:
+                                evidence_snapshot=None
                             # Publication metadata required for zero_dte_paper._open_scanner
                             # to find this alert (filters on publication.category == "options_0dte").
                             # Without it, scanner observations never become paper trades.
                             self.db.append(c,'alert','setup_study',o['symbol'],checked_at,
                                 {**saved,'status':'option_setup_new','last_quote':q,
                                  'expires_at':checked_at+120,'underlying_invalidation':signal.get('invalidation'),
+                                 'evidence_snapshot':evidence_snapshot,
                                  'publication': {
                                      'category': 'options_0dte',
                                      'contract': {
