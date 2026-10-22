@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compass Chart</title>
+<link rel="stylesheet" href="/static/chart.css">
+</head>
+<body>
+<header class="chart-head">
+  <div class="chart-title">Compass Chart <span class="chart-sub">live bars + Compass levels (prototype)</span></div>
+  <nav class="chart-symbols" id="symbols"></nav>
+  <div class="chart-status" id="status">loading…</div>
+  <a class="chart-back" href="/detailed">← Dashboard</a>
+</header>
+<main>
+  <div id="chart"></div>
+  <div class="chart-legend" id="legend"></div>
+</main>
+<script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+<script src="/static/chart.js"></script>
+</body>
+</html>

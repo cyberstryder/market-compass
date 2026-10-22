@@ -296,6 +296,9 @@ def create_app(cfg=None):
     @app.get("/detailed",response_class=HTMLResponse)
     def dashboard(): return (root/"static"/"index.html").read_text()
 
+    @app.get("/chart",response_class=HTMLResponse)
+    def chart_page(): return (root/"static"/"chart.html").read_text()
+
     # The dashboard snapshot is split into two tiers to keep the 3-second
     # poll small enough to parse and render without blocking the main thread.
     # Fast tier (/api/state): header, quotes, positions, live status.

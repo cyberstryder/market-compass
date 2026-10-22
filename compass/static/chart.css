@@ -1,0 +1,20 @@
+/* Compass Chart prototype page. Dark, self-contained. */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: #0f141a; color: #d6deeb;
+  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.chart-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 10px 14px; border-bottom: 1px solid #22303c; background: #131a21; }
+.chart-title { font-weight: 700; font-size: 17px; }
+.chart-sub { font-weight: 400; font-size: 12px; color: #8b98a5; margin-left: 6px; }
+.chart-symbols { display: flex; gap: 6px; flex-wrap: wrap; }
+.chart-symbols button { background: #1b2630; color: #d6deeb; border: 1px solid #2d3f4e;
+  border-radius: 6px; padding: 5px 11px; font-size: 13px; cursor: pointer; }
+.chart-symbols button:hover { background: #243444; }
+.chart-symbols button.active { background: #14532d; border-color: #2ebd85; color: #eafff3; }
+.chart-status { font-size: 12.5px; color: #8b98a5; }
+.chart-back { margin-left: auto; color: #7cc7ff; font-size: 13px; text-decoration: none; }
+.chart-back:hover { text-decoration: underline; }
+#chart { width: 100%; height: calc(100vh - 122px); min-height: 380px; }
+.chart-legend { display: flex; gap: 18px; flex-wrap: wrap; padding: 8px 14px;
+  font-size: 12.5px; color: #aeb9c4; border-top: 1px solid #22303c; }
+.chart-legend b { font-weight: 600; }
