@@ -11,6 +11,14 @@ html, body { margin: 0; padding: 0; background: #0f141a; color: #d6deeb;
   border-radius: 6px; padding: 5px 11px; font-size: 13px; cursor: pointer; }
 .chart-symbols button:hover { background: #243444; }
 .chart-symbols button.active { background: #14532d; border-color: #2ebd85; color: #eafff3; }
+.chart-custom { display: flex; gap: 6px; }
+.chart-custom input { background: #0f141a; color: #d6deeb; border: 1px solid #2d3f4e;
+  border-radius: 6px; padding: 5px 9px; font-size: 13px; width: 168px;
+  text-transform: uppercase; }
+.chart-custom input::placeholder { text-transform: none; color: #66788a; }
+.chart-custom button { background: #1b2630; color: #d6deeb; border: 1px solid #2d3f4e;
+  border-radius: 6px; padding: 5px 11px; font-size: 13px; cursor: pointer; }
+.chart-custom button:hover { background: #243444; }
 .chart-status { font-size: 12.5px; color: #8b98a5; }
 .chart-back { margin-left: auto; color: #7cc7ff; font-size: 13px; text-decoration: none; }
 .chart-back:hover { text-decoration: underline; }

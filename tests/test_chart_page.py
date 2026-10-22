@@ -39,10 +39,13 @@ def test_chart_page_served_with_assets(tmp_path, monkeypatch):
         assert 'id="chart"' in r.text
         assert '/static/chart.js' in r.text
         assert '/static/vendor/lightweight-charts.standalone.production.js' in r.text
+        # Free-form symbol entry (any ticker, not just the preset buttons).
+        assert 'id="customSymbol"' in r.text
 
         js = client.get('/static/chart.js')
         assert js.status_code == 200
         assert '/api/bars' in js.text
+        assert 'resolveCustomSymbol' in js.text
         assert '/api/gamma-levels' in js.text
         assert '/api/gamma-flip' in js.text
 

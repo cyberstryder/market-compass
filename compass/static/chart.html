@@ -10,6 +10,11 @@
 <header class="chart-head">
   <div class="chart-title">Compass Chart <span class="chart-sub">live bars + Compass levels (prototype)</span></div>
   <nav class="chart-symbols" id="symbols"></nav>
+  <form class="chart-custom" id="customForm">
+    <input id="customSymbol" type="text" placeholder="Any symbol — e.g. MU"
+      autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <button type="submit">Load</button>
+  </form>
   <div class="chart-status" id="status">loading…</div>
   <a class="chart-back" href="/detailed">← Dashboard</a>
 </header>

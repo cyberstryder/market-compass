@@ -15,6 +15,7 @@ var SYMBOLS = [
   { key: 'TSLA', label: 'TSLA', lvl: 'TSLA' },
   { key: 'META', label: 'META', lvl: 'META' },
   { key: 'MSFT', label: 'MSFT', lvl: 'MSFT' },
+  { key: 'MU', label: 'MU', lvl: 'MU' },
   { key: 'MNQ.c.0', label: 'MNQ', lvl: 'NQ' },
   { key: 'MES.c.0', label: 'MES', lvl: 'ES' },
   { key: 'MGC.v.0', label: 'MGC', lvl: null },
@@ -192,6 +193,57 @@ SYMBOLS.forEach(function (entry) {
   if (entry === current) btn.classList.add('active');
   btn.addEventListener('click', function () { selectSymbol(entry); });
   symbolsEl.appendChild(btn);
+});
+
+/* Free-form symbol entry: any ticker the collector stores bars for.
+ * Equities load bars + gamma levels under their own ticker; futures
+ * roots map to the continuous-contract aliases the bars are stored
+ * under (NQ/ES get their gamma levels, the rest are bars-only). */
+var FUTURES_ALIAS = {
+  MNQ: 'MNQ.c.0', NQ: 'MNQ.c.0', MES: 'MES.c.0', ES: 'MES.c.0',
+  MGC: 'MGC.v.0', GC: 'MGC.v.0', MCL: 'MCL.v.0', CL: 'MCL.v.0',
+  MYM: 'MYM.c.0', YM: 'MYM.c.0', M2K: 'M2K.c.0', RTY: 'M2K.c.0',
+  M6A: 'M6A.c.0', M6E: 'M6E.c.0'
+};
+
+function resolveCustomSymbol(raw) {
+  var trimmed = String(raw || '').trim().replace(/^\$/, '');
+  if (!trimmed) return null;
+  var i;
+  for (i = 0; i < SYMBOLS.length; i++) {
+    if (SYMBOLS[i].key === trimmed) return SYMBOLS[i];
+  }
+  var sym = trimmed.toUpperCase();
+  for (i = 0; i < SYMBOLS.length; i++) {
+    if (SYMBOLS[i].label === sym) return SYMBOLS[i];
+  }
+  if (Object.prototype.hasOwnProperty.call(FUTURES_ALIAS, sym)) {
+    var key = FUTURES_ALIAS[sym];
+    var lvl = key === 'MNQ.c.0' ? 'NQ' : (key === 'MES.c.0' ? 'ES' : null);
+    return { key: key, label: sym, lvl: lvl };
+  }
+  if (sym.indexOf('.') !== -1 || sym.indexOf('@') !== -1) {
+    // Full stored keys are case-sensitive past the root (MES.c.0@123):
+    // uppercase root, lowercase suffix.
+    var dot = sym.indexOf('.');
+    var fixed = dot === -1 ? sym : sym.slice(0, dot) + sym.slice(dot).toLowerCase();
+    for (i = 0; i < SYMBOLS.length; i++) {
+      if (SYMBOLS[i].key === fixed) return SYMBOLS[i];
+    }
+    return { key: fixed, label: fixed, lvl: null };
+  }
+  return { key: sym, label: sym, lvl: sym };
+}
+
+var customForm = document.getElementById('customForm');
+var customInput = document.getElementById('customSymbol');
+customForm.addEventListener('submit', function (ev) {
+  ev.preventDefault();
+  var entry = resolveCustomSymbol(customInput.value);
+  if (!entry) return;
+  customInput.value = '';
+  customInput.blur();
+  selectSymbol(entry);
 });
 
 function resize() {
