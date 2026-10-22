@@ -2123,6 +2123,52 @@ a{color:#888}</style></head><body>
                     rows=db.recent(c,"bar",variant,limit=limit)
             return rows
 
+    @app.get("/api/chart-markers")
+    def get_chart_markers(symbol:str,limit:int=200):
+        """Detector signal markers for the Compass Chart, for one symbol.
+
+        Stocks: MU-scalp gap/spike fades (alert events, source mu_scalp).
+        Futures: the ICT + YouTube-method detector signal events, keyed by
+        the continuous alias (MNQ.c.0 etc.). All payloads share
+        direction/entry/stop/target, so markers normalize to
+        {ts, label, direction, entry, stop, target} newest first.
+        """
+        kinds={
+            'ict_aoi_fade_signal':'AOI Fade','ict_aoi_signal':'AOI Zones',
+            'ict_bos_fvg_signal':'BOS+FVG','ict_bos_gz_vwap_signal':'BOS+GZ/VWAP',
+            'ict_continuation_signal':'Continuation',
+            'ict_golden_zone_signal':'Golden Zone',
+            'ict_session_liquidity_signal':'Session Liquidity',
+            'ict_turtle_soup_signal':'Turtle Soup',
+            'ict_smt_signal':'SMT Divergence',
+            'morning_drive_signal':'Morning Drive','icc_signal':'ICC',
+            'rumers_box_signal':'Rumers Box',
+        }
+        scalp_labels={'mu_gap_fade':'Gap Fade','mu_spike_fade':'Spike Fade'}
+        out=[]
+        with db.tx() as c:
+            for kind,label in kinds.items():
+                for row in db.recent(c,kind,symbol,limit=60):
+                    p=row.get('payload') or {}
+                    out.append({'ts':row.get('ts'),'label':label,
+                                'direction':str(p.get('direction') or '').lower(),
+                                'entry':p.get('entry'),'stop':p.get('stop'),
+                                'target':p.get('target')})
+            for row in db.recent(c,'alert',symbol,limit=60):
+                if row.get('source')!='mu_scalp':
+                    continue
+                p=row.get('payload') or {}
+                label=scalp_labels.get(p.get('detector'))
+                if not label:
+                    continue
+                out.append({'ts':row.get('ts'),'label':label,
+                            'direction':str(p.get('direction') or '').lower(),
+                            'entry':p.get('entry'),'stop':p.get('stop'),
+                            'target':p.get('target')})
+        out=[m for m in out if m['ts']]
+        out.sort(key=lambda m:m['ts'],reverse=True)
+        return out[:max(1,min(limit,500))]
+
     @app.get("/api/events")
     def get_events(kind:str="alert",limit:int=100):
         if kind not in {"alert","alert_delivery","signal","bar","daily","flow","vendor_flow","mapping","exposure","matrix_raw","research","opportunity","opportunity_update","secondary_review","secondary_error"}:

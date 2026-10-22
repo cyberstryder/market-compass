@@ -160,6 +160,7 @@ function applyBars(bars, initial) {
   }
   var last = bars[bars.length - 1];
   lastBarTime = last.time;
+  firstBarRawTs = bars[0].rawTs;
   barCount = bars.length;
   statusEl.textContent = current.label + ' · ' + barCount + ' bars · last ' +
     ctClock(last.rawTs) + ' CT · poll 10s';
@@ -173,17 +174,50 @@ function loadBars(initial) {
     });
 }
 
+var firstBarRawTs = 0;
+
+/* Detector markers: engine signal events for the current symbol
+ * (scalp fades for stocks, ICT detectors for futures), refreshed on
+ * the same 10s poll as the bars — a marker lands within seconds of
+ * the detector firing, the same record the alerts use. */
+function loadMarkers() {
+  fetchJSON('/api/chart-markers?symbol=' + encodeURIComponent(current.key) + '&limit=200')
+    .then(function (rows) {
+      var markers = [];
+      (rows || []).forEach(function (m) {
+        var ts = num(m && m.ts);
+        if (!ts || (firstBarRawTs && ts < firstBarRawTs)) return;
+        var isLong = m.direction === 'long';
+        var isShort = m.direction === 'short';
+        if (!isLong && !isShort) return;
+        var entry = num(m.entry);
+        markers.push({
+          time: ts + tzOffsetSeconds(ts),
+          position: isLong ? 'belowBar' : 'aboveBar',
+          shape: isLong ? 'arrowUp' : 'arrowDown',
+          color: isLong ? '#2ebd85' : '#e5534b',
+          text: m.label + (entry ? ' ' + (Math.round(entry * 100) / 100).toFixed(2) : '')
+        });
+      });
+      markers.sort(function (a, b) { return a.time - b.time; });
+      series.setMarkers(markers);
+    })
+    .catch(function () { /* markers are additive; keep the chart as-is */ });
+}
+
 function selectSymbol(entry) {
   current = entry;
-  lastBarTime = 0; barCount = 0;
+  lastBarTime = 0; barCount = 0; firstBarRawTs = 0;
   clearPriceLines();
   series.setData([]);
+  series.setMarkers([]);
   Array.prototype.forEach.call(symbolsEl.children, function (btn) {
     btn.classList.toggle('active', btn.dataset.key === entry.key);
   });
   statusEl.textContent = entry.label + ': loading…';
   loadBars(true);
   loadLevels();
+  loadMarkers();
 }
 
 SYMBOLS.forEach(function (entry) {
@@ -253,5 +287,5 @@ window.addEventListener('resize', resize);
 resize();
 
 selectSymbol(current);
-setInterval(function () { loadBars(false); }, 10000);
+setInterval(function () { loadBars(false); loadMarkers(); }, 10000);
 setInterval(loadLevels, 60000);

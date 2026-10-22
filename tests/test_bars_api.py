@@ -75,3 +75,38 @@ def test_unknown_symbol_still_empty(tmp_path, monkeypatch):
         assert r.json() == []
     finally:
         client.__exit__(None, None, None)
+
+
+def test_chart_markers_filter_and_normalize(tmp_path, monkeypatch):
+    client, db = make_client(tmp_path, monkeypatch)
+    try:
+        with db.tx() as c:
+            db.append(c, 'ict_bos_fvg_signal', 'ict_futures', 'MNQ.c.0',
+                      5000.0, {'direction': 'long', 'entry': 21000.5,
+                               'stop': 20990.0, 'target': 21021.5})
+            db.append(c, 'ict_bos_fvg_signal', 'ict_futures', 'MES.c.0',
+                      5000.0, {'direction': 'short', 'entry': 6500.0})
+            db.append(c, 'alert', 'mu_scalp', 'MU', 6000.0,
+                      {'detector': 'mu_spike_fade', 'direction': 'short',
+                       'entry': 512.3, 'stop': 515.0, 'target': 508.0})
+            db.append(c, 'alert', 'someone_else', 'MU', 7000.0,
+                      {'detector': 'mu_spike_fade', 'direction': 'long',
+                       'entry': 1.0})
+
+        r = client.get('/api/chart-markers', params={'symbol': 'MNQ.c.0'})
+        assert r.status_code == 200
+        rows = r.json()
+        assert len(rows) == 1
+        assert rows[0]['label'] == 'BOS+FVG'
+        assert rows[0]['direction'] == 'long'
+        assert rows[0]['entry'] == 21000.5
+        assert rows[0]['ts'] == 5000.0
+
+        r = client.get('/api/chart-markers', params={'symbol': 'MU'})
+        assert r.status_code == 200
+        rows = r.json()
+        assert len(rows) == 1  # the other-source alert is excluded
+        assert rows[0]['label'] == 'Spike Fade'
+        assert rows[0]['direction'] == 'short'
+    finally:
+        client.__exit__(None, None, None)
