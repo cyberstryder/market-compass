@@ -217,6 +217,10 @@ class Config:
     smoothers_url: str = field(default_factory=lambda: env("SMOOTHERS_SOURCE_URL"))
     smoothers_token: str = field(default_factory=lambda: env("SMOOTHERS_INTEGRATION_TOKEN"))
     futures_observer_token: str = field(default_factory=lambda: env("FUTURES_OBSERVER_TOKEN"))
+    # Audit #3 endpoint lockdown: bearer token for the state-mutating
+    # cron/agent endpoints (see CRON_TOKEN_ENDPOINTS in app.py). Empty =
+    # lockdown off, endpoints keep their historical public behavior.
+    cron_token: str = field(default_factory=lambda: env("COMPASS_CRON_TOKEN"), repr=False)
     observer_streams: tuple = field(default_factory=lambda: tuple(s for s in env("FUTURES_OBSERVER_STREAMS").split(",") if s))
     secondary: bool = field(default_factory=lambda: env("SECONDARY_REVIEW_ENABLED", "true") == "true")
     secondary_alerts: bool = field(default_factory=lambda: env("SECONDARY_REVIEW_ALERTS", "true") == "true")
@@ -281,7 +285,7 @@ class Config:
             raise ValueError("Discovery base coverage exceeds 500 symbols")
         if not self.watch_symbols or len(self.watch_symbols)>500:
             raise ValueError("Watchlist must contain 1–500 symbols")
-        for token in (self.morning_token, self.native_morning_intake_token, self.smoothers_token, self.futures_observer_token):
+        for token in (self.morning_token, self.native_morning_intake_token, self.smoothers_token, self.futures_observer_token, self.cron_token):
             if token and len(token) < 32: raise ValueError("Integration tokens require 32 or more characters")
         for url in (self.morning_url, self.smoothers_url):
             if url and not url.startswith("https://"): raise ValueError("Source connections require HTTPS")

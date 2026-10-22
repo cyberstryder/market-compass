@@ -45,6 +45,24 @@ from .smoothers_daily import run as run_smoothers_daily
 from .native_api import install as install_native_api
 from .secondary import Secondary, snapshot as secondary_snapshot, reviews as secondary_reviews
 
+# Audit #3 endpoint lockdown: public-but-state-mutating cron/agent endpoints.
+# When COMPASS_CRON_TOKEN is set (cfg.cron_token), these (method, path) pairs
+# require "Authorization: Bearer <token>" in the guard middleware; when the
+# var is unset they keep their historical public behavior, so deploying this
+# code can never brick the VM crons that call them. /api/pick-check/auto
+# stays public by Josh's 2026-10-09 direction and is deliberately not here.
+CRON_TOKEN_ENDPOINTS = {
+    ("POST", "/api/tradermatrix-intel/web-scrape"),
+    ("POST", "/api/tradermatrix-intel/refresh"),
+    ("POST", "/api/admin/archive-trigger"),
+    ("POST", "/api/admin/copy-archive-chunk"),
+    ("POST", "/api/admin/simple-archive-chunk"),
+    ("POST", "/api/admin/archive-verify-samples"),
+    ("POST", "/api/admin/archive-prune-chunk"),
+    ("GET", "/api/admin/backtest-futures"),
+    ("GET", "/api/admin/backtest-scalp"),
+}
+
 def create_app(cfg=None):
     cfg=cfg or Config()
     db=Store(cfg.db)
@@ -187,6 +205,14 @@ def create_app(cfg=None):
     @app.middleware("http")
     async def guard(request,call_next):
         path=request.url.path
+        # Endpoint lockdown (audit #3): scoped bearer token on the mutating
+        # cron/agent endpoints, enforced only when COMPASS_CRON_TOKEN is set.
+        # Mirrors the integration-route pattern (projects.py / native morning
+        # intake): constant-time compare of the full "Bearer <token>" value.
+        if cfg.cron_token and (request.method,path) in CRON_TOKEN_ENDPOINTS:
+            supplied=request.headers.get("authorization","")
+            if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
+                return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
         public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
@@ -1502,9 +1528,12 @@ a{color:#888}</style></head><body>
         from .alpaca_option_stream import compare_sources
         try:
             return compare_sources(db)
-        except Exception as e:
-            import traceback
-            return {"error": str(e), "traceback": traceback.format_exc(limit=5)}
+        except Exception:
+            # Public endpoint: log the traceback server-side, return clean
+            # error JSON (audit #3, same rule as the 2026-10-15 cleanup).
+            import logging
+            logging.getLogger('uvicorn.error').exception('option-stream-parity failed')
+            return {"error": "Option stream parity failed. Check server logs."}
 
     @app.get('/api/option-ideas')
     def get_option_ideas():
@@ -1554,20 +1583,25 @@ a{color:#888}</style></head><body>
 
             return {"alpaca": shaped(h_alpaca, 'alpaca_option_stream'),
                     "massive": shaped(h_option, 'option_stream')}
-        except Exception as e:
-            import traceback
-            return {"error": str(e), "traceback": traceback.format_exc(limit=5)}
+        except Exception:
+            # Public endpoint: log the traceback server-side, return clean
+            # error JSON (audit #3, same rule as the 2026-10-15 cleanup).
+            import logging
+            logging.getLogger('uvicorn.error').exception('alpaca-stream-status failed')
+            return {"error": "Alpaca stream status failed. Check server logs."}
 
     @app.get('/api/provider-usage')
-    def get_provider_usage():
+    def get_provider_usage(request: Request):
         # Provider cost-effectiveness monitor.
         # Shows API call volume, success rate, and cost per provider.
         # Use ?days=7 for weekly summary, ?day=YYYY-MM-DD for specific day.
+        # (Was permanently broken: it imported flask's request inside this
+        # FastAPI app — audit #3. Now uses the FastAPI request like every
+        # other handler.)
         from .provider_monitor import get_daily_usage, get_all_providers_usage, get_weekly_summary
         try:
-            from flask import request
-            days = request.args.get('days', '1')
-            day = request.args.get('day')
+            days = request.query_params.get('days', '1')
+            day = request.query_params.get('day')
 
             with db.tx() as c:
                 # Trick: provider_monitor expects db with .conn and .get/.put
@@ -1590,9 +1624,10 @@ a{color:#888}</style></head><body>
                     result = get_all_providers_usage(ctx)
 
             return {"providers": result}
-        except Exception as e:
-            import traceback
-            return {"error": str(e), "traceback": traceback.format_exc(limit=5)}
+        except Exception:
+            import logging
+            logging.getLogger('uvicorn.error').exception('provider-usage failed')
+            return {"error": "Provider usage failed. Check server logs."}
 
     @app.get('/api/deck')
     def get_deck():
