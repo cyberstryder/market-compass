@@ -253,10 +253,14 @@ class Engine:
                     # triggers it; T2/Trail legs will find no open TradersPost
                     # position and the close is a no-op).
                     # Use leg suffix to dedupe: only T1 sends the close.
+                    # Audit #4: queue the close in this transaction — the
+                    # POST is dispatched after the tick commits, never
+                    # from inside it. ref (the position id) is the close's
+                    # send-once identity.
                     if p["id"].endswith("-t1"):
                         try:
                             from . import traderspost
-                            traderspost.send_close_signal(self.cfg, self.db, p["symbol"])
+                            traderspost.queue_close_signal(self.db, c, p["symbol"], ref=p["id"])
                         except Exception:
                             pass
                 continue
@@ -426,13 +430,16 @@ class Engine:
             # 'exit' on an already-flat ticker is a no-op, so this costs
             # nothing when the bracket worked and closes a naked
             # position seconds after the cross when it did not.
+            # Audit #4: the exit is QUEUED here (inside the tick
+            # transaction) and POSTed by tick-end dispatch after commit;
+            # ref (the position id) makes it send-once.
             if p.get("status") == "closed" and p["id"].startswith("ict-") \
                     and p["id"].endswith("-t1") \
                     and p.get("traderspost_sent") \
                     and p.get("exit_reason") in ("stop", "stop_detected_in_bar"):
                 try:
                     from . import traderspost
-                    traderspost.send_close_signal(self.cfg, self.db, p["symbol"])
+                    traderspost.queue_close_signal(self.db, c, p["symbol"], ref=p["id"])
                 except Exception:
                     pass
 
@@ -885,6 +892,16 @@ class Engine:
             from .observation_recovery import tick as recovery_tick
             recovery_tick(self.db,c,self.clock() if self.clock else now)
             self.db.put(c,"worker:engine",{"at":now,"mode":policy(self.cfg)['mode'],"strategy_version":VERSION,"orb_setups_enabled":self.cfg.orb_setups,"morning_enabled":self.cfg.morning_enabled})
+        # TradersPost dispatch (audit #4): entries/closes queued during
+        # the tick (ict_paper.submit, exits) are POSTed HERE, after the
+        # tick transaction has committed — a slow or hanging webhook
+        # must never hold the tick's DB transaction open. A dispatch
+        # failure must never break the tick loop.
+        try:
+            from . import traderspost as _traderspost
+            _traderspost.dispatch_pending(self.cfg, self.db)
+        except Exception:
+            logging.getLogger('uvicorn.error').exception('TradersPost dispatch failed')
         if magnet_summary and magnet_summary.get('ran'):
             self.db.health('apex_magnet','running','%d symbols in radius, %d excluded' % (
                 magnet_summary['symbols'], sum(magnet_summary['excluded'].values())))

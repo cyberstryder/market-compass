@@ -66,6 +66,12 @@ def submit(db, cfg, detector, symbol, **kw):
     with db.tx() as c:
         r = ict_paper.submit(db, c, cfg, NOW, detector, symbol, sig(**kw))
         assert r['submitted'], r
+    # Audit #4: the send is queued inside the submit transaction and
+    # dispatched after commit — engine.tick does this in production;
+    # the helper does it here so the assertions below observe the same
+    # post-dispatch state they always did.
+    traderspost.dispatch_pending(cfg, db)
+    with db.tx() as c:
         trade = db.get(c, 'trade:' + r['trade_id'] + '-t1')
     return r, trade
 

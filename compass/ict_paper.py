@@ -450,27 +450,39 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                 # 2026-10-18: Single position (2 contracts) sent to TradersPost.
                 # No 2/2/1 scaling — paper and live both trade the detector's
                 # target with 2 contracts.
+                # Audit #4: do NOT POST from here — submit() runs inside
+                # the engine tick transaction, and a slow webhook must
+                # never hold that transaction open. Queue a durable
+                # outbox row in this transaction instead; Engine.tick
+                # dispatches it after commit, and dispatch writes
+                # traderspost_sent (or the failure reason) onto BOTH
+                # copies — see the skip branch: exits() overwrites the
+                # trade record from the position record at close.
                 if submitted_ids:
                     trade = db.get(c, 'trade:' + submitted_ids[0])
                     if trade:
                         trade = dict(trade)
                         trade['is_first_leg'] = True
-                        success, msg = traderspost.send_signal(cfg, db, trade)
-                        # Mark as sent (or failed) on BOTH copies — see
-                        # the skip branch: exits() overwrites the trade
-                        # record from the position record at close.
-                        for key in ('trade:' + submitted_ids[0],
-                                    leg_pos_keys.get(submitted_ids[0])):
-                            if not key:
-                                continue
-                            t = db.get(c, key)
-                            if t:
-                                t = dict(t)
-                                t['traderspost_sent'] = success
-                                if not success:
+                        queued = traderspost.queue_signal(
+                            db, c, trade,
+                            trade_key='trade:' + submitted_ids[0],
+                            position_key=leg_pos_keys.get(submitted_ids[0]))
+                        if not queued:
+                            # Payload refused at queue time (fail-closed
+                            # validation in build_payload): mark exactly
+                            # like a send failure, on both copies.
+                            for key in ('trade:' + submitted_ids[0],
+                                        leg_pos_keys.get(submitted_ids[0])):
+                                if not key:
+                                    continue
+                                t = db.get(c, key)
+                                if t:
+                                    t = dict(t)
+                                    t['traderspost_sent'] = False
                                     t['traderspost_skip_reason'] = \
-                                        f"send_failed: {msg}"
-                                db.put(c, key, t)
+                                        'send_failed: invalid payload ' \
+                                        'at queue time'
+                                    db.put(c, key, t)
     except Exception as e:
         try:
             db.health('traderspost_webhook', 'error', f"hook failed: {type(e).__name__}: {str(e)[:200]}")

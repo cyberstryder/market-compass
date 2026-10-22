@@ -8,9 +8,10 @@ paper twin stopped out at 07:09. Josh closed it manually (+$350) and
 directed: auto-exit immediately if a stop is rejected — fail closed.
 
 Mechanism under test: when a traderspost_sent ICT position stops out
-in paper, engine.exits() fires traderspost.send_close_signal for the
-ticker. If the broker stop worked, the ticker is already flat and
-'exit' is a no-op; if it was rejected, this closes the position.
+in paper, engine.exits() queues a TradersPost exit for the ticker and
+tick-end dispatch fires traderspost.send_close_signal. If the broker
+stop worked, the ticker is already flat and 'exit' is a no-op; if it
+was rejected, this closes the position.
 """
 from datetime import datetime
 
@@ -45,7 +46,7 @@ def db(tmp_path):
 def close_calls(monkeypatch):
     calls = []
 
-    def fake_close(cfg, db, symbol):
+    def fake_close(cfg, db, symbol, ref=None):
         calls.append(symbol)
         return True, "ok"
 
@@ -71,12 +72,17 @@ def put_position(db, **over):
 
 
 def run_exits(db, bid, ask):
-    engine = Engine(db, Config(local=True, paper_trading=True))
+    cfg = Config(local=True, paper_trading=True)
+    engine = Engine(db, cfg)
     with db.tx() as c:
         db.put(c, "quote:MNQ.c.0",
                {"ts": NOW, "bid": bid, "ask": ask,
                 "bid_size": 10, "ask_size": 10})
         engine.exits(c, NOW)
+    # Audit #4: exits() queues the close inside the transaction;
+    # engine.tick dispatches it after commit — mirror that here.
+    traderspost.dispatch_pending(cfg, db)
+    with db.tx() as c:
         return db.get(c, POS_KEY)
 
 
