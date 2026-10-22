@@ -175,7 +175,8 @@ function drillCard(it, id, cfg){
   } else if(n > 0){
     var rate = pct(st.win_rate);
     res = '<span><b class="' + signCls(st.pnl) + '">' + money(st.pnl) + '</b> · ' + num(n) + ' trades · ' + rate + ' wins'
-      + (st.data_gaps ? ' · ' + num(st.data_gaps) + ' excluded (no data)' : '') + '</span>'
+      + (st.data_gaps ? ' · ' + num(st.data_gaps) + ' excluded (no data)' : '')
+      + (st.undelivered ? ' · ' + num(st.undelivered) + ' excluded (not alerted)' : '') + '</span>'
       + '<span class="pill ' + cfg.pillCls + '">' + cfg.pill + '</span>';
   } else if((st.pulses || 0) > 0){
     res = '<span><b>' + num(st.pulses) + '</b> pulses · no tracks closed yet</span>'
@@ -225,6 +226,7 @@ function selectDrill(id, scroll, showList){
            '<b>' + money(st.pnl) + '</b> net'];
     if(st.open) sum.push('<b>' + num(st.open) + '</b> still open');
     if(st.data_gaps) sum.push('<b>' + num(st.data_gaps) + '</b> excluded — no live data (' + money(st.data_gap_pnl) + ')');
+    if(st.undelivered) sum.push('<b>' + num(st.undelivered) + '</b> excluded — alert not delivered (' + money(st.undelivered_pnl) + ')');
     if(id === 'zeroDte') sum.push('<b>' + num(st.plans) + '</b> plans · <b>' + num(st.alerts) + '</b> alerts');
     if(id === 'flowPulse') sum.push('<b>' + num(st.pulses) + '</b> pulses');
   }

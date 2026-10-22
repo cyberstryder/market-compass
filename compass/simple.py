@@ -11,6 +11,7 @@ flow pulse (paper tracks). 0DTE is scored by hit rate /
 counts — no dollars, and the UI must say so.
 """
 
+import re
 from collections import defaultdict
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -69,11 +70,104 @@ def _drill(name, watches, stats):
 # ---------------------------------------------------------------- smoothers
 
 
+def _smoothers_delivery(db, c):
+    """Entry-alert delivery evidence for Smoothers, or None.
+
+    Josh's rule (2026-10-14): only Smoothers whose alert was actually
+    DELIVERED count in the stats. The receipt of record is the native
+    outbox: a pick's entry alert is the per-signal ':entry' row (the
+    join /api/admin/repair-smoothers-alerts uses), or the weekly compact
+    batch row naming the ticker for picks without an individual alert.
+    Rows from the primary ('smoothers') and shared ('smoothers_shared')
+    destinations are merged: delivery to either configured destination
+    is a delivered alert.
+
+    Returns None when the native outbox is not this store's delivery
+    record — no accepted Compass ownership grant. Before the weekly
+    handoff, the original Smoothers sender delivered through its own
+    channel and kept no receipts here ('original_delivery_evidence:
+    unrecorded' in the handoff plan), so there is nothing to join
+    against and stats keep their historical basis.
+    """
+    try:
+        own = db.get(c, "native:ownership:smoothers", {}) or {}
+        if own.get("owner") != "compass" or not own.get("effective_from"):
+            return None
+        from .native_outbox import outbox as native_outbox
+        rows = list(c.execute(select(
+            native_outbox.c.event_key, native_outbox.c.status,
+            native_outbox.c.payload).where(
+            native_outbox.c.program.in_(("smoothers", "smoothers_shared")))).mappings())
+    except Exception:
+        return None
+    entries = defaultdict(set)
+    compact = defaultdict(list)
+    for r in rows:
+        ek = r.get("event_key") or ""
+        if ek.endswith(":entry"):
+            entries[ek[:-len(":entry")]].add(r.get("status"))
+        elif ":compact:" in ek:
+            p = r.get("payload") or {}
+            compact[ek.split(":compact:")[0]].append(
+                (r.get("status"), p.get("content") if isinstance(p, dict) else None))
+    return {"cutoff": _num(own.get("effective_from")),
+            "effective_week": own.get("effective_week"),
+            "entries": dict(entries), "compact": dict(compact)}
+
+
+def _compact_names_ticker(content, ticker):
+    """True when a compact-batch message carries this ticker's one-liner.
+
+    Compact lines lead with the ticker ("AAPL CALL $210.00→$215.00 Q72.5",
+    joined by ' | '), so match on token boundaries, not substrings —
+    'A' must not match inside 'AAPL'.
+    """
+    if not content or not ticker:
+        return False
+    return re.search(r"(?<![A-Z0-9.\-])" + re.escape(ticker) +
+                     r"(?![A-Z0-9.\-])", content) is not None
+
+
+def _smoother_alert_delivered(ev, sid, week, ticker, p):
+    """True when the pick's entry alert was delivered to Discord.
+
+    Native era (cohort at/after the handoff cutoff): a delivered
+    ':entry' row — or a delivered compact batch naming the ticker —
+    counts; a recorded send that never delivered (failed / suppressed /
+    still pending / ambiguous) does not, and neither does a pick with
+    no delivery record at all.
+
+    Pre-handoff cohorts were the original sender's: its delivery is
+    unrecorded here and the native rows are shadow previews, so a
+    missing or shadow-only record for those cohorts is not evidence of
+    non-delivery. A recorded non-shadow outcome still decides, whenever
+    it exists.
+    """
+    statuses = set(ev["entries"].get(sid) or ()) if sid else set()
+    batches = ev["compact"].get(week) or []
+    named = [s for s, content in batches
+             if _compact_names_ticker(content, ticker)]
+    statuses.update(named)
+    if "delivered" in statuses:
+        return True
+    if statuses - {"shadow"}:
+        return False
+    cohort = _num(p.get("model_entry_time")) or _num(p.get("created_at"))
+    if cohort is not None and ev.get("cutoff") is not None:
+        return cohort < ev["cutoff"]
+    if week and ev.get("effective_week"):
+        return week < ev["effective_week"]
+    return False
+
+
 def _smoothers(db, c, now):
     rows = list(c.execute(select(
+        smoothers_weekly.c.id, smoothers_weekly.c.week,
         smoothers_weekly.c.ticker, smoothers_weekly.c.status,
         smoothers_weekly.c.payload)).mappings())
+    evidence = _smoothers_delivery(db, c)
     per_ticker = defaultdict(list)
+    per_ticker_undelivered = defaultdict(list)
     by_day = defaultdict(lambda: {"pnl": 0.0, "count": 0})
     target_hits = 0
     for r in rows:
@@ -87,6 +181,17 @@ def _smoothers(db, c, now):
         # still open) are excluded from the public page, not deleted.
         if pnl is None:
             continue
+        if evidence is not None and not _smoother_alert_delivered(
+                evidence, r.get("id") or p.get("id"),
+                r.get("week") or p.get("week"), r.get("ticker") or "?", p):
+            # Josh 2026-10-14: only delivered alerts count. A measured
+            # pick whose entry alert never reached Discord is excluded
+            # from wins/losses/P&L and bucketed separately — the same
+            # transparency pattern as futures data_gap trades and the
+            # 0DTE pre-evidence reset (audit #8). It stays in the DB
+            # and in the trade-by-trade detail views.
+            per_ticker_undelivered[r.get("ticker") or "?"].append(pnl)
+            continue
         won = pnl > 0
         per_ticker[r.get("ticker") or "?"].append((won, pnl))
         if r.get("status") == "WIN":
@@ -99,17 +204,27 @@ def _smoothers(db, c, now):
     drill = []
     for ticker in sorted(per_ticker):
         st = _stats(per_ticker[ticker])
+        und = per_ticker_undelivered.get(ticker)
+        if und:
+            st["undelivered"] = len(und)
+            st["undelivered_pnl"] = round(sum(und), 2)
         drill.append(_drill(ticker, "Weekly Smoothers pick on %s." % ticker, st))
     # Note: "current-week" is the default view (auto-opened by frontend),
     # not a drill list item. The stock list is for research.
     stats = _stats(all_trades)
     stats["target_hits"] = target_hits
+    undelivered = [pnl for v in per_ticker_undelivered.values() for pnl in v]
+    if undelivered:
+        stats["undelivered"] = len(undelivered)
+        stats["undelivered_pnl"] = round(sum(undelivered), 2)
     return (_block(
         "smoothers", "Smoothers",
         "Weekly option picks on big liquid stocks.",
         "Every Monday morning: one call or put per stock, held for the week.",
         "Win = the paper option trade made money (bought at ask, sold at bid, minus fees). "
-        "Target hit = the stock reached its target by Friday.",
+        "Target hit = the stock reached its target by Friday. "
+        "Only picks whose entry alert was actually delivered to Discord count; "
+        "measured picks that were never alerted are excluded and tallied separately.",
         stats, drill), by_day)
 
 
@@ -577,10 +692,12 @@ def _detail_smoothers_this_week(db, c, now):
                 "title": "This Week's Smoothers Picks",
                 "sub": "No picks found.", "items": []}
     rows = list(c.execute(select(
+        smoothers_weekly.c.id, smoothers_weekly.c.week,
         smoothers_weekly.c.ticker, smoothers_weekly.c.status,
         smoothers_weekly.c.payload)
         .where(smoothers_weekly.c.week == week_row)
         .order_by(smoothers_weekly.c.ticker)).mappings())
+    evidence = _smoothers_delivery(db, c)
     items = []
     for r in rows:
         p = r.get("payload") or {}
@@ -609,6 +726,12 @@ def _detail_smoothers_this_week(db, c, now):
         tier = p.get("quality_tier") or p.get("tier")
         if tier:
             orows.append(["Tier", str(tier)])
+        # History stays complete: an undelivered pick is marked, not
+        # removed (it is only excluded from the headline stats).
+        if evidence is not None and not _smoother_alert_delivered(
+                evidence, r.get("id") or p.get("id"),
+                r.get("week") or p.get("week"), ticker, p):
+            orows.append(["Alert", "Not delivered — excluded from stats"])
         items.append({
             "tag": ticker, "title": "%s %s" % (ticker, direction), "sub": sub, "rows": orows,
             "result": _m(pnl) if pnl is not None else status,
@@ -630,10 +753,11 @@ def _detail_smoothers(db, c, now, name):
     if name == "current-week":
         return _detail_smoothers_this_week(db, c, now)
     rows = list(c.execute(select(
-        smoothers_weekly.c.week, smoothers_weekly.c.status,
-        smoothers_weekly.c.payload)
+        smoothers_weekly.c.id, smoothers_weekly.c.week,
+        smoothers_weekly.c.status, smoothers_weekly.c.payload)
         .where(smoothers_weekly.c.ticker == name)
         .order_by(smoothers_weekly.c.week.desc()).limit(104)).mappings())
+    evidence = _smoothers_delivery(db, c)
     items = []
     for r in rows:
         p = r.get("payload") or {}
@@ -662,6 +786,11 @@ def _detail_smoothers(db, c, now, name):
                 pass
         orows = [["Status", status], ["Net P&L", _m(pnl)]]
         orows.append(["Target hit", "Yes" if status == "WIN" else "No"])
+        # Undelivered picks stay in the history, marked — they are only
+        # excluded from the headline stats (Josh 2026-10-14).
+        if evidence is not None and not _smoother_alert_delivered(
+                evidence, r.get("id") or p.get("id"), week, name, p):
+            orows.append(["Alert", "Not delivered — excluded from stats"])
         # Holding time from entry to exit quote timestamps (2026-10-13)
         try:
             eq = p.get("quote") or {}
