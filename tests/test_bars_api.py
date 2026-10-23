@@ -40,15 +40,17 @@ def seed_bars(db, symbol, stamps):
 
 
 def test_bare_alias_resolves_to_newest_variant(tmp_path, monkeypatch):
+    import time as _time
     client, db = make_client(tmp_path, monkeypatch)
     try:
-        seed_bars(db, 'MES.c.0@111', [1000.0, 1060.0])
-        seed_bars(db, 'MES.c.0@222', [2000.0])
+        base = _time.time() - 3600  # inside the resolver's 14-day window
+        seed_bars(db, 'MES.c.0@111', [base, base + 60])
+        seed_bars(db, 'MES.c.0@222', [base + 3600])
         r = client.get('/api/bars', params={'symbol': 'MES.c.0', 'limit': 10})
         assert r.status_code == 200
         rows = r.json()
         # Newest variant (@222, latest ts) wins.
-        assert [row['ts'] for row in rows] == [2000.0]
+        assert [row['ts'] for row in rows] == [base + 3600]
         assert rows[0]['symbol'] == 'MES.c.0@222'
     finally:
         client.__exit__(None, None, None)

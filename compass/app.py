@@ -2115,10 +2115,18 @@ a{color:#888}</style></head><body>
                 # same pattern as futures quotes). Resolve a bare alias to
                 # its newest variant, mirroring ict_common.resolve_bar_key,
                 # so /api/bars?symbol=MES.c.0 works for chart consumers.
+                # Range bounds, not LIKE: a parameterized LIKE pattern got
+                # a generic plan that ignored the (kind, symbol, ts) index
+                # and died on the statement timeout in production
+                # (2026-10-22, dashboard logs). The 14-day floor keeps the
+                # scan inside recent variants.
                 from sqlalchemy import text as sql_text
                 variant=c.execute(sql_text(
-                    "SELECT symbol FROM events WHERE kind='bar' AND symbol LIKE :pat "
-                    "ORDER BY ts DESC LIMIT 1"),{"pat":symbol+"@%"}).scalar()
+                    "SELECT symbol FROM events WHERE kind='bar' AND symbol >= :lo "
+                    "AND symbol < :hi AND ts >= :since "
+                    "ORDER BY ts DESC LIMIT 1"),
+                    {"lo":symbol+"@","hi":symbol+"@\uffff",
+                     "since":time.time()-14*86400}).scalar()
                 if variant:
                     rows=db.recent(c,"bar",variant,limit=limit)
             return rows
