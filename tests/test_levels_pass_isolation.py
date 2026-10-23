@@ -57,6 +57,33 @@ def test_levels_pass_processes_symbol(tmp_path):
         assert db.get(c, 'cursor:SPY') == NOW
 
 
+def test_pre_ict_failure_does_not_block_ict_detectors(tmp_path, monkeypatch):
+    """Second-stage freeze (2026-10-22): the pre-ICT scans shared one
+    transaction with the ICT block and their cumulative timeouts starved
+    the detectors. A pre-ICT failure must now be contained (health row)
+    while the ICT block still runs in its own transaction."""
+    cfg = Config(paper_trading=True, stock_paper_trades=True,
+                 db='sqlite:///' + str(tmp_path / 'tick.db'), local=True,
+                 role='web', password='x', stocks=('SPY',), futures=(),
+                 alpaca_key='', alpaca_secret='', massive='', databento='',
+                 matrix='', discord='')
+    db = Store(cfg.db)
+    db.initialize()
+    engine = Engine(db, cfg)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError('statement timeout (simulated)')
+
+    monkeypatch.setattr(engine.scanner, 'scan', boom)
+    monkeypatch.setattr(engine.scanner, 'retry_options', boom)
+    now = time.time()
+    engine.tick(now)  # must not raise
+    with db.tx() as c:
+        assert db.get(c, 'ict_bos_fvg:scanned_at') == now
+        err = db.get(c, 'health:pre_ict_error')
+        assert err and 'statement timeout' in err['error']
+
+
 def test_one_poison_symbol_does_not_stop_the_pass(tmp_path, monkeypatch):
     engine, db = make_engine(tmp_path, stocks=('TSLA', 'SPY'))
     seed_bars(db, 'TSLA')

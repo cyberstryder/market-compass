@@ -637,6 +637,122 @@ class Engine:
                     break
 
 
+    def _pre_ict_scans(self,c,now):
+        """Pre-ICT tick scans (swings, earnings, scanner, magnet, tape,
+        pulse, 0DTE, darkpool, IV rank, squeeze, gaps, breakouts, day
+        board) as one failure-contained unit.
+
+        2026-10-22 second-stage freeze: after the levels pass was
+        isolated, these scans still shared one transaction with the
+        ICT block, and on the strained production database their
+        cumulative work crossed the transaction timeout on essentially
+        every tick (deaths observed in scanner.retry_options' quote
+        prefix scan and tape_confirmed's recents read). The ICT
+        detectors — individually light KV readers — never got a turn
+        for 35+ hours even though none of them ever crashed. tick()
+        now runs this unit in its own transaction under try/except
+        and proceeds to the ICT block in a fresh transaction whether
+        or not this unit survived. Returns the summary dict the
+        post-ICT health writes consume."""
+        self.swings(c,now)
+        # Earnings plays: post-earnings gap momentum (runs 9:45-10:30 AM CT)
+        # Checks OPRA tickers for earnings gaps >3%, generates 0DTE signals
+        try:
+            from .earnings_play import scan_earnings_plays
+            from .tradermatrix_intel import OPRA_TICKERS
+            earnings_signals = scan_earnings_plays(self.db, c, self.cfg, now, list(OPRA_TICKERS))
+            for sig in earnings_signals:
+                # The publication contract must be the resolved listed
+                # option (OCC symbol), never the bare underlying ticker:
+                # zero_dte_paper books whatever symbol is here, and a stock
+                # symbol produced a phantom stock-priced "option" trade.
+                contract = sig.get('contract') or {}
+                if not contract.get('symbol'):
+                    logging.getLogger('uvicorn.error').warning(
+                        f"Earnings play {sig['symbol']}: signal has no resolved contract, skipping alert")
+                    continue
+                # Create alert for 0DTE paper trading (same as scanner signals)
+                # Uses publication.category = options_0dte so zero_dte_paper picks it up
+                self.db.append(c, 'alert', 'setup_study', sig['symbol'], now, {
+                    'strategy': 'earnings-play-v1',
+                    'symbol': sig['symbol'],
+                    'direction': sig['direction'],
+                    'option_type': sig['option_type'],
+                    'entry': sig['entry'],
+                    'stop': sig['stop'],
+                    'target': sig['target'],
+                    'gap_pct': sig['gap_pct'],
+                    'earnings_date': sig['earnings_date'],
+                    'publication': {
+                        'category': 'options_0dte',
+                        'contract': {
+                            'symbol': contract['symbol'],
+                            'underlying': sig['symbol'],
+                            'strike': contract.get('strike'),
+                            'type': contract.get('type'),
+                            'expiry': contract.get('expiry'),
+                        },
+                        'status': 'option_setup_new',
+                    },
+                }, f"earnings-{sig['symbol']}-{int(now)}")
+        except Exception as e:
+            # NOTE: Do NOT import logging here - it shadows module-level import
+            logging.getLogger('uvicorn.error').warning(f"Earnings play scan failed: {e}")
+        if self.cfg.scanner:
+            self.scanner.scan(c,now,self)
+        else:
+            self.scanner.retry_options(c,{k[6:]:q for k,q in self.db.prefix(c,'quote:').items()},now,self)
+        magnet_summary = None
+        if self.cfg.apex_magnet:
+            from .apex_magnet import scan as apex_magnet_scan
+            magnet_summary = apex_magnet_scan(self.db,c,self.cfg,now)
+        tape_summary = None
+        if self.cfg.tape_confirmed:
+            from .tape_confirmed import scan as tape_confirmed_scan
+            tape_summary = tape_confirmed_scan(self.db,c,self.cfg,now)
+        pulse_summary = None
+        if self.cfg.flow_pulse:
+            from .flow_pulse import scan as flow_pulse_scan
+            pulse_summary = flow_pulse_scan(self.db,c,self.cfg,now)
+        zero_dte_summary = None
+        if getattr(self.cfg, 'zero_dte_paper', True):
+            from .zero_dte_paper import scan as zero_dte_paper_scan
+            zero_dte_summary = zero_dte_paper_scan(self.db,c,self.cfg,now)
+        darkpool_summary = None
+        if self.cfg.darkpool:
+            from .darkpool import scan as darkpool_scan
+            darkpool_summary = darkpool_scan(self.db,c,self.cfg,now)
+        iv_rank_summary = None
+        if self.cfg.iv_rank:
+            from .iv_rank import scan as iv_rank_scan
+            iv_rank_summary = iv_rank_scan(self.db,c,self.cfg,now)
+        squeeze_summary = None
+        if self.cfg.squeeze:
+            from .squeeze import scan as squeeze_scan
+            squeeze_summary = squeeze_scan(self.db,c,self.cfg,now)
+        gap_summary = None
+        if self.cfg.gap_continuation:
+            from .gap_continuation import scan as gap_continuation_scan
+            gap_summary = gap_continuation_scan(self.db,c,self.cfg,now)
+        breakout_summary = None
+        if self.cfg.breakouts:
+            from .breakouts import scan as breakouts_scan
+            breakout_summary = breakouts_scan(self.db,c,self.cfg,now)
+        board_summary = None
+        if self.cfg.day_trading_board:
+            from .day_trading_board import scan as day_board_scan
+            board_summary = day_board_scan(self.db,c,self.cfg,now)
+        return {'magnet_summary': magnet_summary,
+                'tape_summary': tape_summary,
+                'pulse_summary': pulse_summary,
+                'zero_dte_summary': zero_dte_summary,
+                'darkpool_summary': darkpool_summary,
+                'iv_rank_summary': iv_rank_summary,
+                'squeeze_summary': squeeze_summary,
+                'gap_summary': gap_summary,
+                'breakout_summary': breakout_summary,
+                'board_summary': board_summary}
+
     def _levels_pass(self,now):
         """Per-symbol levels/entry pass, isolated per symbol.
 
@@ -737,95 +853,29 @@ class Engine:
             self.study.tick(c,now)
             self.exits(c,now)
         self._levels_pass(now)
-        with self.db.tx() as c:
-            self.swings(c,now)
-            # Earnings plays: post-earnings gap momentum (runs 9:45-10:30 AM CT)
-            # Checks OPRA tickers for earnings gaps >3%, generates 0DTE signals
+        _summaries = {}
+        try:
+            with self.db.tx() as c:
+                _summaries = self._pre_ict_scans(c, now)
+        except Exception as e:
+            logging.getLogger('uvicorn.error').error(f'Pre-ICT scans failed: {e}')
             try:
-                from .earnings_play import scan_earnings_plays
-                from .tradermatrix_intel import OPRA_TICKERS
-                earnings_signals = scan_earnings_plays(self.db, c, self.cfg, now, list(OPRA_TICKERS))
-                for sig in earnings_signals:
-                    # The publication contract must be the resolved listed
-                    # option (OCC symbol), never the bare underlying ticker:
-                    # zero_dte_paper books whatever symbol is here, and a stock
-                    # symbol produced a phantom stock-priced "option" trade.
-                    contract = sig.get('contract') or {}
-                    if not contract.get('symbol'):
-                        logging.getLogger('uvicorn.error').warning(
-                            f"Earnings play {sig['symbol']}: signal has no resolved contract, skipping alert")
-                        continue
-                    # Create alert for 0DTE paper trading (same as scanner signals)
-                    # Uses publication.category = options_0dte so zero_dte_paper picks it up
-                    self.db.append(c, 'alert', 'setup_study', sig['symbol'], now, {
-                        'strategy': 'earnings-play-v1',
-                        'symbol': sig['symbol'],
-                        'direction': sig['direction'],
-                        'option_type': sig['option_type'],
-                        'entry': sig['entry'],
-                        'stop': sig['stop'],
-                        'target': sig['target'],
-                        'gap_pct': sig['gap_pct'],
-                        'earnings_date': sig['earnings_date'],
-                        'publication': {
-                            'category': 'options_0dte',
-                            'contract': {
-                                'symbol': contract['symbol'],
-                                'underlying': sig['symbol'],
-                                'strike': contract.get('strike'),
-                                'type': contract.get('type'),
-                                'expiry': contract.get('expiry'),
-                            },
-                            'status': 'option_setup_new',
-                        },
-                    }, f"earnings-{sig['symbol']}-{int(now)}")
-            except Exception as e:
-                # NOTE: Do NOT import logging here - it shadows module-level import
-                logging.getLogger('uvicorn.error').warning(f"Earnings play scan failed: {e}")
-            if self.cfg.scanner:
-                self.scanner.scan(c,now,self)
-            else:
-                self.scanner.retry_options(c,{k[6:]:q for k,q in self.db.prefix(c,'quote:').items()},now,self)
-            magnet_summary = None
-            if self.cfg.apex_magnet:
-                from .apex_magnet import scan as apex_magnet_scan
-                magnet_summary = apex_magnet_scan(self.db,c,self.cfg,now)
-            tape_summary = None
-            if self.cfg.tape_confirmed:
-                from .tape_confirmed import scan as tape_confirmed_scan
-                tape_summary = tape_confirmed_scan(self.db,c,self.cfg,now)
-            pulse_summary = None
-            if self.cfg.flow_pulse:
-                from .flow_pulse import scan as flow_pulse_scan
-                pulse_summary = flow_pulse_scan(self.db,c,self.cfg,now)
-            zero_dte_summary = None
-            if getattr(self.cfg, 'zero_dte_paper', True):
-                from .zero_dte_paper import scan as zero_dte_paper_scan
-                zero_dte_summary = zero_dte_paper_scan(self.db,c,self.cfg,now)
-            darkpool_summary = None
-            if self.cfg.darkpool:
-                from .darkpool import scan as darkpool_scan
-                darkpool_summary = darkpool_scan(self.db,c,self.cfg,now)
-            iv_rank_summary = None
-            if self.cfg.iv_rank:
-                from .iv_rank import scan as iv_rank_scan
-                iv_rank_summary = iv_rank_scan(self.db,c,self.cfg,now)
-            squeeze_summary = None
-            if self.cfg.squeeze:
-                from .squeeze import scan as squeeze_scan
-                squeeze_summary = squeeze_scan(self.db,c,self.cfg,now)
-            gap_summary = None
-            if self.cfg.gap_continuation:
-                from .gap_continuation import scan as gap_continuation_scan
-                gap_summary = gap_continuation_scan(self.db,c,self.cfg,now)
-            breakout_summary = None
-            if self.cfg.breakouts:
-                from .breakouts import scan as breakouts_scan
-                breakout_summary = breakouts_scan(self.db,c,self.cfg,now)
-            board_summary = None
-            if self.cfg.day_trading_board:
-                from .day_trading_board import scan as day_board_scan
-                board_summary = day_board_scan(self.db,c,self.cfg,now)
+                with self.db.tx() as c:
+                    self.db.put(c, 'health:pre_ict_error',
+                                {'error': str(e)[:300], 'at': now})
+            except Exception:
+                pass
+        magnet_summary = _summaries.get('magnet_summary')
+        tape_summary = _summaries.get('tape_summary')
+        pulse_summary = _summaries.get('pulse_summary')
+        zero_dte_summary = _summaries.get('zero_dte_summary')
+        darkpool_summary = _summaries.get('darkpool_summary')
+        iv_rank_summary = _summaries.get('iv_rank_summary')
+        squeeze_summary = _summaries.get('squeeze_summary')
+        gap_summary = _summaries.get('gap_summary')
+        breakout_summary = _summaries.get('breakout_summary')
+        board_summary = _summaries.get('board_summary')
+        with self.db.tx() as c:
             # ICT futures concept detectors (Phase 1: evidence-only). Ordered
             # by dependency: liquidity map -> HTF levels -> event detectors ->
             # confluence tiering.

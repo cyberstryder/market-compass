@@ -2110,25 +2110,29 @@ a{color:#888}</style></head><body>
         with db.tx() as c:
             rows=db.recent(c,"bar",symbol,limit=limit)
             if not rows and "@" not in symbol:
-                # Futures bars land under "<alias>@<instrument_id>" keys
-                # (the Databento live writer keys OHLCV by alias@iid, the
-                # same pattern as futures quotes). Resolve a bare alias to
-                # its newest variant, mirroring ict_common.resolve_bar_key,
-                # so /api/bars?symbol=MES.c.0 works for chart consumers.
-                # Range bounds, not LIKE: a parameterized LIKE pattern got
-                # a generic plan that ignored the (kind, symbol, ts) index
-                # and died on the statement timeout in production
-                # (2026-10-22, dashboard logs). The 14-day floor keeps the
-                # scan inside recent variants.
-                from sqlalchemy import text as sql_text
-                variant=c.execute(sql_text(
-                    "SELECT symbol FROM events WHERE kind='bar' AND symbol >= :lo "
-                    "AND symbol < :hi AND ts >= :since "
-                    "ORDER BY ts DESC LIMIT 1"),
-                    {"lo":symbol+"@","hi":symbol+"@\uffff",
-                     "since":time.time()-14*86400}).scalar()
-                if variant:
+                # Futures bars are keyed by the DATED contract the
+                # Databento writer resolves (e.g. "MESZ6@<iid>"), never
+                # the continuous alias. Resolve exactly the way the ICT
+                # detectors do (ict_common.resolve_bar_key over the
+                # bar_window keys), then fall back to an events range
+                # scan for any "<alias>@<iid>" keys. (The first version
+                # of this used a parameterized LIKE, whose generic plan
+                # ignored the (kind, symbol, ts) index and died on the
+                # statement timeout in production, 2026-10-22.)
+                from .ict_common import resolve_bar_key
+                variant=resolve_bar_key(db,c,symbol)
+                if variant and variant!=symbol:
                     rows=db.recent(c,"bar",variant,limit=limit)
+                if not rows:
+                    from sqlalchemy import text as sql_text
+                    found=c.execute(sql_text(
+                        "SELECT symbol FROM events WHERE kind='bar' AND symbol >= :lo "
+                        "AND symbol < :hi AND ts >= :since "
+                        "ORDER BY ts DESC LIMIT 1"),
+                        {"lo":symbol+"@","hi":symbol+"@\uffff",
+                         "since":time.time()-14*86400}).scalar()
+                    if found:
+                        rows=db.recent(c,"bar",found,limit=limit)
             return rows
 
     @app.get("/api/chart-markers")

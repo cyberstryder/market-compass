@@ -56,6 +56,28 @@ def test_bare_alias_resolves_to_newest_variant(tmp_path, monkeypatch):
         client.__exit__(None, None, None)
 
 
+def test_alias_resolves_to_dated_contract_key(tmp_path, monkeypatch):
+    """Production shape: futures bars live under the dated contract key
+    (MESZ6@<iid>); the alias resolves via the bar_window keys, the same
+    path the ICT detectors use (ict_common.resolve_bar_key)."""
+    import time as _time
+    client, db = make_client(tmp_path, monkeypatch)
+    try:
+        base = _time.time() - 3600
+        seed_bars(db, 'MESZ6@4242', [base, base + 60])
+        with db.tx() as c:
+            db.put(c, 'bar_window:MESZ6@4242',
+                   [[base, 100.0, 101.0, 99.0, 100.5, 10],
+                    [base + 60, 100.5, 101.5, 100.0, 101.0, 12]])
+        r = client.get('/api/bars', params={'symbol': 'MES.c.0', 'limit': 10})
+        assert r.status_code == 200
+        rows = r.json()
+        assert len(rows) == 2
+        assert all(row['symbol'] == 'MESZ6@4242' for row in rows)
+    finally:
+        client.__exit__(None, None, None)
+
+
 def test_exact_symbol_unchanged(tmp_path, monkeypatch):
     client, db = make_client(tmp_path, monkeypatch)
     try:
