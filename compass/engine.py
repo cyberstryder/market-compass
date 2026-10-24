@@ -777,6 +777,8 @@ class Engine:
         for symbol in symbols:
             try:
                 self._levels_symbol(symbol,now)
+            except Engine.LeaseLost:
+                raise
             except Exception as e:
                 logging.getLogger('uvicorn.error').error(
                     f'Levels pass failed for {symbol}: {e}')
@@ -789,6 +791,7 @@ class Engine:
 
     def _levels_symbol(self,symbol,now):
         with self.db.tx() as c:
+            self._hold(c)
             latest=self.db.get(c,"latestbar:"+symbol)
             if latest is not None and latest<=self.db.get(c,"cursor:"+symbol,0): return
             rows=dedup(self.db.recent(c,"bar",symbol,limit=8000,since=now-8*86400),now)
@@ -813,34 +816,69 @@ class Engine:
                 if symbol in self.cfg.stocks and self.cfg.paper_trading: self.options(c,s,now)
             self.db.put(c,"cursor:"+symbol,bar["ts"])
 
-    def tick(self,now=None):
-        now=now or time.time()
-        with self.db.tx() as c:
-            if not self.db.lease(c,"engine",self.owner,30): return
-            # TraderMatrix intel refresh (hourly): earnings, economic calendar, market health
-            # Used for: earnings ticker flags, news pause, regime filter
-            try:
-                last_refresh = self.db.get(c, "intel:last_refresh", {})
-                last_at = last_refresh.get("at", 0)
-                # FIX (2026-10-18): Handle ISO string timestamps.
-                # refresh_intel writes at as ISO string (now.isoformat()),
-                # but now is a float timestamp. Parse the string.
-                if isinstance(last_at, str):
+    class LeaseLost(RuntimeError):
+        """Raised when a tick segment finds another engine owns the lease."""
+
+    def _hold(self,c,seconds=30):
+        """Renew the engine lease at the start of every transaction segment.
+
+        2026-10-23: tick() runs as several transactions (levels per
+        symbol, pre-ICT scans, ICT block, MU scalp). The 30-second lease
+        was taken once in the first segment and never renewed, so during
+        a deployment overlap a second engine could take the lease and
+        both would run exits()/submit() concurrently -> duplicate live
+        orders. Every segment now re-asserts ownership and aborts the
+        remainder of the tick if it is lost."""
+        if not self.db.lease(c,"engine",self.owner,seconds):
+            raise Engine.LeaseLost("engine lease lost mid-tick")
+
+    def _refresh_intel_if_due(self,now):
+        """Hourly TraderMatrix intel refresh, OUTSIDE any tick transaction.
+
+        2026-10-23: this used to run inside tick's first transaction
+        (the one that also runs paper_risk.ledgers and exits()). Three
+        30-second vendor HTTP calls inside a transaction with a 30s
+        idle-in-transaction timeout aborted the connection, which
+        silently skipped that tick's exits/flatten; and because
+        intel:last_refresh is only written on success it retried every
+        tick. Now: decide in a short tx, do HTTP with no connection
+        held, write results in a second short tx, and record the
+        attempt time so a failing vendor is retried hourly, not every
+        two seconds."""
+        try:
+            with self.db.tx() as c:
+                last_refresh=self.db.get(c,"intel:last_refresh",{})
+                last_at=last_refresh.get("at",0)
+                if isinstance(last_at,str):
                     try:
                         from datetime import datetime
-                        # Parse ISO format with timezone
-                        dt = datetime.fromisoformat(last_at)
-                        last_at = dt.timestamp()
+                        last_at=datetime.fromisoformat(last_at).timestamp()
                     except Exception:
-                        last_at = 0
-                # Refresh if never refreshed or >1 hour ago
-                if now - last_at > 3600:
-                    from .tradermatrix_intel import refresh_intel
-                    refresh_intel(self.db, c)
-            except Exception as e:
-                # NOTE: Do NOT import logging here - it shadows the module-level
-                # logging import and causes UnboundLocalError later in tick().
-                logging.getLogger('uvicorn.error').warning(f"Intel refresh failed: {e}")
+                        last_at=0
+                last_attempt=self.db.get(c,"intel:last_attempt",0)
+                due=now-last_at>3600 and now-last_attempt>3600
+                if due: self.db.put(c,"intel:last_attempt",now)
+            if not due: return
+            from .tradermatrix_intel import refresh_intel
+            refresh_intel(self.db,None)
+        except Exception as e:
+            # NOTE: Do NOT import logging here - it shadows the module-level
+            # logging import and causes UnboundLocalError later in tick().
+            logging.getLogger('uvicorn.error').warning(f"Intel refresh failed: {e}")
+
+    def tick(self,now=None):
+        now=now or time.time()
+        try:
+            self._tick(now)
+        except Engine.LeaseLost as e:
+            logging.getLogger('uvicorn.error').warning('%s; another engine owns the lease, skipping remainder of tick',e)
+
+    def _tick(self,now):
+        with self.db.tx() as c:
+            if not self.db.lease(c,"engine",self.owner,30): return
+        self._refresh_intel_if_due(now)
+        with self.db.tx() as c:
+            self._hold(c)
             if self.cfg.paper_trading:
                 paper_risk.ledgers(self.db,c,now,persist=True)
             active_policy=policy(self.cfg)
@@ -856,7 +894,10 @@ class Engine:
         _summaries = {}
         try:
             with self.db.tx() as c:
+                self._hold(c)
                 _summaries = self._pre_ict_scans(c, now)
+        except Engine.LeaseLost:
+            raise
         except Exception as e:
             logging.getLogger('uvicorn.error').error(f'Pre-ICT scans failed: {e}')
             try:
@@ -875,7 +916,21 @@ class Engine:
         gap_summary = _summaries.get('gap_summary')
         breakout_summary = _summaries.get('breakout_summary')
         board_summary = _summaries.get('board_summary')
+        # VIX data feed: keep the regime keys fresh before the gating block
+        # below reads them. 2026-10-23: moved out of the ICT transaction
+        # into its own short one — fetch_vix is a 20s vendor HTTP call and
+        # must not be able to abort the transaction that runs the detectors
+        # and ict_paper submits. Throttled inside scan() to every 5 min.
+        vix_regime_summary = None
+        if getattr(self.cfg, "massive", ""):
+            try:
+                from .vix_regime import scan as vix_regime_scan
+                with self.db.tx() as c:
+                    vix_regime_summary = vix_regime_scan(self.db, c, self.cfg, now)
+            except Exception as e:
+                logging.getLogger('uvicorn.error').warning('VIX scan failed: %s', type(e).__name__)
         with self.db.tx() as c:
+            self._hold(c)
             # ICT futures concept detectors (Phase 1: evidence-only). Ordered
             # by dependency: liquidity map -> HTF levels -> event detectors ->
             # confluence tiering.
@@ -898,13 +953,6 @@ class Engine:
                     except Exception:
                         pass
                     return None
-            # VIX data feed: keep the regime keys fresh before the gating
-            # block below reads them. Runs whenever the Massive key exists so
-            # data is already flowing when VIX_REGIME_ENABLED is flipped.
-            vix_regime_summary = None
-            if getattr(self.cfg, "massive", ""):
-                from .vix_regime import scan as vix_regime_scan
-                vix_regime_summary = vix_regime_scan(self.db, c, self.cfg, now)
             # VIX regime filter: skip detectors that underperform in current regime
             _vix_regime = 'normal'
             if getattr(self.cfg, 'vix_regime_enabled', False):
@@ -1027,57 +1075,105 @@ class Engine:
                            'ran, %d symbols' % (_tb.get('symbols', 0)))
         # Runner: trailing stops for ICT positions at 1R+ profit.
         # Lets winners run (overnight trends) instead of fixed 2R exits.
+        # 2026-10-24 (audit-adoption deviation): the audit set deleted
+        # ict_trail; we keep it. At HEAD this block ran on the already-
+        # closed ICT connection (the same bug as the MU scalp block
+        # below) and failed silently every tick. It now runs in its own
+        # transaction segment with the lease re-asserted, and failures
+        # are logged and reported via health:ict_trail instead of
+        # swallowed.
         try:
-            from .ict_trail import manage_all as _trail_all
-            _trail_result = _trail_all(self.db, c, now)
+            with self.db.tx() as c:
+                self._hold(c)
+                from .ict_trail import manage_all as _trail_all
+                _trail_result = _trail_all(self.db, c, now)
             if _trail_result.get('trailed'):
                 self.db.health('ict_trail', 'running',
                                '%d positions trailing' % _trail_result['trailed'])
-        except Exception:
-            pass
-        # MU scalp detectors (Josh 2026-10-08): gap fade premarket, spike fade 9:45-11am ET.
-        # Generalized 2026-10-11 to run on all volatile single-stocks, not just MU.
-        # Alerts feed the 0DTE paper book via options_0dte category.
-        # Gated by MU_SCALP_ENABLED (default true).
-        try:
-            if getattr(self.cfg, 'mu_scalp', True):
-                from . import mu_scalp, mu_paper
-                from datetime import datetime, timezone
-                import pytz
-                et = pytz.timezone('America/New_York')
-                now_et = datetime.fromtimestamp(now, tz=timezone.utc).astimezone(et)
-                hm = now_et.strftime('%H:%M')
-                # Volatile single-stocks for gap/spike fade (ETFs excluded — different behavior)
-                # MU, TSLA, NVDA, AAPL, AMD, META, AMZN, MSFT, GOOGL, NFLX, AVGO, PLTR
-                scalp_symbols = ('MU', 'TSLA', 'NVDA', 'AAPL', 'AMD', 'META',
-                                 'AMZN', 'MSFT', 'GOOGL', 'NFLX', 'AVGO', 'PLTR')
-                # Gap fade: premarket 08:30-09:25 ET, once per day per symbol
-                if '08:30' <= hm <= '09:25':
-                    day_key = now_et.strftime('%Y-%m-%d')
-                    for symbol in scalp_symbols:
-                        done_key = 'mu_scalp:gap_done:%s:%s' % (symbol, day_key)
-                        if self.db.get(c, done_key):
-                            continue
-                        sig = mu_scalp.check_gap_fade(self.db, c, now, symbol=symbol)
-                        if sig:
-                            # Dedupe by signal key (not timestamp)
-                            if not self.db.get(c, 'alert:' + sig.get('dedupe_key', '')):
-                                mu_scalp.publish_alert(self.db, c, sig, now)
-                                mu_paper.open_trade(self.db, c, sig, now)
-                        self.db.put(c, done_key, True)
-                # Spike fade: 09:45-11:00 ET, every minute, per symbol
-                if '09:45' <= hm <= '11:00':
-                    for symbol in scalp_symbols:
-                        sig = mu_scalp.check_spike_fade(self.db, c, now, symbol=symbol)
-                        if sig:
-                            # Dedupe by spike event key (stable across ticks)
-                            if not self.db.get(c, 'alert:' + sig.get('dedupe_key', '')):
-                                mu_scalp.publish_alert(self.db, c, sig, now)
-                                mu_paper.open_trade(self.db, c, sig, now)
-                # Manage open MU paper trades (target/stop/15min exits)
-                mu_paper.manage_trades(self.db, c, now)
-        except Exception:
-            pass
+        except Engine.LeaseLost:
+            raise
+        except Exception as e:
+            logging.getLogger('uvicorn.error').error('ICT trail segment failed: %s', e)
+            try:
+                with self.db.tx() as c:
+                    self.db.put(c, 'health:ict_trail', {'name': 'ict_trail', 'status': 'error',
+                                                        'detail': str(e)[:300], 'checked_at': now})
+            except Exception:
+                pass
+        # MU / volatile single-stock scalp detectors (Josh 2026-10-08):
+        # gap fade premarket, spike fade 9:45-11am ET. Generalized
+        # 2026-10-11 to a fixed list of volatile names. Alerts feed the
+        # 0DTE paper book via options_0dte category. Gated by
+        # MU_SCALP_ENABLED (default true).
+        #
+        # 2026-10-23 FIX: this block (and the ict_trail runner that sat
+        # above it) ran AFTER the ICT `with self.db.tx() as c:` block had
+        # exited, so every db call hit a closed SQLAlchemy connection
+        # (ResourceClosedError), swallowed by `except Exception: pass`.
+        # Net effect: no MU/stock scalp trade was ever recorded in
+        # production ("Stock scalp (all): 0 tracked" since 10-12). It now
+        # runs in its own transaction segment with the lease re-asserted.
+        # The ict_trail runner directly above got the same treatment
+        # (2026-10-24 adoption deviation: the audit set deleted it; we
+        # keep the feature, fixed onto a live connection).
+        if getattr(self.cfg, 'mu_scalp', True):
+            try:
+                with self.db.tx() as c:
+                    self._hold(c)
+                    self._mu_scalp_segment(c, now)
+            except Engine.LeaseLost:
+                raise
+            except Exception as e:
+                logging.getLogger('uvicorn.error').error('MU scalp segment failed: %s', e)
+                try:
+                    with self.db.tx() as c:
+                        self.db.put(c, 'health:mu_scalp', {'name': 'mu_scalp', 'status': 'error',
+                                                           'detail': str(e)[:300], 'checked_at': now})
+                except Exception:
+                    pass
+
+    SCALP_SYMBOLS = ('MU', 'TSLA', 'NVDA', 'AAPL', 'AMD', 'META',
+                     'AMZN', 'MSFT', 'GOOGL', 'NFLX', 'AVGO', 'PLTR')
+
+    def _mu_scalp_segment(self, c, now):
+        from . import mu_scalp, mu_paper
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo('America/New_York')
+        now_et = datetime.fromtimestamp(now, tz=timezone.utc).astimezone(et)
+        hm = now_et.strftime('%H:%M')
+        ran = {'gap': 0, 'spike': 0}
+        # Gap fade: premarket 08:30-09:25 ET, once per day per symbol
+        if '08:30' <= hm <= '09:25':
+            day_key = now_et.strftime('%Y-%m-%d')
+            for symbol in self.SCALP_SYMBOLS:
+                done_key = 'mu_scalp:gap_done:%s:%s' % (symbol, day_key)
+                if self.db.get(c, done_key):
+                    continue
+                sig = mu_scalp.check_gap_fade(self.db, c, now, symbol=symbol)
+                if sig:
+                    # Dedupe by signal key (not timestamp)
+                    if not self.db.get(c, 'alert:' + sig.get('dedupe_key', '')):
+                        mu_scalp.publish_alert(self.db, c, sig, now)
+                        mu_paper.open_trade(self.db, c, sig, now)
+                        ran['gap'] += 1
+                self.db.put(c, done_key, True)
+        # Spike fade: 09:45-11:00 ET, every minute, per symbol
+        if '09:45' <= hm <= '11:00':
+            for symbol in self.SCALP_SYMBOLS:
+                sig = mu_scalp.check_spike_fade(self.db, c, now, symbol=symbol)
+                if sig:
+                    # Dedupe by spike event key (stable across ticks)
+                    if not self.db.get(c, 'alert:' + sig.get('dedupe_key', '')):
+                        mu_scalp.publish_alert(self.db, c, sig, now)
+                        mu_paper.open_trade(self.db, c, sig, now)
+                        ran['spike'] += 1
+        # Manage open MU paper trades (target/stop/15min exits)
+        mu_paper.manage_trades(self.db, c, now)
+        self.db.put(c, 'health:mu_scalp', {'name': 'mu_scalp', 'status': 'running',
+                                           'detail': 'et %s gap=%d spike=%d' % (hm, ran['gap'], ran['spike']),
+                                           'checked_at': now, 'ran': ran})
+        return ran
 
     async def run(self):
         while True:

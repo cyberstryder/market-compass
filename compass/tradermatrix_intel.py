@@ -235,11 +235,17 @@ def is_news_window_now(economic_events, buffer_minutes=15):
             continue
     return False, None
 
-def refresh_intel(db, c):
+def refresh_intel(db, c=None):
     """
     Fetch all three intel sources and store in DB.
-    Called by engine on startup and periodically (e.g., hourly).
-    
+    Called by engine hourly and by /api/tradermatrix-intel/refresh.
+
+    2026-10-23: all vendor HTTP happens first with NO database
+    connection held; the writes then go into one short transaction
+    (the caller's `c` if given, otherwise a fresh db.tx()). Previously
+    the three 30-second fetches ran inside the engine tick transaction
+    and could abort it (and that tick's exits) on a slow vendor.
+
     Stores:
     - intel:earnings:{YYYY-MM-DD} - OPRA earnings for the week
     - intel:economic:{YYYY-MM-DD} - High-impact economic events for the week
@@ -248,44 +254,47 @@ def refresh_intel(db, c):
     """
     now = datetime.now(CT)
     today_str = now.strftime("%Y-%m-%d")
-    
-    # Fetch earnings (current week)
+
+    # --- network phase (no connection held) ---
     earnings = fetch_earnings_calendar()
     opra_earnings = filter_opra_earnings(earnings)
-    db.put(c, f"intel:earnings:{today_str}", {
-        "date": today_str,
-        "opra_earnings": opra_earnings,
-        "total_events": len(earnings),
-        "fetched_at": now.isoformat(),
-    })
-    log.info(f"Intel: {len(opra_earnings)} OPRA earnings this week (of {len(earnings)} total)")
-    
-    # Fetch economic calendar (current week)
     economic = fetch_economic_calendar()
     high_impact = filter_high_impact_economic(economic)
-    db.put(c, f"intel:economic:{today_str}", {
-        "date": today_str,
-        "high_impact": high_impact,
-        "total_events": len(economic),
-        "fetched_at": now.isoformat(),
-    })
-    log.info(f"Intel: {len(high_impact)} high-impact economic events this week (of {len(economic)} total)")
-    
-    # Fetch market health
     health = fetch_market_health()
     health_summary = get_market_health_summary(health)
+
+    # --- write phase (one short transaction) ---
+    def _write(c):
+        db.put(c, f"intel:earnings:{today_str}", {
+            "date": today_str,
+            "opra_earnings": opra_earnings,
+            "total_events": len(earnings),
+            "fetched_at": now.isoformat(),
+        })
+        db.put(c, f"intel:economic:{today_str}", {
+            "date": today_str,
+            "high_impact": high_impact,
+            "total_events": len(economic),
+            "fetched_at": now.isoformat(),
+        })
+        if health_summary:
+            db.put(c, "intel:market_health", health_summary)
+        db.put(c, "intel:last_refresh", {
+            "at": now.isoformat(),
+            "earnings_count": len(opra_earnings),
+            "economic_high_impact": len(high_impact),
+            "market_health_score": health_summary["score"] if health_summary else None,
+        })
+    if c is not None:
+        _write(c)
+    else:
+        with db.tx() as c2:
+            _write(c2)
+    log.info(f"Intel: {len(opra_earnings)} OPRA earnings this week (of {len(earnings)} total)")
+    log.info(f"Intel: {len(high_impact)} high-impact economic events this week (of {len(economic)} total)")
     if health_summary:
-        db.put(c, "intel:market_health", health_summary)
         log.info(f"Intel: Market Health score {health_summary['score']}/{health_summary['max_score']} ({health_summary['label']})")
-    
-    # Record refresh time
-    db.put(c, "intel:last_refresh", {
-        "at": now.isoformat(),
-        "earnings_count": len(opra_earnings),
-        "economic_high_impact": len(high_impact),
-        "market_health_score": health_summary["score"] if health_summary else None,
-    })
-    
+
     return {
         "earnings": opra_earnings,
         "economic_high_impact": high_impact,
