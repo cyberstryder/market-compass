@@ -1,8 +1,12 @@
+# Build context exclusions. tests/ is deliberately NOT ignored: the Dockerfile
+# `test` stage copies it. pine/, docs/ and scripts are never needed in an image.
+**/__pycache__
+**/*.pyc
 .git
 .venv
-__pycache__
 .pytest_cache
 .env
-*.db
-*.db-*
+*.db*
 docs
+scripts
+pine
