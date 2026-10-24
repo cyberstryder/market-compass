@@ -150,12 +150,29 @@ def identity(*args):
 class Store:
     def __init__(self,url):
         url=url.replace("postgres://","postgresql+psycopg://",1).replace("postgresql://","postgresql+psycopg://",1)
-        self.engine=create_engine(url,pool_pre_ping=True,
-            connect_args={"check_same_thread":False,"timeout":30} if url.startswith("sqlite") else {"connect_timeout":10,
+        if url.startswith("sqlite"):
+            options=dict(connect_args={"check_same_thread":False,"timeout":30})
+        else:
+            # Explicit, bounded pool: every worker shares this engine, and
+            # a checkout that waits longer than pool_timeout fails loudly
+            # instead of stalling a task behind an exhausted default pool.
+            options=dict(pool_size=10,max_overflow=10,pool_timeout=10,
+                connect_args={"connect_timeout":10,
                 "options":str(make_url(url).query.get("options", ""))+" -c statement_timeout=30000 -c lock_timeout=5000 -c idle_in_transaction_session_timeout=30000",
                 "keepalives":1,"keepalives_idle":10,"keepalives_interval":5,
                 "keepalives_count":3,"tcp_user_timeout":30000})
-        if not url.startswith("sqlite"):
+        self.engine=create_engine(url,pool_pre_ping=True,**options)
+        if url.startswith("sqlite"):
+            @event.listens_for(self.engine, "connect")
+            def sqlite_wal(connection, record):
+                # Readers no longer block behind the writer (local/dev runs
+                # and tests share one file across worker threads). The
+                # pragma is a no-op on in-memory databases.
+                try:
+                    connection.execute("PRAGMA journal_mode=WAL")
+                except Exception:
+                    logging.getLogger('uvicorn.error').warning('SQLite WAL mode unavailable; continuing with the default journal')
+        else:
             @event.listens_for(self.engine, "connect")
             def bound_transaction(connection, record):
                 # PostgreSQL 17+ can also bound a transaction doing client-side work.

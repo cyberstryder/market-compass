@@ -5,8 +5,10 @@ import logging
 import time
 from .market import ts, number
 from .quote_collection import VERSION as COLLECTION_VERSION
+from .option_stream import persist_batch
 
 LOG=logging.getLogger('uvicorn.error')
+BAR_CAPACITY=4096
 
 
 class StockStreamError(RuntimeError):
@@ -18,6 +20,11 @@ class StockBuffer:
         self.watch, self.core = set(watch), set(core)
         self.quotes, self.bars, self.last_source, self.written = {}, {}, {}, {}
         self.diagnostics = {}
+        # Bounded-degradation counter (2026-10-21 option-stream rule): a
+        # full bar queue drops the OLDEST bar and counts it instead of
+        # raising — see offer().
+        self.dropped_bars = 0
+        self._drop_warned = False
 
     def offer(self, item, now=None):
         symbol, kind = item.get('S'), item.get('T')
@@ -37,9 +44,22 @@ class StockBuffer:
                 bid_size=item.get('bs',0),ask_size=item.get('as',0),socket_read_at=now,
                 collection_version=COLLECTION_VERSION)
         else:
-            self.bars[(symbol,stamp)] = {k:item[k] for k in ('o','h','l','c','v','vw') if k in item}
-            if len(self.bars)>4096:
-                raise StockStreamError('Stock bar writer fell behind; reconnecting with an explicit data gap')
+            key=(symbol,stamp)
+            if key not in self.bars and len(self.bars)>=BAR_CAPACITY:
+                # NEVER raise here: the raise fired in the socket read task,
+                # consume() ends on FIRST_COMPLETED, and one slow database
+                # tore the whole stream down into a reconnect/resubscribe
+                # loop (same failure the option streams had on 2026-10-21).
+                # Drop the oldest queued bar (history recovery re-fetches
+                # bars; quotes are untouched) and keep the gap explicit by
+                # counting it into stream health.
+                self.bars.pop(next(iter(self.bars)))
+                self.dropped_bars += 1
+                if not self._drop_warned:
+                    self._drop_warned = True
+                    LOG.warning('Stock bar persistence queue full; dropping oldest bars with an '
+                        'explicit data gap (counted in stream health)')
+            self.bars[key] = {k:item[k] for k in ('o','h','l','c','v','vw') if k in item}
 
     def take(self, now):
         return self.take_quotes(now),self.take_bars()
@@ -64,6 +84,7 @@ async def consume(ws, collector):
     authenticated=asyncio.Event()
     committed={'quotes':0,'bars':0}
     in_flight={'quotes':0,'bars':0}
+    dropped_batches={'quotes':0,'bars':0}
     stored={}
     async def read():
         frames=0
@@ -89,23 +110,38 @@ async def consume(ws, collector):
             if batch:
                 fn=collector.quote_batch if kind=='quotes' else collector.bars
                 in_flight[kind]=len(batch)
-                work=asyncio.create_task(asyncio.to_thread(fn,'alpaca',batch))
-                cancelled=False
+                # persist_batch owns retry/backoff and the cancellation
+                # contract (it awaits the thread to completion, then
+                # re-raises CancelledError so a reconnect never overlaps an
+                # unfinished transaction). A batch that still fails is
+                # dropped and counted — never a writer death, which ended
+                # consume() on FIRST_COMPLETED and tore the stream down.
+                receipts={}
+                def capture(source,rows):
+                    receipts['value']=fn(source,rows)
                 try:
-                    receipts=await asyncio.shield(work)
-                except asyncio.CancelledError:
-                    # Do not let a reconnect overlap an unfinished transaction.
-                    receipts=await work
-                    cancelled=True
+                    ok=await persist_batch(capture,'alpaca',batch,attempts=2,
+                        label='Stock %s persistence'%kind)
+                finally:
+                    in_flight[kind]=0
+                if not ok:
+                    dropped_batches[kind]+=len(batch)
+                    LOG.warning('Stock %s persistence batch dropped after retries (%s rows)',kind,len(batch))
+                    try:
+                        await asyncio.to_thread(collector.db.health,'alpaca_stocks_persistence','degraded',
+                            'Stock %s batch dropped after a database failure; observation gap recorded'%kind,
+                            dropped_batches=dict(dropped_batches))
+                    except Exception:
+                        LOG.exception('Stock stream drop health write failed')
+                    continue
                 committed[kind]+=len(batch)
-                in_flight[kind]=0
                 if kind=='quotes':
                     committed_at=time.time()
-                    for symbol,q,at in (receipts if receipts is not None else
+                    value=receipts.get('value')
+                    for symbol,q,at in (value if value is not None else
                             [(symbol,q,committed_at) for symbol,q,_ in batch]):
                         stored[symbol]=dict(last_stored_source_ts=q['ts'],last_commit_at=at,
                             socket_to_commit_seconds=at-q['socket_read_at'],source_to_commit_seconds=at-q['ts'])
-                if cancelled: raise asyncio.CancelledError
             await asyncio.sleep(.05)
 
     async def health():
@@ -120,6 +156,7 @@ async def consume(ws, collector):
             report=dict(at=now,collection_version=COLLECTION_VERSION,watch_symbols=len(buffer.watch),
                 quote_queue=len(buffer.quotes),bar_queue=len(buffer.bars),in_flight=dict(in_flight),
                 committed=dict(committed),symbols=rows,
+                persistence_dropped_bars=buffer.dropped_bars,persistence_dropped_batches=dict(dropped_batches),
                 basis='Source time, local socket receipt and completed storage measured separately; original quote clocks unchanged')
             await asyncio.to_thread(collector.db.health,'alpaca_stocks','receiving' if latest else 'waiting',
                 'Independent stock receipt and quote/bar writers; core quotes up to 4 Hz, other symbols up to 1 Hz',latest,**report)

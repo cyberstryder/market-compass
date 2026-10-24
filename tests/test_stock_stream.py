@@ -79,10 +79,16 @@ def test_bars_are_batched_and_corrections_replace_only_same_symbol_minute():
     assert next(p for s,t,p in bars if s=='SPY' and t==NOW)['c']==102
 
 
-def test_bar_writer_overflow_fails_explicitly_instead_of_dropping_history():
+def test_bar_writer_overflow_drops_oldest_and_counts_instead_of_tearing_down():
+    # Pre-2026-10-23 the buffer raised StockStreamError here; that fired in
+    # the socket read task and tore the whole stream down (option-stream
+    # incident of 2026-10-21). Now: bounded, counted drop of the OLDEST bar.
     b=StockBuffer(['SPY'],['SPY'])
-    with pytest.raises(StockStreamError,match='explicit data gap'):
-        for i in range(4097):b.offer(dict(T='b',S='SPY',t=NOW+i*60,c=100))
+    for i in range(4100):b.offer(dict(T='b',S='SPY',t=NOW+i*60,c=100))
+    assert len(b.bars)==4096 and b.dropped_bars==4
+    assert ('SPY',NOW) not in b.bars and ('SPY',NOW+4099*60) in b.bars
+    b.offer(dict(T='b',S='SPY',t=NOW+4099*60,c=101))  # correction of a queued bar: no drop
+    assert b.dropped_bars==4 and b.bars[('SPY',NOW+4099*60)]['c']==101
 
 
 def test_slow_database_does_not_stop_reading_fresh_stock_quotes():
@@ -130,21 +136,41 @@ def test_vendor_error_propagates_and_cancels_writer():
     asyncio.run(run())
 
 
-def test_writer_failure_propagates_while_reader_is_idle():
-    cancelled=[]
+def test_database_failure_drops_batch_and_stream_survives(monkeypatch):
+    # A DB exception from quote_batch used to propagate out of the writer,
+    # ending consume() on FIRST_COMPLETED: one transient database error cost
+    # a full stream teardown. Now the batch is retried once, then dropped and
+    # counted (health row + stream report) while reading continues.
+    original_sleep=asyncio.sleep
+    async def fast(seconds):await original_sleep(.01 if seconds>=.25 else seconds)
+    monkeypatch.setattr('compass.option_stream.asyncio.sleep',fast)
+    monkeypatch.setattr('compass.stock_stream.asyncio.sleep',fast)
+    attempts=[];saved=[];health=[]
+    recovered=threading.Event()
     class WS:
+        async def send(self,*a):pass
         def __aiter__(self):return self.rows()
         async def rows(self):
-            try:
-                yield json.dumps([q()])
-                await asyncio.Event().wait()
-            finally:cancelled.append(True)
-    def broken(*args):raise RuntimeError('Database unavailable')
+            yield json.dumps([dict(T='success',msg='authenticated'),q()])
+            await asyncio.to_thread(lambda:len(attempts)>=2 or threading.Event().wait(2))
+            yield json.dumps([q(i=5)])
+            await asyncio.Event().wait()
+    def write(source,batch):
+        attempts.append(batch)
+        if len(attempts)<=2:raise RuntimeError('Database unavailable')
+        saved.extend(batch);recovered.set()
+    collector=SimpleNamespace(cfg=SimpleNamespace(stocks=('SPY',),feed='sip'),stock_symbols=lambda:('SPY',),
+        quote_batch=write,bars=lambda *a:None,db=SimpleNamespace(health=lambda *a,**k:health.append((a,k))))
     async def run():
-        cfg=SimpleNamespace(watch_symbols=('SPY',),stocks=('SPY',),feed='sip')
-        with pytest.raises(RuntimeError,match='Database unavailable'):
-            await asyncio.wait_for(consume(WS(),SimpleNamespace(cfg=cfg,stock_symbols=lambda:('SPY',),quote_batch=broken)),2)
-        assert cancelled
+        task=asyncio.create_task(consume(WS(),collector))
+        try:
+            assert await asyncio.to_thread(recovered.wait,3)
+            assert not task.done()  # the stream survived the failed batch
+            assert len(attempts)==3 and attempts[0][0][1]['ts']==NOW and saved[0][1]['ts']==NOW+.005
+            drops=[k for a,k in health if a[0]=='alpaca_stocks_persistence']
+            assert drops and drops[-1]['dropped_batches']=={'quotes':1,'bars':0}
+        finally:
+            task.cancel();await asyncio.gather(task,return_exceptions=True)
     asyncio.run(run())
 
 

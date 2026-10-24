@@ -66,9 +66,11 @@ def scan(db, c, cfg, now):
     try:
         row = fetch_vix(cfg.massive)
     except Exception as e:
-        db.health("vix_regime", "error", "fetch failed: %s" % (e,),
+        # Exception class only: httpx error text carries the request URL,
+        # which includes the Massive apiKey (same rule as darkpool.scan).
+        db.health("vix_regime", "error", "fetch failed: %s" % type(e).__name__,
                   poll_ts=now)
-        return {"ran": True, "fetched": False, "error": str(e)}
+        return {"ran": True, "fetched": False, "error": type(e).__name__}
     if not row or not row.get("value"):
         db.health("vix_regime", "error", "no value in snapshot", poll_ts=now)
         return {"ran": True, "fetched": False, "error": "no_value"}
