@@ -19,6 +19,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Check deployment API access without changing services
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -38,7 +41,7 @@ jobs:
     timeout-minutes: 60
     services:
       postgres:
-        image: postgres:18
+        image: postgres:18.1
         env:
           POSTGRES_USER: compass_test
           POSTGRES_PASSWORD: isolated_test_only
@@ -53,15 +56,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install -r requirements.txt
-      - run: python -m pytest -q
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m pytest -q -p no:cacheprovider
         env:
           COMPASS_LOCAL: 'true'
           SMOOTHERS_TEST_DATABASE_URL: 'postgresql+psycopg://compass_test:isolated_test_only@localhost:5432/compass_test'
-      - run: node --check compass/static/daily-results.js && node --check compass/static/discovery.js && node --check compass/static/app.js && node --check compass/static/login.js && node --check compass/static/native.js && node --check compass/static/research-admin.js && node --check compass/static/setup-records.js && node --check compass/static/tm-study.js && node --check compass/static/swing-study.js && node --check compass/static/spy-study.js && node --check compass/static/session-gaps.js && node tests/session-gaps.test.cjs
-      - name: Build production image and run packaged tests
+      - name: Syntax-check every static script and run the Node tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in compass/static/*.js; do node --check "$f"; done
+          node --test tests/*.test.cjs
+      # The Python suite already ran on the host above (with the Postgres
+      # service). Building the Dockerfile `test` stage runs it a second time
+      # inside the image, which was doubling CI wall-clock (12-15 min). That
+      # packaged run is now PR-only: pull requests prove the image's own
+      # dependency set still passes; main pushes run the suite once and build
+      # only the runtime stage before smoke-testing and publishing it.
+      - name: Build the test stage and run the packaged suite (pull requests only)
+        if: github.event_name == 'pull_request'
+        run: docker build --target test -t market-compass-test .
+      - name: Build the runtime image
         run: >-
-          docker build --tag market-compass-ci
+          docker build --target runtime --tag market-compass-ci
+          --build-arg COMPASS_REVISION=${{ github.sha }}
           --label org.opencontainers.image.source=https://github.com/cyberstryder/market-compass
           --label org.opencontainers.image.revision=${{ github.sha }} .
       - name: Check the built image starts and shuts down cleanly as its runtime user
@@ -78,6 +96,9 @@ jobs:
             sleep 1
           done
           test "$smoke_ready" = true
+          # The runtime image was built with --build-arg COMPASS_REVISION=<sha>;
+          # /health must report that exact revision.
+          curl --fail --silent http://127.0.0.1:18080/health | grep -F "$GITHUB_SHA"
           docker stop --time 15 compass-smoke >/dev/null
           smoke_exit=$(docker inspect --format '{{.State.ExitCode}}' compass-smoke)
           # Uvicorn can re-raise SIGTERM after completing lifespan cleanup.
@@ -147,9 +168,7 @@ jobs:
           retention-days: 90
   deploy:
     needs: [publish, deployment-preflight]
-    if: >-
-      github.ref == 'refs/heads/main' && github.event_name != 'pull_request' &&
-      vars.RAILWAY_IMAGE_DEPLOY_ENABLED == 'true'
+    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.deployment-preflight.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.RAILWAY_IMAGE_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     environment: production
