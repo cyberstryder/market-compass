@@ -117,8 +117,10 @@ class Config:
     vix_regime_enabled: bool = field(default_factory=lambda: env("VIX_REGIME_ENABLED","true")=="true")
     vix_low_threshold: float = field(default_factory=lambda: float(env("VIX_LOW_THRESHOLD","15.0")))
     vix_high_threshold: float = field(default_factory=lambda: float(env("VIX_HIGH_THRESHOLD","25.0")))
-    # VWAP fade detector (futures): mean reversion from 2-3 SD extremes
-    vwap_fade_enabled: bool = field(default_factory=lambda: env("VWAP_FADE_ENABLED","true")=="true")
+    # VWAP fade detector (futures): mean reversion from 2-3 SD extremes.
+    # Default off (2026-10-23): the detector emits summaries only and cannot
+    # submit trades, so running it by default is wasted scan time.
+    vwap_fade_enabled: bool = field(default_factory=lambda: env("VWAP_FADE_ENABLED","false")=="true")
     vwap_fade_sd_entry: float = field(default_factory=lambda: float(env("VWAP_FADE_SD_ENTRY","2.0")))
     vwap_fade_sd_stop: float = field(default_factory=lambda: float(env("VWAP_FADE_SD_STOP","3.0")))
     vwap_fade_session: str = field(default_factory=lambda: env("VWAP_FADE_SESSION","ny"))
@@ -209,8 +211,9 @@ class Config:
     # flatten 5 minutes before the close (OPTION_FLATTEN_MIN) regardless of expiry.
     option_0dte_max_dte: int = field(default_factory=lambda: int(env("OPTION_0DTE_MAX_DTE","7")))
     obsidian_url: str = field(default_factory=lambda: env("OBSIDIAN_FEED_URL"), repr=False)
-    morning_enabled: bool = field(default_factory=lambda: env("MORNING_ORB_ENABLED","true")=="true")
-    orb_setups: bool = field(default_factory=lambda: env("ORB_SETUPS_ENABLED","true")=="true")
+    # Morning/ORB retired 2026-10 (see ops/ORB_RETIREMENT.md); default off, env override still honored.
+    morning_enabled: bool = field(default_factory=lambda: env("MORNING_ORB_ENABLED","false")=="true")
+    orb_setups: bool = field(default_factory=lambda: env("ORB_SETUPS_ENABLED","false")=="true")
     morning_url: str = field(default_factory=lambda: env("MORNING_SOURCE_URL"))
     morning_token: str = field(default_factory=lambda: env("MORNING_INTEGRATION_TOKEN"))
     native_morning_intake_token: str = field(default_factory=lambda: env("NATIVE_MORNING_INTAKE_TOKEN"), repr=False)
@@ -250,7 +253,8 @@ class Config:
             raise ValueError("COMPASS_PASSWORD must be at least 16 characters")
         if any(s not in {root+suffix for root in ("MES","MNQ","ES","NQ") for suffix in (".c.0",".v.0")} for s in self.futures):
             raise ValueError("Futures specifications support ES/NQ/MES/MNQ only")
-        if any(s not in {r+'.v.0' for r in ('MGC','GC','SIL','SI','MCL','CL','YM','MYM')} for s in self.extra_futures):
+        # SIL/SI dropped 2026-10-15: Tradeify does not support SIL.
+        if any(s not in {r+'.v.0' for r in ('MGC','GC','MCL','CL','YM','MYM')} for s in self.extra_futures):
             raise ValueError("Additional futures require supported volume-ranked symbols")
         if self.max_entries < 0:
             raise ValueError("SHADOW_MAX_ENTRIES must be zero (unlimited) or positive")

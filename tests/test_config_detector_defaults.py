@@ -53,3 +53,31 @@ def test_env_var_still_overrides_default(clean_env, monkeypatch):
     cfg = Config()
     assert cfg.ict_smt_divergence is False
     assert cfg.ict_continuation is True
+
+
+RETIRED_VARS = ['MORNING_ORB_ENABLED', 'ORB_SETUPS_ENABLED', 'VWAP_FADE_ENABLED']
+
+
+def test_retired_programs_default_off(monkeypatch):
+    """Morning/ORB retired (ops/ORB_RETIREMENT.md) and VWAP fade cannot
+    submit trades: all three default off as of 2026-10-23; env still overrides."""
+    for var in RETIRED_VARS:
+        monkeypatch.delenv(var, raising=False)
+    cfg = Config()
+    assert cfg.morning_enabled is False
+    assert cfg.orb_setups is False
+    assert cfg.vwap_fade_enabled is False
+    monkeypatch.setenv('MORNING_ORB_ENABLED', 'true')
+    assert Config().morning_enabled is True
+
+
+def test_extra_futures_rejects_silver(monkeypatch):
+    """SIL/SI dropped 2026-10-15: Tradeify does not support SIL."""
+    # Repo convention: local mode so validate() reaches the futures
+    # checks instead of stopping at the production-Postgres guard.
+    monkeypatch.setenv('COMPASS_LOCAL', 'true')
+    monkeypatch.setenv('EXTRA_FUTURES_SYMBOLS', 'MGC.v.0,SIL.v.0')
+    with pytest.raises(ValueError, match='Additional futures'):
+        Config().validate()
+    monkeypatch.setenv('EXTRA_FUTURES_SYMBOLS', 'MGC.v.0,MCL.v.0')
+    Config().validate()
