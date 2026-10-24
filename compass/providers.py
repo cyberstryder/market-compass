@@ -2,6 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 """Independent data collectors; no broker order endpoints."""
 import asyncio
+import logging
 import json
 import time
 import uuid
@@ -73,20 +74,20 @@ class Collectors:
             endpoint = _up(url).path[:50]  # Truncate long paths
         except:
             endpoint = 'unknown'
+        # 2026-10-23: record_call does ~10 DB statements; it used to fail
+        # silently (db.conn) and now that it works it must not run on the
+        # event loop. Off-loop, fire-and-forget, errors logged not raised.
+        async def _record(ok):
+            try:
+                await asyncio.to_thread(record_call, self.db, provider, endpoint, ok, (_time.time() - start) * 1000)
+            except Exception as e:
+                logging.getLogger('uvicorn.error').debug('provider usage record failed: %s', type(e).__name__)
         try:
             result = await self.get_with_client(self.client,url,headers,params)
-            latency_ms = (_time.time() - start) * 1000
-            try:
-                record_call(self.db, provider, endpoint, True, latency_ms)
-            except:
-                pass  # Don't break the request if monitoring fails
+            asyncio.create_task(_record(True))
             return result
-        except Exception as e:
-            latency_ms = (_time.time() - start) * 1000
-            try:
-                record_call(self.db, provider, endpoint, False, latency_ms)
-            except:
-                pass
+        except Exception:
+            asyncio.create_task(_record(False))
             raise
 
     @staticmethod
@@ -114,7 +115,8 @@ class Collectors:
                     frame=e.rcvd or e.sent
                     detail='Connection closed '+str(frame.code if frame else 'without status')+': '+redacted_detail(
                         frame.reason if frame else 'No close frame',(self.cfg.alpaca_key,self.cfg.alpaca_secret,self.cfg.massive),160)
-                self.db.health(name,"error",detail+f"; retry in {delay}s")
+                try: self.db.health(name,"error",detail+f"; retry in {delay}s")
+                except Exception: logging.getLogger('uvicorn.error').exception('%s health write failed',name)
                 await asyncio.sleep(delay)
                 delay=min(delay*2,120)
 

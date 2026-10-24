@@ -13,6 +13,7 @@ Providers tracked:
 - obsidian (Cipher X): Flash Agentic setups
 """
 import time
+from contextlib import contextmanager
 from urllib.parse import urlparse
 from datetime import datetime, timezone
 
@@ -41,6 +42,23 @@ def provider_from_url(url):
     return 'other'
 
 
+@contextmanager
+def _connection(db):
+    """Yield a connection for `db.get`/`db.put`.
+
+    `Store` has no `.conn`; every read/write goes through `with db.tx() as c`.
+    A caller that already holds a transaction (the /api/provider-usage handler
+    wraps the store in a shim exposing `.conn`) is used as-is so the work stays
+    inside its transaction.
+    """
+    conn = getattr(db, 'conn', None)
+    if conn is not None:
+        yield conn
+        return
+    with db.tx() as c:
+        yield c
+
+
 def record_call(db, provider, endpoint, success, latency_ms, bytes_out=0):
     """Record a single API call. Called from providers.py get()."""
     now = time.time()
@@ -48,9 +66,12 @@ def record_call(db, provider, endpoint, success, latency_ms, bytes_out=0):
 
     # Increment counters
     key_base = f"provider_usage:{provider}:{day}"
-    c = db.conn  # Get raw connection for pipeline
+    with _connection(db) as c:
+        _record(db, c, key_base, provider, endpoint, success, latency_ms, now)
 
-    # Use db.put for simple counters (atomic incr via get+put)
+
+def _record(db, c, key_base, provider, endpoint, success, latency_ms, now):
+    # Use db.put for simple counters (get+put inside one transaction)
     total = db.get(c, f"{key_base}:total", 0) + 1
     db.put(c, f"{key_base}:total", total)
 
@@ -85,12 +106,11 @@ def get_daily_usage(db, provider, day=None):
         day = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
     key_base = f"provider_usage:{provider}:{day}"
-    c = db.conn
-
-    total = db.get(c, f"{key_base}:total", 0)
-    success = db.get(c, f"{key_base}:success", 0)
-    fail = db.get(c, f"{key_base}:fail", 0)
-    avg_latency = db.get(c, f"{key_base}:avg_latency_ms", 0)
+    with _connection(db) as c:
+        total = db.get(c, f"{key_base}:total", 0)
+        success = db.get(c, f"{key_base}:success", 0)
+        fail = db.get(c, f"{key_base}:fail", 0)
+        avg_latency = db.get(c, f"{key_base}:avg_latency_ms", 0)
 
     return {
         'provider': provider,

@@ -45,3 +45,34 @@ def test_provider_usage_returns_providers_not_traceback(tmp_path, monkeypatch):
             assert 'traceback' not in body, (url, body)
     finally:
         client.__exit__(None, None, None)
+
+
+def test_record_call_increments_counters_on_store(tmp_path):
+    """record_call used `db.conn`, which Store never had, so every call raised
+    (swallowed by providers.get) and no usage was ever recorded. It now opens
+    its own transaction via db.tx()."""
+    from datetime import datetime, timezone
+    from compass.provider_monitor import record_call, get_daily_usage, get_weekly_summary
+
+    db = Store('sqlite:///' + str(tmp_path / 'monitor.db'))
+    db.initialize()
+    record_call(db, 'massive', '/v3/snapshot', True, 100.0)
+    record_call(db, 'massive', '/v3/snapshot', True, 300.0)
+    record_call(db, 'massive', '/v2/aggs', False, 50.0)
+
+    day = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    base = f'provider_usage:massive:{day}'
+    with db.tx() as c:
+        assert db.get(c, base + ':total') == 3
+        assert db.get(c, base + ':success') == 2
+        assert db.get(c, base + ':fail') == 1
+        assert db.get(c, base + ':latency_n') == 3
+        assert db.get(c, base + ':endpoint:/v3/snapshot') == 2
+        assert db.get(c, base + ':endpoint:/v2/aggs') == 1
+        assert db.get(c, 'provider_usage:massive:last_seen') > 0
+
+    usage = get_daily_usage(db, 'massive')
+    assert usage['total_calls'] == 3 and usage['success'] == 2 and usage['fail'] == 1
+    assert usage['avg_latency_ms'] == 150.0
+    assert get_weekly_summary(db)['massive']['weekly_calls'] == 3
+    assert get_daily_usage(db, 'alpaca')['total_calls'] == 0
