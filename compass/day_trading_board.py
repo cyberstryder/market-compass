@@ -305,6 +305,7 @@ def display(db, c, now, days=7):
 
 # --- Push A+ board on build/refresh (alerts live by default; kill fast if noisy) ---
 import asyncio as _asyncio
+import logging
 import re as _re
 import time as _time
 from sqlalchemy import select as _select
@@ -423,7 +424,11 @@ async def run(db, cfg):
         while True:
             try:
                 if getattr(cfg, 'day_board_push_enabled', True):
-                    deliver_one(db, client, url)
+                    # Sync POST + sync db.tx(): off the event loop (ict_push pattern).
+                    await _asyncio.to_thread(deliver_one, db, client, url)
             except Exception:
-                db.health('day_board_push', 'error', 'drainer exception')
+                try:
+                    db.health('day_board_push', 'error', 'drainer exception')
+                except Exception:
+                    logging.getLogger('uvicorn.error').exception('day_board_push health write failed')
             await _asyncio.sleep(1)

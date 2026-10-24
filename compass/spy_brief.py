@@ -1,4 +1,5 @@
 """Timestamped morning plan. Informational alerts only; no order or entry-rule writes."""
+import logging
 import asyncio
 from datetime import datetime
 import math
@@ -338,7 +339,10 @@ class BriefWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                self.db.health('spy_morning_brief', 'error', type(error).__name__)
+                try:
+                    self.db.health('spy_morning_brief', 'error', type(error).__name__)
+                except Exception:
+                    logging.getLogger('uvicorn.error').exception('spy_brief health write failed')
             await asyncio.sleep(10)
 
 

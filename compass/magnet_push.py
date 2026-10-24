@@ -6,6 +6,7 @@ and a drainer POSTs them to Discord. Transport pattern only: nothing here
 touches alerts.py, alert_ownership, entries, paper trading, or order paths.
 """
 import asyncio
+import logging
 import re
 import time
 
@@ -148,7 +149,11 @@ async def run(db, cfg):
     with httpx.Client(timeout=10, follow_redirects=False) as client:
         while True:
             try:
-                deliver_one(db, client, url)
+                # Sync POST + sync db.tx(): off the event loop (ict_push pattern).
+                await asyncio.to_thread(deliver_one, db, client, url)
             except Exception as e:
-                db.health('magnet_push', 'error', type(e).__name__)
+                try:
+                    db.health('magnet_push', 'error', type(e).__name__)
+                except Exception:
+                    logging.getLogger('uvicorn.error').exception('magnet_push health write failed')
             await asyncio.sleep(1)

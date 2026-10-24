@@ -145,5 +145,6 @@ async def run(db,cfg=None):
     while True:
         try: await asyncio.to_thread(tick,db,owner,time.time(),cfg.morning_enabled if cfg is not None else True)
         except Exception as e:
-            db.health('program_parity','error',type(e).__name__)
+            try: db.health('program_parity','error',type(e).__name__)
+            except Exception: logging.getLogger('uvicorn.error').exception('program_parity health write failed')
         await asyncio.sleep(60)

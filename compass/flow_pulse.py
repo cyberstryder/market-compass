@@ -15,6 +15,7 @@ alerts. The Discord push path is built but gated behind FLOW_PULSE_PUSH_ENABLED
 (default false); Josh arms it himself.
 """
 import asyncio
+import logging
 import re
 import time
 from datetime import datetime, timezone
@@ -387,9 +388,13 @@ async def run(db, cfg):
         while True:
             try:
                 if getattr(cfg, 'flow_pulse_push_enabled', False):
-                    deliver_one(db, client, url)
+                    # Sync POST + sync db.tx(): off the event loop (ict_push pattern).
+                    await asyncio.to_thread(deliver_one, db, client, url)
             except Exception:
-                db.health('flow_pulse_push', 'error', 'drainer exception')
+                try:
+                    db.health('flow_pulse_push', 'error', 'drainer exception')
+                except Exception:
+                    logging.getLogger('uvicorn.error').exception('flow_pulse_push health write failed')
             await asyncio.sleep(1)
 
 

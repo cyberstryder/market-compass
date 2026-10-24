@@ -1,3 +1,5 @@
+# 2026-10-23: Morning/ORB default off in Config (ops/ORB_RETIREMENT.md); these
+# behavior tests opt in explicitly so the retired paths stay covered.
 import asyncio
 import copy
 from datetime import datetime, timezone
@@ -67,7 +69,7 @@ def minute_rows(db, symbol='BKNG'):
 
 
 def test_missing_inputs_retry_then_freeze_one_decision_with_current_anchor(db):
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     enqueue(db, worker)
     with db.tx() as c:
         assert c.execute(select(func.count()).select_from(reviews)).scalar_one() == 0
@@ -89,7 +91,7 @@ def test_missing_inputs_retry_then_freeze_one_decision_with_current_anchor(db):
 
 
 def test_expired_window_is_never_recovered_as_a_timely_trade(db):
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     enqueue(db, worker)
     worker.tick(NOW+61)
     with db.tx() as c:
@@ -106,11 +108,11 @@ def test_expired_window_is_never_recovered_as_a_timely_trade(db):
 
 
 def test_pending_survives_restart_without_new_original_clock(db):
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     enqueue(db, worker)
     with db.tx() as c:
         c.execute(leases.update().where(leases.c.key == 'secondary').values(until=0))
-    restarted = Secondary(db, Config(local=True))
+    restarted = Secondary(db, Config(morning_enabled=True,local=True))
     seed(db, NOW+32)
     restarted.tick(NOW+32)
     with db.tx() as c:
@@ -120,7 +122,7 @@ def test_pending_survives_restart_without_new_original_clock(db):
 
 
 def test_source_outcome_updates_do_not_extend_a_pending_deadline(db):
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     enqueue(db, worker)
     with db.tx() as c:
         row = source()
@@ -137,7 +139,7 @@ def test_source_outcome_updates_do_not_extend_a_pending_deadline(db):
 
 
 def test_old_version_receives_only_outcome_updates_never_a_new_review(db):
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     seed(db)
     enqueue(db, worker)
     with db.tx() as c:
@@ -158,7 +160,7 @@ def test_old_version_receives_only_outcome_updates_never_a_new_review(db):
 
 
 def test_missing_daily_history_is_not_a_directional_disagreement(db):
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     seed(db)
     weekly = {**source(), 'status': 'open', 'original': {'target_atr_mult': .3}}
     enqueue(db, worker, 'smoothers', weekly)
@@ -173,7 +175,7 @@ def test_missing_daily_history_is_not_a_directional_disagreement(db):
 
 
 def test_connected_coverage_collects_bkng_without_expanding_scanner_entries(db):
-    cfg = Config(local=True, stocks=('SPY',), watchlist=('SPY',))
+    cfg = Config(morning_enabled=True,local=True, stocks=('SPY',), watchlist=('SPY',))
     with db.tx() as c:
         ingest(db, c, 'smoothers', {**source(), 'symbol': 'BKNG'}, NOW)
         assert data_symbols(db, c, cfg, NOW) == ('SPY', 'BKNG', *cfg.sector_etfs)
@@ -204,7 +206,7 @@ def test_daily_history_uses_completed_exchange_sessions_and_rejects_a_gap(db):
 
 
 def test_recovery_requests_are_bounded_and_prioritize_waiting_candidates(db):
-    cfg = Config(local=True, stocks=('SPY',))
+    cfg = Config(morning_enabled=True,local=True, stocks=('SPY',))
     worker = Secondary(db, cfg)
     enqueue(db, worker)
     collector = SimpleNamespace(db=db, cfg=cfg)
@@ -215,7 +217,7 @@ def test_recovery_requests_are_bounded_and_prioritize_waiting_candidates(db):
 
 
 def test_rest_quote_recovery_keeps_source_clock_and_cannot_rewind_stream(db, monkeypatch):
-    cfg = Config(local=True, stocks=('SPY',))
+    cfg = Config(morning_enabled=True,local=True, stocks=('SPY',))
     worker = Secondary(db, cfg)
     enqueue(db, worker)
     collector = Collectors(db, cfg)
@@ -246,7 +248,7 @@ def test_rest_quote_recovery_keeps_source_clock_and_cannot_rewind_stream(db, mon
 
 
 def test_stale_readiness_never_claims_current_coverage(db):
-    cfg = Config(local=True, stocks=('SPY',))
+    cfg = Config(morning_enabled=True,local=True, stocks=('SPY',))
     with db.tx() as c:
         ingest(db, c, 'smoothers', source(), NOW)
         db.put(c, 'secondary:data_status', dict(at=NOW-46, rows=[dict(symbol='SPY',
@@ -258,7 +260,7 @@ def test_stale_readiness_never_claims_current_coverage(db):
 
 
 def test_pending_minute_recovery_retries_before_review_deadline(db):
-    cfg = Config(local=True, stocks=('SPY',))
+    cfg = Config(morning_enabled=True,local=True, stocks=('SPY',))
     enqueue(db, Secondary(db, cfg))
     collector = SimpleNamespace(db=db, cfg=cfg)
     assert plan(collector, NOW)['minute'] == ['SPY']
@@ -267,7 +269,7 @@ def test_pending_minute_recovery_retries_before_review_deadline(db):
 
 
 def test_failed_quote_and_daily_requests_do_not_starve_minute_recovery(db, monkeypatch):
-    cfg = Config(local=True, stocks=('SPY',))
+    cfg = Config(morning_enabled=True,local=True, stocks=('SPY',))
     enqueue(db, Secondary(db, cfg))
     collector = Collectors(db, cfg)
     calls = []
@@ -299,7 +301,7 @@ def test_quote_batch_retains_all_accepted_samples_in_bounded_transactions(db):
     def count(conn,cursor,statement,parameters,context,executemany):
         if statement.startswith('INSERT INTO events '): statements.append(statement)
     event.listen(db.engine,'before_cursor_execute',count)
-    collector=Collectors(db,Config(local=True))
+    collector=Collectors(db,Config(morning_enabled=True,local=True))
     try:
         collector.quote_batch('test', [('SPY',quote(NOW+i),True) for i in range(64)]
             + [('SPY',quote(NOW-1),True),('QQQ',quote(NOW),False)])
@@ -315,7 +317,7 @@ def test_quote_batch_retains_all_accepted_samples_in_bounded_transactions(db):
 
 
 def test_expired_review_explanation_uses_frozen_inputs_not_previous_quote_failure(db):
-    worker=Secondary(db,Config(local=True))
+    worker=Secondary(db,Config(morning_enabled=True,local=True))
     enqueue(db,worker)
     with db.tx() as c: db.put(c,'quote:SPY',quote(NOW+60))
     worker.tick(NOW+62)

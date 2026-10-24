@@ -398,6 +398,7 @@ async def run(db,cfg,role='schedule'):
                         last_log=now
             except Exception as e:
                 failed=True
-                db.health(VERSION+'_'+role,'error',type(e).__name__)
+                try: db.health(VERSION+'_'+role,'error',type(e).__name__)
+                except Exception: logging.getLogger('uvicorn.error').exception('native_smoothers health write failed')
                 logging.getLogger('uvicorn.error').warning('Native Smoothers %s: %s',role,type(e).__name__)
             await asyncio.sleep(30 if failed else 2 if role=='schedule' else max(1,60-(time.time()-15)%60) if role=='target' else max(1,300-(time.time()-35)%300))

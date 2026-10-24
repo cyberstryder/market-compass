@@ -191,7 +191,9 @@ async def run(db,cfg,role="intake"):
                         await asyncio.to_thread(sample_batch,db.engine,provider)
                     if time.time()-last>=60:
                         await asyncio.to_thread(report,db,time.time());last=time.time()
-            except Exception as e: db.health(VERSION,'error',type(e).__name__)
+            except Exception as e:
+                try: db.health(VERSION,'error',type(e).__name__)
+                except Exception: logging.getLogger('uvicorn.error').exception('native_morning_worker health write failed')
             await asyncio.sleep(1)
 
 

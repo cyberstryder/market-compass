@@ -161,5 +161,6 @@ async def run(db):
             await asyncio.to_thread(tick, db, owner, time.time())
         except Exception as exc:
             logging.exception('Strategy tracking worker failed')
-            db.health('strategy_tracking', 'error', type(exc).__name__)
+            try: db.health('strategy_tracking', 'error', type(exc).__name__)
+            except Exception: logging.getLogger('uvicorn.error').exception('strategy_tracking health write failed')
         await asyncio.sleep(5)

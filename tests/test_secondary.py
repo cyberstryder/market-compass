@@ -1,3 +1,5 @@
+# 2026-10-23: Morning/ORB default off in Config (ops/ORB_RETIREMENT.md); these
+# behavior tests opt in explicitly so the retired paths stay covered.
 import copy
 from datetime import datetime, timezone
 
@@ -116,7 +118,7 @@ def test_continuous_levels_are_not_compared_to_dated_contracts():
 
 
 def test_contract_resolution_keeps_mes_and_mnq_and_rolls_distinct(db):
-    cfg = Config(local=True)
+    cfg = Config(morning_enabled=True,local=True)
     with db.tx() as c:
         db.put(c, "quote:MESZ6@1", quote())
         db.put(c, "quote:MNQZ6@2", quote(price=25000))
@@ -148,13 +150,13 @@ def test_night_futures_ignore_closed_cash_flow_as_confirmation(db):
         db.put(c, "matrix:QQQ", {"source_ts": night, "strikes": [{"strike": 100, "gex": 99, "vex": 22}]})
         db.put(c, "matrix:unusual_activity", {"rows": [{"symbol": "QQQ", "source_ts": night,
             "score": 95, "premium": 1000000, "sentiment": "bearish"}]})
-        inputs = capture(db, c, candidate(night, project="futures", symbol="MNQ1!"), Config(local=True), night)
+        inputs = capture(db, c, candidate(night, project="futures", symbol="MNQ1!"), Config(morning_enabled=True,local=True), night)
         assert inputs["exposure"]["status"] == "cash_market_closed" and not inputs["flow"]
         assert assess(candidate(night, project="futures", symbol="MNQ1!"), inputs, night)["verdict"] == "supported"
 
 
 def test_original_unchanged_review_frozen_and_duplicate_delivery_not_rescored(db):
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     worker.tick(NOW - 1)
     seed(db)
     original = source()
@@ -180,7 +182,7 @@ def test_original_unchanged_review_frozen_and_duplicate_delivery_not_rescored(db
 
 
 def test_secondary_worker_recovers_archived_checkpoint_after_restart_delay(db):
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     worker.tick(NOW-1)
     seed(db)
     with db.tx() as c:
@@ -195,7 +197,7 @@ def test_secondary_worker_recovers_archived_checkpoint_after_restart_delay(db):
         # The prior process lease must expire before a replacement can run.
         from compass.store import leases
         c.execute(leases.update().values(until=0))
-    Secondary(db,Config(local=True)).tick(NOW+1000)
+    Secondary(db,Config(morning_enabled=True,local=True)).tick(NOW+1000)
     with db.tx() as c:
         after = dict(c.execute(select(reviews)).mappings().one())
         assert after['measurements']['horizons']['15']['price'] == 102
@@ -207,7 +209,7 @@ def test_secondary_worker_recovers_archived_checkpoint_after_restart_delay(db):
 def test_activation_skips_existing_history_and_late_import_never_alerts(db):
     with db.tx() as c:
         ingest(db, c, "morning", source(NOW - 100), NOW - 100)
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     worker.tick(NOW - 1)
     seed(db)
     with db.tx() as c:
@@ -220,7 +222,7 @@ def test_activation_skips_existing_history_and_late_import_never_alerts(db):
 
 
 def test_futures_exit_and_secondary_notifications_do_not_create_new_candidates(db):
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     worker.tick(NOW - 1)
     seed(db, symbol="MESZ6@1")
     with db.tx() as c:
@@ -237,7 +239,7 @@ def test_futures_exit_and_secondary_notifications_do_not_create_new_candidates(d
 
 
 def test_one_bad_candidate_cannot_block_the_next(db):
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     worker.tick(NOW - 1)
     seed(db)
     with db.tx() as c:
@@ -253,7 +255,7 @@ def test_late_committing_lower_event_id_is_not_lost_behind_a_cursor(db):
     with db.tx() as c:
         c.execute(db.insert(events).values(id=100, key="existing-higher-id", kind="bar", source="test",
             symbol="SPY", ts=NOW - 100, received=NOW - 100, payload={}))
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     worker.tick(NOW - 1)
     seed(db)
     with db.tx() as c:
@@ -316,7 +318,7 @@ def test_comparison_counts_missed_winners_and_excludes_missing_data():
 
 
 def test_secondary_alert_is_distinct_and_late_delivery_loses_current_entry_wording(db):
-    worker = Secondary(db, Config(local=True))
+    worker = Secondary(db, Config(morning_enabled=True,local=True))
     worker.tick(NOW - 1)
     seed(db)
     with db.tx() as c:
@@ -333,7 +335,7 @@ def test_secondary_alert_is_distinct_and_late_delivery_loses_current_entry_wordi
 
 
 def test_review_api_requires_owner_auth_and_dashboard_reports_no_comparison_yet(tmp_path):
-    cfg = Config(local=True, role="web", db="sqlite:///" + str(tmp_path / "web.db"), password="owner-password-long")
+    cfg = Config(morning_enabled=True,local=True, role="web", db="sqlite:///" + str(tmp_path / "web.db"), password="owner-password-long")
     app = create_app(cfg)
     with TestClient(app) as client:
         assert client.get("/api/secondary").status_code == 401

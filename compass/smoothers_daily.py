@@ -258,5 +258,7 @@ async def run(db,cfg):
             except asyncio.CancelledError:raise
             except Exception:
                 logging.getLogger('uvicorn.error').exception('Daily Smoothers comparison failed')
-                await asyncio.to_thread(db.health,VERSION,'error','Research worker failed; see runtime logs')
+                try: await asyncio.to_thread(db.health,VERSION,'error','Research worker failed; see runtime logs')
+                except asyncio.CancelledError: raise
+                except Exception: logging.getLogger('uvicorn.error').exception('smoothers_daily health write failed')
             await asyncio.sleep(10)

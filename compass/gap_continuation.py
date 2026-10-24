@@ -338,6 +338,7 @@ def display(db, c, now, days=7):
 
 # --- Push on qualified gap (alerts live by default; kill fast if noisy) ---
 import asyncio
+import logging
 import re
 import time as _time
 from sqlalchemy import select as _select
@@ -464,7 +465,11 @@ async def run(db, cfg):
         while True:
             try:
                 if getattr(cfg, 'gap_push_enabled', True):
-                    deliver_one(db, client, url)
+                    # Sync POST + sync db.tx(): off the event loop (ict_push pattern).
+                    await asyncio.to_thread(deliver_one, db, client, url)
             except Exception:
-                db.health('gap_push', 'error', 'drainer exception')
+                try:
+                    db.health('gap_push', 'error', 'drainer exception')
+                except Exception:
+                    logging.getLogger('uvicorn.error').exception('gap_push health write failed')
             await asyncio.sleep(1)

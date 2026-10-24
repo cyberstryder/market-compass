@@ -1,3 +1,5 @@
+# 2026-10-23: Morning/ORB default off in Config (ops/ORB_RETIREMENT.md); these
+# behavior tests opt in explicitly so the retired paths stay covered.
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -40,7 +42,7 @@ def test_matrix_stale_envelope_survives_parser_and_health(db):
     parsed=matrix_summary(payload,NOW)
     with db.tx() as c:
         db.put(c,'matrix:SPY',parsed)
-        row=matrix_health(db,c,Config(local=True,stocks=('SPY',)),NOW)[0]
+        row=matrix_health(db,c,Config(morning_enabled=True,local=True,stocks=('SPY',)),NOW)[0]
     assert parsed['vendor_stale'] and parsed['cached'] and row['status']=='vendor_stale'
     assert not row['eligible_for_live_confirmation']
 
@@ -59,7 +61,7 @@ def test_repeated_old_source_does_not_become_current_with_new_http_time():
 def test_stale_flow_cannot_create_scanner_trade_or_secondary_confirmation(db,stopped):
     summary=dict(source_ts=NOW-1,received=NOW-61 if stopped else NOW,vendor_stale=not stopped,
         rows=[dict(symbol='SPY',source_ts=NOW-1,premium=200000,score=90,sentiment='Bullish',vendor_id='one')])
-    cfg=Config(local=True,stocks=('SPY',),futures=(),scanner_paper=False)
+    cfg=Config(morning_enabled=True,local=True,stocks=('SPY',),futures=(),scanner_paper=False)
     with db.tx() as c:
         db.put(c,'matrix:unusual_activity',summary)
         db.put(c,'scanner_features:SPY',fact())
@@ -126,7 +128,7 @@ def test_recovery_page_cannot_refresh_page_one_clock(db):
 
 
 def test_research_reports_poll_age_vendor_stale_and_context_only(db):
-    cfg=Config(local=True,matrix='fixture')
+    cfg=Config(morning_enabled=True,local=True,matrix='fixture')
     with db.tx() as c:
         db.put(c,'health:research',{'status':'receiving'})
         db.put(c,'research:signals',dict(source_ts=NOW,received=NOW-181,items=[]))
@@ -169,7 +171,7 @@ def test_report_cutover_excludes_earlier_candidates(db):
     from compass.secondary import Secondary
     from compass.projects import ingest
     from test_secondary import seed, source
-    worker=Secondary(db,Config(local=True))
+    worker=Secondary(db,Config(morning_enabled=True,local=True))
     worker.tick(NOW-1)
     seed(db,NOW)
     with db.tx() as c: ingest(db,c,'morning',source(NOW),NOW)
@@ -183,7 +185,7 @@ def test_report_cutover_excludes_earlier_candidates(db):
 def test_swing_waits_for_current_collection_before_quoted_entry(db):
     from compass.swing_ideas import SwingIdeas
     from test_swing_ideas import seed, signal, flow, records, NOW as SWING_NOW
-    cfg=Config(local=True,stocks=('SPY',),futures=(),scanner_paper=False)
+    cfg=Config(morning_enabled=True,local=True,stocks=('SPY',),futures=(),scanner_paper=False)
     worker=SwingIdeas(db,cfg)
     with db.tx() as c:
         seed(db,c,SWING_NOW)

@@ -1,4 +1,5 @@
 """Durable previews and a gated sender. Old shadow intents are never promoted."""
+import logging
 import asyncio
 from copy import deepcopy
 import re
@@ -359,5 +360,7 @@ async def run(db,cfg):
     with httpx.Client(timeout=10,follow_redirects=False) as client:
         while True:
             try:await asyncio.to_thread(deliver_one,db,client,hooks,enabled,None,() if cfg.morning_enabled else ("morning",))
-            except Exception as e:db.health('native_outbox','error',type(e).__name__)
+            except Exception as e:
+                try: db.health('native_outbox','error',type(e).__name__)
+                except Exception: logging.getLogger('uvicorn.error').exception('native_outbox health write failed')
             await asyncio.sleep(1)

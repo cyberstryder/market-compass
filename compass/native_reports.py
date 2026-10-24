@@ -280,5 +280,7 @@ async def run(db,cfg=None):
                         db.put(c,'native-program-report-v1:summary',summary)
                     logging.getLogger('uvicorn.error').info('Native program report: %s',summary)
                 await asyncio.to_thread(compute)
-        except Exception as e:db.health('native_program_report','error',type(e).__name__)
+        except Exception as e:
+            try: db.health('native_program_report','error',type(e).__name__)
+            except Exception: logging.getLogger('uvicorn.error').exception('native_reports health write failed')
         await asyncio.sleep(120)

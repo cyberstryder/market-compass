@@ -3,6 +3,7 @@
 This worker only reads originals. It owns no positions, source filters or broker
 route. A review is frozen before its alert; later source results cannot rescore it.
 """
+import logging
 import asyncio
 import math
 import re
@@ -642,7 +643,10 @@ class Secondary:
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                self.db.health("secondary", "error", type(error).__name__ + "; original strategies remain independent")
+                try:
+                    self.db.health("secondary", "error", type(error).__name__ + "; original strategies remain independent")
+                except Exception:
+                    logging.getLogger('uvicorn.error').exception('secondary health write failed')
             await asyncio.sleep(2)
 
 
