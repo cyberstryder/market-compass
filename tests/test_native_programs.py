@@ -1,3 +1,5 @@
+# 2026-10-23: Morning/ORB default off in Config (ops/ORB_RETIREMENT.md); these
+# behavior tests opt in explicitly so the retired paths stay covered.
 from copy import deepcopy
 from datetime import datetime,date,timezone,timedelta
 import pandas as pd
@@ -186,7 +188,7 @@ def test_native_route_uses_scoped_auth_without_dashboard_cookie(tmp_path):
     from fastapi.testclient import TestClient
     from compass.app import create_app
     from compass.config import Config
-    cfg=Config(local=True,role='web',db='sqlite:///'+str(tmp_path/'native.db'),password='owner-private-test-secret',morning_token='native-test-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
+    cfg=Config(morning_enabled=True,local=True,role='web',db='sqlite:///'+str(tmp_path/'native.db'),password='owner-private-test-secret',morning_token='native-test-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
     event=signal_event(stamp=int(time.time()*1000))
     with TestClient(create_app(cfg)) as client:
         assert client.post('/hooks/native/morning',json=event).status_code==401
@@ -203,7 +205,7 @@ def test_dedicated_native_credential_isolated_from_source_and_dashboard(tmp_path
     from compass.config import Config
     source_token='source-feed-test-token-'+'s'*32
     intake_token='native-intake-test-token-'+'n'*32
-    cfg=Config(local=True,role='web',db='sqlite:///'+str(tmp_path/'dedicated.db'),
+    cfg=Config(morning_enabled=True,local=True,role='web',db='sqlite:///'+str(tmp_path/'dedicated.db'),
         password='owner-private-test-secret',morning_token=source_token,
         native_morning_intake_token=intake_token)
     event=signal_event(stamp=int(time.time()*1000))
@@ -224,7 +226,7 @@ def test_dedicated_native_credential_requires_entropy_length(monkeypatch):
     from compass.config import Config
     monkeypatch.setenv('NATIVE_MORNING_INTAKE_TOKEN','too-short')
     with pytest.raises(ValueError,match='Integration tokens'):
-        Config(local=True).validate()
+        Config(morning_enabled=True,local=True).validate()
 
 
 def test_premium_eligible_rows_not_starved_by_rows_without_options(db):

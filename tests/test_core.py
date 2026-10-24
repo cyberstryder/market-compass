@@ -1,3 +1,5 @@
+# 2026-10-23: Morning/ORB default off in Config (ops/ORB_RETIREMENT.md); these
+# behavior tests opt in explicitly so the retired paths stay covered.
 import asyncio
 from datetime import datetime
 import pytest
@@ -23,7 +25,7 @@ def db(tmp_path):
 
 @pytest.fixture
 def cfg(tmp_path):
-    return Config(paper_trading=True,stock_paper_trades=True,db="sqlite:///"+str(tmp_path/"web.db"),local=True,role="web",
+    return Config(orb_setups=True,morning_enabled=True,paper_trading=True,stock_paper_trades=True,db="sqlite:///"+str(tmp_path/"web.db"),local=True,role="web",
         password="test-password-for-tests-only",secret="test-signing-secret-for-tests-only",
         stocks=("SPY",),futures=(),alpaca_key="",alpaca_secret="",massive="",databento="",matrix="",discord="")
 

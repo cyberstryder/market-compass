@@ -1,3 +1,5 @@
+# 2026-10-23: Morning/ORB default off in Config (ops/ORB_RETIREMENT.md); these
+# behavior tests opt in explicitly so the retired paths stay covered.
 import asyncio
 import copy
 import time
@@ -90,7 +92,7 @@ def test_current_fetch_does_not_make_unknown_matrix_clock_current(db):
 
 def test_source_recovery_rechecks_mutable_outcomes_and_late_records(db):
     now = time.time()
-    cfg = Config(local=True, morning_url="https://morning.example", morning_token=TOKEN)
+    cfg = Config(morning_enabled=True,local=True, morning_url="https://morning.example", morning_token=TOKEN)
     rows = [source(now - 100)]
     requests = []
     def handle(request):
@@ -117,14 +119,14 @@ def test_connection_goes_stale_without_deleting_observations(db):
     with db.tx() as c:
         db.put(c, "health:project_morning", {"status": "connected", "checked_at": now - 30})
         ingest(db, c, "morning", source(now - 100), now)
-        result = snapshot(db, c, Config(local=True), now)
+        result = snapshot(db, c, Config(morning_enabled=True,local=True), now)
         assert result["projects"][0]["status"] == "stale"
         assert result["projects"][0]["record_count"] == 1
 
 
 def test_receiving_endpoint_does_not_claim_unsaved_mirror_is_active(db):
     with db.tx() as c:
-        result = snapshot(db,c,Config(local=True,futures_observer_token=TOKEN,observer_streams=("mnq",)),time.time())
+        result = snapshot(db,c,Config(morning_enabled=True,local=True,futures_observer_token=TOKEN,observer_streams=("mnq",)),time.time())
         future = result["projects"][2]
         assert future["status"] == "partial"
         assert future["streams"][0]["status"] == "awaiting_first_event"
@@ -140,7 +142,7 @@ def test_invalid_futures_observation_rejected(updates):
 
 
 def test_scoped_webhook_auth_dedup_and_no_order_route(tmp_path):
-    cfg = Config(local=True, role="web", db="sqlite:///" + str(tmp_path / "app.db"),
+    cfg = Config(morning_enabled=True,local=True, role="web", db="sqlite:///" + str(tmp_path / "app.db"),
         password="private-owner-password", futures_observer_token=TOKEN, morning_token=TOKEN + "morning")
     app = create_app(cfg)
     path = "/hooks/projects/futures/" + TOKEN + "/mnq"
@@ -232,7 +234,7 @@ def test_mgc_has_no_long_entry_and_exit_cannot_claim_position_size():
 
 
 def test_custom_alert_ingress_deduplicates_notifications_without_opening_or_closing_positions(tmp_path):
-    cfg = Config(local=True, role="web", db="sqlite:///" + str(tmp_path / "pine.db"),
+    cfg = Config(morning_enabled=True,local=True, role="web", db="sqlite:///" + str(tmp_path / "pine.db"),
         password="private-owner-password", futures_observer_token=TOKEN)
     app = create_app(cfg)
     path = "/hooks/projects/futures/" + TOKEN + "/mnq"

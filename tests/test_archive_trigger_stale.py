@@ -15,6 +15,8 @@ from fastapi.testclient import TestClient
 from compass.config import Config
 from compass.store import Store
 from compass.app import create_app
+CRON = 'test-cron-token-' + 'x' * 40
+AUTH = {'Authorization': 'Bearer ' + CRON}
 
 
 def make_client(tmp_path, monkeypatch):
@@ -23,6 +25,7 @@ def make_client(tmp_path, monkeypatch):
     monkeypatch.setenv('COMPASS_LOCAL', 'true')
     monkeypatch.delenv('ARCHIVE_BUCKET', raising=False)
     cfg = Config()
+    cfg.cron_token = CRON  # 2026-10-23: locked endpoints always require the bearer
     cfg.db = 'sqlite:///' + db_path
     cfg.password = 'test-password-12345678'
     cfg.local = True
@@ -50,7 +53,7 @@ def test_fresh_worker_still_blocks(tmp_path, monkeypatch):
     try:
         now = time.time()
         seed(db, True, last_run=now - 60, heartbeat_at=now - 30)
-        r = client.get('/api/admin/archive-trigger')
+        r = client.get('/api/admin/archive-trigger', headers=AUTH)
         assert r.status_code == 200
         body = r.json()
         assert body['ok'] is False
@@ -66,7 +69,7 @@ def test_stale_flag_cleared_and_worker_starts(tmp_path, monkeypatch):
         # The 2026-10-22 shape: flag set hours ago, heartbeat frozen
         # with it (thread killed by a redeploy).
         seed(db, True, last_run=now - 7200, heartbeat_at=now - 7140)
-        r = client.get('/api/admin/archive-trigger')
+        r = client.get('/api/admin/archive-trigger', headers=AUTH)
         assert r.status_code == 200
         body = r.json()
         assert body['ok'] is True, body
@@ -79,7 +82,7 @@ def test_no_flag_starts_normally(tmp_path, monkeypatch):
     client, db = make_client(tmp_path, monkeypatch)
     try:
         seed(db, False)
-        r = client.get('/api/admin/archive-trigger')
+        r = client.get('/api/admin/archive-trigger', headers=AUTH)
         assert r.status_code == 200
         assert r.json()['ok'] is True
     finally:

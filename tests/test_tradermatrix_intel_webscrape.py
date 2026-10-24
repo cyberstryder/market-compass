@@ -11,6 +11,8 @@ from fastapi.testclient import TestClient
 from compass.config import Config
 from compass.store import Store
 from compass.app import create_app
+CRON = 'test-cron-token-' + 'x' * 40
+AUTH = {'Authorization': 'Bearer ' + CRON}
 
 
 def make_client(tmp_path, name, monkeypatch):
@@ -18,6 +20,7 @@ def make_client(tmp_path, name, monkeypatch):
     monkeypatch.setenv('COMPASS_PASSWORD', 'test-password-12345678')
     monkeypatch.setenv('COMPASS_LOCAL', 'true')
     cfg = Config()
+    cfg.cron_token = CRON  # 2026-10-23: locked endpoints always require the bearer
     cfg.db = 'sqlite:///' + db_path
     cfg.password = 'test-password-12345678'
     cfg.local = True
@@ -45,7 +48,7 @@ def test_web_scrape_store_roundtrip(tmp_path, monkeypatch):
     client, db = make_client(tmp_path, 'ws1', monkeypatch)
     try:
         # No login: endpoint is public for cron.
-        r = client.post('/api/tradermatrix-intel/web-scrape', json=valid_payload())
+        r = client.post('/api/tradermatrix-intel/web-scrape', headers=AUTH, json=valid_payload())
         assert r.status_code == 200, (r.status_code, r.text[:300])
         body = r.json()
         assert body["ok"] is True
@@ -67,7 +70,7 @@ def test_web_scrape_rejects_bad_run(tmp_path, monkeypatch):
     try:
         bad = valid_payload()
         bad["run"] = "midnight"
-        r = client.post('/api/tradermatrix-intel/web-scrape', json=bad)
+        r = client.post('/api/tradermatrix-intel/web-scrape', headers=AUTH, json=bad)
         assert r.json()["ok"] is False
         assert "run" in r.json()["error"]
     finally:
@@ -79,7 +82,7 @@ def test_web_scrape_rejects_non_list_rows(tmp_path, monkeypatch):
     try:
         bad = valid_payload()
         bad["sector_flow"] = {"sector": "Technology"}
-        r = client.post('/api/tradermatrix-intel/web-scrape', json=bad)
+        r = client.post('/api/tradermatrix-intel/web-scrape', headers=AUTH, json=bad)
         assert r.json()["ok"] is False
         assert "sector_flow" in r.json()["error"]
     finally:
@@ -89,8 +92,7 @@ def test_web_scrape_rejects_non_list_rows(tmp_path, monkeypatch):
 def test_web_scrape_rejects_invalid_json(tmp_path, monkeypatch):
     client, _db = make_client(tmp_path, 'ws4', monkeypatch)
     try:
-        r = client.post('/api/tradermatrix-intel/web-scrape',
-                        content=b'not json', headers={'content-type': 'application/json'})
+        r = client.post('/api/tradermatrix-intel/web-scrape', content=b'not json', headers={**AUTH, 'content-type': 'application/json'})
         assert r.json()["ok"] is False
     finally:
         client.__exit__(None, None, None)

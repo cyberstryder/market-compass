@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import hmac
 import json
 import time
@@ -46,22 +47,27 @@ from .native_api import install as install_native_api
 from .secondary import Secondary, snapshot as secondary_snapshot, reviews as secondary_reviews
 
 # Audit #3 endpoint lockdown: public-but-state-mutating cron/agent endpoints.
-# When COMPASS_CRON_TOKEN is set (cfg.cron_token), these (method, path) pairs
-# require "Authorization: Bearer <token>" in the guard middleware; when the
-# var is unset they keep their historical public behavior, so deploying this
-# code can never brick the VM crons that call them. /api/pick-check/auto
-# stays public by Josh's 2026-10-09 direction and is deliberately not here.
-CRON_TOKEN_ENDPOINTS = {
-    ("POST", "/api/tradermatrix-intel/web-scrape"),
-    ("POST", "/api/tradermatrix-intel/refresh"),
-    ("POST", "/api/admin/archive-trigger"),
-    ("POST", "/api/admin/copy-archive-chunk"),
-    ("POST", "/api/admin/simple-archive-chunk"),
-    ("POST", "/api/admin/archive-verify-samples"),
-    ("POST", "/api/admin/archive-prune-chunk"),
-    ("GET", "/api/admin/backtest-futures"),
-    ("GET", "/api/admin/backtest-scalp"),
+# These PATHS require "Authorization: Bearer <COMPASS_CRON_TOKEN>" in the
+# guard middleware for EVERY method. 2026-10-23: matching was (method, path)
+# while every handler below is registered for both GET and POST, so the
+# other verb bypassed the token; and enforcement was skipped entirely when
+# the variable was unset, which is how production ran (never activated).
+# Now: path-only, and Config.validate() refuses to start a non-local
+# deployment without the token. /api/pick-check/auto stays public by
+# Josh's 2026-10-09 direction (tape logger / scanner watch call it).
+CRON_TOKEN_PATHS = {
+    "/api/tradermatrix-intel/web-scrape",
+    "/api/tradermatrix-intel/refresh",
+    "/api/admin/archive-trigger",
+    "/api/admin/copy-archive-chunk",
+    "/api/admin/simple-archive-chunk",
+    "/api/admin/archive-verify-samples",
+    "/api/admin/archive-prune-chunk",
+    "/api/admin/backtest-futures",
+    "/api/admin/backtest-scalp",
 }
+# Kept for callers/tests that import the old name.
+CRON_TOKEN_ENDPOINTS = {(m, p) for p in CRON_TOKEN_PATHS for m in ("GET", "POST")}
 
 def create_app(cfg=None):
     cfg=cfg or Config()
@@ -74,10 +80,47 @@ def create_app(cfg=None):
     worker_id=uuid.uuid4().hex
 
     async def heartbeat():
-        while True:
+        # 2026-10-23: one DB blip used to kill this task permanently and the
+        # readiness page then reported a dead worker while it was running.
+        def _beat():
             with db.tx() as c:
                 db.put(c,"worker:"+cfg.role,{"at":time.time(),"id":worker_id})
+        while True:
+            try:
+                await asyncio.to_thread(_beat)
+            except Exception as e:
+                logging.getLogger("uvicorn.error").warning("heartbeat write failed: %s",type(e).__name__)
             await asyncio.sleep(5)
+
+    def spawn(coro,name=None):
+        """create_task with supervision: a loop that exits with an exception is
+        logged and restarted after a backoff instead of dying silently.
+
+        2026-10-23: every background loop was created with a bare
+        create_task and no done-callback, so an exception (typically a DB
+        error raised from inside the loop's own except-handler) killed the
+        task for the life of the process with nothing in the logs until
+        shutdown. Restart is bounded (60s backoff, 5 min cap)."""
+        name=name or getattr(coro,"__qualname__",None) or repr(coro)
+        factory=coro if callable(coro) else None
+        state={"delay":60}
+        def _start(aw):
+            t=asyncio.create_task(aw,name=name)
+            t.add_done_callback(_done)
+            tasks.append(t)
+            return t
+        def _done(t):
+            if t.cancelled(): return
+            exc=t.exception()
+            if exc is None: return
+            logging.getLogger("uvicorn.error").error("background task %s died: %r",name,exc)
+            if factory is None: return
+            async def _restart():
+                await asyncio.sleep(state["delay"])
+                state["delay"]=min(state["delay"]*2,300)
+                _start(factory())
+            _start(_restart())
+        return _start(factory() if factory else coro)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -96,67 +139,68 @@ def create_app(cfg=None):
             serializer=URLSafeTimedSerializer(cfg.secret)
         if cfg.role in {"all","collector"}:
             collectors=Collectors(db,cfg)
-            tasks.extend(asyncio.create_task(t) for t in collectors.tasks())
-            tasks.append(asyncio.create_task(run_sources(db,cfg)))
+            for t in collectors.tasks(): spawn(t)
+            spawn(lambda: run_sources(db,cfg),'run_sources')
             if cfg.morning_enabled:
-                tasks.append(asyncio.create_task(run_morning_history(db,cfg)))
+                spawn(lambda: run_morning_history(db,cfg),'run_morning_history')
         if cfg.role in {"all","engine"}:
             engine = Engine(db,cfg,clock=time.time)
-            tasks.extend([asyncio.create_task(engine.run()),asyncio.create_task(deliver(db,cfg))])
-            tasks.append(asyncio.create_task(engine.study.run_reports()))
-            tasks.append(asyncio.create_task(Secondary(db,cfg,clock=time.time).run()))
-            tasks.append(asyncio.create_task(SwingIdeas(db,cfg).run()))
+            spawn(lambda: engine.run(),"engine.run")
+            spawn(lambda: deliver(db,cfg),"alerts.deliver")
+            spawn(lambda: engine.study.run_reports(),'engine.study.run_reports')
+            spawn(lambda: Secondary(db,cfg,clock=time.time).run(),'Secondary')
+            spawn(lambda: SwingIdeas(db,cfg).run(),'SwingIdeas')
             from .discovery import Discovery
-            tasks.append(asyncio.create_task(Discovery(db,cfg).run()))
-            tasks.append(asyncio.create_task(run_obsidian(db,cfg)))
+            spawn(lambda: Discovery(db,cfg).run(),'Discovery')
+            spawn(lambda: run_obsidian(db,cfg),'run_obsidian')
             if cfg.morning_enabled:
-                tasks.append(asyncio.create_task(run_strategy_tracking(db)))
+                spawn(lambda: run_strategy_tracking(db),'run_strategy_tracking')
             from .native_reports import run as run_native_reports
-            tasks.append(asyncio.create_task(run_native_reports(db,cfg)))
+            spawn(lambda: run_native_reports(db,cfg),'run_native_reports')
             from .native_outbox import run as run_native_outbox
-            tasks.append(asyncio.create_task(run_native_outbox(db,cfg)))
+            spawn(lambda: run_native_outbox(db,cfg),'run_native_outbox')
             if cfg.magnet_push_enabled:
                 from .magnet_push import run as run_magnet_push
-                tasks.append(asyncio.create_task(run_magnet_push(db,cfg)))
+                spawn(lambda: run_magnet_push(db,cfg),'run_magnet_push')
             if cfg.flow_pulse_push_enabled:
                 from .flow_pulse import run as run_flow_pulse_push
-                tasks.append(asyncio.create_task(run_flow_pulse_push(db,cfg)))
+                spawn(lambda: run_flow_pulse_push(db,cfg),'run_flow_pulse_push')
             if cfg.ict_push_enabled:
                 from .ict_push import run as run_ict_push
-                tasks.append(asyncio.create_task(run_ict_push(db,cfg)))
+                spawn(lambda: run_ict_push(db,cfg),'run_ict_push')
             if cfg.gap_push_enabled:
                 from .gap_continuation import run as run_gap_push
-                tasks.append(asyncio.create_task(run_gap_push(db,cfg)))
+                spawn(lambda: run_gap_push(db,cfg),'run_gap_push')
             if cfg.day_board_push_enabled:
                 from .day_trading_board import run as run_day_board_push
-                tasks.append(asyncio.create_task(run_day_board_push(db,cfg)))
+                spawn(lambda: run_day_board_push(db,cfg),'run_day_board_push')
             if cfg.morning_enabled and cfg.morning_token:
-                tasks.append(asyncio.create_task(run_native_morning(db,cfg,"intake")))
-                tasks.append(asyncio.create_task(run_native_morning(db,cfg,"samples")))
+                spawn(lambda: run_native_morning(db,cfg,"intake"),'run_native_morning')
+                spawn(lambda: run_native_morning(db,cfg,"samples"),'run_native_morning')
             if cfg.alpaca_key and cfg.alpaca_secret:
-                tasks.append(asyncio.create_task(run_smoothers_daily(db,cfg)))
+                spawn(lambda: run_smoothers_daily(db,cfg),'run_smoothers_daily')
                 for role in ("schedule","target","premium"):
-                    tasks.append(asyncio.create_task(run_native_smoothers(db,cfg,role)))
+                    spawn(lambda role=role: run_native_smoothers(db,cfg,role),"native_smoothers:"+role)
             from .program_parity import run as run_program_parity
-            tasks.append(asyncio.create_task(run_program_parity(db,cfg)))
-            tasks.append(asyncio.create_task(run_storage_health(db,cfg)))
+            spawn(lambda: run_program_parity(db,cfg),'run_program_parity')
+            spawn(lambda: run_storage_health(db,cfg),'run_storage_health')
             if cfg.morning_enabled:
-                tasks.append(asyncio.create_task(run_morning_report(db)))
+                spawn(lambda: run_morning_report(db),'run_morning_report')
             from .spy_brief import BriefWorker
-            tasks.append(asyncio.create_task(BriefWorker(db,cfg).run()))
+            spawn(lambda: BriefWorker(db,cfg).run(),'BriefWorker')
             from .forward_audit import run as run_forward_audit
-            tasks.append(asyncio.create_task(run_forward_audit(db,cfg)))
+            spawn(lambda: run_forward_audit(db,cfg),'run_forward_audit')
             from .observation_audit import run as run_observation_audit
-            tasks.append(asyncio.create_task(run_observation_audit(db,cfg)))
+            spawn(lambda: run_observation_audit(db,cfg),'run_observation_audit')
             from .tm_study import Study as TMStudy
-            tasks.append(asyncio.create_task(TMStudy(db,cfg).run()))
+            spawn(lambda: TMStudy(db,cfg).run(),'TMStudy')
             from .swing_study import Study as SwingStudy
-            tasks.append(asyncio.create_task(SwingStudy(db,cfg).run()))
+            spawn(lambda: SwingStudy(db,cfg).run(),'SwingStudy')
             from .spy_study import Study as SPYStudy
-            tasks.append(asyncio.create_task(SPYStudy(db,cfg).run()))
+            spawn(lambda: SPYStudy(db,cfg).run(),'SPYStudy')
             if cfg.spy_timeframes_enabled:
-                tasks.append(asyncio.create_task(SPYTimeframes(db,cfg).run()))
-        tasks.append(asyncio.create_task(heartbeat()))
+                spawn(lambda: SPYTimeframes(db,cfg).run(),'SPYTimeframes')
+        spawn(lambda: heartbeat(),'heartbeat')
         try:
             yield
         finally:
@@ -209,20 +253,26 @@ def create_app(cfg=None):
         # cron/agent endpoints, enforced only when COMPASS_CRON_TOKEN is set.
         # Mirrors the integration-route pattern (projects.py / native morning
         # intake): constant-time compare of the full "Bearer <token>" value.
-        if cfg.cron_token and (request.method,path) in CRON_TOKEN_ENDPOINTS:
+        if path in CRON_TOKEN_PATHS:
+            if not cfg.cron_token:
+                # Local/dev only: validate() refuses to start without it elsewhere.
+                return JSONResponse({"detail":"COMPASS_CRON_TOKEN is not configured"},status_code=503)
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
         public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
-        if integration and cfg.role not in {"all","web"}:
+        # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
+        # Previously only private routes 404'd on workers, so the public
+        # archive/backtest/scrape endpoints could run inside the trading
+        # engine process if its service ever got a domain.
+        if cfg.role not in {"all","web"} and path!="/health":
             return JSONResponse({"detail":"Worker service"},status_code=404)
         public=public or integration
         if not public:
             if not cfg.password:
                 return JSONResponse({"detail":"Set COMPASS_PASSWORD in Railway to unlock the private workspace"},status_code=503)
-            if cfg.role not in {"all","web"}: return JSONResponse({"detail":"Worker service"},status_code=404)
             try:
                 token=serializer.loads(request.cookies.get("compass_session",""),max_age=86400)
                 if token!="owner": raise BadSignature("invalid")
@@ -243,14 +293,17 @@ def create_app(cfg=None):
         response.headers["X-Content-Type-Options"]="nosniff"
         response.headers["X-Frame-Options"]="DENY"
         response.headers["Referrer-Policy"]="no-referrer"
-        response.headers["Cache-Control"]="no-store"
+        # Static assets are versionless but immutable per deploy; no-store on
+        # them re-downloaded ~550 KB on every dashboard load.
+        response.headers["Cache-Control"]="public, max-age=3600" if path.startswith("/static/") else "no-store"
         response.headers["Content-Security-Policy"]="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
         return response
 
     @app.get("/health")
     def health():
         with db.tx() as c: c.execute(text("SELECT 1"))
-        return {"status":"ok","service":"market-compass","role":cfg.role,"mode":"SIMULATED"}
+        return {"status":"ok","service":"market-compass","role":cfg.role,"mode":"SIMULATED",
+                "revision":os.environ.get("COMPASS_REVISION","unknown")}
 
     @app.get("/login",response_class=HTMLResponse)
     def login_page():
@@ -268,13 +321,22 @@ def create_app(cfg=None):
 
     @app.post("/login")
     async def login(request:Request):
-        addr=request.client.host if request.client else "unknown"
+        # 2026-10-23: behind Railway's proxy request.client.host is the proxy
+        # itself, so the per-address limiter was global: ten bad passwords
+        # from anyone locked the owner out. uvicorn now runs with
+        # --proxy-headers so client.host is the real peer; fall back to the
+        # first X-Forwarded-For hop if the header is present anyway.
+        fwd=request.headers.get("x-forwarded-for","").split(",")[0].strip()
+        addr=fwd or (request.client.host if request.client else "unknown")
         now=time.time()
         attempts=[t for t in failures.get(addr,[]) if now-t<300]
         failures[addr]=attempts
+        if len(failures)>10000:
+            for k in [k for k,v in failures.items() if not any(now-t<300 for t in v)]: failures.pop(k,None)
         if len(attempts)>=10: raise HTTPException(429,"Wait five minutes before trying again")
-        data=await request.json()
-        value=str(data.get("password",""))
+        try: data=await request.json()
+        except Exception: raise HTTPException(400,"Invalid JSON body")
+        value=str((data or {}).get("password",""))
         if not cfg.password or not hmac.compare_digest(value,cfg.password):
             failures[addr].append(now)
             raise HTTPException(401,"Incorrect access password")

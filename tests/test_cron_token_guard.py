@@ -2,10 +2,13 @@
 
 The guard middleware in compass/app.py requires
 "Authorization: Bearer <token>" on the state-mutating cron/agent endpoints
-(CRON_TOKEN_ENDPOINTS) ONLY when COMPASS_CRON_TOKEN is set. Unset must keep
-the historical public behavior so deploying the code can't brick the VM
-crons that call these endpoints; /api/pick-check/auto stays public by
-Josh's 2026-10-09 direction regardless.
+(CRON_TOKEN_PATHS) for EVERY HTTP method. 2026-10-23: the token is no
+longer optional at the guard — an unset token answers 503 (the 10-22
+lockdown shipped but was never activated, and the (method,path) match
+let the other verb through). 2026-10-24 adoption note: the audit set's
+Config.validate() start-refusal is NOT adopted (held for Josh), so no
+test asserts it here. /api/pick-check/auto stays public by Josh's
+2026-10-09 direction regardless.
 """
 from fastapi.testclient import TestClient
 
@@ -63,20 +66,26 @@ def valid_payload():
     }
 
 
-def test_token_unset_endpoints_behave_as_before(tmp_path, monkeypatch):
+def test_token_unset_locked_paths_are_503_not_public(tmp_path, monkeypatch):
     client = make_client(tmp_path, 'unset', monkeypatch)
     try:
-        # Mutating POST: public store still works with no header at all.
-        r = client.post('/api/tradermatrix-intel/web-scrape', json=valid_payload())
-        assert r.status_code == 200, (r.status_code, r.text[:300])
-        assert r.json()["ok"] is True
-        # Locked-class POST reaches its handler (clean error JSON on the
-        # empty test DB, not a 401).
-        r = client.post('/api/admin/archive-prune-chunk')
-        assert r.status_code == 200, (r.status_code, r.text[:300])
-        # Locked-class GET reaches its handler too.
-        r = client.get('/api/admin/backtest-futures')
-        assert r.status_code == 200, (r.status_code, r.text[:300])
+        for path in LOCKED_POSTS + LOCKED_GETS:
+            for call in (client.post, client.get):
+                r = call(path, json=valid_payload()) if call is client.post else call(path)
+                assert r.status_code == 503, (path, call.__name__, r.status_code)
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_token_set_other_verb_is_also_locked(tmp_path, monkeypatch):
+    # Regression: handlers register both GET and POST; the old guard matched
+    # (method, path) so the unlisted verb bypassed the token.
+    client = make_client(tmp_path, 'verbs', monkeypatch, token=TOKEN)
+    try:
+        for path in LOCKED_POSTS:
+            assert client.get(path).status_code == 401, path
+        for path in LOCKED_GETS:
+            assert client.post(path).status_code == 401, path
     finally:
         client.__exit__(None, None, None)
 

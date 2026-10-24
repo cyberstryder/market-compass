@@ -1,3 +1,5 @@
+# 2026-10-23: Morning/ORB default off in Config (ops/ORB_RETIREMENT.md); these
+# behavior tests opt in explicitly so the retired paths stay covered.
 import asyncio
 import threading
 
@@ -14,7 +16,7 @@ from test_projects import db,source,TOKEN
 NOW=2000000000.
 
 
-def config():return Config(local=True,morning_url='https://source.example',morning_token=TOKEN)
+def config():return Config(morning_enabled=True,local=True,morning_url='https://source.example',morning_token=TOKEN)
 
 
 def page(rows,next_page=None):

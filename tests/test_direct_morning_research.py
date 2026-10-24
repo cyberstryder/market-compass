@@ -1,4 +1,6 @@
 """Direct TradingView entries must reach research without the original app."""
+# 2026-10-23: Morning/ORB default off in Config (ops/ORB_RETIREMENT.md); these
+# behavior tests opt in explicitly so the retired paths stay covered.
 import pytest
 from sqlalchemy import select, func
 from native_morning_fixtures import signal_event, checkpoint_event
@@ -32,7 +34,7 @@ def frame(entry=True):
 @pytest.mark.parametrize('original_first',[False,True])
 def test_direct_entry_reviews_once_without_original_dependency(db,use_frame,original_first):
     worker.initialize(db)
-    review = Secondary(db,Config(morning_url='',secondary_alerts=True,secondary_native=False))
+    review = Secondary(db,Config(morning_enabled=True,morning_url='',secondary_alerts=True,secondary_native=False))
     review.tick(NOW-1)
     seed(db,NOW,symbol='DEMO')
     raw = frame() if use_frame else signal_event(stamp=int(NOW*1000))

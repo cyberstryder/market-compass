@@ -11,13 +11,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from compass.app import create_app
+CRON = 'test-cron-token-' + 'x' * 40
+AUTH = {'Authorization': 'Bearer ' + CRON}
 from compass.config import Config
 from compass.market import NY
 
 
 @pytest.fixture
 def cfg(tmp_path):
-    return Config(paper_trading=True, stock_paper_trades=True,
+    return Config(paper_trading=True, stock_paper_trades=True, cron_token=CRON,
                   db="sqlite:///" + str(tmp_path / "web.db"), local=True, role="web",
                   password="x" * 20, secret="y" * 32,
                   stocks=("SPY",), futures=(), alpaca_key="", alpaca_secret="",
@@ -59,7 +61,7 @@ def test_backtest_scalp_counts_gap_signal(cfg):
         _seed_day(db, "MU", d1, 100.0, 100.0)
         _seed_day(db, "MU", d2, 103.0, 103.5)
         _seed_day(db, "MU", d3, 103.6, 104.0)
-        r = client.get("/api/admin/backtest-scalp?days=5&symbols=MU")
+        r = client.get("/api/admin/backtest-scalp?days=5&symbols=MU", headers=AUTH)
     assert r.status_code == 200, r.text[:500]
     body = r.json()
     assert body["ok"] is True, body
@@ -80,7 +82,7 @@ def test_backtest_scalp_gap_down_is_long(cfg):
         db = app.state.db
         _seed_day(db, "MU", d1, 100.0, 100.0)
         _seed_day(db, "MU", d2, 97.5, 98.0)  # -2.5% gap -> long (fade the gap)
-        r = client.get("/api/admin/backtest-scalp?days=3&symbols=MU")
+        r = client.get("/api/admin/backtest-scalp?days=3&symbols=MU", headers=AUTH)
     assert r.status_code == 200, r.text[:500]
     body = r.json()
     assert body["ok"] is True, body
@@ -93,7 +95,7 @@ def test_backtest_scalp_gap_down_is_long(cfg):
 def test_backtest_scalp_no_data_symbol_returns_zero(cfg):
     app = create_app(cfg)
     with TestClient(app) as client:
-        r = client.get("/api/admin/backtest-scalp?days=5&symbols=ZZZQ")
+        r = client.get("/api/admin/backtest-scalp?days=5&symbols=ZZZQ", headers=AUTH)
     assert r.status_code == 200, r.text[:500]
     body = r.json()
     assert body["ok"] is True, body
