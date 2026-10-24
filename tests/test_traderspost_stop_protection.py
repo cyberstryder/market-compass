@@ -102,12 +102,15 @@ def test_stop_out_of_unsent_trade_fires_nothing(db, close_calls):
     assert close_calls == []
 
 
-def test_target_hit_fires_nothing(db, close_calls):
-    # The broker take-profit handles target exits; the fail-closed
-    # exit is reserved for stop-outs (a rejected TP leaves a
-    # stop-protected position, not a naked one).
+def test_target_hit_also_queues_close(db, close_calls):
+    # 2026-10-23: a paper target hit no longer assumes the live TP filled.
+    # The bracket TP is priced off the signal reference, not the fill
+    # (2026-10-20 MCL: TP above fill), so paper can close and free the
+    # symbol while the live position persists and the next signal stacks.
+    # Every paper close of a live-sent position now queues an exit; on a
+    # flat ticker it is a no-op at TradersPost.
     put_position(db)
     p = run_exits(db, bid=104.5, ask=104.75)
     assert p["status"] == "closed"
     assert p["exit_reason"] == "target"
-    assert close_calls == []
+    assert len(close_calls) == 1

@@ -433,10 +433,19 @@ class Engine:
             # Audit #4: the exit is QUEUED here (inside the tick
             # transaction) and POSTed by tick-end dispatch after commit;
             # ref (the position id) makes it send-once.
+            #
+            # 2026-10-23: extended from stop-only to EVERY paper close of a
+            # live-sent position (target, target_detected_in_bar,
+            # underlying_invalidation, ...). The live bracket's take-profit
+            # is priced off the signal reference, not the actual fill
+            # (2026-10-20 17:20 CT MCL: TP above fill), so a paper target
+            # hit does not imply the live TP filled. Without this, paper
+            # closes and frees the symbol while the live position persists,
+            # and the next signal stacks on top of it. 'exit' on a flat
+            # ticker is a no-op at TradersPost, so the extra send is free.
             if p.get("status") == "closed" and p["id"].startswith("ict-") \
                     and p["id"].endswith("-t1") \
-                    and p.get("traderspost_sent") \
-                    and p.get("exit_reason") in ("stop", "stop_detected_in_bar"):
+                    and p.get("traderspost_sent"):
                 try:
                     from . import traderspost
                     traderspost.queue_close_signal(self.db, c, p["symbol"], ref=p["id"])
