@@ -197,8 +197,9 @@ def test_attribution_splits_pnl_by_detector(db, cfg):
     exit_with(e, db, NOW + 120, quote(NOW + 120, 104.1, 104.11))
     e2 = open_position(db, cfg, 'aoi_fade',
                        direction='short', entry=100.0, stop=102.0, target=96.0)
-    # aoi_fade allowlist is {MCL} after the 2026-10-24 prune (bos_fvg, the
-    # old vehicle here, is pruned: default-off with an empty allowlist).
+    # aoi_fade allowlist is {MCL, MES} (MCL from the 2026-10-24 prune; MES
+    # added 2026-10-25 after clearing both replay legs; bos_fvg, the old
+    # vehicle here, is pruned: default-off with an empty allowlist).
     af_sym = sorted(ict_paper.DETECTOR_SYMBOL_ALLOWLIST['aoi_fade'])[0] + '.c.0'
     p2 = exit_with(e2, db, NOW + 240, quote(NOW + 240, 102.1, 102.11),
                    pos_key='position:ict:aoi_fade:' + af_sym + ':t1', sym=af_sym)

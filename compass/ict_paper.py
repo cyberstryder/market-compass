@@ -93,7 +93,7 @@ DETECTOR_FLAGS = {
 #   AOI Fade|MCL), the full strategy x ticker matrix (only 2 of 112
 #   combos cleared the exploratory bar), and an independent 8-week replay.
 DETECTOR_SYMBOL_ALLOWLIST = {
-    'aoi_fade': {'MCL'},  # 2026-10-24 prune: proven core only
+    'aoi_fade': {'MCL', 'MES'},  # 2026-10-24 prune {MCL}; MES added 2026-10-25 (cleared both replay legs: 90 tr, +$2,569)
     'aoi_zones': set(),  # 2026-10-24: default-off; empty blocks re-enable by env
     'bos_fvg': set(),  # 2026-10-24: default-off; empty blocks re-enable by env
     'bos_gz_vwap': set(),  # 2026-10-24: default-off; empty blocks re-enable by env
