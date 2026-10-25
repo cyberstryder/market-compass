@@ -18,6 +18,19 @@ spike extreme (both plus STOP_BUF_ATR_FRAC x ATR).
 Target: continuation -> 2R; reversal -> closer of 2R and the opposite box
 edge, requiring >= MIN_TARGET_R (1.5) else the setup is skipped.
 
+RISK CAP (2026-10-24, futures plan phase 1): a setup whose initial risk
+(the structural stop distance) exceeds 1.0 x ATR(14) is SKIPPED by scan()
+with the distinct excluded reason 'risk_cap_atr' — never silently. This
+is the loss geometry that made Rumers on MNQ catastrophic in the
+replays (same logic as MYM, ~10x the loss per trade). The stop is NOT
+tightened to the cap: the structural stop beyond the box edge / spike
+extreme is the setup, and a synthetic tighter stop would sit inside the
+very level the trade is predicated on. A skipped setup does not consume
+the symbol's one-trade-per-day slot and is not submitted. The cap lives
+in scan() (the module's admission layer, alongside the other excluded
+reasons) rather than in the pure detect_signal(). Knob:
+ICT_RB_RISK_CAP_ATR_MULT (default 1.0; <= 0 disables the cap).
+
 Evidence only. No alerts. Paper fills via ict_paper only when both
 ICT_FUTURES_PAPER_ENABLED and the detector flag are on.
 """
@@ -38,6 +51,7 @@ VOL_LOOKBACK = 20
 STOP_BUF_ATR_FRAC_DEFAULT = 0.25
 RR_DEFAULT = 2.0
 MIN_TARGET_R_DEFAULT = 1.5
+RISK_CAP_ATR_MULT_DEFAULT = 1.0
 ATR_PERIOD = 14
 BAR_LIMIT = 10000
 MIN_RTH_BARS = 200
@@ -165,6 +179,31 @@ def detect_signal(bars, box_hi, box_lo, today,
             'vol_ok': vol_ok, 'vwap_ok': vwap_ok, 'vwap': vwap, 'atr': atr_v}
 
 
+def risk_cap_skip(sig, cap_mult=RISK_CAP_ATR_MULT_DEFAULT):
+    """Risk-cap verdict for a detected signal (2026-10-24 prune).
+
+    Returns a detail dict when the signal's initial risk (structural stop
+    distance, sig['risk_pts']) exceeds cap_mult x ATR(14) — the setup must
+    be skipped. Returns None when the signal is admissible: within the
+    cap, exactly at it, or unjudgeable (no ATR / no risk on the signal —
+    mirrors ict_paper's "skipped when bars are unavailable" philosophy:
+    missing vol data never blocks by itself). cap_mult <= 0 disables.
+    """
+    if not sig:
+        return None
+    if cap_mult is None or cap_mult <= 0:
+        return None
+    atr_v = number(sig.get('atr'))
+    risk = number(sig.get('risk_pts'))
+    if not atr_v or not risk:
+        return None
+    cap_pts = cap_mult * atr_v
+    if risk > cap_pts:
+        return {'risk_pts': risk, 'atr': atr_v,
+                'cap_atr_mult': cap_mult, 'cap_pts': cap_pts}
+    return None
+
+
 def scan(db, c, cfg, now):
     """Throttled Rumers Box scan over supported symbols."""
     if not getattr(cfg, 'ict_rumers_box', False):
@@ -179,6 +218,10 @@ def scan(db, c, cfg, now):
     min_tr = number(getattr(cfg, 'ict_rb_min_target_r', MIN_TARGET_R_DEFAULT))
     if min_tr is None:
         min_tr = MIN_TARGET_R_DEFAULT
+    cap_mult = number(getattr(cfg, 'ict_rb_risk_cap_atr_mult',
+                              RISK_CAP_ATR_MULT_DEFAULT))
+    if cap_mult is None:
+        cap_mult = RISK_CAP_ATR_MULT_DEFAULT
     try:
         vwap_min = int(number(getattr(cfg, 'ict_rb_vwap_min_bars', 20)) or 20)
     except (TypeError, ValueError):
@@ -217,6 +260,17 @@ def scan(db, c, cfg, now):
             excluded['no_setup'] = excluded.get('no_setup', 0) + 1
             rows[symbol] = {**base, 'excluded': 'no_setup', 'vwap': number(vwap)}
             continue
+        cap_skip = risk_cap_skip(sig, cap_mult)
+        if cap_skip is not None:
+            # Distinct outcome (never silent): counted in the scan summary
+            # and rowed with the numbers. Not marked traded-today and not
+            # submitted — the symbol keeps its one-trade-per-day slot.
+            excluded['risk_cap_atr'] = excluded.get('risk_cap_atr', 0) + 1
+            rows[symbol] = {**base, 'excluded': 'risk_cap_atr',
+                            'setup': sig['setup'],
+                            'direction': sig['direction'],
+                            'vwap': number(vwap), **cap_skip}
+            continue
         row = {**base, **sig}
         rows[symbol] = row
         payload = {k: v for k, v in row.items() if k != 'at'}
@@ -230,7 +284,8 @@ def scan(db, c, cfg, now):
     db.put(c, 'rumers_box:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,
             'params': {'stop_buf_atr_frac': stop_buf, 'rr': rr,
-                       'min_target_r': min_tr, 'vwap_min_bars': vwap_min},
+                       'min_target_r': min_tr, 'vwap_min_bars': vwap_min,
+                       'risk_cap_atr_mult': cap_mult},
             'status': 'running' if rows else 'idle'})
     db.put(c, 'rumers_box:scanned_at', now)
     return {'ran': True, 'symbols': len(rows), 'signals': n_signals,

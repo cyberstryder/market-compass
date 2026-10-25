@@ -276,7 +276,11 @@ def test_scan_signal_and_dedupe(db):
     with db.tx() as c:
         d1 = _seed_continuation(db, c, SYM)
         now = rth_ts(d1, 31)
-        res = rb.scan(db, c, _cfg(), now)
+        # The canonical continuation fixture runs at 1.03x ATR risk — a
+        # hair over the plan's 1.0x production cap (see phase-1 status
+        # note). Admit it here at 1.25 so the dedupe mechanics stay
+        # covered; the cap itself is covered by the risk-cap tests below.
+        res = rb.scan(db, c, _cfg(ict_rb_risk_cap_atr_mult=1.25), now)
         assert res['ran'] is True and res['signals'] == 1
         latest = db.get(c, 'rumers_box:latest')
         row_ = latest['rows'][SYM]
@@ -284,7 +288,7 @@ def test_scan_signal_and_dedupe(db):
         assert row_['box_hi'] == pytest.approx(101.0)
         sigs = db.recent(c, 'rumers_box_signal', limit=5)
         assert len(sigs) == 1
-        res2 = rb.scan(db, c, _cfg(), now + 200)
+        res2 = rb.scan(db, c, _cfg(ict_rb_risk_cap_atr_mult=1.25), now + 200)
         assert res2['signals'] == 0
         assert res2['excluded'].get('already_traded_today') == 1
 
@@ -299,7 +303,8 @@ def test_scan_ym_supported(db):
     with db.tx() as c:
         d1 = _seed_continuation(db, c, YMSYM)
         now = rth_ts(d1, 31)
-        res = rb.scan(db, c, _cfg(ict_symbols=(YMSYM,)), now)
+        res = rb.scan(db, c, _cfg(ict_symbols=(YMSYM,),
+                                  ict_rb_risk_cap_atr_mult=1.25), now)
         assert res['signals'] == 1
         assert db.get(c, 'rumers_box:latest')['rows'][YMSYM]['direction'] \
             == 'long'
@@ -334,8 +339,64 @@ def test_paper_dual_gate(db):
 def test_paper_submit_tag(db):
     with db.tx() as c:
         cfg = _cfg(ict_futures_paper=True)
+        # 2026-10-24 prune: rumers_box allowlist is {MYM} — NQ.c.0 is
+        # symbol_not_allowed now; MYM.c.0 is the live combo.
         r = ict_paper.submit(db, c, cfg, 1_699_992_000,
-                             'rumers_box', SYM, _sig())
+                             'rumers_box', 'MYM.c.0', _sig())
         assert r['submitted'] is True
         trade = db.get(c, 'trade:' + r['legs'][0])
         assert trade['strategy'] == 'yt-rumers-box'
+
+
+# --- risk cap (2026-10-24): skip setups whose stop distance > cap x ATR ---
+
+def test_risk_cap_skip_fires_above_cap():
+    out = rb.risk_cap_skip({'risk_pts': 30.0, 'atr': 20.0}, 1.0)
+    assert out is not None
+    assert out['cap_pts'] == pytest.approx(20.0)
+    assert out['risk_pts'] == pytest.approx(30.0)
+
+
+def test_risk_cap_skip_within_and_at_cap():
+    assert rb.risk_cap_skip({'risk_pts': 15.0, 'atr': 20.0}, 1.0) is None
+    # exactly at the cap is admissible (cap is "exceeds", not "reaches")
+    assert rb.risk_cap_skip({'risk_pts': 20.0, 'atr': 20.0}, 1.0) is None
+
+
+def test_risk_cap_skip_unjudgeable_never_blocks():
+    assert rb.risk_cap_skip({'risk_pts': 30.0, 'atr': None}, 1.0) is None
+    assert rb.risk_cap_skip({'risk_pts': 30.0}, 1.0) is None
+    assert rb.risk_cap_skip({'atr': 20.0}, 1.0) is None
+    assert rb.risk_cap_skip(None, 1.0) is None
+
+
+def test_risk_cap_skip_disabled_and_custom_mult():
+    assert rb.risk_cap_skip({'risk_pts': 30.0, 'atr': 20.0}, 0) is None
+    assert rb.risk_cap_skip({'risk_pts': 30.0, 'atr': 20.0}, 2.0) is None
+    assert rb.risk_cap_skip({'risk_pts': 30.0, 'atr': 20.0}, 0.5) is not None
+
+
+def test_scan_risk_cap_excludes_distinctly(db):
+    with db.tx() as c:
+        d1 = _seed_continuation(db, c, SYM)
+        now = rth_ts(d1, 31)
+        # Tiny cap via the cfg knob: the standard continuation's ~1.4pt
+        # risk exceeds 0.1 x ATR, so the cap must bite.
+        res = rb.scan(db, c, _cfg(ict_rb_risk_cap_atr_mult=0.1), now)
+        assert res['signals'] == 0
+        assert res['excluded'].get('risk_cap_atr') == 1
+        row_ = db.get(c, 'rumers_box:latest')['rows'][SYM]
+        assert row_['excluded'] == 'risk_cap_atr'
+        assert row_['risk_pts'] > row_['cap_pts'] > 0
+        # Not silent, not submitted, and the day slot is NOT consumed.
+        assert db.recent(c, 'rumers_box_signal', limit=5) == []
+        assert not (db.get(c, 'rumers_box:traded:' + SYM) or {})
+
+
+def test_scan_risk_cap_disabled_lets_signal_through(db):
+    with db.tx() as c:
+        d1 = _seed_continuation(db, c, SYM)
+        now = rth_ts(d1, 31)
+        res = rb.scan(db, c, _cfg(ict_rb_risk_cap_atr_mult=0), now)
+        assert res['signals'] == 1
+        assert 'risk_cap_atr' not in res['excluded']
