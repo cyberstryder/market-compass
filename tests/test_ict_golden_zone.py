@@ -7,7 +7,7 @@ from compass import golden_zone as gz
 from compass import ict_paper
 
 OPEN = 1_699_992_000
-SYM = 'NQ.c.0'
+SYM = 'MNQ.c.0'  # 2026-10-24 prune: golden_zone watches {MCL, MNQ}; bare NQ (mini) no longer allowed
 NOW = OPEN + 16 * 60
 
 # Bullish impulsive leg 98 -> 110, then a fade back into the zone.

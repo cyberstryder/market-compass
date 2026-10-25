@@ -121,14 +121,14 @@ def test_submit_writes_shadow_record_and_still_trades(db, cfg):
            'target': 104.0, 'rr': 2.0, 'signal_ts': NOW - 60,
            'level_kind': 'test'}
     with db.tx() as c:
-        res = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', 'NQ.c.0', sig)
+        res = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', 'MCL.v.0', sig)
     assert res['submitted'] is True  # shadow never blocks
     with db.tx() as c:
         recs = db.prefix(c, 'brake_shadow:')
     assert len(recs) == 1
     rec = next(iter(recs.values()))
     assert rec['detector'] == 'golden_zone'
-    assert rec['corr_cap1']['would_block'] is False  # NQ not in a group
+    assert rec['corr_cap1']['would_block'] is False  # MCL not in a group
     assert rec['strike3_0830']['strikes'] == 0
     assert 'open_marks' in rec and 'vwap' in rec
     assert rec['trade_id'] == res['legs'][0]
@@ -140,7 +140,7 @@ def test_shadow_disabled_by_config(db, cfg):
            'target': 104.0, 'rr': 2.0, 'signal_ts': NOW - 60,
            'level_kind': 'test'}
     with db.tx() as c:
-        res = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', 'NQ.c.0', sig)
+        res = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', 'MCL.v.0', sig)
     assert res['submitted'] is True
     with db.tx() as c:
         assert db.prefix(c, 'brake_shadow:') == {}
