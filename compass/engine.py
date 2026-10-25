@@ -257,7 +257,13 @@ class Engine:
                     # POST is dispatched after the tick commits, never
                     # from inside it. ref (the position id) is the close's
                     # send-once identity.
-                    if p["id"].endswith("-t1"):
+                    # 2026-10-25: gated on traderspost_sent, same as the
+                    # exits() close below — this branch previously queued a
+                    # close for ANY -t1 position, including ones never sent
+                    # (duplicate/hedging skips, and now paper-only detectors
+                    # golden_zone/rumers_box). A never-sent position must
+                    # never emit a broker close.
+                    if p["id"].endswith("-t1") and p.get("traderspost_sent"):
                         try:
                             from . import traderspost
                             traderspost.queue_close_signal(self.db, c, p["symbol"], ref=p["id"])

@@ -20,9 +20,12 @@ WINDOW_DAYS = 28
 
 # The post-prune live combos: (detector, symbol root). Golden Zone|MNQ is
 # watch-status (paper attribution until 100+ trades); the rest are the
-# proven core plus Rumers Box's one surviving combo.
+# proven core plus Rumers Box's one surviving combo. AOI Fade|MES was
+# added 2026-10-25 (Josh: MES activation — it cleared both replay legs)
+# so its live record is tracked from day one.
 LIVE_COMBOS = (
     ('aoi_fade', 'MCL'),
+    ('aoi_fade', 'MES'),
     ('turtle_soup', 'MCL'),
     ('golden_zone', 'MCL'),
     ('golden_zone', 'MNQ'),

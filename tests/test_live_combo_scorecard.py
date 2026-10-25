@@ -96,6 +96,18 @@ def test_summarize_groups_by_combo_and_flags(db):
     assert rb['trades'] == 0 and rb['kill_watch'] is False
 
 
+def test_summarize_includes_aoi_fade_mes(db):
+    # 2026-10-25: AOI Fade|MES joined the tracked combos when MES was
+    # activated (Josh) — its live record must be scorecard-visible.
+    seed(db, 'aoi_fade', 'MES.c.0', 200.0, NOW - 1 * D)
+    seed(db, 'aoi_fade', 'MES.c.0', -50.0, NOW - 2 * D)
+    with db.tx() as c:
+        out = sc.summarize(db, c, NOW)
+    mes = combo(out, 'aoi_fade', 'MES')
+    assert mes['trades'] == 2 and mes['net'] == pytest.approx(150.0)
+    assert len(out['combos']) == 6
+
+
 def test_summarize_window_and_exclusions(db):
     seed(db, 'aoi_fade', 'MCL.v.0', 500.0, NOW - 29 * D)      # too old
     seed(db, 'aoi_fade', 'MCL.v.0', 500.0, NOW - 27 * D)      # in window

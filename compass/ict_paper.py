@@ -106,6 +106,16 @@ DETECTOR_SYMBOL_ALLOWLIST = {
     # either disabled or not in the futures mix).
 }
 
+# Paper-only detectors (Josh 2026-10-25): Golden Zone and Rumers Box keep
+# paper trading — positions, attribution, brake-shadow and the live-combo
+# scorecard all see them exactly as before — but their trades are NEVER
+# mirrored to TradersPost (no live orders on the prop account). submit()
+# routes them through the standard skip marking (traderspost_sent=False +
+# reason on both the trade and position copies), so the exits()/flatten
+# close gates, which key on traderspost_sent, can never emit a broker
+# close for them either.
+PAPER_ONLY_DETECTORS = frozenset({'golden_zone', 'rumers_box'})
+
 def symbol_allowed(detector, symbol):
     """True if this detector is allowed to trade this symbol.
 
@@ -381,7 +391,16 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
             }
             group = CORRELATED.get(root, None)
             skip_reason = None
-            if symbol and side:
+            if detector in PAPER_ONLY_DETECTORS:
+                # Paper-only (Josh 2026-10-25): never mirror this
+                # detector to TradersPost. Set the skip reason up front
+                # so the standard marking below records
+                # traderspost_sent=False + reason on BOTH copies; the
+                # duplicate/hedging scan is moot for a trade that is
+                # never sent, so it is skipped too.
+                skip_reason = \
+                    f"skip {symbol}: paper-only detector ({detector})"
+            if not skip_reason and symbol and side:
                 # Check all active detectors for open positions
                 # 2026-10-19: FIX - also check the CURRENT detector, not just
                 # "another" detector. Same-detector re-entry was stacking:

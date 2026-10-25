@@ -9,6 +9,11 @@
    missed 5 of the 12 detectors in STRATEGY_TAGS.
 3. Unmapped symbols (absent from traderspost.SYMBOL_MAP) would
    have been POSTed verbatim to TradersPost as an unknown ticker.
+
+2026-10-25: Golden Zone and Rumers Box became paper-only (never
+mirrored — see tests/test_paper_only_carve_out.py), so the "sent"
+roles below are played by mirrored detectors (aoi_fade, turtle_soup,
+trend_rider). Each test's original purpose is unchanged.
 """
 from datetime import datetime, timezone
 
@@ -36,6 +41,8 @@ def cfg():
     c.ict_futures_paper = True
     c.ict_golden_zone = True
     c.ict_aoi_fade = True
+    c.ict_turtle_soup = True
+    c.ict_trend_rider = True
     c.ict_rumers_box = True
     c.traderspost_enabled = True
     return c
@@ -76,23 +83,23 @@ def submit(db, cfg, detector, symbol, **kw):
 
 
 def test_first_signal_is_sent_not_self_skipped(db, cfg, sent):
-    _, trade = submit(db, cfg, 'golden_zone', 'MCL.v.0')
+    _, trade = submit(db, cfg, 'aoi_fade', 'MCL.v.0')
     assert len(sent) == 1
     assert trade['traderspost_sent'] is True
 
 
 def test_second_detector_same_symbol_is_skipped(db, cfg, sent):
     submit(db, cfg, 'aoi_fade', 'MCL.v.0')
-    _, trade2 = submit(db, cfg, 'golden_zone', 'MCL.v.0', signal_ts=NOW - 30)
+    _, trade2 = submit(db, cfg, 'turtle_soup', 'MCL.v.0', signal_ts=NOW - 30)
     assert len(sent) == 1  # only the first signal went out
     assert trade2['traderspost_sent'] is False
     assert 'already open for aoi_fade' in trade2['traderspost_skip_reason']
 
 
 def test_same_detector_reentry_blocked_at_paper_layer(db, cfg, sent):
-    submit(db, cfg, 'golden_zone', 'MCL.v.0')
+    submit(db, cfg, 'aoi_fade', 'MCL.v.0')
     with db.tx() as c:
-        r = ict_paper.submit(db, c, cfg, NOW, 'golden_zone', 'MCL.v.0',
+        r = ict_paper.submit(db, c, cfg, NOW, 'aoi_fade', 'MCL.v.0',
                              sig(signal_ts=NOW - 30))
     assert r['submitted'] is False
     assert r['reason'] == 'existing_position'
@@ -103,8 +110,11 @@ def test_correlated_opposite_direction_is_hedging_skip(db, cfg, sent):
     # Post-prune vehicles (2026-10-24): aoi_zones/bos_fvg are disabled with
     # empty allowlists; golden_zone|MNQ and rumers_box|MYM are live combos
     # in the same equity correlation group.
-    submit(db, cfg, 'golden_zone', 'MNQ.c.0')  # long, equity group
-    _, trade2 = submit(db, cfg, 'rumers_box', 'MYM.c.0', signal_ts=NOW - 30,
+    # 2026-10-25: golden_zone/rumers_box are paper-only now, so the pair is
+    # aoi_fade|MES (long, equity group) vs trend_rider|MNQ (short) —
+    # trend_rider has no allowlist entry, hence no symbol restriction.
+    submit(db, cfg, 'aoi_fade', 'MES.c.0')  # long, equity group
+    _, trade2 = submit(db, cfg, 'trend_rider', 'MNQ.c.0', signal_ts=NOW - 30,
                        direction='short', entry=100.0, stop=102.0, target=96.0)
     assert len(sent) == 1
     assert trade2['traderspost_sent'] is False
@@ -118,9 +128,9 @@ def test_sent_flag_survives_exits_copy_over(db, cfg, sent):
     — a flag stored only on the trade record was erased at close, so
     /api/traderspost-skips and the Simple live split showed zero
     sends while live trades filled. The hook must mark both copies."""
-    r, trade = submit(db, cfg, 'golden_zone', 'MCL.v.0')
+    r, trade = submit(db, cfg, 'aoi_fade', 'MCL.v.0')
     assert trade['traderspost_sent'] is True
-    pos_key = 'position:ict:golden_zone:MCL.v.0:t1'
+    pos_key = 'position:ict:aoi_fade:MCL.v.0:t1'
     with db.tx() as c:
         pos = db.get(c, pos_key)
         assert pos['traderspost_sent'] is True
@@ -135,10 +145,10 @@ def test_sent_flag_survives_exits_copy_over(db, cfg, sent):
 
 
 def test_unmapped_symbol_fails_closed(db, cfg, sent):
-    # golden_zone's allowlist is root-based, so MCL.c.0 is a legal paper
+    # aoi_fade's allowlist is root-based, so MCL.c.0 is a legal paper
     # symbol, but SYMBOL_MAP has no MCL.c.0 entry (it maps MCL.v.0):
     # the raw Compass symbol must never be POSTed to TradersPost.
-    _, trade = submit(db, cfg, 'golden_zone', 'MCL.c.0')
+    _, trade = submit(db, cfg, 'aoi_fade', 'MCL.c.0')
     assert sent == []
     assert trade['traderspost_sent'] is False
     assert 'no TradersPost symbol mapping' in trade['traderspost_skip_reason']
