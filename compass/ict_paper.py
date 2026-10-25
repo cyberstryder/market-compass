@@ -47,9 +47,6 @@ DETECTOR_FLAGS = {
     'turtle_soup': 'ict_turtle_soup',
     'smt_divergence': 'ict_smt_divergence',
     'aoi_zones': 'ict_aoi_zones',
-    'continuation': 'ict_continuation',
-    'morning_drive': 'ict_morning_drive',
-    'icc': 'ict_icc',
     'rumers_box': 'ict_rumers_box',
     'aoi_fade': 'ict_aoi_fade',
     'trend_rider': 'ict_trend_rider',
@@ -99,7 +96,6 @@ DETECTOR_SYMBOL_ALLOWLIST = {
     'bos_gz_vwap': set(),  # 2026-10-24: default-off; empty blocks re-enable by env
     'smt_divergence': set(),  # 2026-10-24: default-off; was unrestricted
     'turtle_soup': {'MCL'},  # 2026-10-24 prune: proven core only (MYM out 2026-10-17)
-    'continuation': set(),  # disabled entirely
     'golden_zone': {'MCL', 'MNQ'},  # 2026-10-24: watch status; MGC + eval roots out; NQ was tests-only, now a watch symbol per the plan
     'rumers_box': {'MYM'},  # Added 2026-10-24: only positive combo; MNQ blocked on stop geometry
     # Detectors not listed here have no symbol restriction (they're

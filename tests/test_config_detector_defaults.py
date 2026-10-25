@@ -15,9 +15,7 @@ ICT_VARS = [
     'ICT_AOI_ZONES_ENABLED', 'ICT_AOI_FADE_ENABLED',
     'ICT_GOLDEN_ZONE_ENABLED', 'ICT_BOS_FVG_ENABLED',
     'ICT_BOS_GZ_VWAP_ENABLED', 'ICT_RUMERS_BOX_ENABLED',
-    'ICT_FUTURES_PAPER_ENABLED', 'ICT_CONTINUATION_ENABLED',
-    'ICT_TREND_RIDER_ENABLED', 'ICT_MORNING_DRIVE_ENABLED',
-    'ICT_ICC_ENABLED',
+    'ICT_FUTURES_PAPER_ENABLED', 'ICT_TREND_RIDER_ENABLED',
 ]
 
 
@@ -38,7 +36,8 @@ def test_production_detectors_default_on(clean_env):
 
 def test_deliberately_off_detectors_stay_off(clean_env):
     cfg = Config()
-    assert cfg.ict_continuation is False  # Josh disabled, 2026-10-14
+    # ICT Continuation is not asserted here: the detector was retired
+    # outright 2026-10-25 (module deleted; see docs/RETIRED_DETECTORS.md).
     assert cfg.ict_trend_rider is False   # default-off by design, 2026-10-08
     assert cfg.ict_gz_ema_cross is False  # contradicted the GZ setup
     # Futures prune (Josh, 2026-10-24): structure-chasers default off;
@@ -51,24 +50,25 @@ def test_deliberately_off_detectors_stay_off(clean_env):
 
 def test_env_var_still_overrides_default(clean_env, monkeypatch):
     monkeypatch.setenv('ICT_SMT_DIVERGENCE_ENABLED', 'false')
-    monkeypatch.setenv('ICT_CONTINUATION_ENABLED', 'true')
+    monkeypatch.setenv('ICT_TREND_RIDER_ENABLED', 'true')
     cfg = Config()
     assert cfg.ict_smt_divergence is False
-    assert cfg.ict_continuation is True
+    assert cfg.ict_trend_rider is True
 
 
-RETIRED_VARS = ['MORNING_ORB_ENABLED', 'ORB_SETUPS_ENABLED', 'VWAP_FADE_ENABLED']
+RETIRED_VARS = ['MORNING_ORB_ENABLED', 'ORB_SETUPS_ENABLED']
 
 
 def test_retired_programs_default_off(monkeypatch):
-    """Morning/ORB retired (ops/ORB_RETIREMENT.md) and VWAP fade cannot
-    submit trades: all three default off as of 2026-10-23; env still overrides."""
+    """Morning/ORB retired (ops/ORB_RETIREMENT.md): both default off as
+    of 2026-10-23; env still overrides. VWAP_FADE_ENABLED was in this
+    list until 2026-10-25, when the VWAP Fade detector was deleted
+    outright (docs/RETIRED_DETECTORS.md) and its config fields removed."""
     for var in RETIRED_VARS:
         monkeypatch.delenv(var, raising=False)
     cfg = Config()
     assert cfg.morning_enabled is False
     assert cfg.orb_setups is False
-    assert cfg.vwap_fade_enabled is False
     monkeypatch.setenv('MORNING_ORB_ENABLED', 'true')
     assert Config().morning_enabled is True
 
