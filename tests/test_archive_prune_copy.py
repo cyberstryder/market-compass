@@ -325,3 +325,111 @@ def test_coverage_reports_progress_and_gaps(db, s3):
     assert bar['rows_archived'] == 3
     assert len(bar['missing']) == bar['periods'] - 1
     assert cov['ready'] is False  # other kinds have no coverage yet
+
+
+def seed_deleting(db, kind, pstr, deleted, expected, **extra):
+    """Bank a mid-deletion prune state directly (verification already
+    passed in an earlier life), as the pre-fix code left W40."""
+    st = {'status': 'deleting', 'deleted': deleted,
+          'expected_rows': expected, 'band_done': True,
+          'delete_cursor': 0}
+    st.update(extra)
+    with db.tx() as c:
+        db.put(c, f'copy-archive:prune:{kind}:{pstr}', st)
+    return st
+
+
+def test_completion_recount_failure_banks_progress_and_resumes(
+        db, s3, monkeypatch):
+    """W40 live (2026-10-24): the completion recount's COUNT died on
+    the statement timeout, the exception escaped prune_next into the
+    route's fieldless error body, and every retry re-ran the recount
+    from zero and banked nothing — the week wedged at 'deleting' with
+    deleted == expected, blocking the whole queue. A slice failure
+    must now surface as a fielded recount_pending with progress
+    banked, and the next call must resume from the banked cursor."""
+    ts = NOW - 400 * DAY
+    pstr = archive_week(db, s3, 'bar', ts, rows=5)
+    ws = apc._week_start(pstr)
+    seed_deleting(db, 'bar', pstr, deleted=5, expected=5)  # rows gone
+    real_count = apc._count_rows
+    calls = {'n': 0, 'fail': True}
+
+    def flaky_count(db_, kind, lo, hi):
+        calls['n'] += 1
+        if calls['fail'] and calls['n'] == 3:
+            raise RuntimeError(
+                'canceling statement due to statement timeout')
+        return real_count(db_, kind, lo, hi)
+
+    monkeypatch.setattr(apc, '_count_rows', flaky_count)
+    r1 = apc.prune_next(db, s3, BUCKET, now=NOW)  # must not raise
+    assert r1['ok'] is True and r1['action'] == 'recount_pending'
+    assert r1['kind'] == 'bar' and r1['period'] == pstr
+    assert r1['status'] == 'deleting'
+    assert 'statement timeout' in r1['recount_error']
+    st = apc._prune_states(apc._all_copy_state(db))[('bar', pstr)]
+    assert st['status'] == 'deleting'
+    assert st['recount_next_ts'] == ws + 2 * 3600  # two slices banked
+    assert st['recount_total'] == 0
+    assert 'statement timeout' in st['recount_error']
+    calls['fail'] = False
+    r2 = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r2['action'] == 'pruned_batch' and r2['status'] == 'done'
+    assert r2['deleted_this_call'] == 0
+    st = apc._prune_states(apc._all_copy_state(db))[('bar', pstr)]
+    assert st['status'] == 'done'
+    assert apc.prune_status(db)['rows_deleted'] == 5
+
+
+def test_completion_recount_with_remaining_rows_refuses(db, s3):
+    """The gate's strictness is unchanged: a completed recount that
+    finds live rows banks the final_count_mismatch refusal with the
+    same detail shape as before the fix. The seeded delete_cursor
+    sits past the surviving rows' ids (a straggler geometry the walk
+    has already passed), so the recount is the instrument that
+    catches them."""
+    ts = NOW - 400 * DAY
+    pstr = archive_week(db, s3, 'bar', ts, rows=5)
+    ws = apc._week_start(pstr)
+    add_event(db, 'bar', ws + 60)
+    add_event(db, 'bar', ws + 3600 + 60)  # second recount slice
+    seed_deleting(db, 'bar', pstr, deleted=5, expected=5,
+                  delete_cursor=10 ** 9)
+    r = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r['ok'] is False and r['status'] == 'refused'
+    st = apc._prune_states(apc._all_copy_state(db))[('bar', pstr)]
+    assert st['reason'] == 'final_count_mismatch'
+    assert st['detail'] == {'deleted': 5, 'expected_rows': 5,
+                            'remaining': 2}
+    assert count_kind(db, 'bar') == 2  # a refusal never deletes
+
+
+def test_completion_recount_with_deleted_over_expected_refuses(db, s3):
+    """deleted may overshoot expected when rows landed between verify
+    and deletion; a completed recount of 0 remaining must still
+    refuse rather than bless the week."""
+    ts = NOW - 400 * DAY
+    pstr = archive_week(db, s3, 'bar', ts, rows=5)
+    seed_deleting(db, 'bar', pstr, deleted=6, expected=5)
+    r = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r['ok'] is False and r['status'] == 'refused'
+    st = apc._prune_states(apc._all_copy_state(db))[('bar', pstr)]
+    assert st['reason'] == 'final_count_mismatch'
+    assert st['detail'] == {'deleted': 6, 'expected_rows': 5,
+                            'remaining': 0}
+
+
+def test_pre_fix_w40_state_completes_via_recount(db, s3):
+    """W40's exact live shape (2026-10-24): prune state banked by the
+    pre-fix code — status 'deleting', deleted == expected_rows, band
+    fields present, NO recount fields — with zero live rows left. The
+    week must complete through the new recount path in one call."""
+    ts = NOW - 400 * DAY
+    pstr = archive_week(db, s3, 'bar', ts, rows=5)
+    seed_deleting(db, 'bar', pstr, deleted=5, expected=5,
+                  band_lo=1, band_hi=100, band_done=False)
+    r = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r['status'] == 'done' and r['deleted_this_call'] == 0
+    status = apc.prune_status(db)
+    assert status['periods_done'] == 1 and status['rows_deleted'] == 5

@@ -16,6 +16,10 @@ Gate design (Josh's rule, 2026-10-19: verify R2 has the data, THEN prune):
 - Deletion is batched and resumable; per-week prune state lives in
   copy-archive:prune:<kind>:<week> so an interrupted run never re-verifies
   mid-delete or double-counts.
+- The completion recount (deleted == expected, certifying remaining == 0
+  before a week may flip to 'done') is sliced and banked the same way:
+  a count timeout stalls the week visibly (action='recount_pending')
+  but can never wedge it silently behind a fieldless error.
 """
 import hashlib
 import os
@@ -159,6 +163,80 @@ def _count_rows(db, kind, lo, hi):
                     events.c.ts < nxt)).scalar() or 0
         t = nxt
     return total
+
+
+# The completion recount uses one-hour slices (168 per week). It runs
+# over a range the delete walk has just emptied, where the index still
+# carries the week's dead entries, and a six-hour kind+ts COUNT there
+# outlived the production statement timeout (2026-10-24, see
+# _completion_recount).
+_RECOUNT_SLICE_SECONDS = float(
+    os.environ.get('PRUNE_RECOUNT_SLICE_SECONDS', '3600'))
+
+
+def _bank_recount(db, kind, pstr, st, nxt, total):
+    st['recount_next_ts'] = nxt
+    st['recount_total'] = total
+    st['updated_at'] = time.time()
+    _set_prune_state(db, kind, pstr, st)
+
+
+def _completion_recount(db, kind, pstr, st, ws, we, deadline):
+    """Resumable exact recount of a week's live rows for the completion
+    gate (deleted >= expected_rows). Returns the remaining count when
+    the recount completes, or None while it is still pending.
+
+    The recount this replaces called _count_rows once, all-or-nothing,
+    AFTER the final deletions were already banked. On quote/2026-W40 a
+    slice COUNT over the just-emptied range died on the statement
+    timeout, the exception escaped prune_next into the route's
+    fieldless error body, and every retry re-ran the recount from zero
+    and banked nothing — the week wedged at 'deleting' with
+    deleted == expected and, selection being oldest-week-first,
+    blocked the whole prune queue behind it (2026-10-24). So the
+    recount now mirrors the delete walk: one-hour slices of the SAME
+    kind + ts-range predicate _count_rows uses (via _count_rows
+    itself, one internal slice per call — the completed sum is exactly
+    the week's live count, so the gate loses no strictness), progress
+    banked in prune state (recount_next_ts / recount_total) after
+    every slice, bounded by the caller's deadline. A slice that raises
+    is caught here: the last banked progress stays, recount_error
+    notes the failure, and the caller returns a fielded
+    'recount_pending' — a recount failure must never escape prune_next
+    or masquerade as the fieldless error body again. State rows banked
+    before this fix carry no recount fields; missing fields mean a
+    fresh recount from the week start."""
+    nxt = st.get('recount_next_ts')
+    total = st.get('recount_total')
+    if nxt is None or total is None or not ws <= nxt <= we:
+        nxt, total = ws, 0
+    while nxt < we:
+        if time.time() >= deadline:
+            break
+        slice_hi = min(we, nxt + _RECOUNT_SLICE_SECONDS)
+        try:
+            n = _count_rows(db, kind, nxt, slice_hi)
+        except Exception as e:
+            st['recount_error'] = str(e)[:300]
+            break
+        total += n
+        nxt = slice_hi
+        st.pop('recount_error', None)
+        try:
+            _bank_recount(db, kind, pstr, st, nxt, total)
+        except Exception as e:
+            st['recount_error'] = f'recount bank failed: {e}'[:300]
+            break
+    if nxt >= we:
+        return total
+    # Pending: bank where the recount stopped (covers the
+    # deadline-before-first-slice and slice-failure exits; a no-op
+    # rewrite when the loop already banked this exact point).
+    try:
+        _bank_recount(db, kind, pstr, st, nxt, total)
+    except Exception:
+        pass
+    return None
 
 
 def coverage(db, now=None):
@@ -529,7 +607,23 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
     st['status'] = 'deleting'
     _set_prune_state(db, kind, pstr, st)
     if st['deleted'] >= st['expected_rows']:
-        remaining = _count_rows(db, kind, ws, we)
+        remaining = _completion_recount(db, kind, pstr, st, ws, we,
+                                        deadline)
+        if remaining is None:
+            # Recount incomplete (deadline reached or a slice failed):
+            # progress is banked in prune state and the week stays
+            # 'deleting'; the driver sees a fielded pending instead of
+            # the route's fieldless error body, and the next call
+            # resumes the recount where this one stopped.
+            return {'ok': True, 'action': 'recount_pending',
+                    'kind': kind, 'period': pstr,
+                    'deleted_this_call': n_all,
+                    'deleted_total': st['deleted'],
+                    'expected_rows': st['expected_rows'],
+                    'status': st['status'],
+                    'recount_next_ts': st.get('recount_next_ts'),
+                    'recount_total': st.get('recount_total'),
+                    'recount_error': st.get('recount_error')}
         if remaining == 0 and st['deleted'] == st['expected_rows']:
             st['status'] = 'done'
         else:
