@@ -100,11 +100,17 @@ class Config:
     # 2026-10-08). Before this cleanup every default read "false" while
     # production ran them all via env vars — a lost env var would have
     # silently disabled live detectors on redeploy.
+    # PRUNE (Josh, 2026-10-24, futures plan phase 1): bos_fvg, bos_gz_vwap,
+    # aoi_zones and smt_divergence now default OFF. Three datasets agree
+    # (production-config backtest, the full strategy x ticker matrix, and
+    # an independent 8-week replay): the structure-chasing detectors bleed
+    # while the level-fades earn. Env vars remain as overrides, and the
+    # ict_paper allowlists block their old combos as defense in depth.
     ict_session_liquidity: bool = field(default_factory=lambda: env("ICT_SESSION_LIQUIDITY_ENABLED","true")=="true")
     ict_htf_levels: bool = field(default_factory=lambda: env("ICT_HTF_LEVELS_ENABLED","true")=="true")
     ict_turtle_soup: bool = field(default_factory=lambda: env("ICT_TURTLE_SOUP_ENABLED","true")=="true")
-    ict_smt_divergence: bool = field(default_factory=lambda: env("ICT_SMT_DIVERGENCE_ENABLED","true")=="true")
-    ict_aoi_zones: bool = field(default_factory=lambda: env("ICT_AOI_ZONES_ENABLED","true")=="true")
+    ict_smt_divergence: bool = field(default_factory=lambda: env("ICT_SMT_DIVERGENCE_ENABLED","false")=="true")
+    ict_aoi_zones: bool = field(default_factory=lambda: env("ICT_AOI_ZONES_ENABLED","false")=="true")
     ict_aoi_fade: bool = field(default_factory=lambda: env("ICT_AOI_FADE_ENABLED","true")=="true")
     ict_continuation: bool = field(default_factory=lambda: env("ICT_CONTINUATION_ENABLED","false")=="true")
     ict_trend_rider: bool = field(default_factory=lambda: env("ICT_TREND_RIDER_ENABLED","false")=="true")
@@ -131,8 +137,8 @@ class Config:
     ict_gz_ema_slow: int = field(default_factory=lambda: int(env("ICT_GZ_EMA_SLOW","21")))
     ict_gz_ema_cross_lookback: int = field(default_factory=lambda: int(env("ICT_GZ_EMA_CROSS_LOOKBACK","5")))
     ict_gz_ema_cross: bool = field(default_factory=lambda: env("ICT_GZ_EMA_CROSS_ENABLED","false")=="true")
-    ict_bos_fvg: bool = field(default_factory=lambda: env("ICT_BOS_FVG_ENABLED","true")=="true")
-    ict_bos_gz_vwap: bool = field(default_factory=lambda: env("ICT_BOS_GZ_VWAP_ENABLED","true")=="true")
+    ict_bos_fvg: bool = field(default_factory=lambda: env("ICT_BOS_FVG_ENABLED","false")=="true")
+    ict_bos_gz_vwap: bool = field(default_factory=lambda: env("ICT_BOS_GZ_VWAP_ENABLED","false")=="true")
     ict_morning_drive: bool = field(default_factory=lambda: env("ICT_MORNING_DRIVE_ENABLED","false")=="true")
     ict_icc: bool = field(default_factory=lambda: env("ICT_ICC_ENABLED","false")=="true")
     ict_rumers_box: bool = field(default_factory=lambda: env("ICT_RUMERS_BOX_ENABLED","true")=="true")
