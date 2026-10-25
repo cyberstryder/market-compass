@@ -62,11 +62,14 @@ def test_pre_ict_failure_does_not_block_ict_detectors(tmp_path, monkeypatch):
     transaction with the ICT block and their cumulative timeouts starved
     the detectors. A pre-ICT failure must now be contained (health row)
     while the ICT block still runs in its own transaction."""
+    # ict_bos_fvg=True: since the 2026-10-24 prune the detector is
+    # code-default OFF; it is this test's ICT-block witness, so enable it
+    # explicitly (the test is about transaction isolation, not defaults).
     cfg = Config(paper_trading=True, stock_paper_trades=True,
                  db='sqlite:///' + str(tmp_path / 'tick.db'), local=True,
                  role='web', password='x', stocks=('SPY',), futures=(),
                  alpaca_key='', alpaca_secret='', massive='', databento='',
-                 matrix='', discord='')
+                 matrix='', discord='', ict_bos_fvg=True)
     db = Store(cfg.db)
     db.initialize()
     engine = Engine(db, cfg)
