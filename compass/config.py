@@ -112,7 +112,6 @@ class Config:
     ict_smt_divergence: bool = field(default_factory=lambda: env("ICT_SMT_DIVERGENCE_ENABLED","false")=="true")
     ict_aoi_zones: bool = field(default_factory=lambda: env("ICT_AOI_ZONES_ENABLED","false")=="true")
     ict_aoi_fade: bool = field(default_factory=lambda: env("ICT_AOI_FADE_ENABLED","true")=="true")
-    ict_continuation: bool = field(default_factory=lambda: env("ICT_CONTINUATION_ENABLED","false")=="true")
     ict_trend_rider: bool = field(default_factory=lambda: env("ICT_TREND_RIDER_ENABLED","false")=="true")
     # Gap fade detector (futures): fade overnight gaps at RTH open
     gap_fade_enabled: bool = field(default_factory=lambda: env("GAP_FADE_ENABLED","false")=="true")
@@ -123,13 +122,6 @@ class Config:
     vix_regime_enabled: bool = field(default_factory=lambda: env("VIX_REGIME_ENABLED","true")=="true")
     vix_low_threshold: float = field(default_factory=lambda: float(env("VIX_LOW_THRESHOLD","15.0")))
     vix_high_threshold: float = field(default_factory=lambda: float(env("VIX_HIGH_THRESHOLD","25.0")))
-    # VWAP fade detector (futures): mean reversion from 2-3 SD extremes.
-    # Default off (2026-10-23): the detector emits summaries only and cannot
-    # submit trades, so running it by default is wasted scan time.
-    vwap_fade_enabled: bool = field(default_factory=lambda: env("VWAP_FADE_ENABLED","false")=="true")
-    vwap_fade_sd_entry: float = field(default_factory=lambda: float(env("VWAP_FADE_SD_ENTRY","2.0")))
-    vwap_fade_sd_stop: float = field(default_factory=lambda: float(env("VWAP_FADE_SD_STOP","3.0")))
-    vwap_fade_session: str = field(default_factory=lambda: env("VWAP_FADE_SESSION","ny"))
     mu_scalp: bool = field(default_factory=lambda: env("MU_SCALP_ENABLED","true")=="true")
     ict_tier_a_b: bool = field(default_factory=lambda: env("ICT_TIER_A_B_ENABLED","false")=="true")
     ict_golden_zone: bool = field(default_factory=lambda: env("ICT_GOLDEN_ZONE_ENABLED","true")=="true")
@@ -139,8 +131,6 @@ class Config:
     ict_gz_ema_cross: bool = field(default_factory=lambda: env("ICT_GZ_EMA_CROSS_ENABLED","false")=="true")
     ict_bos_fvg: bool = field(default_factory=lambda: env("ICT_BOS_FVG_ENABLED","false")=="true")
     ict_bos_gz_vwap: bool = field(default_factory=lambda: env("ICT_BOS_GZ_VWAP_ENABLED","false")=="true")
-    ict_morning_drive: bool = field(default_factory=lambda: env("ICT_MORNING_DRIVE_ENABLED","false")=="true")
-    ict_icc: bool = field(default_factory=lambda: env("ICT_ICC_ENABLED","false")=="true")
     ict_rumers_box: bool = field(default_factory=lambda: env("ICT_RUMERS_BOX_ENABLED","true")=="true")
     ict_trend_bias: bool = field(default_factory=lambda: env("ICT_TREND_BIAS_ENABLED","false")=="true")
     ict_trend_bias_sma_len: int = field(default_factory=lambda: int(env("ICT_TREND_BIAS_SMA_LEN","50")))

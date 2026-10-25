@@ -1868,12 +1868,6 @@ a{color:#888}</style></head><body>
         with db.tx() as c:
             return display(db,c,time.time())
 
-    @app.get('/api/ict-continuation')
-    def get_ict_continuation():
-        from .continuation import display
-        with db.tx() as c:
-            return display(db,c,time.time())
-
     @app.get('/api/ict-tier-a-b')
     def get_ict_tier_a_b():
         from .tier_a_b import display
@@ -1903,18 +1897,6 @@ a{color:#888}</style></head><body>
         from .ict_paper import attribution
         with db.tx() as c:
             return {'asof': time.time(), 'attribution': attribution(db, c)}
-
-    @app.get('/api/yt-morning-drive')
-    def get_yt_morning_drive():
-        from .morning_drive import display
-        with db.tx() as c:
-            return display(db,c,time.time())
-
-    @app.get('/api/yt-icc')
-    def get_yt_icc():
-        from .icc import display
-        with db.tx() as c:
-            return display(db,c,time.time())
 
     @app.get('/api/yt-rumers-box')
     def get_yt_rumers_box():

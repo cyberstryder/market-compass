@@ -153,10 +153,11 @@ def test_engine_dispatch_calls_vix_gate():
     import re
     src = open(os.path.join(os.path.dirname(__file__), "..", "compass",
                             "engine.py")).read()
-    # detectors the gate is specified for: 6 breakout + 4 fade
-    gated = {"bos_fvg", "bos_gz_vwap", "continuation", "morning_drive",
-             "icc", "rumers_box", "turtle_soup", "aoi_zones", "aoi_fade",
-             "gap_fade"}
+    # detectors the gate is specified for: 3 breakout + 4 fade
+    # (continuation, morning_drive and icc were in this set until their
+    # retirement on 2026-10-25 — docs/RETIRED_DETECTORS.md)
+    gated = {"bos_fvg", "bos_gz_vwap", "rumers_box", "turtle_soup",
+             "aoi_zones", "aoi_fade", "gap_fade"}
     # each gated detector's dispatch line must call _should_run('<name>')
     for name in sorted(gated):
         pattern = r"_should_run\(['\"]%s['\"]\)" % re.escape(name)

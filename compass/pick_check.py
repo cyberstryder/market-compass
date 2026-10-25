@@ -20,9 +20,6 @@ ICT_DETECTORS = (
     ('turtle_soup', 'ict_turtle_soup:latest', 'Turtle Soup'),
     ('smt_divergence', 'ict_smt_divergence:latest', 'SMT Divergence'),
     ('aoi_zones', 'ict_aoi_zones:latest', 'AOI Zones'),
-    ('continuation', 'ict_continuation:latest', 'Continuation'),
-    ('morning_drive', 'morning_drive:latest', 'Morning-Drive Fade'),
-    ('icc', 'icc:latest', 'ICC'),
     ('rumers_box', 'rumers_box:latest', 'Rumers Box'),
 )
 

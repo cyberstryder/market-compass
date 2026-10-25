@@ -1003,18 +1003,12 @@ class Engine:
             if self.cfg.ict_aoi_fade and _should_run('aoi_fade'):
                 from .aoi_fade import scan as ict_aoi_fade_scan
                 ict_summaries['aoi_fade'] = _safe_scan('aoi_fade', lambda: ict_aoi_fade_scan(self.db,c,self.cfg,now))
-            if self.cfg.ict_continuation and _should_run('continuation'):
-                from .continuation import scan as ict_continuation_scan
-                ict_summaries['continuation'] = _safe_scan('continuation', lambda: ict_continuation_scan(self.db,c,self.cfg,now))
             if getattr(self.cfg, 'ict_trend_rider', False):
                 from .trend_rider import scan as ict_trend_rider_scan
                 ict_summaries['trend_rider'] = _safe_scan('trend_rider', lambda: ict_trend_rider_scan(self.db,c,self.cfg,now))
             if getattr(self.cfg, 'gap_fade_enabled', False) and _should_run('gap_fade'):
                 from .gap_fade import scan as gap_fade_scan
                 ict_summaries['gap_fade'] = _safe_scan('gap_fade', lambda: gap_fade_scan(self.db,c,self.cfg,now))
-            if getattr(self.cfg, 'vwap_fade_enabled', False):
-                from .vwap_fade import scan as vwap_fade_scan
-                ict_summaries['vwap_fade'] = _safe_scan('vwap_fade', lambda: vwap_fade_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_tier_a_b:
                 from .tier_a_b import scan as ict_tier_a_b_scan
                 ict_summaries['tier_a_b'] = _safe_scan('tier_a_b', lambda: ict_tier_a_b_scan(self.db,c,self.cfg,now))
@@ -1033,12 +1027,6 @@ class Engine:
             # YouTube-trader method detectors: evidence snapshots always; paper
             # fills only when ICT_FUTURES_PAPER_ENABLED is also on (handled
             # inside each scan via ict_paper).
-            if self.cfg.ict_morning_drive and _should_run('morning_drive'):
-                from .morning_drive import scan as yt_morning_drive_scan
-                ict_summaries['morning_drive'] = _safe_scan('morning_drive', lambda: yt_morning_drive_scan(self.db,c,self.cfg,now))
-            if self.cfg.ict_icc and _should_run('icc'):
-                from .icc import scan as yt_icc_scan
-                ict_summaries['icc'] = _safe_scan('icc', lambda: yt_icc_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_rumers_box and _should_run('rumers_box'):
                 from .rumers_box import scan as yt_rumers_box_scan
                 ict_summaries['rumers_box'] = _safe_scan('rumers_box', lambda: yt_rumers_box_scan(self.db,c,self.cfg,now))
@@ -1077,9 +1065,9 @@ class Engine:
             self.db.health('day_trading_board','running','board %s, %d symbols' % (
                 board_summary.get('action') or 'steady', board_summary['symbols']))
         for _ict_name in ('session_liquidity','htf_levels','turtle_soup','smt_divergence',
-                          'aoi_zones','aoi_fade','continuation','tier_a_b',
+                          'aoi_zones','aoi_fade','tier_a_b',
                           'golden_zone','bos_fvg','bos_gz_vwap',
-                          'morning_drive','icc','rumers_box'):
+                          'rumers_box'):
             _s = ict_summaries.get(_ict_name)
             if _s and _s.get('ran'):
                 self.db.health('ict_' + _ict_name, 'running',

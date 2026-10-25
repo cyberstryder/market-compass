@@ -135,6 +135,15 @@ def test_each_detector_submits_with_own_tag(db, cfg):
         setattr(cfg, flag, True)
     with db.tx() as c:
         for detector, tag in ict_paper.STRATEGY_TAGS.items():
+            if detector not in ict_paper.DETECTOR_FLAGS:
+                # Retired 2026-10-25 (docs/RETIRED_DETECTORS.md): the tag
+                # stays in STRATEGY_TAGS as the identity of stored trades,
+                # but with no flag mapping left the detector can never
+                # submit again.
+                r = ict_paper.submit(db, c, cfg, NOW, detector, SYM, sig())
+                assert not r['submitted'], (detector, r)
+                assert r['reason'] == 'paper_disabled'
+                continue
             # Use a symbol allowed for this detector (mix/match allowlist).
             # Detectors not in the allowlist have no restriction, use NQ.
             # Detectors with empty allowlist (e.g. continuation) are disabled
