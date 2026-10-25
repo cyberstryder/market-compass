@@ -4,10 +4,12 @@ from types import SimpleNamespace
 import pytest
 from compass.store import Store
 from compass import bos_gz_vwap as bgv
+from compass import ict_paper
 from compass.ict_common import atr
 
 OPEN = 1_699_992_000
-SYM = 'MCL.c.0'  # BOS_GZ_VWAP allowlist: MCL only (mix/match 2026-10-14)
+SYM = 'MCL.c.0'  # pre-prune allowlist was MCL only; the 2026-10-24 prune
+# emptied it — the submit test below re-enables it locally via monkeypatch
 NOW = OPEN + 15 * 60
 
 # Same BOS tape as the FVG fixture: swing high 102 broken at idx11,
@@ -135,7 +137,14 @@ def test_scan_writes_snapshot_and_signal_without_paper(db):
         assert db.get(c, 'position:ict:bos_gz_vwap:' + SYM + ':t1') is None
 
 
-def test_scan_submits_paper_when_both_flags_on(db):
+def test_scan_submits_paper_when_both_flags_on(db, monkeypatch):
+    # 2026-10-24 prune: bos_gz_vwap is code-default OFF and its allowlist
+    # entry is empty (defense in depth). This test covers the scan ->
+    # submit mechanics for a deliberate re-enable, so it restores the
+    # pre-prune MCL allowlist entry for its duration; production stays
+    # blocked.
+    monkeypatch.setitem(ict_paper.DETECTOR_SYMBOL_ALLOWLIST,
+                        'bos_gz_vwap', {'MCL'})
     with db.tx() as c:
         _seed(db, c)
         bgv.scan(db, c, _cfg(ict_futures_paper=True), NOW)

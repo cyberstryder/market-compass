@@ -31,12 +31,8 @@ def test_production_detectors_default_on(clean_env):
     cfg = Config()
     assert cfg.ict_futures_paper is True
     assert cfg.ict_turtle_soup is True
-    assert cfg.ict_smt_divergence is True
-    assert cfg.ict_aoi_zones is True
     assert cfg.ict_aoi_fade is True
     assert cfg.ict_golden_zone is True
-    assert cfg.ict_bos_fvg is True
-    assert cfg.ict_bos_gz_vwap is True
     assert cfg.ict_rumers_box is True
 
 
@@ -45,6 +41,12 @@ def test_deliberately_off_detectors_stay_off(clean_env):
     assert cfg.ict_continuation is False  # Josh disabled, 2026-10-14
     assert cfg.ict_trend_rider is False   # default-off by design, 2026-10-08
     assert cfg.ict_gz_ema_cross is False  # contradicted the GZ setup
+    # Futures prune (Josh, 2026-10-24): structure-chasers default off;
+    # env vars can still re-enable them deliberately.
+    assert cfg.ict_bos_fvg is False
+    assert cfg.ict_bos_gz_vwap is False
+    assert cfg.ict_aoi_zones is False
+    assert cfg.ict_smt_divergence is False
 
 
 def test_env_var_still_overrides_default(clean_env, monkeypatch):

@@ -14,7 +14,7 @@ from compass.engine import Engine
 from compass import ict_paper
 
 NOW = datetime(2026, 9, 28, 17, 0, tzinfo=timezone.utc).timestamp()  # Mon 12:00 CT
-SYM = 'NQ.c.0'
+SYM = 'MNQ.c.0'  # 2026-10-24 prune: golden_zone watches {MCL, MNQ}; bare NQ (mini) no longer allowed
 POS = 'position:ict:golden_zone:' + SYM + ':t1'  # t1 leg of 2/2/1 scale-out
 
 
@@ -191,23 +191,25 @@ def test_quiet_quote_leaves_position_open(db, cfg):
 
 
 def test_attribution_splits_pnl_by_detector(db, cfg):
-    cfg.ict_bos_fvg = True
+    cfg.ict_aoi_fade = True
     e = open_position(db, cfg, 'golden_zone')
     # Quote at 104.1 hits the 104.0 target (2026-10-18: single position, no 2/2/1)
     exit_with(e, db, NOW + 120, quote(NOW + 120, 104.1, 104.11))
-    e2 = open_position(db, cfg, 'bos_fvg',
+    e2 = open_position(db, cfg, 'aoi_fade',
                        direction='short', entry=100.0, stop=102.0, target=96.0)
-    # bos_fvg allowlist uses MNQ (first allowed), not SYM (NQ)
-    bos_sym = sorted(ict_paper.DETECTOR_SYMBOL_ALLOWLIST['bos_fvg'])[0] + '.c.0'
+    # aoi_fade allowlist is {MCL, MES} (MCL from the 2026-10-24 prune; MES
+    # added 2026-10-25 after clearing both replay legs; bos_fvg, the old
+    # vehicle here, is pruned: default-off with an empty allowlist).
+    af_sym = sorted(ict_paper.DETECTOR_SYMBOL_ALLOWLIST['aoi_fade'])[0] + '.c.0'
     p2 = exit_with(e2, db, NOW + 240, quote(NOW + 240, 102.1, 102.11),
-                   pos_key='position:ict:bos_fvg:' + bos_sym + ':t1', sym=bos_sym)
+                   pos_key='position:ict:aoi_fade:' + af_sym + ':t1', sym=af_sym)
     assert p2['exit_reason'] == 'stop' and p2['pnl'] < 0
     with db.tx() as c:
         attr = ict_paper.attribution(db, c)
-    gz, bf = attr['ict-golden-zone'], attr['ict-bos-fvg']
-    # 2026-10-18: Single position (no 2/2/1). gz 1 trade win; bf 1 trade loss.
+    gz, af = attr['ict-golden-zone'], attr['ict-aoi-fade']
+    # 2026-10-18: Single position (no 2/2/1). gz 1 trade win; af 1 trade loss.
     assert gz['trades'] == 1 and gz['wins'] == 1 and gz['realized'] > 0
-    assert bf['trades'] == 1 and bf['losses'] == 1 and bf['realized'] < 0
+    assert af['trades'] == 1 and af['losses'] == 1 and af['realized'] < 0
 
 
 def test_exits_log_no_alerts_only_paper_decisions(db, cfg):

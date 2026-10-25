@@ -7,7 +7,7 @@
    There were zero tests exercising the TradersPost path.
 2. The duplicate/hedging scan used a hand-maintained detector list that
    missed 5 of the 12 detectors in STRATEGY_TAGS.
-3. Unmapped symbols (e.g. NQ.c.0, absent from traderspost.SYMBOL_MAP) would
+3. Unmapped symbols (absent from traderspost.SYMBOL_MAP) would
    have been POSTed verbatim to TradersPost as an unknown ticker.
 """
 from datetime import datetime, timezone
@@ -36,8 +36,7 @@ def cfg():
     c.ict_futures_paper = True
     c.ict_golden_zone = True
     c.ict_aoi_fade = True
-    c.ict_aoi_zones = True
-    c.ict_bos_fvg = True
+    c.ict_rumers_box = True
     c.traderspost_enabled = True
     return c
 
@@ -101,8 +100,11 @@ def test_same_detector_reentry_blocked_at_paper_layer(db, cfg, sent):
 
 
 def test_correlated_opposite_direction_is_hedging_skip(db, cfg, sent):
-    submit(db, cfg, 'aoi_zones', 'MES.c.0')  # long, equity group
-    _, trade2 = submit(db, cfg, 'bos_fvg', 'MNQ.c.0', signal_ts=NOW - 30,
+    # Post-prune vehicles (2026-10-24): aoi_zones/bos_fvg are disabled with
+    # empty allowlists; golden_zone|MNQ and rumers_box|MYM are live combos
+    # in the same equity correlation group.
+    submit(db, cfg, 'golden_zone', 'MNQ.c.0')  # long, equity group
+    _, trade2 = submit(db, cfg, 'rumers_box', 'MYM.c.0', signal_ts=NOW - 30,
                        direction='short', entry=100.0, stop=102.0, target=96.0)
     assert len(sent) == 1
     assert trade2['traderspost_sent'] is False
@@ -133,9 +135,10 @@ def test_sent_flag_survives_exits_copy_over(db, cfg, sent):
 
 
 def test_unmapped_symbol_fails_closed(db, cfg, sent):
-    # golden_zone allowlist includes NQ, but SYMBOL_MAP has no NQ.c.0 entry:
+    # golden_zone's allowlist is root-based, so MCL.c.0 is a legal paper
+    # symbol, but SYMBOL_MAP has no MCL.c.0 entry (it maps MCL.v.0):
     # the raw Compass symbol must never be POSTed to TradersPost.
-    _, trade = submit(db, cfg, 'golden_zone', 'NQ.c.0')
+    _, trade = submit(db, cfg, 'golden_zone', 'MCL.c.0')
     assert sent == []
     assert trade['traderspost_sent'] is False
     assert 'no TradersPost symbol mapping' in trade['traderspost_skip_reason']

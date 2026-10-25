@@ -4,10 +4,12 @@ from types import SimpleNamespace
 import pytest
 from compass.store import Store
 from compass import bos_fvg as bf
+from compass import ict_paper
 from compass.ict_common import atr, detect_fvgs, fvg_mitigated
 
 OPEN = 1_699_992_000
-SYM = 'MNQ.c.0'  # BOS_FVG allowlist: MNQ only (SIL dropped 2026-10-15)
+SYM = 'MNQ.c.0'  # pre-prune allowlist was MNQ only; the 2026-10-24 prune
+# emptied it — the submit test below re-enables it locally via monkeypatch
 NOW = OPEN + 15 * 60
 
 # Swing high 102 (idx6), bullish FVG (101.2, 102.6) formed idx9,
@@ -144,7 +146,13 @@ def test_scan_writes_snapshot_and_signal_without_paper(db):
         assert db.get(c, 'position:ict:bos_fvg:' + SYM + ':t1') is None
 
 
-def test_scan_submits_paper_when_both_flags_on(db):
+def test_scan_submits_paper_when_both_flags_on(db, monkeypatch):
+    # 2026-10-24 prune: bos_fvg is code-default OFF and its allowlist entry
+    # is empty (defense in depth). This test covers the scan -> submit
+    # mechanics for a deliberate re-enable, so it restores the pre-prune
+    # MNQ allowlist entry for its duration; production stays blocked.
+    monkeypatch.setitem(ict_paper.DETECTOR_SYMBOL_ALLOWLIST,
+                        'bos_fvg', {'MNQ'})
     with db.tx() as c:
         _seed(db, c)
         bf.scan(db, c, _cfg(ict_futures_paper=True), NOW)

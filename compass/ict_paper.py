@@ -75,14 +75,33 @@ DETECTOR_FLAGS = {
 #   Turtle Soup fades breakouts (mean-reversion). Method-symbol mismatch.
 #   MYM is profitable WITHOUT Turtle Soup (+$742 across AOI Zones, BOS+FVG,
 #   Rumers Box). Turtle Soup works on MCL (+$748, ranging market) — keep it there.
+# - PRUNE 2026-10-24 (Josh, futures plan phase 1): allowlists cut to the
+#   proven core. AOI Fade {MCL} and Turtle Soup {MCL} are the surviving
+#   live combos; Golden Zone {MCL, MNQ} is watch-status (NQ was tests-only
+#   before — now a watch symbol per the plan; MGC and the eval roots are
+#   out); Rumers Box is restricted to {MYM}, its one positive combo (MNQ
+#   blocked: same logic, ~10x the loss per trade — stop geometry). The
+#   Oct-15 eval roots (MYM/M2K/M6A/M6E) come off every other detector:
+#   their paper evaluation never produced clean data (production scan
+#   paths silently skip M2K/M6A/M6E, so that evaluation was vacuous).
+#   The pruned detectors (bos_fvg, bos_gz_vwap, aoi_zones, smt_divergence)
+#   get EMPTY allowlists as defense in depth: their config defaults are
+#   now off, and if a flag is ever re-enabled by env the old losing combos
+#   stay blocked until a replay earns them back. Evidence (three datasets,
+#   same verdict — fades at levels earn, structure-chasers bleed):
+#   production-config backtest (book carried by Turtle Soup|MCL and
+#   AOI Fade|MCL), the full strategy x ticker matrix (only 2 of 112
+#   combos cleared the exploratory bar), and an independent 8-week replay.
 DETECTOR_SYMBOL_ALLOWLIST = {
-    'aoi_fade': {'MCL', 'MNQ', 'MYM', 'M2K', 'M6A', 'M6E'},
-    'aoi_zones': {'MES', 'MYM', 'M2K', 'M6A', 'M6E'},
-    'bos_fvg': {'MNQ', 'MYM', 'M2K', 'M6A', 'M6E'},
-    'bos_gz_vwap': {'MCL', 'MYM', 'M2K', 'M6A', 'M6E'},
-    'turtle_soup': {'MCL', 'M2K', 'M6A', 'M6E'},  # MYM removed 2026-10-17
+    'aoi_fade': {'MCL', 'MES'},  # 2026-10-24 prune {MCL}; MES added 2026-10-25 (cleared both replay legs: 90 tr, +$2,569)
+    'aoi_zones': set(),  # 2026-10-24: default-off; empty blocks re-enable by env
+    'bos_fvg': set(),  # 2026-10-24: default-off; empty blocks re-enable by env
+    'bos_gz_vwap': set(),  # 2026-10-24: default-off; empty blocks re-enable by env
+    'smt_divergence': set(),  # 2026-10-24: default-off; was unrestricted
+    'turtle_soup': {'MCL'},  # 2026-10-24 prune: proven core only (MYM out 2026-10-17)
     'continuation': set(),  # disabled entirely
-    'golden_zone': {'MGC', 'MCL', 'MYM', 'M2K', 'M6A', 'M6E', 'NQ'},  # Added 2026-10-19: MGC trial with new system (R:R 1.5, single position); NQ for tests
+    'golden_zone': {'MCL', 'MNQ'},  # 2026-10-24: watch status; MGC + eval roots out; NQ was tests-only, now a watch symbol per the plan
+    'rumers_box': {'MYM'},  # Added 2026-10-24: only positive combo; MNQ blocked on stop geometry
     # Detectors not listed here have no symbol restriction (they're
     # either disabled or not in the futures mix).
 }
