@@ -361,10 +361,18 @@ def scan(db, c, cfg, now=None):
         return {"ran": True, "reason": "no session"}
     opened = 0
     if now < flatten_at - ENTRY_CUTOFF_SEC:
-        try:
-            opened += _open_spy_plans(db, c, now, flatten_at)
-        except Exception:
-            pass
+        # SPY morning plan RETIRED 2026-10-25 (Josh's decision; full record:
+        # 5 paper trades, net -$113.50). Plan entries open only while the
+        # plan itself is enabled — cfg.spy_morning_brief is the plan's
+        # master switch (code default off, no production override), so a
+        # confirmed spy_brief report can no longer book a plan trade.
+        # Scanner entries below are unaffected, and exits in _update_open
+        # stay ungated so any open plan trade still exits normally.
+        if getattr(cfg, "spy_morning_brief", False):
+            try:
+                opened += _open_spy_plans(db, c, now, flatten_at)
+            except Exception:
+                pass
         try:
             opened += _open_scanner(db, c, now, flatten_at)
         except Exception:
