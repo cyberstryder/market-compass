@@ -248,6 +248,24 @@ def _open_scanner(db, c, now, flatten_at, cfg=None):
             continue
         q = _fresh_quote(db, c, symbol, now)
         if not q:
+            # Seat/shadow denominator parity (Task 003 item 8): a seated
+            # alert dropped here used to leave NO record — scan_ts had
+            # already advanced, so the seat book's denominator silently
+            # shrank — while the shadow path records the identical case
+            # as a closed data_gap row. Record the same accounting for
+            # the seat book: the shadow record shape (built by
+            # scanner_shadow.new_record with entry=None), re-kinded to
+            # "scanner" and stored under the seat book's own trade key
+            # (disjoint from the shadow keyspace), where simple.py's
+            # _0dte already tallies closed data_gap rows separately
+            # from wins/losses. Booking behavior is unchanged.
+            if family is not None:
+                rec = scanner_shadow.new_record(
+                    db, c, key, payload, family,
+                    contract.get("underlying"), symbol, None, now, ts,
+                    flatten_at, alert_key=r.get("key"))
+                rec["kind"] = "scanner"
+                _open(db, c, key, rec)
             continue
         entry = _num(q.get("ask")) + SLIPPAGE
         rec = {

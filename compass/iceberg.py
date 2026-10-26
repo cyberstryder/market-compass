@@ -61,6 +61,17 @@ DEFAULTS = {
 
 HORIZONS = ('h1', 'close', 'next_close', 'expiry')
 
+# pending_alerts bound: an alert fires at most once per contract per
+# cooldown (30 min default) and the collector pass drains the queue
+# every ~30 s, so a healthy queue holds a handful at most. The cap
+# exists for the stalled/stopped-drain case: the deque used to be
+# unbounded, so a detector whose drain never ran accumulated alerts
+# forever (Task 003 item 6). 1024 is orders of magnitude above any
+# plausible inter-drain burst; on overflow the deque drops the OLDEST
+# undrained alerts and snapshot_diag's pending_alerts pins at the cap
+# — the visible symptom of a stalled drain.
+PENDING_ALERTS_MAXLEN = 1024
+
 
 def _opt(cfg, name, default):
     value = getattr(cfg, 'iceberg_' + name, None) if cfg is not None else None
@@ -113,7 +124,17 @@ class IcebergDetector:
 
     def __init__(self, cfg=None):
         self.cfg = cfg
-        self.enabled = bool(_opt(cfg, 'enabled', DEFAULTS['enabled']))
+        # Kill switch: the Config field is `iceberg_detector`
+        # (config.py, env ICEBERG_DETECTOR_ENABLED). This used to read
+        # _opt(cfg, 'enabled') -> cfg.iceberg_enabled, a field Config
+        # does not have, so the value was always None and `enabled`
+        # always fell back to the default True — the env switch did
+        # nothing (Task 003 item 6, confirmed behaviorally). The legacy
+        # name stays as a fallback for callers that pass iceberg_enabled.
+        _det = _opt(cfg, 'detector', None)
+        if _det is None:
+            _det = _opt(cfg, 'enabled', DEFAULTS['enabled'])
+        self.enabled = bool(_det)
         self.min_contracts = float(_opt(cfg, 'min_contracts_30m',
                                          DEFAULTS['min_contracts_30m']))
         self.min_premium = float(_opt(cfg, 'min_premium_30m',
@@ -136,7 +157,7 @@ class IcebergDetector:
         self.contracts = OrderedDict()      # symbol -> _State (LRU)
         self.nbbo = {}                      # symbol -> (ts, bid, ask)
         self.oi_cache = {}                  # symbol -> open interest
-        self.pending_alerts = deque()
+        self.pending_alerts = deque(maxlen=PENDING_ALERTS_MAXLEN)
         self.started_at = time.time()
         self.prints_seen = 0
         self.quotes_seen = 0

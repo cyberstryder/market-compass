@@ -246,6 +246,50 @@ def test_shadow_entry_without_quote_is_data_gap_from_birth(db):
     assert cell["data_gaps"] == 1 and cell["scored"] == 0
 
 
+def test_seated_entry_without_quote_records_seat_data_gap(db):
+    # Task 003 item 8: a SEATED alert dropped for no fresh quote must
+    # leave the same data_gap accounting the shadow path records —
+    # under the seat book's own trade key (disjoint from the shadow
+    # keyspace), so the seat scorecard's denominator stops silently
+    # shrinking. Exactly one record, no booking, no shadow row.
+    now = time.time()
+    with db.tx() as c:
+        _seed_alert(db, c, now, "seatgap1", "session_sweep_reclaim",
+                    "MU", MU_OPT, quote=False)
+        opened = zero_dte_paper._open_scanner(db, c, now, now + 7200)
+        rec = db.get(c, "trade:0dte-scan-seatgap1")
+        shadow = db.get(c, _shadow_key("seatgap1"))
+        seat_rows = db.prefix(c, "trade:0dte-scan-")
+        card = scanner_shadow.scorecard(db, c, None)
+    assert opened == 0
+    assert shadow is None
+    assert list(seat_rows) == ["trade:0dte-scan-seatgap1"]
+    assert rec["kind"] == "scanner"
+    assert rec["family"] == "session_sweep_reclaim"
+    assert rec["status"] == "closed" and rec["data_gap"] is True
+    assert rec["entry"] is None and rec["pnl"] is None
+    assert rec["exit_reason"] == "entry quote unavailable (data gap)"
+    # Not double-counted into the shadow book.
+    assert card["totals"]["alerts"] == 0
+    assert card["totals"]["data_gaps"] == 0
+
+
+def test_seated_stale_quote_also_records_seat_data_gap(db):
+    # Same drop, stale-quote flavor: the only quote is older than the
+    # fresh-quote window, so _fresh_quote returns None.
+    now = time.time()
+    with db.tx() as c:
+        _seed_alert(db, c, now, "seatgap2", "session_sweep_reclaim",
+                    "NFLX", NFLX_OPT, quote=False)
+        db.put(c, "quote:" + NFLX_OPT,
+               {"ts": now - 3600, "bid": 2.0, "ask": 2.1})
+        opened = zero_dte_paper._open_scanner(db, c, now, now + 7200)
+        rec = db.get(c, "trade:0dte-scan-seatgap2")
+    assert opened == 0
+    assert rec is not None and rec["data_gap"] is True
+    assert rec["status"] == "closed"
+
+
 def test_active_contracts_include_open_shadow(db):
     now = time.time()
     with db.tx() as c:
