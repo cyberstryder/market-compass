@@ -29,6 +29,15 @@ Trigger: POST/GET ``/api/admin/chain-eod-snapshot`` (cron-token gated,
 see app.py), fired once daily after the close by the goal cron
 ``eod-chain-snapshot``. History before 2026-10-26 does not exist and is
 never fabricated.
+
+Repair 2026-10-26 (first fire captured nothing): the endpoint runs on the
+Dashboard service, which holds NONE of the provider credentials (no
+MASSIVE_API_KEY, no APCA pair — only the Collector service has them), so
+every symbol failed with an Alpaca HTTP 401 in ~4 s. Guards added so this
+class of failure can never again pass as a completed day: a credential
+preflight that records a day-level ``fatal`` instead of per-symbol noise,
+``already_complete`` only for a finished day with zero errors, and the run
+lease is released when the run ends so a same-day re-trigger can retry.
 """
 import asyncio
 import json
@@ -45,6 +54,21 @@ KIND = 'chain_eod'
 DTE_MAX = 60
 BAND = 0.10
 CONCURRENCY = 3
+NO_PROVIDER_CREDENTIALS = 'no_provider_credentials'
+
+
+class ChainConfigError(Exception):
+    """No option-chain provider is configured on this service."""
+
+
+def providers_configured(cfg):
+    """True when at least one chain provider has credentials in this
+    process: Massive (API key) or Alpaca (key + secret pair). The snapshot
+    endpoint's service must hold one of them or every fetch is a 401."""
+    if getattr(cfg, 'massive', None):
+        return True
+    return bool(getattr(cfg, 'alpaca_key', None)
+                and getattr(cfg, 'alpaca_secret', None))
 
 # Fields kept per contract in the archive. ``underlying``/``multiplier`` are
 # hoisted to the payload level (identical for every row); the live path's
@@ -108,6 +132,11 @@ def underlying_close(db, c, symbol, now):
 async def fetch_chain(collectors, symbol, expiry_start, expiry_end):
     """Massive primary, Alpaca fallback — mirrors the chains() policy.
     Returns (contracts, complete, source). Raises only if both fail."""
+    if not providers_configured(collectors.cfg):
+        raise ChainConfigError(
+            'no provider credentials configured on this service '
+            '(MASSIVE_API_KEY and APCA_API_KEY_ID/APCA_API_SECRET_KEY '
+            'are all unset)')
     if collectors.cfg.massive:
         try:
             contracts, complete = await collectors.massive_chain(
@@ -127,7 +156,7 @@ def _manifest(db, c, date_str):
     m = db.get(c, manifest_key(date_str))
     if not isinstance(m, dict) or m.get('date') != date_str:
         m = {'date': date_str, 'started_at': None, 'finished_at': None,
-             'running': False, 'symbols': {}}
+             'running': False, 'fatal': None, 'symbols': {}}
     return m
 
 
@@ -189,6 +218,29 @@ async def run_snapshot(db, cfg, now=None, date_str=None, symbols=None,
     expiry_start = date_str
     expiry_end = day(now + DTE_MAX * 86400)
     symbols = list(cfg.watch_symbols) if symbols is None else list(symbols)
+    if fetch is None and not providers_configured(cfg):
+        # Deployment-context guard (2026-10-26 repair): the service
+        # serving the trigger holds no provider credentials, so every
+        # fetch would fail with a provider 401. Record ONE day-level
+        # fatal instead of a per-symbol error per watch symbol, and
+        # leave the day retryable — start_snapshot_background does not
+        # treat a fatal day as already complete.
+        with db.tx() as c:
+            m = _manifest(db, c, date_str)
+            m['running'] = False
+            m['started_at'] = m.get('started_at') or now
+            m['finished_at'] = time.time()
+            m['fatal'] = NO_PROVIDER_CREDENTIALS
+            db.put(c, manifest_key(date_str), m)
+        m['totals'] = _totals(m)
+        m['complete'] = True
+        db.health(KIND, 'error',
+                  f"EOD chain snapshot {date_str}: no provider credentials "
+                  "configured on this service (MASSIVE_API_KEY / "
+                  "APCA_API_KEY_ID+APCA_API_SECRET_KEY missing); "
+                  "nothing captured",
+                  poll_ts=time.time(), date=date_str, **m['totals'])
+        return m
     own_collectors = None
     if fetch is None:
         from .providers import Collectors
@@ -201,6 +253,7 @@ async def run_snapshot(db, cfg, now=None, date_str=None, symbols=None,
         with db.tx() as c:
             m = _manifest(db, c, date_str)
             m['running'] = True
+            m['fatal'] = None
             m['started_at'] = m.get('started_at') or now
             m['finished_at'] = None
             db.put(c, manifest_key(date_str), m)
@@ -227,7 +280,9 @@ async def run_snapshot(db, cfg, now=None, date_str=None, symbols=None,
         m['totals'] = _totals(m)
         m['complete'] = True
         t = m['totals']
-        db.health(KIND, 'available' if t['error'] == 0 else 'partial',
+        health_status = ('available' if t['error'] == 0 else
+                         'error' if t['ok'] == 0 else 'partial')
+        db.health(KIND, health_status,
                   f"EOD chain snapshot {date_str}: {t['ok']} ok, "
                   f"{t['error']} failed, {t['contracts']} contracts, "
                   f"{t['bytes']} bytes",
@@ -241,10 +296,14 @@ async def run_snapshot(db, cfg, now=None, date_str=None, symbols=None,
                 pass
 
 
-def start_snapshot_background(db, cfg, date_str=None, now=None):
+def start_snapshot_background(db, cfg, date_str=None, now=None, fetch=None,
+                              collectors=None):
     """Start run_snapshot on a daemon thread unless the day is already
-    complete or a run started recently is still marked running. Returns a
-    status dict for the endpoint response."""
+    complete or a run started recently is still marked running. A day is
+    'already complete' only when it finished with every symbol ok — a
+    finished day with errors (or a fatal) falls through and retries the
+    missing symbols; that is what makes a same-day re-trigger a recovery
+    path instead of a no-op. Returns a status dict for the endpoint."""
     import threading
     import uuid
     now = time.time() if now is None else now
@@ -252,8 +311,10 @@ def start_snapshot_background(db, cfg, date_str=None, now=None):
     with db.tx() as c:
         m = _manifest(db, c, date_str)
         if m.get('finished_at') and not m.get('running'):
-            return {'ok': True, 'already_complete': True, 'date': date_str,
-                    'totals': _totals(m)}
+            t = _totals(m)
+            if not m.get('fatal') and t['error'] == 0 and t['ok'] > 0:
+                return {'ok': True, 'already_complete': True,
+                        'date': date_str, 'totals': t}
         if m.get('running') and now - (m.get('started_at') or 0) < 7200:
             return {'ok': True, 'already_running': True, 'date': date_str}
         # A stale 'running' marker (process died mid-run) falls through:
@@ -264,7 +325,8 @@ def start_snapshot_background(db, cfg, date_str=None, now=None):
 
     def _run():
         try:
-            asyncio.run(run_snapshot(db, cfg, now=now, date_str=date_str))
+            asyncio.run(run_snapshot(db, cfg, now=now, date_str=date_str,
+                                     fetch=fetch, collectors=collectors))
         except Exception:
             LOG.exception('chain_eod snapshot run failed for %s', date_str)
             try:
@@ -272,6 +334,14 @@ def start_snapshot_background(db, cfg, date_str=None, now=None):
                     m = _manifest(db, c, date_str)
                     m['running'] = False
                     db.put(c, manifest_key(date_str), m)
+            except Exception:
+                pass
+        finally:
+            # Free the name now; without this a same-day retry waits out
+            # the full lease TTL (2026-10-26 repair).
+            try:
+                with db.tx() as c:
+                    db.release_lease(c, 'chain_eod:run', owner)
             except Exception:
                 pass
 

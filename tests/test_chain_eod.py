@@ -4,6 +4,12 @@ Covers: archive shaping (strike band, DTE window, greeks+IV retained), the
 Massive theta/vega discard fix on the snapshot path only, per-date
 idempotency, per-symbol failure isolation, archive registry membership,
 and cron-token gating of the trigger endpoint.
+
+Repair coverage (2026-10-26, first production fire captured nothing —
+the Dashboard service holds no provider credentials): credential
+preflight records a day-level fatal instead of per-symbol 401s, a
+finished all-error day re-triggers instead of reporting
+already_complete, and the run lease is released when the run ends.
 """
 import asyncio
 import time
@@ -204,6 +210,130 @@ def test_start_background_reports_already_complete(db):
                              fetch=make_fetch()))
     out = chain_eod.start_snapshot_background(db, cfg, date_str=DATE, now=NOW)
     assert out['already_complete'] is True and out['ok'] is True
+
+
+# ---------- repair 2026-10-26: deployment-context credentials ----------
+
+def _no_cred_cfg(symbols=('AAA',)):
+    return SimpleNamespace(watch_symbols=symbols, massive='',
+                           alpaca_key='', alpaca_secret='')
+
+
+def test_fetch_chain_without_credentials_raises_config_error():
+    calls = []
+
+    class FakeCollectors:
+        cfg = _no_cred_cfg()
+
+        async def massive_chain(self, symbol, **kw):
+            calls.append('massive')
+            return ([], True)
+
+        async def alpaca_chain(self, symbol, **kw):
+            calls.append('alpaca')
+            return ([], True)
+
+    with pytest.raises(chain_eod.ChainConfigError):
+        asyncio.run(chain_eod.fetch_chain(
+            FakeCollectors(), 'AAA', DATE, '2026-12-25'))
+    assert calls == []  # no provider is even attempted
+
+
+def test_run_snapshot_without_credentials_records_fatal(db):
+    # Would have caught the 2026-10-26 empty first fire: with no provider
+    # credentials in this process the run must record ONE day-level fatal,
+    # never 144 per-symbol 401 errors dressed up as a completed day, and
+    # must not call a provider at all.
+    seed_close(db, 'AAA')
+    cfg = _no_cred_cfg()
+    coll_calls = []
+
+    class FakeCollectors:
+        def __init__(self, cfg):
+            self.cfg = cfg
+
+        async def massive_chain(self, symbol, **kw):
+            coll_calls.append(symbol)
+            return ([provider_contract()], True)
+
+        async def alpaca_chain(self, symbol, **kw):
+            coll_calls.append(symbol)
+            return ([provider_contract()], True)
+
+    m = asyncio.run(run_snapshot(db, cfg, now=NOW, date_str=DATE,
+                                 collectors=FakeCollectors(cfg)))
+    assert m['fatal'] == chain_eod.NO_PROVIDER_CREDENTIALS
+    assert m['complete'] is True and m['running'] is False
+    assert m['symbols'] == {} and m['totals']['ok'] == 0
+    assert coll_calls == []
+    assert count_events(db) == 0
+    with db.tx() as c:
+        health = db.get(c, 'health:chain_eod')
+    assert health['status'] == 'error'
+    assert 'no provider credentials' in health['detail']
+
+
+def _poll_manifest(db, predicate, timeout=10):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            m = read_manifest(db, DATE)
+        except Exception:
+            m = None
+        if m is not None and predicate(m):
+            return m
+        time.sleep(0.1)
+    return read_manifest(db, DATE)
+
+
+def test_background_retrigger_after_all_error_day(db):
+    # A finished day where every symbol errored is NOT already_complete:
+    # a same-day re-trigger must retry (the 2026-10-26 recovery path —
+    # before the fix the endpoint no-oped and the day stayed empty).
+    seed_close(db, 'AAA')
+    cfg = SimpleNamespace(watch_symbols=('AAA',))
+    m = asyncio.run(run_snapshot(db, cfg, now=NOW, date_str=DATE,
+                                 fetch=make_fetch(fail=('AAA',))))
+    assert m['totals']['error'] == 1
+    out = chain_eod.start_snapshot_background(
+        db, _no_cred_cfg(), date_str=DATE, now=NOW)
+    assert out.get('started') is True and 'already_complete' not in out
+    # The retry runs in the background; with a credential-less cfg it
+    # lands on the fatal preflight instead of touching a provider.
+    m2 = _poll_manifest(db, lambda mm: bool(mm.get('fatal')))
+    assert m2['fatal'] == chain_eod.NO_PROVIDER_CREDENTIALS
+
+
+def test_background_run_releases_lease(db):
+    seed_close(db, 'AAA')
+    cfg = SimpleNamespace(watch_symbols=('AAA',))
+    out = chain_eod.start_snapshot_background(
+        db, cfg, date_str=DATE, now=NOW, fetch=make_fetch())
+    assert out.get('started') is True
+    m = _poll_manifest(
+        db, lambda mm: mm['complete'] and mm['totals']['ok'] == 1)
+    assert m['totals']['ok'] == 1
+    # The lease is released when the run ends: another owner can take it
+    # immediately, not only after the 2 h TTL (before the fix a same-day
+    # retry was locked out for the full TTL).
+    deadline = time.time() + 10
+    acquired = False
+    while time.time() < deadline and not acquired:
+        with db.tx() as c:
+            acquired = db.lease(c, 'chain_eod:run', 'probe-owner',
+                                seconds=30)
+        if not acquired:
+            time.sleep(0.1)
+    assert acquired
+
+
+def test_store_release_lease_only_by_owner(db):
+    with db.tx() as c:
+        assert db.lease(c, 'x:run', 'owner-a', seconds=7200) is True
+        assert db.release_lease(c, 'x:run', 'owner-b') is False
+        assert db.lease(c, 'x:run', 'owner-b', seconds=30) is False
+        assert db.release_lease(c, 'x:run', 'owner-a') is True
+        assert db.lease(c, 'x:run', 'owner-b', seconds=30) is True
 
 
 # ---------- registry ----------
