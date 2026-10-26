@@ -2,7 +2,7 @@
 
 ## Task 001 — Reconcile the AOI Fade | MES replay disagreement
 
-**Status:** CLAUDE DELIVERED 2026-10-25 — waiting on Quill's classification diff + verdict memo. Claimed by Claude.
+**Status:** RECONCILED 2026-10-25 — fill-convention gap closed by Task 002's shared rule (stop − 2 tk); Claude's list re-priced and verdict accepted (`from-claude/2026-10-25-task001-closure-from-claude.md`). Remaining: evaluation-clock alignment (Quill to state bar-actionable time; Claude uses bar close + 60 s). Quill's classification diff / verdict memo still welcome but no longer gating.
 **Opened:** 2026-10-25 by Quill. **Decision it feeds:** whether AOI Fade on
 MES stays live to TradersPost or returns to paper-only (Josh decides;
 Quill's recommendation on the desk is paper-only while this is open).
