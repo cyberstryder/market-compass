@@ -20,6 +20,7 @@ import time
 
 from sqlalchemy import select
 
+from . import scanner_shadow
 from .market import day, session
 from .store import events
 
@@ -184,8 +185,13 @@ def _find_0dte_contract(db, c, underlying, strike, typ, now):
     return None
 
 
-def _open_scanner(db, c, now, flatten_at):
-    """Open paper trades on new 0DTE scanner alerts."""
+def _open_scanner(db, c, now, flatten_at, cfg=None):
+    """Open paper trades on new 0DTE scanner alerts.
+
+    Seat/shadow split (2026-10-25): scanner-family alerts book only from
+    a seated family x name cell (compass/scanner_shadow.py); every other
+    scanner cell opens a shadow record whose hypothetical outcome is
+    scored instead. Non-scanner producers (no family) book as before."""
     since = db.get(c, "zero_dte_paper:scan_ts", 0) or 0
     if not since:
         since = now  # no backfill
@@ -201,8 +207,10 @@ def _open_scanner(db, c, now, flatten_at):
     for r in rows:
         ts = _num(r.get("ts")) or 0
         db.put(c, "zero_dte_paper:scan_ts", max(ts, db.get(c, "zero_dte_paper:scan_ts", 0) or 0))
-        pub = (r.get("payload") or {}).get("publication") or {}
+        payload = r.get("payload") or {}
+        pub = payload.get("publication") or {}
         contract = pub.get("contract") or {}
+        family = scanner_shadow.alert_family(payload)
         symbol = contract.get("symbol")
         if not (symbol and _OPTION_SYMBOL.match(str(symbol))):
             # Missing OR not an option contract (e.g. a bare underlying from
@@ -213,6 +221,28 @@ def _open_scanner(db, c, now, flatten_at):
             symbol = (o or {}).get("symbol")
         if not symbol:
             continue
+        if family is not None and not scanner_shadow.is_seated(
+                family, contract.get("underlying"), cfg):
+            # Shadow cell: no booking. Record the alert and score the
+            # hypothetical outcome on fresh quotes (scanner_shadow).
+            skey = "%sscan-%s" % (scanner_shadow.SHADOW_PREFIX,
+                                  r.get("key") or int(ts))
+            if not db.get(c, skey):
+                q = _fresh_quote(db, c, symbol, now)
+                entry = (round(_num(q.get("ask")) + SLIPPAGE, 2)
+                         if q else None)
+                rec = scanner_shadow.new_record(
+                    db, c, skey, payload, family,
+                    contract.get("underlying"), symbol, entry, now, ts,
+                    flatten_at, alert_key=r.get("key"))
+                try:
+                    from .entry_evidence import build as _build_evidence
+                    rec["evidence"] = _build_evidence(
+                        db, c, contract.get("underlying"), now)
+                except Exception:
+                    rec["evidence"] = None
+                _open(db, c, skey, rec)
+            continue
         key = "trade:0dte-scan-%s" % (r.get("key") or int(ts))
         if db.get(c, key):
             continue
@@ -222,6 +252,7 @@ def _open_scanner(db, c, now, flatten_at):
         entry = _num(q.get("ask")) + SLIPPAGE
         rec = {
             "id": key, "kind": "scanner", "symbol": symbol,
+            "family": family,
             "underlying": contract.get("underlying"), "side": "long", "qty": 1, "multiplier": 100,
             "entry": round(entry, 2), "entered_at": now,
             "exit_up_pct": 50.0, "exit_down_pct": -50.0,
@@ -358,6 +389,10 @@ def scan(db, c, cfg, now=None):
     flatten_at = _flatten_at(now, cfg)
     if not flatten_at:
         _update_open(db, c, now)
+        try:
+            scanner_shadow.update(db, c, now)
+        except Exception:
+            pass
         return {"ran": True, "reason": "no session"}
     opened = 0
     if now < flatten_at - ENTRY_CUTOFF_SEC:
@@ -374,13 +409,17 @@ def scan(db, c, cfg, now=None):
             except Exception:
                 pass
         try:
-            opened += _open_scanner(db, c, now, flatten_at)
+            opened += _open_scanner(db, c, now, flatten_at, cfg)
         except Exception:
             pass
     try:
         closed = _update_open(db, c, now)
     except Exception:
         closed = 0
+    try:
+        scanner_shadow.update(db, c, now)
+    except Exception:
+        pass
     return {"ran": True, "opened": opened, "closed": closed}
 
 
@@ -399,6 +438,20 @@ def active_contracts(db, c, now):
             if t.get("status") != "open":
                 continue
             sym = t.get("symbol")
+            if sym:
+                symbols.append(sym)
+    except Exception:
+        pass
+    # Open shadow records are measurement positions too: their contracts
+    # need live quotes or every hypothetical outcome becomes a data gap.
+    try:
+        shadows = db.prefix(c, scanner_shadow.SHADOW_PREFIX)
+        for sid, s in shadows.items():
+            if not isinstance(s, dict):
+                continue
+            if s.get("status") != "open":
+                continue
+            sym = s.get("symbol")
             if sym:
                 symbols.append(sym)
     except Exception:

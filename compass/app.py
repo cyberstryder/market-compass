@@ -260,7 +260,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -1524,6 +1524,24 @@ a{color:#888}</style></head><body>
             import logging
             logging.getLogger('uvicorn.error').exception(
                 'live-combo-scorecard failed')
+            return {"ok": False, "error": str(e)}
+
+    @app.get('/api/scanner-shadow-scorecard')
+    def scanner_shadow_scorecard_summary(request: Request):
+        """Seat/shadow split for the 0DTE scanner (underlying-first
+        validation, 2026-10-25): the effective paper seats, per-cell
+        shadow stats (scored alerts, PF), and graduation flags against
+        the >=20 scored / PF >= 1.2 bar. Read-only; graduation is
+        flagged for a human decision, never auto-promoted."""
+        try:
+            with db.tx() as c:
+                from . import scanner_shadow
+                return {"ok": True,
+                        **scanner_shadow.scorecard(db, c, cfg)}
+        except Exception as e:
+            import logging
+            logging.getLogger('uvicorn.error').exception(
+                'scanner-shadow-scorecard failed')
             return {"ok": False, "error": str(e)}
 
     @app.post('/api/tradermatrix-intel/web-scrape')
