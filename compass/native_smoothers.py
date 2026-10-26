@@ -348,19 +348,33 @@ def monitor(db,data,now):
             db.append(c,'native_target_check','smoothers',p['ticker'],now,{'id':p['id'],'from':start,'through':end,'missing_minutes':len(missing),'last_seen_at':p['last_seen_at'],'status':p['status']})
             if p['status']=='WIN':queue_signal(db,c,p,'target',messages.target(p),now,p['resolution_time']+60)
     # Recover overdue closures after a restart even when the calendar week changed.
+    overdue=[]
     with db.tx() as c:
         open_weeks=c.execute(select(weekly.c.week).where(weekly.c.status=='OPEN').distinct()).scalars().all()
         for open_week in open_weeks:
             closing=db.get(c,VERSION+':week:'+open_week,{}).get('sessions',[])
             if not closing or now<closing[-1]['close']+300:continue
-            for p in c.execute(select(weekly.c.payload).where(weekly.c.week==open_week,weekly.c.status=='OPEN').with_for_update()).scalars().all():
-                # An observed target is not an option fill or option profit.
-                final_seen=(p.get('last_seen_at') or 0)==closing[-1]['close']-60
-                p.update(status='UNRESOLVED' if p.get('coverage_missing') or not final_seen else 'LOSS',resolution_time=closing[-1]['close']+300,
-                         exit_underlying=p.get('last_underlying') if final_seen else None,closed_detected_at=now,
-                         closure_basis='Completed final regular-session minute close; option return unverified')
-                save(db,c,p)
-                queue_signal(db,c,p,'close',messages.close(p),now,p['resolution_time'])
+            for p in c.execute(select(weekly.c.payload).where(weekly.c.week==open_week,weekly.c.status=='OPEN')).scalars().all():
+                overdue.append((closing,p))
+    for closing,p in overdue:
+        # Capture at resolution time, never substitute an old hourly premium:
+        # the same quote capture the target-touch path uses, so a LOSS or
+        # UNRESOLVED week is measurable (or visibly unmeasurable) instead of
+        # silently carrying no exit quote and no option P&L.
+        try:p['exit_quote']=data.quote(p['contract']) if p.get('contract') else {'status':'unavailable','reason':'no_contract'}
+        except Exception as e:p['exit_quote']={'status':'unavailable','reason':type(e).__name__}
+        # An observed target is not an option fill or option profit.
+        final_seen=(p.get('last_seen_at') or 0)==closing[-1]['close']-60
+        p.update(status='UNRESOLVED' if p.get('coverage_missing') or not final_seen else 'LOSS',resolution_time=closing[-1]['close']+300,
+                 exit_underlying=p.get('last_underlying') if final_seen else None,closed_detected_at=now,
+                 closure_basis='Completed final regular-session minute close; option return unverified')
+        with db.tx() as c:
+            current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
+            if current['status']!='OPEN':continue
+            current.update({k:p[k] for k in ('status','resolution_time','exit_underlying','closed_detected_at','closure_basis','exit_quote') if k in p})
+            p=current
+            save(db,c,p)
+            queue_signal(db,c,p,'close',messages.close(p),now,p['resolution_time'])
 
 
 def premium(db,data,now):

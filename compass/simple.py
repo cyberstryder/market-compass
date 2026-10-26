@@ -166,44 +166,72 @@ def _smoothers(db, c, now):
         smoothers_weekly.c.ticker, smoothers_weekly.c.status,
         smoothers_weekly.c.payload)).mappings())
     evidence = _smoothers_delivery(db, c)
-    per_ticker = defaultdict(list)
+    # Headline basis (2026-10-26, Claude §6 / Josh): WIN/LOSS is the
+    # underlying outcome and is counted by status for every delivered
+    # resolved pick. Option P&L is a separate, measured subset: resolved
+    # picks whose entry and exit quotes are both usable. A resolved pick
+    # without a usable exit quote is tallied as 'excluded' beside the
+    # headline — the futures data_gap pattern — never silently dropped
+    # (previously such picks vanished and the win rate divided by the
+    # measured subset only).
+    per_ticker = defaultdict(lambda: {"wins": 0, "losses": 0, "pnls": [],
+                                      "excluded": 0, "unresolved": 0})
     per_ticker_undelivered = defaultdict(list)
     by_day = defaultdict(lambda: {"pnl": 0.0, "count": 0})
-    target_hits = 0
     for r in rows:
         p = r.get("payload") or {}
         if not isinstance(p, dict):
             continue
-        res = option_result(p)
-        pnl = res.get("net_pnl")
-        # Public results show only the values we have: signals with real,
-        # measured option P&L. Unmeasurable weeks (missing quotes, unresolved,
-        # still open) are excluded from the public page, not deleted.
-        if pnl is None:
-            continue
+        status = r.get("status") or p.get("status")
+        pnl = option_result(p).get("net_pnl")
         if evidence is not None and not _smoother_alert_delivered(
                 evidence, r.get("id") or p.get("id"),
                 r.get("week") or p.get("week"), r.get("ticker") or "?", p):
-            # Josh 2026-10-14: only delivered alerts count. A measured
-            # pick whose entry alert never reached Discord is excluded
-            # from wins/losses/P&L and bucketed separately — the same
-            # transparency pattern as futures data_gap trades and the
-            # 0DTE pre-evidence reset (audit #8). It stays in the DB
-            # and in the trade-by-trade detail views.
-            per_ticker_undelivered[r.get("ticker") or "?"].append(pnl)
+            # Josh 2026-10-14: only delivered alerts count. A pick whose
+            # entry alert never reached Discord is excluded from the
+            # headline and bucketed separately (measured picks only, as
+            # before) — the same transparency pattern as futures data_gap
+            # trades and the 0DTE pre-evidence reset (audit #8). It stays
+            # in the DB and in the trade-by-trade detail views.
+            if pnl is not None:
+                per_ticker_undelivered[r.get("ticker") or "?"].append(pnl)
             continue
-        won = pnl > 0
-        per_ticker[r.get("ticker") or "?"].append((won, pnl))
-        if r.get("status") == "WIN":
-            target_hits += 1
+        if status not in ("WIN", "LOSS", "UNRESOLVED"):
+            continue  # still open: no final outcome to count or exclude
+        t = per_ticker[r.get("ticker") or "?"]
+        if status == "WIN":
+            t["wins"] += 1
+        elif status == "LOSS":
+            t["losses"] += 1
+        else:
+            t["unresolved"] += 1
+        if pnl is None:
+            t["excluded"] += 1
+            continue
+        t["pnls"].append(pnl)
         d = _day(p.get("resolution_time"))
         if d:
             by_day[d]["pnl"] += pnl
             by_day[d]["count"] += 1
-    all_trades = [t for v in per_ticker.values() for t in v]
+
+    def _outcome_stats(t):
+        n = t["wins"] + t["losses"]
+        return {
+            "tracked": n,
+            "wins": t["wins"],
+            "win_rate": round(100.0 * t["wins"] / n, 1) if n else None,
+            "pnl": round(sum(t["pnls"]), 2),
+            "measured": len(t["pnls"]),
+        }
+
     drill = []
     for ticker in sorted(per_ticker):
-        st = _stats(per_ticker[ticker])
+        t = per_ticker[ticker]
+        st = _outcome_stats(t)
+        if t["excluded"]:
+            st["excluded"] = t["excluded"]
+        if t["unresolved"]:
+            st["unresolved"] = t["unresolved"]
         und = per_ticker_undelivered.get(ticker)
         if und:
             st["undelivered"] = len(und)
@@ -211,8 +239,17 @@ def _smoothers(db, c, now):
         drill.append(_drill(ticker, "Weekly Smoothers pick on %s." % ticker, st))
     # Note: "current-week" is the default view (auto-opened by frontend),
     # not a drill list item. The stock list is for research.
-    stats = _stats(all_trades)
-    stats["target_hits"] = target_hits
+    tot = {"wins": 0, "losses": 0, "pnls": [], "excluded": 0, "unresolved": 0}
+    for t in per_ticker.values():
+        tot["wins"] += t["wins"]
+        tot["losses"] += t["losses"]
+        tot["pnls"].extend(t["pnls"])
+        tot["excluded"] += t["excluded"]
+        tot["unresolved"] += t["unresolved"]
+    stats = _outcome_stats(tot)
+    stats["target_hits"] = tot["wins"]
+    stats["excluded"] = tot["excluded"]
+    stats["unresolved"] = tot["unresolved"]
     undelivered = [pnl for v in per_ticker_undelivered.values() for pnl in v]
     if undelivered:
         stats["undelivered"] = len(undelivered)
@@ -221,10 +258,15 @@ def _smoothers(db, c, now):
         "smoothers", "Smoothers",
         "Weekly option picks on big liquid stocks.",
         "Every Monday morning: one call or put per stock, held for the week.",
-        "Win = the paper option trade made money (bought at ask, sold at bid, minus fees). "
-        "Target hit = the stock reached its target by Friday. "
-        "Only picks whose entry alert was actually delivered to Discord count; "
-        "measured picks that were never alerted are excluded and tallied separately.",
+        "Win = the stock reached its target by Friday; the win rate counts "
+        "every delivered pick that resolved WIN or LOSS. Paper P&L = the "
+        "paper option estimate (bought at ask, sold at bid, minus fees) over "
+        "the measured subset: resolved picks with usable entry and exit "
+        "quotes. Resolved picks without a usable exit quote (including "
+        "unresolved weeks) are tallied as 'excluded', never silently "
+        "dropped. Only picks whose entry alert was actually delivered to "
+        "Discord count; measured picks that were never alerted are excluded "
+        "and tallied separately.",
         stats, drill), by_day)
 
 
