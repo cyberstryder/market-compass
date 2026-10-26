@@ -121,3 +121,16 @@ disqualified by `quote_path.recorded_path` and persist-batch drops invisible to 
 Fix ranked: (1) hole pauses measurement, never terminates; (2) exit on the underlying, model the option
 between prints; (3) accept late-stored quotes via `socket_read_at`; (4) persist drops → degraded health;
 (5) if option-quote-based, SPY/QQQ only. Tests listed in the drop. Josh decides scope; Quill implements.
+
+**Quill VERIFIED 2026-10-26** — see `from-quill/2026-10-26-task005-observation-gaps-verification.md`.
+Root cause CONFIRMED at Claude's basis 4d0a95e and re-checked on main ff1905b (rule at
+`option_ideas.py:269-283`, tolerance constants, 1 Hz sampler, `quote_path` late-storage rejection,
+persist drops invisible to Massive/Alpaca health status, stock-stream degraded precedent, swing
+data-gap-day precedent; live Massive `subscribed=400` confirmed — production env, code default is 500).
+Corrections: a 180 s observation-recovery grace already defers current-version trades but marks
+`data_gap=True` immediately at detection; the 0DTE "silently never booked" claim is stale on current
+main (seat/shadow denominator parity now records a `data_gap` row; 0DTE exits already flag, not kill);
+fix 1's `data_gap`-only-at-exit clause conflicts with Josh's 2026-10-06 exclusion rule. Recommended
+scope: fixes 3+4 first, fix 1 minus the `data_gap` clause, fix 2 after underlying-first validation,
+fix 5 not recommended (would unseat Josh's 2026-10-25 scanner seats). **Awaiting Josh's scope
+decision — nothing implemented.**
