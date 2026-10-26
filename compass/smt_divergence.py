@@ -285,9 +285,12 @@ def scan(db, c, cfg, now):
         # confirming leg. Entry/stop/target prices come from the divergent
         # leg's bars, so the symbol must match or we get e.g. an MES
         # position with an MNQ price (30,172 instead of 7,738).
-        _paper_submit(db, c, cfg, now, 'smt_divergence',
-                      best.get('divergent_leg'),
-                      {k: v for k, v in row.items() if k != 'at'})
+        _sig = {k: v for k, v in row.items() if k != 'at'}
+        _res = _paper_submit(db, c, cfg, now, 'smt_divergence',
+                             best.get('divergent_leg'), _sig)
+        from .ict_declines import record_decline as _record_decline
+        _record_decline(db, c, now, 'smt_divergence',
+                        best.get('divergent_leg'), _res, _sig)
     db.put(c, 'ict_smt_divergence:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,
             'params': {'confirm_bars': confirm_bars, 'tick_fallback': tick_fb},
