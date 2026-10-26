@@ -39,6 +39,28 @@ Robustness (audit #4, 2026-10-21):
   behind an any() roll-up.
 - HTTP 200 bodies are parsed: an error payload in a 200 body counts
   as a failure, not a send.
+
+Relative brackets (Task 003 Item 1, 2026-10-26):
+- When the paper trade booked its entry from a fresh send-time quote
+  (entry_price_source 'quote'/'quote_last'), the entry payload sends
+  RELATIVE brackets — stopLoss {type: stop, amount: <points>},
+  takeProfit {amount: <points>} — with price/signalPrice set to the
+  BOOKED entry. Docs (Signal Message Reference): for market orders
+  TradersPost anchors relative brackets on a quote it fetches from the
+  broker at receipt time (~0.2 s before the fill) and only falls back
+  to signalPrice when the broker cannot supply a quote — so
+  signalPrice must be the send-time booked quote, never the stale
+  detector price (that would resurrect the 2026-10-20 rejected-stop /
+  naked-position class the absolute form suffered from).
+- Amounts are the APPROVED geometry: distances from the detector's
+  signal price to its stop/target, rounded to the symbol tick.
+- Trades without a fresh booked entry send the absolute payload
+  byte-for-byte as before. The two forms never mix in one payload
+  (TradersPost hard-rejects relative+absolute in one bracket object).
+- The claim record carries bracket_form, the amounts (relative) or
+  absolutes sent, order_sent_at, and the TradersPost response id from
+  the 200 body. Fill price/time are NOT on the wire (acceptance-only
+  response); they arrive via later reconciliation, never faked here.
 """
 import hashlib
 import json
@@ -127,6 +149,42 @@ def signal_key_for_trade(trade):
 def close_key(ref):
     """Deterministic idempotency key for a close/flatten signal."""
     return 'close:' + str(ref)
+
+
+def _round_to_tick(value, tick):
+    """Round a point distance to the symbol's tick grid.
+
+    Distances between tick-aligned prices are already tick-aligned;
+    this only burns off float dust (103.27 - 102.44 = 0.8300000000000043
+    must send as 0.83). Returns value unchanged without a usable tick.
+    """
+    if not tick:
+        return value
+    try:
+        return round(round(value / tick) * tick, 10)
+    except Exception:
+        return value
+
+
+def _bracket_record(payload):
+    """Describe the bracket a built payload carries, for the claim /
+    audit record: ('relative', {stop_amount, take_profit_amount,
+    anchor_price}) or ('absolute', {stop_price, take_profit_price}).
+    Derived from the payload itself so the record always matches what
+    was actually sent. (None, {}) for bracket-less payloads (closes).
+    """
+    sl = payload.get('stopLoss') or {}
+    tp = payload.get('takeProfit') or {}
+    if 'amount' in sl or 'amount' in tp:
+        return 'relative', {
+            'stop_amount': sl.get('amount'),
+            'take_profit_amount': tp.get('amount'),
+            'anchor_price': payload.get('signalPrice')}
+    if 'stopPrice' in sl or 'limitPrice' in tp:
+        return 'absolute', {
+            'stop_price': sl.get('stopPrice'),
+            'take_profit_price': tp.get('limitPrice')}
+    return None, {}
 
 
 def build_payload(cfg, trade):
@@ -218,6 +276,33 @@ def build_payload(cfg, trade):
         'timeInForce': 'day',
     }
 
+    # Relative bracket form (2026-10-26, Task 003 Item 1): when the
+    # paper trade booked its entry from a FRESH send-time quote
+    # (entry_price_source 'quote' / 'quote_last'), replace the absolute
+    # bracket wholesale with amount offsets — the approved geometry
+    # (distances from the signal price, validated above, tick-rounded)
+    # — and anchor on the booked entry. TradersPost computes the actual
+    # bracket prices from its own receipt-time broker quote, falling
+    # back to signalPrice only when the broker cannot supply a quote,
+    # so price/signalPrice carry the BOOKED entry here, never the
+    # stale signal price. Mixing forms in one payload is a hard
+    # TradersPost rejection, so the nested objects are replaced, never
+    # merged. Degenerate (sub-half-tick) distances fall through to the
+    # absolute form — the known behavior.
+    booked = trade.get('entry')
+    source = str(trade.get('entry_price_source') or '')
+    if source.startswith('quote') and booked:
+        from .instruments import future_spec
+        spec = future_spec(symbol) or {}
+        tick = spec.get('tick') or trade.get('tick')
+        stop_amount = _round_to_tick(abs(stop - entry), tick)
+        tp_amount = _round_to_tick(abs(target - entry), tick)
+        if stop_amount > 0 and tp_amount > 0:
+            payload['price'] = booked
+            payload['signalPrice'] = booked
+            payload['stopLoss'] = {'type': 'stop', 'amount': stop_amount}
+            payload['takeProfit'] = {'amount': tp_amount}
+
     return payload
 
 
@@ -254,6 +339,24 @@ def _response_error(body):
     status = str(data.get('status') or data.get('state') or '').strip().lower()
     if status in _ERROR_STATUSES:
         return 'status=%s' % status
+    return None
+
+
+def _response_id(body):
+    """Extract the TradersPost signal id from a 200 response body.
+
+    The documented success body is {success, id, payload-echo} —
+    acceptance only, no fill data. The id is the handle the
+    TradersPost-side record is reconciled against later, so it is
+    captured on the claim record at dispatch. None when absent or
+    unparseable. Never raises.
+    """
+    try:
+        data = json.loads(body)
+    except Exception:
+        return None
+    if isinstance(data, dict) and data.get('id'):
+        return str(data['id'])[:100]
     return None
 
 
@@ -338,18 +441,21 @@ def _post_all(cfg, db, payload, signal_key):
             with urllib.request.urlopen(req, timeout=10) as resp:
                 body = resp.read().decode('utf-8', errors='ignore')[:500]
             err = _response_error(body)
+            rid = _response_id(body)
             if err:
                 results.append({'firm': firm, 'ok': False,
+                                'response_id': rid,
                                 'detail': 'HTTP 200 error body: ' + err})
             else:
                 results.append({'firm': firm, 'ok': True,
+                                'response_id': rid,
                                 'detail': body[:120]})
         except urllib.error.HTTPError as e:
             err_body = e.read().decode('utf-8', errors='ignore')[:500]
-            results.append({'firm': firm, 'ok': False,
+            results.append({'firm': firm, 'ok': False, 'response_id': None,
                             'detail': 'HTTP %s: %s' % (e.code, err_body[:200])})
         except Exception as e:
-            results.append({'firm': firm, 'ok': False,
+            results.append({'firm': firm, 'ok': False, 'response_id': None,
                             'detail': 'send failed: %s' % str(e)[:200]})
     ok_any = any(r['ok'] for r in results)
     ok_all = all(r['ok'] for r in results)
@@ -369,7 +475,10 @@ def _post_all(cfg, db, payload, signal_key):
     _audit(db, status, detail,
            at=time.time(), ticker=ticker, action=action, qty=qty,
            signal_id=signal_key, partial=bool(ok_any and not ok_all),
-           firms={r['firm']: r['ok'] for r in results})
+           firms={r['firm']: r['ok'] for r in results},
+           bracket_form=_bracket_record(payload)[0],
+           response_ids={r['firm']: r.get('response_id')
+                         for r in results if r.get('response_id')})
     return ok_any, summary, results
 
 
@@ -457,10 +566,17 @@ def send_signal(cfg, db, trade):
 
     key = signal_key_for_trade(trade)
     payload['extras'] = {'signal_id': key}
+    # Bracket provenance (2026-10-26): record the form and the exact
+    # bracket values being sent on the claim BEFORE posting, so the
+    # Tier-1 re-fit can compare the sent geometry against the fill
+    # record later. Derived from the payload itself — always matches
+    # what goes on the wire.
+    bracket_form, bracket_values = _bracket_record(payload)
     prior = _claim_send(db, key, {
         'kind': 'entry', 'status': 'attempting', 'at': time.time(),
         'ticker': payload['ticker'], 'action': payload['action'],
-        'qty': payload['quantity']})
+        'qty': payload['quantity'],
+        'bracket_form': bracket_form, **bracket_values})
     if prior is False:
         return (False, 'Send-once claim could not be recorded; not sending')
     if prior is not None:
@@ -468,12 +584,21 @@ def send_signal(cfg, db, trade):
                 'Duplicate suppressed: %s already attempted (%s)'
                 % (key, prior.get('detail', 'no detail recorded')))
 
+    sent_at = time.time()
     ok, summary, results = _post_all(cfg, db, payload, key)
+    response_ids = {r['firm']: r.get('response_id')
+                    for r in results if r.get('response_id')}
+    tp_response_id = next(
+        (r.get('response_id') for r in results
+         if r.get('ok') and r.get('response_id')), None)
     _finish_claim(db, key,
                   status='sent' if ok else 'failed', ok=ok,
                   partial=bool(ok and not all(r['ok'] for r in results)),
                   firms={r['firm']: r['ok'] for r in results},
-                  detail=summary[:300], responded_at=time.time())
+                  detail=summary[:300], responded_at=time.time(),
+                  order_sent_at=sent_at,
+                  tp_response_id=tp_response_id,
+                  response_ids=response_ids)
     if ok:
         return (True, 'Sent to TradersPost: ' + summary)
     return (False, 'TradersPost send failed: ' + summary)
