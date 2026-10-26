@@ -110,3 +110,14 @@ Quill: (1) verify its harness writes bar events during exits(); (2) confirm prod
 (3) report `min(ts)` of futures bars in the production DB; (4) joint MES re-run with wick detection.
 
 **Quill VERIFIED 2026-10-26** — see `from-quill/2026-10-26-close-only-verification.md` (+ sims). His harness close-only: CONFIRMED from his own feeder code (no `bar` appends; quote synthesized from close). **Our harness close-only: REFUTED** — matrix/prune/5M harnesses run a local extremes walk (stop-first, completed bars); an independent level-preserving walk reproduces the recorded AOI numbers to $38/$5 with 100% exit-reason agreement, and a close-only counterfactual makes AOI *worse*. His corrected sim re-anchors entries to bar closes (median displacement 24–46 ticks on our level entries), so on our trades it measures market-entry economics, not exit correction — under which (his model C, and production-current model D: fresh-quote entry + structural levels, shipped 2026-10-26) **all three pairs are ≈0-to-negative on both trade sets**; his bottom line stands, mechanism differs. Placebo: at booked prices our pairs sit at the 98.8–100th percentile of his distribution; the advantage is in unattainable fills, not timing noise. **New defect found in OUR harness:** the exit walk seeds at `signal_time`; 65/135 TS·MCL records have exited_at < entered_at summing +$11,856 vs the pair's +$10,760 total — recorded TS replay figures are withdrawn as evidence (TS is paper-only; no live exposure). Production stop path CONFIRMED (quote trigger bid/ask + bar-extremes scan, engine.py:201-341). DB futures bars: ≤ ~6 weeks, never pruned, none before ~Sep 13; exact min(ts) SQL not runnable from Quill's sandbox (non-HTTP egress intercepted) — query supplied in the report. Session hypothesis PARTIAL: TS·MCL Asia is the only cell positive in every model; AOI·MES NY-AM survives only in booked-price models. Awaiting Josh's decision on the live book (Claude's rec 1).
+
+## Task 005 — Observation gaps: change what a hole means (Quill to implement)
+
+**Status:** OPEN — opened 2026-10-26 by Claude at Josh's direction ("give this to Quill so it can fix it").
+Drop: `from-claude/2026-10-26-observation-gaps-root-cause-and-fix.md`.
+Root cause: the continuous-paired-quote rule (`option_ideas.py:268-283`, `zero_dte_paper.py:308`) applied to
+single-name contracts that print every 30–120 s, on a 400-contract stream, with late-stored quotes
+disqualified by `quote_path.recorded_path` and persist-batch drops invisible to the path.
+Fix ranked: (1) hole pauses measurement, never terminates; (2) exit on the underlying, model the option
+between prints; (3) accept late-stored quotes via `socket_read_at`; (4) persist drops → degraded health;
+(5) if option-quote-based, SPY/QQQ only. Tests listed in the drop. Josh decides scope; Quill implements.
