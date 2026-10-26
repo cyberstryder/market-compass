@@ -511,8 +511,10 @@ def test_flow_pulse_drill_includes_pulse_counts(db):
     assert bear['stats']['pulses'] == 1
 
 
-def test_smoother_filters_unmeasurable(db):
-    # Public page shows only weeks with real, measured option P&L.
+def test_smoother_headline_counts_status_and_tallies_unmeasurable(db):
+    # Headline (2026-10-26): every resolved pick counts by status; a
+    # resolved pick without a usable exit quote is tallied as 'excluded',
+    # not dropped. The detail view remains the measured-P&L listing.
     now = NOW
     measurable = _smoothers_payload(50.0, now)  # WIN with good quotes
     no_quotes = dict(_smoothers_payload(50.0, now), exit_quote=None)
@@ -529,8 +531,10 @@ def test_smoother_filters_unmeasurable(db):
             payload=open_week))
         out = simple.summary(db, c, now)
     sm = out['types']['smoothers']
-    assert sm['stats']['tracked'] == 1
+    assert sm['stats']['tracked'] == 2
+    assert sm['stats']['wins'] == 2
     assert sm['stats']['measured'] == 1
+    assert sm['stats']['excluded'] == 1
     assert sm['stats']['pnl'] == 49.68
     with db.tx() as c:
         d = simple.detail(db, c, now, 'smoothers', 'DEMO')
