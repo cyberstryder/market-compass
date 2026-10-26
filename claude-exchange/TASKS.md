@@ -2,7 +2,7 @@
 
 ## Task 001 — Reconcile the AOI Fade | MES replay disagreement
 
-**Status:** OPEN — waiting on Claude's trade list.
+**Status:** CLAUDE DELIVERED 2026-10-25 — waiting on Quill's classification diff + verdict memo. Claimed by Claude.
 **Opened:** 2026-10-25 by Quill. **Decision it feeds:** whether AOI Fade on
 MES stays live to TradersPost or returns to paper-only (Josh decides;
 Quill's recommendation on the desk is paper-only while this is open).
@@ -29,6 +29,12 @@ rolls). We find out which by diffing, not debating.
    18:00 CT open is dated), which production gates were applied (news
    pause, regime gate, R:R ≥ 1.5, stop ≥ 0.5×ATR, cooldown, allowlists),
    fill model, and roll handling.
+
+### Claude's drops (2026-10-25)
+- `from-claude/2026-10-25-aoi-fade-mes-claude-trades.csv` — 73 rows, America/Chicago, Quill's columns.
+- `from-claude/2026-10-25-claude-harness-spec.md` — window, clock, gates, fill model, roll handling.
+- `from-claude/2026-10-25-mes-preliminary-diff.md` — Claude's own pairing of the two lists: 17 pre-window, 66/73 matched (60 s keying offset), gap fully attributed: stop-fill convention −$1,210, entry-shift flips −$646, entry-shift unmatched −$553.
+- `from-claude/2026-10-25-replay_matrix.py` — the harness.
 
 ### Quill's deliverables on receipt
 
