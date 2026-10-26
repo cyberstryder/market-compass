@@ -66,6 +66,11 @@ class Config:
         s.strip() for s in env("MAGNET_PUSH_SIGNALS","broke_through").split(",") if s.strip()))
     flow_pulse: bool = field(default_factory=lambda: env("FLOW_PULSE_ENABLED","true")=="true")
     zero_dte_paper: bool = field(default_factory=lambda: env("ZERO_DTE_PAPER_ENABLED","true")=="true")
+    # 0DTE scanner seat/shadow split (underlying-first validation, 2026-10-25).
+    # Empty = the validated defaults in compass/scanner_shadow.py. Override
+    # format: "family:NAME,NAME;family2:NAME" (seats) / "family,family".
+    scanner_paper_seats: str = field(default_factory=lambda: env("SCANNER_PAPER_SEATS",""))
+    scanner_promoted_families: str = field(default_factory=lambda: env("SCANNER_PROMOTED_FAMILIES",""))
     darkpool: bool = field(default_factory=lambda: env("DARKPOOL_ENABLED","true")=="true")
     iv_rank: bool = field(default_factory=lambda: env("IV_RANK_ENABLED","true")=="true")
     squeeze: bool = field(default_factory=lambda: env("SQUEEZE_ENABLED","true")=="true")
