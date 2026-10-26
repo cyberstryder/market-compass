@@ -143,6 +143,14 @@ class Config:
     ict_paper_min_stop_atr: float = field(default_factory=lambda: float(env("ICT_PAPER_MIN_STOP_ATR","0.5")))
     ict_paper_cooldown_min: float = field(default_factory=lambda: float(env("ICT_PAPER_COOLDOWN_MIN","15")))
     ict_brake_shadow: bool = field(default_factory=lambda: env("ICT_BRAKE_SHADOW_ENABLED", "true") == "true")
+    # Freshness guard (Josh 2026-10-26, go-live): at the TradersPost
+    # send-queue decision in ict_paper.submit(), skip the LIVE send
+    # when the fresh quote is already beyond the trade's approved
+    # stop/target, or has moved adversely from the booked entry by
+    # >10% of target distance (see compass/freshness_guard.py). The
+    # paper trade books regardless. Default ON — production needs no
+    # var set; FRESHNESS_GUARD_ENABLED=false is the no-deploy rollback.
+    freshness_guard: bool = field(default_factory=lambda: env("FRESHNESS_GUARD_ENABLED", "true") == "true")
     # Shadow iceberg detector (2026-10-25): reconstructs institutional
     # options accumulation from the OPRA print stream. SHADOW ONLY —
     # logs alerts + scored outcomes, never trades, never alerts Discord
