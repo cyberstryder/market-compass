@@ -123,3 +123,43 @@ def test_summarize_window_and_exclusions(db):
     af = combo(out, 'aoi_fade', 'MCL')
     assert af['trades'] == 1 and af['net'] == pytest.approx(500.0)
     assert len(out['combos']) == len(sc.LIVE_COMBOS)
+
+
+# ---------- traderspost_sent subset ----------
+
+def test_sent_subset_pure():
+    trades = [{'pnl': 100.0, 'traderspost_sent': True},
+              {'pnl': -40.0, 'traderspost_sent': True},
+              {'pnl': 999.0, 'traderspost_sent': False},
+              {'pnl': 999.0}]  # no flag -> not sent
+    s = sc.sent_subset(trades)
+    assert s == {'trades': 2, 'wins': 1, 'losses': 1, 'net': 60.0}
+    assert sc.sent_subset([]) == {'trades': 0, 'wins': 0,
+                                  'losses': 0, 'net': 0.0}
+
+
+def test_summarize_traderspost_sent_subset(db):
+    seed(db, 'aoi_fade', 'MCL.v.0', 300.0, NOW - 2 * D,
+         traderspost_sent=True)
+    seed(db, 'aoi_fade', 'MCL.v.0', -100.0, NOW - 1 * D,
+         traderspost_sent=True)
+    seed(db, 'aoi_fade', 'MCL.v.0', 500.0, NOW - 1 * D,
+         traderspost_sent=False)
+    seed(db, 'aoi_fade', 'MCL.v.0', 700.0, NOW - 1 * D)  # flag absent
+    seed(db, 'turtle_soup', 'MCL.v.0', 50.0, NOW - 3 * D)  # none sent
+    with db.tx() as c:
+        out = sc.summarize(db, c, NOW)
+    af = combo(out, 'aoi_fade', 'MCL')
+    # Headline stats are untouched by the new key.
+    assert af['trades'] == 4 and af['net'] == pytest.approx(1400.0)
+    assert af['traderspost_sent'] == {'trades': 2, 'wins': 1, 'losses': 1,
+                                      'net': pytest.approx(200.0)}
+    # A combo with trades but zero sent yields zeros, not an error.
+    ts = combo(out, 'turtle_soup', 'MCL')
+    assert ts['trades'] == 1
+    assert ts['traderspost_sent'] == {'trades': 0, 'wins': 0,
+                                      'losses': 0, 'net': 0.0}
+    # And a combo with no trades at all also yields zeros.
+    rb = combo(out, 'rumers_box', 'MYM')
+    assert rb['traderspost_sent'] == {'trades': 0, 'wins': 0,
+                                      'losses': 0, 'net': 0.0}
