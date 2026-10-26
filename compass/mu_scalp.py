@@ -44,26 +44,58 @@ def _pct(a, b):
     return (a - b) / abs(b) * 100.0
 
 
+def _window_bars(db, c, symbol):
+    """1-min bars for `symbol` from the real intraday keyspace.
+
+    Production bars live in bar_window:<SYM> (providers writes kind='bar'
+    rows there, capped at 1800); ict_bars is the canonical reader for that
+    keyspace (exact-key resolution for plain equity symbols). The previous
+    implementation read db.prefix('bar:<SYM>:') — a keyspace no module
+    writes — so these detectors never saw a bar in production.
+    """
+    from .ict_common import ict_bars
+    return ict_bars(db, c, symbol)
+
+
+def _prior_session_close(bars, now):
+    """Prior session close as the validated gap rule defines it.
+
+    scalp_backtest.py (the backtest that validated gap fade) takes the
+    close of the last 1-min bar inside the prior trading day's regular
+    session [09:30, 16:00) ET. Returns None when that session has no bars
+    (holiday / data gap) — never fabricate a close.
+    """
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo('America/New_York')
+    today = datetime.fromtimestamp(now, tz=timezone.utc).astimezone(et).date()
+    prev = today - timedelta(days=1)
+    while prev.weekday() >= 5:
+        prev -= timedelta(days=1)
+    start = datetime(prev.year, prev.month, prev.day, 9, 30, tzinfo=et).timestamp()
+    end = datetime(prev.year, prev.month, prev.day, 16, 0, tzinfo=et).timestamp()
+    close = None
+    for b in bars:  # ascending by ts
+        ts = b.get('ts')
+        if ts is None or ts < start:
+            continue
+        if ts >= end:
+            break
+        if b.get('c'):
+            close = b['c']
+    return close
+
+
 def check_gap_fade(db, c, now, symbol="MU"):
     """Premarket gap check. Returns signal dict or None.
     
     Call once premarket (~8:45am ET). Compares premarket price to prior close.
     """
-    # Get prior close and current premarket price
-    # Prior close from daily bars, premarket from quote
+    # Prior close from the prior session's intraday bars (bar_window),
+    # current premarket price from the live quote.
     try:
-        bars = db.prefix(c, 'bar:%s:' % symbol)
-        if not bars:
-            return None
-        # Find the most recent daily bar close
-        daily_close = None
-        for k in sorted(bars.keys(), reverse=True):
-            if '1d' in k or 'D' in k:
-                daily_close = (bars[k].get('payload') or {}).get('c')
-                if daily_close:
-                    break
+        daily_close = _prior_session_close(_window_bars(db, c, symbol), now)
         if not daily_close:
-            # Fallback: use the last 5-min bar close from prior day
             return None
         
         q = db.get(c, 'quote:' + symbol)
@@ -134,25 +166,12 @@ def check_spike_fade(db, c, now, symbol="MU"):
         except Exception:
             # Fallback to 6.5hr lookback if timezone calc fails
             session_start = now - (6.5 * 3600)
-        for k, v in db.prefix(c, 'bar:%s:' % symbol).items():
-            if ':1m:' in k or ':1M:' in k:
-                payload = v.get('payload') or {}
-                ts = v.get('ts')
-                if not ts:
-                    continue
-                bar = {
-                    'ts': ts,
-                    'o': number(payload.get('o')),
-                    'h': number(payload.get('h')),
-                    'l': number(payload.get('l')),
-                    'c': number(payload.get('c')),
-                }
-                if not bar['c']:
-                    continue
-                if ts >= session_start:
-                    session_bars.append(bar)
-                if now - ts <= 600:  # last 10 min for spike detection
-                    recent_bars.append(bar)
+        for bar in _window_bars(db, c, symbol):
+            ts = bar['ts']
+            if ts >= session_start:
+                session_bars.append(bar)
+            if now - ts <= 600:  # last 10 min for spike detection
+                recent_bars.append(bar)
         
         recent_bars = sorted(recent_bars, key=lambda x: x['ts'])
         session_bars = sorted(session_bars, key=lambda x: x['ts'])

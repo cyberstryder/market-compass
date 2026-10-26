@@ -22,7 +22,7 @@ T0 = datetime(2026, 10, 26, 10, 0, tzinfo=NY).timestamp()  # Mon 10:00 ET
 
 
 def cfg(**over):
-    base = dict(iceberg_enabled=True, iceberg_min_contracts_30m=500,
+    base = dict(iceberg_detector=True, iceberg_min_contracts_30m=500,
                 iceberg_min_premium_30m=25000.0, iceberg_min_prints_30m=25,
                 iceberg_min_ask_share=0.65, iceberg_min_active_subwindows=3,
                 iceberg_vol_oi_ratio=0.5, iceberg_no_concession_tol=0.05,
@@ -119,10 +119,48 @@ def test_conceding_premium_does_not_fire():
 
 
 def test_kill_switch_disables_detector():
-    det = IcebergDetector(cfg(iceberg_enabled=False))
+    det = IcebergDetector(cfg(iceberg_detector=False))
     feed(det)
     assert det.drain_alerts() == []
     assert det.prints_seen == 0 and det.contracts == {}
+
+
+def test_kill_switch_reads_the_real_config_field():
+    # Task 003 item 6: the Config field is `iceberg_detector`
+    # (config.py). A cfg carrying ONLY that field (the production
+    # shape) must disable the detector; before the fix, __init__ read
+    # the nonexistent `iceberg_enabled` and enabled was always True.
+    det = IcebergDetector(SimpleNamespace(iceberg_detector=False))
+    assert det.enabled is False
+    det.observe_quote(SYM, T0, 1.95, 2.05)
+    det.observe_trade(SYM, T0, {'p': 2.05, 's': 10, 'x': 1,
+                                'src': 'massive'})
+    assert det.prints_seen == 0 and det.quotes_seen == 0
+    assert det.contracts == {} and det.drain_alerts() == []
+    # And the real Config default keeps the detector ON (production
+    # behavior unchanged: ICEBERG_DETECTOR_ENABLED defaults true).
+    from compass.config import Config
+    assert IcebergDetector(Config()).enabled is True
+
+
+def test_kill_switch_legacy_field_name_still_works():
+    # Back-compat fallback: callers passing iceberg_enabled (the old
+    # misread name) are still honored when iceberg_detector is absent.
+    det = IcebergDetector(SimpleNamespace(iceberg_enabled=False))
+    assert det.enabled is False
+
+
+def test_pending_alerts_buffer_is_bounded():
+    # Task 003 item 6: pending_alerts used to be a bare deque() — a
+    # stalled drain grew it without limit. It must cap at
+    # PENDING_ALERTS_MAXLEN, dropping the oldest undrained alerts.
+    from compass.iceberg import PENDING_ALERTS_MAXLEN
+    det = IcebergDetector(cfg())
+    assert det.pending_alerts.maxlen == PENDING_ALERTS_MAXLEN
+    for i in range(PENDING_ALERTS_MAXLEN + 50):
+        det.pending_alerts.append({'id': 'a%d' % i})
+    assert len(det.pending_alerts) == PENDING_ALERTS_MAXLEN
+    assert det.pending_alerts[0]['id'] == 'a50'
 
 
 def test_cross_source_echo_print_counted_once():
