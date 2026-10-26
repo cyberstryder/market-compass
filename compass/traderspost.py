@@ -155,7 +155,15 @@ def build_payload(cfg, trade):
     else:
         return None
 
-    entry = trade.get('entry')
+    # Reference price (2026-10-26): the payload's price field and the
+    # level validation below use the detector's SIGNAL price, never the
+    # paper trade's booked entry. Since the entry-quote booking fix,
+    # trade['entry'] is the quote-booked paper price, which can differ
+    # from the signal price this live order was approved against; using
+    # signal_price keeps the live payload byte-identical to pre-fix
+    # behavior for the same signal. Fallback to entry for any record
+    # that predates signal_price.
+    entry = trade.get('signal_price') or trade.get('entry')
     stop = trade.get('stop')
     target = trade.get('target')
     qty = trade.get('qty', 1)
