@@ -260,7 +260,7 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
                     # Repaired alerts may not have their entry delivered, but the target
                     # should still go out. Without this, the publication gate suppresses
                     # repaired alerts before they reach the channel gate's bypass check.
-                    if not d.get('repair_bypass') and (not trade or not publication.entry_delivered(c,trade)):
+                    if not d.get('repair_bypass') and not decision.get('exit_admitted_without_entry') and (not trade or not publication.entry_delivered(c,trade)):
                         c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',delivery=dict(d,error='Entry was not confirmed delivered')))
                         continue
                 if decision['category']!=row['program']:
@@ -273,7 +273,7 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
             # 2026-10-14: Allow repair_bypass flag to skip the entry-delivered check.
             # Repaired alerts (e.g., via /api/admin/repair-smoothers-alerts) may not have
             # their entry alerts delivered, but the target should still go out.
-            if row['program']=='smoothers' and d.get('publication',{}).get('event') not in (None,'ENTRY') and not d.get('repair_bypass') and not channel_entry_delivered(c,'smoothers',d['publication']):
+            if row['program']=='smoothers' and d.get('publication',{}).get('event') not in (None,'ENTRY') and not d.get('repair_bypass') and not d.get('publication',{}).get('exit_admitted_without_entry') and not channel_entry_delivered(c,'smoothers',d['publication']):
                 c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',delivery=dict(d,error='Entry not confirmed in this destination')))
                 continue
             message_id=None
