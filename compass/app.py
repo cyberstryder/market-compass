@@ -479,6 +479,7 @@ def create_app(cfg=None):
     from .snapshot_cache import SnapshotCache
     dashboard_cache = SnapshotCache()
     studies_cache = SnapshotCache(ttl=300)
+    simple_cache = SnapshotCache()
 
     @app.get("/api/state")
     def get_state(): return dashboard_cache.get(snapshot_fast)
@@ -571,9 +572,16 @@ def create_app(cfg=None):
     @app.get('/api/simple')
     def get_simple():
         # Plain-English scoreboards + drill-downs. Read-only.
-        from .simple import summary
-        with db.tx() as c:
-            return summary(db,c,time.time())
+        # Through SnapshotCache (Task 003 item 7): summary() runs five
+        # prefix scans plus a Config() rebuild, and this route is
+        # public — every hit used to rescan. Same coalescing + TTL
+        # semantics as dashboard_cache: bursts share one build, and
+        # the payload is at most the TTL stale.
+        def build():
+            from .simple import summary
+            with db.tx() as c:
+                return summary(db, c, time.time())
+        return simple_cache.get(build)
 
     @app.get('/api/simple/calendar')
     def get_simple_calendar(request: Request):
