@@ -41,7 +41,6 @@ from .market import number, day
 from .ict_common import ict_bars, atr, session_vwap, _bars_from_recent
 from .instruments import future_root
 from .ict_paper import submit as _paper_submit
-from .ict_declines import record_decline as _record_decline
 
 NY = ZoneInfo("America/New_York")
 
@@ -280,8 +279,7 @@ def scan(db, c, cfg, now):
         db.put(c, 'rumers_box:traded:' + symbol,
                {'date': today, 'signal_ts': sig['signal_ts'],
                 'setup': sig['setup'], 'direction': sig['direction'], 'at': now})
-        _res = _paper_submit(db, c, cfg, now, 'rumers_box', symbol, sig)
-        _record_decline(db, c, now, 'rumers_box', symbol, _res, sig)
+        _paper_submit(db, c, cfg, now, 'rumers_box', symbol, sig)
         n_signals += 1
     db.put(c, 'rumers_box:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,

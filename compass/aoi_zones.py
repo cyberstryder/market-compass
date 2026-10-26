@@ -310,11 +310,7 @@ def scan(db, c, cfg, now):
                 # research but not traded (they fail — low liquidity, false OBs).
                 if _in_session:
                     from .ict_paper import submit as _paper_submit
-                    _res = _paper_submit(db, c, cfg, now, 'aoi_zones',
-                                         symbol, ob)
-                    from .ict_declines import record_decline as _record_decline
-                    _record_decline(db, c, now, 'aoi_zones', symbol,
-                                    _res, ob)
+                    _paper_submit(db, c, cfg, now, 'aoi_zones', symbol, ob)
     db.put(c, 'ict_aoi_zones:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,
             'range_session': range_session,

@@ -234,9 +234,7 @@ def scan(db, c, cfg, now):
                       sig, key='gapfade:%s:%s' % (symbol, day(now)))
             # Submit to paper trading (Variant B 2/2/1 via ict_paper)
             from .ict_paper import submit as _paper_submit
-            _res = _paper_submit(db, c, cfg, now, 'gap_fade', symbol, sig)
-            from .ict_declines import record_decline as _record_decline
-            _record_decline(db, c, now, 'gap_fade', symbol, _res, sig)
+            _paper_submit(db, c, cfg, now, 'gap_fade', symbol, sig)
     
     db.put(c, 'gap_fade:latest', {'at': now, 'rows': rows, 'status': 'running' if rows else 'idle'})
     db.put(c, 'gap_fade:scanned_at', now)

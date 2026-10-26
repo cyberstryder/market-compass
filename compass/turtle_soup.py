@@ -293,17 +293,7 @@ def scan(db, c, cfg, now):
                     'direction': best['direction'], 'at': now})
             n_signals += 1
         from .ict_paper import submit as _paper_submit
-        _res = _paper_submit(db, c, cfg, now, 'turtle_soup', symbol, best)
-        # Persist declines + a scan-eval summary (2026-10-26, fire-rate
-        # audit fixes 1+3). Both recorders are fault-isolated: they can
-        # never change the submission outcome.
-        from .ict_declines import record_decline as _record_decline
-        _record_decline(db, c, now, 'turtle_soup', symbol, _res, best)
-        from .ict_declines import record_scan_eval as _record_scan_eval
-        _record_scan_eval(db, c, now, 'turtle_soup', symbol,
-                          zones=len(levels), signals=1,
-                          submitted=1 if _res.get('submitted') else 0,
-                          declined=0 if _res.get('submitted') else 1)
+        _paper_submit(db, c, cfg, now, 'turtle_soup', symbol, best)
     db.put(c, 'ict_turtle_soup:latest',
            {'at': now, 'rows': rows, 'excluded': excluded,
             'params': {'confirm_bars': confirm_bars, 'atr_frac': atr_frac,

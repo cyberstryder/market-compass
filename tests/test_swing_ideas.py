@@ -530,3 +530,92 @@ def test_swing_state_is_owner_only(db,cfg):
         studies=client.get('/api/state/studies')
         assert studies.status_code==200 and studies.json()['swing_ideas']['max_hold_sessions']==10
         assert 'swing-ideas' in client.get('/detailed').text
+
+
+def test_gap_day_stop_evaluates_at_first_post_gap_snapshot(db,cfg):
+    # Task 003 Item 5 (Josh, 2026-10-26): the stop evaluates at the first
+    # available post-gap snapshot. Tuesday is a gap day; Wednesday's close
+    # snapshot breaches the premium stop. The chain is stale at that
+    # observe, so the metadata gate would answer 'waiting' -- previously
+    # that parked the position while the snapshot rolled forward and the
+    # stop was priced at a later close (or never). Now the post-gap
+    # evaluation runs in the same pass that marks the gap day.
+    monday_close=stamp('2026-09-14',16,30);wednesday_close=stamp('2026-09-16',16,30)
+    with db.tx() as c:
+        svc,p=open_swing(db,c,cfg)
+        close_state(db,c,CALL,'2026-09-14',(2.2,2.25),(100,100.02),monday_close)
+        svc.observe(c,p,monday_close)
+        assert records(c)[0]['status']=='open'
+        # Tuesday produces no prints at all; Wednesday's close breaches the
+        # premium stop (entry 2.06, stop 1.34, Wednesday mark 1.19).
+        close_state(db,c,CALL,'2026-09-16',(1.2,1.25),(100,100.02),wednesday_close)
+        chain=db.get(c,'chain:SPY');chain['asof']=wednesday_close-3600;db.put(c,'chain:SPY',chain)
+        svc.observe(c,records(c)[0],wednesday_close)
+        p=records(c)[0]
+        assert p['status']=='closed' and p['exit_reason']=='premium_stop' and p['exit']==1.19
+        assert p['data_gap_days']==['2026-09-15'] and p['data_gap'] is True
+
+
+def test_gap_day_no_breach_at_first_post_gap_snapshot_continues(db,cfg):
+    # Same shape, but Wednesday's snapshot does not breach anything: the
+    # gap day is marked, Wednesday is still evaluated in the same pass
+    # (not deferred by the stale-chain 'waiting' verdict), and the hold
+    # continues.
+    monday_close=stamp('2026-09-14',16,30);wednesday_close=stamp('2026-09-16',16,30)
+    with db.tx() as c:
+        svc,p=open_swing(db,c,cfg)
+        close_state(db,c,CALL,'2026-09-14',(2.2,2.25),(100,100.02),monday_close)
+        svc.observe(c,p,monday_close)
+        assert records(c)[0]['status']=='open'
+        close_state(db,c,CALL,'2026-09-16',(2.5,2.55),(100,100.02),wednesday_close)
+        chain=db.get(c,'chain:SPY');chain['asof']=wednesday_close-3600;db.put(c,'chain:SPY',chain)
+        svc.observe(c,records(c)[0],wednesday_close)
+        p=records(c)[0]
+        assert p['status']=='open' and p.get('exit_reason') is None and p['pnl'] is None
+        assert p['data_gap_days']==['2026-09-15'] and p['data_gap'] is True
+        assert p['last_mark_day']=='2026-09-16' and '2026-09-16' in p['evaluated_days']
+
+
+def test_hold_exit_when_final_quote_stamps_at_or_after_close(db,cfg):
+    # Task 003 Item 4: the contract's final quote stamps 5s AFTER the
+    # 16:00 close. The strict in-session window rejects it, the close
+    # snapshot is never captured, and maximum_hold -- checked only inside
+    # evaluate_close -- could never fire. With the hold deadline reached,
+    # the late stamp is accepted as the session's close and the deadline
+    # exit runs, priced at that close.
+    monday_close=stamp('2026-09-14',16,30);tuesday_close=stamp('2026-09-15',16,30)
+    tuesday_session_close=session('2026-09-15')[1]
+    with db.tx() as c:
+        svc,p=open_swing(db,c,cfg)
+        p['exit_deadline']=stamp('2026-09-15',15,45);svc.save(c,p,NOW)
+        close_state(db,c,CALL,'2026-09-14',(2.2,2.25),(100,100.02),monday_close)
+        svc.observe(c,p,monday_close)
+        assert records(c)[0]['status']=='open'
+        db.put(c,'quote:'+CALL,quote(tuesday_session_close+5,2.2,2.25))
+        db.put(c,'quote:SPY',quote(tuesday_session_close-30,100,100.02))
+        chain=db.get(c,'chain:SPY');chain['asof']=tuesday_close;db.put(c,'chain:SPY',chain)
+        svc.observe(c,records(c)[0],tuesday_close)
+        p=records(c)[0]
+        assert p['status']=='closed' and p['exit_reason']=='maximum_hold' and p['exit']==2.19
+
+
+def test_late_close_stamp_still_rejected_before_deadline(db,cfg):
+    # Item 4 guard: the grace is for the hold-deadline evaluation only.
+    # The same at/after-close stamp on a session well before the deadline
+    # keeps the strict window -- no snapshot is captured and ordinary
+    # marking is unchanged.
+    monday_close=stamp('2026-09-14',16,30);tuesday_close=stamp('2026-09-15',16,30)
+    tuesday_session_close=session('2026-09-15')[1]
+    with db.tx() as c:
+        svc,p=open_swing(db,c,cfg)
+        p['exit_deadline']=stamp('2026-09-22',15,45);svc.save(c,p,NOW)
+        close_state(db,c,CALL,'2026-09-14',(2.2,2.25),(100,100.02),monday_close)
+        svc.observe(c,p,monday_close)
+        assert records(c)[0]['status']=='open'
+        db.put(c,'quote:'+CALL,quote(tuesday_session_close+5,2.2,2.25))
+        db.put(c,'quote:SPY',quote(tuesday_session_close-30,100,100.02))
+        chain=db.get(c,'chain:SPY');chain['asof']=tuesday_close;db.put(c,'chain:SPY',chain)
+        svc.observe(c,records(c)[0],tuesday_close)
+        p=records(c)[0]
+        assert p['status']=='open' and p['close_snapshot']['day']=='2026-09-14'
+        assert p['last_mark_day']=='2026-09-14' and p['data_gap_days']==[]

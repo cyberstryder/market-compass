@@ -16,7 +16,6 @@ from .market import number, day, CT  # noqa: F401  (CT kept for session-math con
 from .ict_common import (ict_bars, atr, fractal_swings, detect_bos,
                          detect_fvgs, fvg_mitigated)
 from .ict_paper import submit as _paper_submit
-from .ict_declines import record_decline as _record_decline
 
 SCAN_THROTTLE = 120
 ATR_PERIOD = 14
@@ -231,8 +230,7 @@ def scan(db, c, cfg, now):
                    {'signal_ts': sig['signal_ts'], 'date': today,
                     'direction': sig['direction'], 'at': now})
             n_signals += 1
-        _res = _paper_submit(db, c, cfg, now, 'bos_fvg', symbol, sig)
-        _record_decline(db, c, now, 'bos_fvg', symbol, _res, sig)
+        _paper_submit(db, c, cfg, now, 'bos_fvg', symbol, sig)
     db.put(c, 'ict_bos_fvg:latest',
            {'at': now, 'rows': rows, 'excluded': excluded, 'params': params,
             'status': 'running' if rows else 'idle'})

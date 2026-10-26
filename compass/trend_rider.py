@@ -146,9 +146,7 @@ def scan(db, c, cfg, now):
                 }
                 rows[symbol] = {'symbol': symbol, 'signals': [sig], 'at': now}
                 from .ict_paper import submit as _paper_submit
-                _res = _paper_submit(db, c, cfg, now, 'trend_rider', symbol, sig)
-                from .ict_declines import record_decline as _record_decline
-                _record_decline(db, c, now, 'trend_rider', symbol, _res, sig)
+                _paper_submit(db, c, cfg, now, 'trend_rider', symbol, sig)
         
         elif regime == 'trend_down':
             range_low = min(b['l'] for b in recent)
@@ -169,8 +167,6 @@ def scan(db, c, cfg, now):
                 }
                 rows[symbol] = {'symbol': symbol, 'signals': [sig], 'at': now}
                 from .ict_paper import submit as _paper_submit
-                _res = _paper_submit(db, c, cfg, now, 'trend_rider', symbol, sig)
-                from .ict_declines import record_decline as _record_decline
-                _record_decline(db, c, now, 'trend_rider', symbol, _res, sig)
+                _paper_submit(db, c, cfg, now, 'trend_rider', symbol, sig)
     
     return {'ran': True, 'symbols': list(rows.keys()), 'at': now}

@@ -352,7 +352,6 @@ def scan(db, c, cfg, now):
         return {'ran': False, 'reason': 'no_symbols'}
     day_iso = datetime.fromtimestamp(now, CT).date().isoformat()
     fired = 0
-    eval_totals = {'zones': 0, 'signals': 0, 'declined': 0}
     for symbol in symbols:
         window = ict_bars(db, c, symbol)
         bars = _bars_from_window(window)
@@ -361,7 +360,6 @@ def scan(db, c, cfg, now):
         zones = build_zones(bars, now)
         if not zones:
             continue
-        eval_totals['zones'] += len(zones)
         bars_1h = _resample(bars, 3600)
         if len(bars_1h) < 15:
             continue
@@ -372,15 +370,10 @@ def scan(db, c, cfg, now):
             hour=0, minute=0, second=0, microsecond=0).timestamp()
         today_bars = [b for b in bars_1h
                       if b['ts'] >= day_start and b['ts'] + 3600 <= now]
-        sym_signals = 0
-        sym_submitted = 0
-        sym_declined = 0
         for bar in today_bars:
             sig = check_signal(bar, zones, atr)
             if not sig:
                 continue
-            sym_signals += 1
-            eval_totals['signals'] += 1
             # Trend gate REMOVED 2026-10-13: a fade strategy fades overbought/oversold
             # extremes, which routinely oppose the 4H trend. This was the same mistake
             # as the golden_zone EMA-cross gate (rejected Oct 9). Fades are counter-trend
@@ -399,35 +392,22 @@ def scan(db, c, cfg, now):
             from .ict_paper import submit as _paper_submit
             res = _paper_submit(db, c, cfg, now, 'aoi_fade', symbol, levels)
             if res.get('submitted'):
-                sym_submitted += 1
                 db.put(c, seen_key, bar['ts'])
                 db.append(c, 'ict_aoi_fade_signal', 'ict_futures', symbol, now,
                           {k: v for k, v in levels.items()},
                           key='ictaof:%s:%d' % (symbol, int(bar['ts'])))
                 fired += 1
             else:
-                # Persist the decline as an append-only event (2026-10-26,
-                # fire-rate audit fix 1). The old health-row overwrite kept
-                # only the latest reason+symbol and dropped the gate's
-                # detail fields, which left 35 of 36 unmatched replay
-                # signals unattributable. Recorder is fault-isolated:
-                # it can never change the submission outcome.
-                sym_declined += 1
-                eval_totals['declined'] += 1
-                from .ict_declines import record_decline as _record_decline
-                _record_decline(db, c, now, 'aoi_fade', symbol, res,
-                                {**levels, 'signal_ts': bar['ts']})
-        if sym_signals:
-            from .ict_declines import record_scan_eval as _record_scan_eval
-            _record_scan_eval(db, c, now, 'aoi_fade', symbol,
-                              zones=len(zones), signals=sym_signals,
-                              submitted=sym_submitted,
-                              declined=sym_declined)
+                # Log decline reason for diagnostics (2026-10-13: 4-day darkness was invisible).
+                # Written on the existing cursor: db.health() opens its own nested tx,
+                # which locks sqlite when scan already runs inside one.
+                reason = res.get('reason', 'unknown')
+                prev = db.get(c, 'health:ict_aoi_fade_declines', {}) or {}
+                db.put(c, 'health:ict_aoi_fade_declines',
+                       {**prev, 'name': 'ict_aoi_fade_declines', 'status': 'info',
+                        'detail': f"{reason}: {symbol}", 'checked_at': time.time()})
     db.put(c, 'ict_aoi_fade:scanned_at', now)
-    db.put(c, 'ict_aoi_fade:latest', {'at': now, 'fired': fired,
-                                      'zones': eval_totals['zones'],
-                                      'signals': eval_totals['signals'],
-                                      'declined': eval_totals['declined']})
+    db.put(c, 'ict_aoi_fade:latest', {'at': now, 'fired': fired})
     return {'ran': True, 'fired': fired}
 
 

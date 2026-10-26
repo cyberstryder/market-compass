@@ -283,13 +283,14 @@ def scan(db, c, cfg, now):
             n_signals += 1
         res = _paper_submit(db, c, cfg, now, 'bos_gz_vwap', symbol, sig)
         if not res.get('submitted'):
-            # Persist the decline as an append-only event (2026-10-26,
-            # fire-rate audit fix 1). The old health-row overwrite kept
-            # only the latest reason+symbol and dropped the gate's
-            # detail fields. Recorder is fault-isolated: it can never
-            # change the submission outcome.
-            from .ict_declines import record_decline as _record_decline
-            _record_decline(db, c, now, 'bos_gz_vwap', symbol, res, sig)
+            # Log decline reason for diagnostics (2026-10-13: 4-day darkness was invisible).
+            # Written on the existing cursor: db.health() opens its own nested tx,
+            # which locks sqlite when scan already runs inside one.
+            reason = res.get('reason', 'unknown')
+            prev = db.get(c, 'health:ict_bos_gz_vwap_declines', {}) or {}
+            db.put(c, 'health:ict_bos_gz_vwap_declines',
+                   {**prev, 'name': 'ict_bos_gz_vwap_declines', 'status': 'info',
+                    'detail': f"{reason}: {symbol}", 'checked_at': time.time()})
     db.put(c, 'ict_bos_gz_vwap:latest',
            {'at': now, 'rows': rows, 'excluded': excluded, 'params': params,
             'status': 'running' if rows else 'idle'})
