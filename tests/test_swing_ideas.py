@@ -231,20 +231,39 @@ def test_scheduled_closures_and_early_closes_add_no_observation_gap(previous,nex
     assert trading_seconds(session(next_day)[0],session(next_day)[0]+61)==61
 
 
+def close_state(db,c,symbol,d,opt,spot,now):
+    # Final prints inside the session's last minute; chain refreshed at the
+    # observe time so the close snapshot and the metadata gate both see them.
+    close=session(d)[1]
+    db.put(c,'quote:'+symbol,quote(close-30,opt[0],opt[1]))
+    db.put(c,'quote:SPY',quote(close-30,spot[0],spot[1]))
+    chain=db.get(c,'chain:SPY');chain['asof']=now;db.put(c,'chain:SPY',chain)
+
+
 @pytest.mark.parametrize('side',['long','short'])
 def test_weekend_carry_and_adverse_reopen_exit_at_observed_bid(db,cfg,side):
     friday=stamp('2026-09-11',14,0)
-    monday=stamp('2026-09-14',9,30,3)
+    saturday=stamp('2026-09-12',12,0)
+    monday_open=stamp('2026-09-14',9,31)
+    monday_close=stamp('2026-09-14',16,30)
     with db.tx() as c:
         svc,p=open_swing(db,c,cfg,friday,side)
         p=prior_close_fixture(svc,c,p,'2026-09-11')
-        svc.observe(c,p,stamp('2026-09-12',12,0))
+        chain=db.get(c,'chain:SPY');chain['asof']=saturday;db.put(c,'chain:SPY',chain)
+        svc.observe(c,p,saturday)
         p=records(c)[0]
         assert p['status']=='open' and p['observation_state']=='scheduled_market_closure'
-        chain=db.get(c,'chain:SPY');chain['asof']=monday;db.put(c,'chain:SPY',chain)
-        db.put(c,'quote:'+p['contract']['symbol'],quote(monday,.8,.85))
-        db.put(c,'quote:SPY',quote(monday,95 if side=='long' else 105,95.02 if side=='long' else 105.02))
-        svc.observe(c,p,monday)
+        assert p['last_mark_day']=='2026-09-11' and p['mark']==pytest.approx(1.99)
+        # An adverse Monday open print is intraday noise now: no exit is
+        # evaluated until Monday's close snapshot exists.
+        db.put(c,'quote:'+p['contract']['symbol'],quote(monday_open,.8,.85))
+        db.put(c,'quote:SPY',quote(monday_open,95 if side=='long' else 105,95.02 if side=='long' else 105.02))
+        svc.observe(c,p,monday_open)
+        p=records(c)[0]
+        assert p['status']=='open' and p['observation_state']=='awaiting_daily_close'
+        close_state(db,c,p['contract']['symbol'],'2026-09-14',(.8,.85),
+            (95,95.02) if side=='long' else (105,105.02),monday_close)
+        svc.observe(c,p,monday_close)
         p=records(c)[0]
         assert p['status']=='closed' and p['exit']==.79 and p['exit']<p['premium_stop']
         assert p['pnl']==pytest.approx(-128.3) and p['outcome']=='loss'
@@ -252,45 +271,55 @@ def test_weekend_carry_and_adverse_reopen_exit_at_observed_bid(db,cfg,side):
 
 
 def test_favorable_reopen_caps_target_and_tracks_independent_option_result(db,cfg):
-    friday=stamp('2026-09-11',14,0);monday=stamp('2026-09-14',9,30,3)
+    friday=stamp('2026-09-11',14,0)
+    saturday=stamp('2026-09-12',12,0)
+    monday_close=stamp('2026-09-14',16,30)
     with db.tx() as c:
         svc,p=open_swing(db,c,cfg,friday)
         p=prior_close_fixture(svc,c,p,'2026-09-11')
-        chain=db.get(c,'chain:SPY');chain['asof']=monday;db.put(c,'chain:SPY',chain)
-        db.put(c,'quote:'+CALL,quote(monday,5,5.05));db.put(c,'quote:SPY',quote(monday,102,102.02))
-        svc.observe(c,p,monday)
+        chain=db.get(c,'chain:SPY');chain['asof']=saturday;db.put(c,'chain:SPY',chain)
+        svc.observe(c,p,saturday)
+        assert records(c)[0]['status']=='open'
+        close_state(db,c,CALL,'2026-09-14',(5,5.05),(102,102.02),monday_close)
+        svc.observe(c,p,monday_close)
         p=records(c)[0]
         assert p['exit']==p['premium_target']==3.60 and p['pnl']==pytest.approx(152.7)
-        assert snapshot(db,c,cfg,monday)['groups'][0]['outcome']=='win'
+        assert snapshot(db,c,cfg,monday_close)['groups'][0]['outcome']=='win'
 
 
-@pytest.mark.parametrize('missing',['minute','session','underlying','metadata'])
-def test_missing_open_session_path_is_unresolved_not_a_later_win(db,cfg,missing):
+@pytest.mark.parametrize('missing',['minute','session','underlying'])
+def test_missing_intraday_path_no_longer_resolves_position(db,cfg,missing):
+    # The quote-gap kill is gone: an unobserved intraday path (a >60s gap, a
+    # whole skipped session's open, a missing underlying leg) leaves the
+    # position open for the next daily close instead of resolving it.
     with db.tx() as c:
         svc,p=open_swing(db,c,cfg)
         later=NOW+61 if missing!='session' else stamp('2026-09-16',9,30,2)
-        if missing=='metadata':
-            p=prior_close_fixture(svc,c,p,'2026-09-14');later=stamp('2026-09-15',9,31,1)
         db.put(c,'quote:'+CALL,quote(later,5,5.05))
         if missing!='underlying':db.put(c,'quote:SPY',quote(later,110,110.02))
         svc.observe(c,p,later)
         p=records(c)[0]
-        assert p['status']=='unresolved' and p['return_pct'] is None and p['pnl'] is None
+        assert p['status']=='open' and p['exit'] is None and p['pnl'] is None
+        assert p.get('exit_reason') is None and p['data_gap_days']==[]
 
 
 @pytest.mark.parametrize('change',['adjusted','missing','basis'])
 def test_changed_contract_or_split_price_basis_cannot_produce_false_outcome(db,cfg,change):
-    friday=stamp('2026-09-11',14,0);monday=stamp('2026-09-14',9,30,3)
+    friday=stamp('2026-09-11',14,0);monday_close=stamp('2026-09-14',16,30)
     with db.tx() as c:
         svc,p=open_swing(db,c,cfg,friday);p=prior_close_fixture(svc,c,p,'2026-09-11')
-        chain=db.get(c,'chain:SPY');chain['asof']=monday
+        close_state(db,c,CALL,'2026-09-14',(5,5.05),(100,100.02),monday_close)
+        chain=db.get(c,'chain:SPY')
         if change=='adjusted':chain['contracts'][0]['multiplier']=10
         if change=='missing':chain['contracts']=[]
         if change=='basis':db.append(c,'daily','alpaca','SPY',stamp(p['daily']['through'],0,0),dict(o=49,h=51,l=48,c=50,v=1000))
         db.put(c,'chain:SPY',chain)
-        db.put(c,'quote:'+CALL,quote(monday,5,5.05));db.put(c,'quote:SPY',quote(monday))
-        svc.observe(c,p,monday)
+        svc.observe(c,p,monday_close)
         p=records(c)[0]
+        # Friday's close was never capturable once Monday's snapshot exists,
+        # so it is a data_gap day; Monday's evaluation reaches the metadata
+        # gate and the integrity failure still resolves the position.
+        assert p['data_gap_days']==['2026-09-11']
         assert p['status']=='unresolved' and p['pnl'] is None
         assert p['exit_reason'] in ('contract_metadata_changed','historical_price_basis_changed')
 
@@ -300,43 +329,142 @@ def test_hold_deadline_respects_holidays_and_expiry_guard():
     assert hold_deadline(stamp('2026-11-25'),'2026-12-18',2)==stamp('2026-11-27',12,45)
 
 
-@pytest.mark.parametrize('late',[False,True])
-def test_hold_exit_needs_quote_at_deadline(db,cfg,late):
+def test_hold_exit_at_deadline_day_close(db,cfg):
+    monday_close=stamp('2026-09-14',16,30);tuesday_close=stamp('2026-09-15',16,30)
     with db.tx() as c:
         svc,p=open_swing(db,c,cfg)
-        p['exit_deadline']=NOW+30;svc.save(c,p,NOW)
-        observed=NOW+36 if late else NOW+30
-        db.put(c,'quote:'+CALL,quote(observed,2.2,2.25));db.put(c,'quote:SPY',quote(observed))
-        svc.observe(c,p,observed)
-        assert records(c)[0]['status']==('unresolved' if late else 'closed')
-        assert records(c)[0]['exit_reason']==('holding_deadline_quote_missing' if late else 'maximum_hold')
+        p['exit_deadline']=stamp('2026-09-15',15,45);svc.save(c,p,NOW)
+        close_state(db,c,CALL,'2026-09-14',(2.2,2.25),(100,100.02),monday_close)
+        svc.observe(c,p,monday_close)
+        assert records(c)[0]['status']=='open'  # Deadline session has not closed yet.
+        close_state(db,c,CALL,'2026-09-15',(2.2,2.25),(100,100.02),tuesday_close)
+        svc.observe(c,p,tuesday_close)
+        p=records(c)[0]
+        assert p['status']=='closed' and p['exit_reason']=='maximum_hold' and p['exit']==2.19
+
+
+def test_hold_exit_missing_deadline_close_defers_to_next_close(db,cfg):
+    monday_close=stamp('2026-09-14',16,30);wednesday_close=stamp('2026-09-16',16,30)
+    with db.tx() as c:
+        svc,p=open_swing(db,c,cfg)
+        p['exit_deadline']=stamp('2026-09-15',15,45);svc.save(c,p,NOW)
+        close_state(db,c,CALL,'2026-09-14',(2.2,2.25),(100,100.02),monday_close)
+        svc.observe(c,p,monday_close)
+        assert records(c)[0]['status']=='open'
+        # No Tuesday prints at all: the deadline day's close never exists.
+        # It becomes a data_gap day (never a kill) and the hold exit is
+        # evaluated at the next available close instead.
+        close_state(db,c,CALL,'2026-09-16',(2.2,2.25),(100,100.02),wednesday_close)
+        svc.observe(c,p,wednesday_close)
+        p=records(c)[0]
+        assert p['status']=='closed' and p['exit_reason']=='maximum_hold' and p['exit']==2.19
+        assert p['data_gap_days']==['2026-09-15'] and p['data_gap'] is True
 
 
 def test_restart_deduplicates_entries_and_milestones_and_disabled_still_manages(db,cfg):
+    monday_close=stamp('2026-09-14',16,30);tuesday_close=stamp('2026-09-15',16,30)
     with db.tx() as c:
         svc,p=open_swing(db,c,cfg)
-        later=NOW+2
-        db.put(c,'quote:'+CALL,quote(later,2.8,2.85));db.put(c,'quote:SPY',quote(later))
-        svc.observe(c,p,later)
-        assert records(c)[0]['milestones']==[10,25]
+        svc.observe(c,p,NOW+2)
+        assert records(c)[0]['milestones']==[]  # No completed session yet.
         restarted=SwingIdeas(db,cfg)
-        restarted.queue(c,signal(),flow(),later)
-        restarted.observe(c,records(c)[0],later)
-        assert len(records(c))==1 and len(db.recent(c,'alert'))==2
+        restarted.queue(c,signal(),flow(),NOW+2)
+        assert len(records(c))==1
+        # Milestones now accrue at daily-close evaluations, not live ticks.
+        close_state(db,c,CALL,'2026-09-14',(2.8,2.85),(100,100.02),monday_close)
+        restarted.observe(c,records(c)[0],monday_close)
+        assert records(c)[0]['milestones']==[10,25]
+        restarted.observe(c,records(c)[0],monday_close+60)
+        assert len(records(c))==1 and len(db.recent(c,'alert'))==2  # Entry + update_25 only.
         cfg.swing_ideas=False
-        db.put(c,'quote:'+CALL,quote(later+2,1,1.05));db.put(c,'quote:SPY',quote(later+2))
-        restarted.tick(c,later+2)
+        close_state(db,c,CALL,'2026-09-15',(1,1.05),(100,100.02),tuesday_close)
+        restarted.tick(c,tuesday_close)
         assert records(c)[0]['status']=='closed' and records(c)[0]['outcome']=='loss'
 
 
-def test_fresh_flow_rechecked_before_delayed_contract_entry(db,cfg):
+def test_stale_flow_no_longer_blocks_delayed_contract_entry(db,cfg):
     with db.tx() as c:
         svc=SwingIdeas(db,cfg)
         seed(db,c)
         f=flow(NOW-290)
         svc.queue(c,signal(),f,NOW)
+        assert records(c)[0]['flow_confirmation']=='confirmed'
+        # Flow is stale by the delayed entry, but it is an attribute now,
+        # not a gate: the entry books and the queue-time evidence stands.
+        db.put(c,'quote:SPY',quote(NOW+20))
+        db.put(c,'quote:'+CALL,quote(NOW+20,2,2.05))
+        db.put(c,'options:subscriptions',dict(at=NOW+20,symbols=[CALL]))
+        chain=db.get(c,'chain:SPY');chain['asof']=NOW+20;db.put(c,'chain:SPY',chain)
         svc.pending(c,records(c)[0],NOW+20)
-        assert records(c)[0]['status']=='excluded' and records(c)[0]['entry'] is None
+        p=records(c)[0]
+        assert p['status']=='open' and p['entry']==2.06 and p['flow_confirmation']=='confirmed'
+
+
+def test_empty_flow_books_with_unavailable_attribute(db,cfg):
+    with db.tx() as c:
+        svc=SwingIdeas(db,cfg)
+        seed(db,c)
+        svc.queue(c,signal(),{},NOW)
+        svc.pending(c,records(c)[0],NOW)
+        p=records(c)[0]
+        assert p['status']=='open' and p['entry']==2.06 and p['flow_confirmation']=='unavailable'
+
+
+def test_unconfirmed_flow_books_with_unconfirmed_attribute(db,cfg):
+    rows=[dict(first_seen=NOW,payload=dict(vendor_id='small',symbol='SPY',source_ts=NOW,
+        premium=1000,option_type='Call',expiry='2026-10-16',sentiment='Bullish'))]
+    f=summarize_flow(rows,NOW)['SPY']
+    assert not confirms(f,'long',NOW)
+    with db.tx() as c:
+        svc=SwingIdeas(db,cfg)
+        seed(db,c)
+        svc.queue(c,signal(),f,NOW)
+        svc.pending(c,records(c)[0],NOW)
+        p=records(c)[0]
+        assert p['status']=='open' and p['entry']==2.06 and p['flow_confirmation']=='unconfirmed'
+
+
+def test_confirmed_flow_records_confirmed_attribute(db,cfg):
+    with db.tx() as c:
+        svc,p=open_swing(db,c,cfg)
+        assert p['status']=='open' and p['flow_confirmation']=='confirmed'
+
+
+def test_multi_hour_quote_gap_survived_and_marked_at_next_close(db,cfg):
+    tuesday_open=stamp('2026-09-15',9,30);tuesday_mid=stamp('2026-09-15',13,30)
+    tuesday_close=stamp('2026-09-15',16,30)
+    with db.tx() as c:
+        svc,p=open_swing(db,c,cfg)
+        # Tuesday prints stop after the open: a four-hour quote gap that
+        # the old 60-second rule would have killed the hold over.
+        db.put(c,'quote:'+CALL,quote(tuesday_open,2.5,2.55))
+        db.put(c,'quote:SPY',quote(tuesday_open))
+        svc.observe(c,p,tuesday_mid)
+        p=records(c)[0]
+        assert p['status']=='open' and p.get('exit_reason') is None and p['data_gap_days']==[]
+        close_state(db,c,CALL,'2026-09-15',(3,3.05),(100,100.02),tuesday_close)
+        svc.observe(c,p,tuesday_close)
+        p=records(c)[0]
+        assert p['status']=='open' and p['last_mark_day']=='2026-09-15'
+        assert p['daily_marks'][-1]['day']=='2026-09-15' and p['daily_marks'][-1]['option_bid']==3
+        assert p['data_gap_days']==['2026-09-14']  # Monday's close was never capturable.
+
+
+def test_missing_daily_snapshot_marks_data_gap_and_resumes(db,cfg):
+    monday_close=stamp('2026-09-14',16,30);wednesday_close=stamp('2026-09-16',16,30)
+    with db.tx() as c:
+        svc,p=open_swing(db,c,cfg)
+        close_state(db,c,CALL,'2026-09-14',(2.2,2.25),(100,100.02),monday_close)
+        svc.observe(c,p,monday_close)
+        assert records(c)[0]['status']=='open'
+        # Tuesday produces no prints at all; Wednesday's close resumes marking.
+        close_state(db,c,CALL,'2026-09-16',(2.5,2.55),(100,100.02),wednesday_close)
+        svc.observe(c,p,wednesday_close)
+        p=records(c)[0]
+        assert p['status']=='open' and p['pnl'] is None and p['data_gap'] is True
+        assert p['data_gap_days']==['2026-09-15']
+        assert [m['day'] for m in p['daily_marks']]==['2026-09-14','2026-09-15','2026-09-16']
+        assert p['daily_marks'][1]['data_gap'] is True and p['last_mark_day']=='2026-09-16'
 
 
 def test_open_swings_precede_pending_intraday_streams(db,cfg,monkeypatch):

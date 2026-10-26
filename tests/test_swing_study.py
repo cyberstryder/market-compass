@@ -107,7 +107,7 @@ def test_candidate_clock_failures_stay_unavailable(db,monkeypatch,case):
         assert c.execute(select(func.count()).select_from(checkpoints).where(checkpoints.c.status=='unavailable')).scalar_one()==6
 
 
-def test_discovery_keeps_delayed_context_but_does_not_admit_or_alert(db,monkeypatch):
+def test_discovery_keeps_delayed_context_and_admits_without_flow_confirmation(db,monkeypatch):
     monkeypatch.setattr('compass.store.time.time',lambda:NOW)
     monkeypatch.setattr('compass.swing_ideas.technical_setups',lambda *args:[signal()])
     with db.tx() as c:
@@ -123,7 +123,12 @@ def test_discovery_keeps_delayed_context_but_does_not_admit_or_alert(db,monkeypa
         saved=c.execute(select(trials.c.payload)).scalar_one()
         assert saved['flow']['group']=='delayed_flow' and saved['original_candidate']['flow']=={}
         assert len(saved['flow']['source_rows'])==2
-        assert c.execute(select(func.count()).select_from(swings)).scalar_one()==0
+        # Flow no longer gates admission: the candidate is admitted as a
+        # pending idea with the attribute recorded as 'unavailable' (the
+        # stale collection zeroed the flow cache). Pending ideas don't alert.
+        assert c.execute(select(func.count()).select_from(swings)).scalar_one()==1
+        admitted=c.execute(select(swings.c.payload)).scalar_one()
+        assert admitted['status']=='pending' and admitted['flow_confirmation']=='unavailable'
         assert len(db.recent(c,'swing_candidate'))==1 and not db.recent(c,'alert')
 
 
