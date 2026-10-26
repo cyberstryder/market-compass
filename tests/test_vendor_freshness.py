@@ -182,7 +182,10 @@ def test_report_cutover_excludes_earlier_candidates(db):
         assert build_report(db,c,NOW+10,since=NOW-1)['window']['reviewed']==1
 
 
-def test_swing_waits_for_current_collection_before_quoted_entry(db):
+def test_swing_books_despite_stale_collection_after_queue(db):
+    # Vendor-collection freshness no longer gates swing entries (it is a
+    # recorded attribute now): a collection that goes stale after queueing
+    # cannot block the quoted entry, and the queue-time attribute stands.
     from compass.swing_ideas import SwingIdeas
     from test_swing_ideas import seed, signal, flow, records, NOW as SWING_NOW
     cfg=Config(morning_enabled=True,local=True,stocks=('SPY',),futures=(),scanner_paper=False)
@@ -193,8 +196,8 @@ def test_swing_waits_for_current_collection_before_quoted_entry(db):
         db.put(c,'matrix:unusual_activity',dict(source_ts=SWING_NOW,received=SWING_NOW,vendor_stale=True))
         worker.pending(c,records(c)[0],SWING_NOW)
         row=records(c)[0]
-        assert row['status']=='pending' and row['entry'] is None
-        assert 'vendor_stale' in row['waiting_reason']
+        assert row['status']=='open' and row['entry']==2.06
+        assert row['flow_confirmation']=='confirmed'
 
 
 def test_documented_refresh_metadata_is_preserved_without_extending_eligibility():

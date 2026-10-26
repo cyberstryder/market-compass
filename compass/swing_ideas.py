@@ -10,14 +10,12 @@ from sqlalchemy import Table, Column, String, Float, JSON, Index, select, update
 from .store import meta, identity, flow_records,events
 from .market import day, session, number
 from .option_ideas import current, liquid, eligible_contracts, FEE, SLIPPAGE
-from .swing_signals import stored_daily_context, minute_context, technical_setups, summarize_flow, confirms, trading_seconds, hold_deadline
+from .swing_signals import stored_daily_context, minute_context, technical_setups, summarize_flow, confirms, sessions_between, hold_deadline
 from .daily_history import RECOVERY_CACHE, current_context
 from .flow_recovery import freshness as flow_freshness
 from .quote_collection import VERSION as COLLECTION_VERSION
-from .gap_tolerance import scaled_tolerance
 
 VERSION = 'swing-ideas-v1'
-MAX_GAP = 60  # Seconds of open exchange time, excluding scheduled closures.
 swings = Table('swing_ideas_v1', meta,
     Column('id', String(64), primary_key=True),
     Column('underlying', String(100), nullable=False),
@@ -26,6 +24,24 @@ swings = Table('swing_ideas_v1', meta,
     Column('updated', Float, nullable=False),
     Column('payload', JSON, nullable=False))
 Index('swing_ideas_active', swings.c.status, swings.c.created)
+
+
+def flow_confirmation(db, c, flow, side, now):
+    """Vendor flow as a recorded entry attribute — never an admission gate.
+
+    'confirmed'   — current, direction-aligned vendor flow at signal time.
+    'unconfirmed' — current flow data exists but does not confirm the side.
+    'unavailable' — no flow summary for the symbol, or the vendor collection
+                    itself is stale: absence of evidence, recorded as such.
+    The parallel underlying-first validation measures whether confirmed
+    signals do better; this attribute is its evidence on the trade record.
+    """
+    if not flow:
+        return 'unavailable'
+    check = flow_freshness(db.get(c,'matrix:unusual_activity',{}),now,300)
+    if not check['eligible_for_live_confirmation']:
+        return 'unavailable'
+    return 'confirmed' if confirms(flow,side,now) else 'unconfirmed'
 
 
 def active_underlyings(c):
@@ -67,8 +83,7 @@ class SwingIdeas:
         hours = session(day(now))
         if (not self.cfg.swing_ideas or signal['symbol'] not in self.cfg.watch_symbols
                 or not hours or not hours[0] <= now < hours[1]-1800
-                or not 0 <= now-signal['signal_time'] <= 90 or not confirms(flow,signal['side'],now)
-                or not flow_freshness(self.db.get(c,'matrix:unusual_activity',{}),now,300)['eligible_for_live_confirmation']):
+                or not 0 <= now-signal['signal_time'] <= 90):
             return
         key = identity(VERSION, signal['symbol'], signal['side'], signal['rule'], signal['signal_time'])
         p = dict(id=key,version=VERSION,underlying=signal['symbol'],underlying_side=signal['side'],
@@ -76,12 +91,15 @@ class SwingIdeas:
             signal_time=signal['signal_time'],signal_price=signal['signal_price'],
             underlying_stop=signal['stop'],underlying_target=signal['target'],
             daily=signal['daily'],weekly_aligned=signal['weekly_aligned'],flow=flow,
+            flow_confirmation=flow_confirmation(self.db,c,flow,signal['side'],now),
             flow_coverage=self.flow_coverage,atr=signal['daily']['atr14'],
             status='pending',created_at=now,updated_at=now,expires_at=min(now+120,hours[1]-1800),
             candidates=[],contract=None,entry=None,exit=None,pnl=None,return_pct=None,
             waiting_reason='Refreshing chain and requesting liquid option quotes',
             samples=0,max_gap_seconds=0,milestones=[],best_pct=None,worst_pct=None,
             overnight_gaps=[],sessions_observed=[],
+            marking_policy='daily_close_snapshot_v1',evaluated_days=[],daily_marks=[],
+            data_gap_days=[],close_snapshot=None,last_mark_day=None,
             basis='Independent one-contract swing simulation; ask + $0.01 entry, bid - $0.01 exit, $0.65 per side; not account P&L')
         inserted = c.execute(self.db.insert(swings).values(id=key,underlying=p['underlying'],
             status=p['status'],created=now,updated=now,payload=p).on_conflict_do_nothing(index_elements=['id'])
@@ -101,12 +119,6 @@ class SwingIdeas:
         now = self.now(now)
         if not self.cfg.swing_ideas or now >= p['expires_at']:
             return self.exclude(c,p,now,'New swings disabled' if not self.cfg.swing_ideas else p['waiting_reason'])
-        if not confirms(p['flow'],p['underlying_side'],now):
-            return self.exclude(c,p,now,'Supporting flow exceeded its five-minute source-age limit')
-        check = flow_freshness(self.db.get(c,'matrix:unusual_activity',{}),now,300)
-        if not check['eligible_for_live_confirmation']:
-            p['waiting_reason'] = 'Supporting flow collection is not current: '+check['status']
-            return self.save(c,p,now)
         if not current(q,now) or q['ts'] < p['signal_time']:
             p['waiting_reason'] = 'Fresh underlying quote required'
             return self.save(c,p,now)
@@ -176,58 +188,63 @@ class SwingIdeas:
         p['metadata_day'] = day(now)
         return 'ready'
 
-    def observe(self, c, p, now):
-        oq = self.db.get(c,'quote:'+p['contract']['symbol'])
+    def capture_close(self, c, p, now):
+        """Capture the latest completed session's closing snapshot, if newer.
+
+        The snapshot is that day's final state of the two quote legs: the
+        contract's quote inside the chain snapshot (falling back to the
+        streamed quote record) and the underlying's quote. Their timestamps
+        freeze at the close, so the first tick after the close -- or after a
+        weekend -- still reads that day's close. Re-capture while the same
+        day remains the latest completed session so the day's final chain
+        refresh wins.
+        """
+        chain = self.db.get(c,'chain:'+p['underlying'],{})
+        contract = next((o for o in chain.get('contracts',[]) if o.get('symbol')==p['contract']['symbol']),None)
+        cq = (contract or {}).get('quote') or self.db.get(c,'quote:'+p['contract']['symbol'])
         uq = self.db.get(c,'quote:'+p['underlying'])
-        now = self.now(now)
-        hours = session(day(now))
-        opened = bool(hours and hours[0] <= now < hours[1])
-        gap_opt = trading_seconds(p['last_option_ts'],now)
-        gap_und = trading_seconds(p['last_underlying_ts'],now)
-        gap = max(gap_opt,gap_und)
-        # Per-leg tolerance scaled to each symbol's own print cadence
-        # (rolling trading-second intervals), floored at the legacy 60s.
-        if (gap_opt > scaled_tolerance(p.get('opt_quote_gaps'),floor=MAX_GAP)
-                or gap_und > scaled_tolerance(p.get('und_quote_gaps'),floor=MAX_GAP)):
-            return self.finish(c,p,now,'open_session_observation_gap')
-        if now > p['exit_deadline']+5:
-            return self.finish(c,p,now,'holding_deadline_quote_missing')
-        if not opened:
-            if p.get('observation_state') != 'scheduled_market_closure':
-                p['observation_state'] = 'scheduled_market_closure'
-                self.save(c,p,now)
+        if not cq or not uq or cq.get('ts') is None or uq.get('ts') is None:
             return
-        metadata = self.metadata(c,p,now)
-        if metadata not in ('ready','waiting'):
-            return self.finish(c,p,now,metadata)
-        if metadata == 'waiting':
-            p['observation_state'] = 'waiting_for_session_contract_metadata'
-            return self.save(c,p,now)
-        now = self.now(now)
-        if (not current(oq,now) or not current(uq,now) or min(oq['ts'],uq['ts']) < hours[0]
-                or max(oq['ts'],uq['ts']) >= hours[1]):
-            p['observation_state'] = 'waiting_for_fresh_quotes'
-            return self.save(c,p,now)
-        if oq['ts']<p['last_option_ts'] or uq['ts']<p['last_underlying_ts']:
+        if any(cq.get(k) is None or uq.get(k) is None for k in ('bid','ask')):
             return
-        changed = oq['ts']>p['last_option_ts'] or uq['ts']>p['last_underlying_ts']
-        if not changed and now < p['exit_deadline']:
+        d = day(cq['ts'])
+        hours = session(d)
+        if (not hours or not hours[0] <= cq['ts'] < hours[1] or day(uq['ts']) != d
+                or now < hours[1]):
             return
-        p['max_gap_seconds'] = max(p['max_gap_seconds'],gap)
-        reopening = day(now) not in p['sessions_observed']
-        if reopening:
-            previous = p['last_quote']
-            prior_stock = p['last_underlying_quote']
-            p['overnight_gaps'].append(dict(day=day(now),observed_at=now,
+        captured = p.get('close_snapshot')
+        if captured and (captured['day'] > d
+                or (captured['day'] == d and captured['chain_asof'] >= chain.get('asof',0))):
+            return
+        p['close_snapshot'] = dict(day=d,chain_asof=chain.get('asof',0),
+            chain_source=chain.get('source'),
+            contract_quote=dict(ts=cq['ts'],bid=cq.get('bid'),ask=cq.get('ask')),
+            underlying_quote=dict(ts=uq['ts'],bid=uq.get('bid'),ask=uq.get('ask')))
+
+    def evaluate_close(self, c, p, now, d):
+        """Evaluate one completed session against its close snapshot.
+
+        Same exit levels and side-aware comparisons as the former live-quote
+        path -- premium 0.65x/1.75x, underlying stop/target, maximum hold at
+        the deadline session -- but priced once, from the day's close.
+        Returns True when the position finished.
+        """
+        snap = p['close_snapshot']
+        oq, uq = snap['contract_quote'], snap['underlying_quote']
+        hours = session(d)
+        if p.get('last_mark_day'):
+            previous, prior_stock = p['last_quote'], p['last_underlying_quote']
+            p['overnight_gaps'].append(dict(day=d,observed_at=now,
                 previous_option_ts=previous['ts'],option_ts=oq['ts'],option_bid_change=oq['bid']-previous['bid'],
                 previous_underlying_ts=prior_stock['ts'],underlying_ts=uq['ts'],
                 underlying_mid_change=(uq['bid']+uq['ask']-prior_stock['bid']-prior_stock['ask'])/2))
-            p['sessions_observed'].append(day(now))
-        if oq['ts']>p['last_option_ts']:
-            gaps=p.setdefault('opt_quote_gaps',[]);gaps.append(trading_seconds(p['last_option_ts'],oq['ts']));del gaps[:-32]
-        if uq['ts']>p['last_underlying_ts']:
-            gaps=p.setdefault('und_quote_gaps',[]);gaps.append(trading_seconds(p['last_underlying_ts'],uq['ts']));del gaps[:-32]
-        p.update(last_quote=oq,last_underlying_quote=uq,last_option_ts=oq['ts'],last_underlying_ts=uq['ts'],
+        if d not in p['sessions_observed']:
+            p['sessions_observed'].append(d)
+        p['daily_marks'].append(dict(day=d,option_bid=oq['bid'],underlying_bid=uq['bid'],
+            underlying_ask=uq['ask'],snapshot_at=snap['chain_asof'],chain_source=snap.get('chain_source')))
+        p.update(last_quote=dict(ts=oq['ts'],bid=oq['bid'],ask=oq['ask']),
+            last_underlying_quote=dict(ts=uq['ts'],bid=uq['bid'],ask=uq['ask']),
+            last_option_ts=oq['ts'],last_underlying_ts=uq['ts'],last_mark_day=d,
             observation_state='market_open',samples=p['samples']+1)
         mark = round(max(0,oq['bid']-SLIPPAGE),2)
         long = p['underlying_side']=='long'
@@ -235,7 +252,7 @@ class SwingIdeas:
         target = uq['bid']>=p['underlying_target'] if long else uq['ask']<=p['underlying_target']
         reason = ('premium_stop' if mark<=p['premium_stop'] else 'underlying_invalidation' if invalid
             else 'premium_target' if mark>=p['premium_target'] else 'underlying_target' if target
-            else 'maximum_hold' if now>=p['exit_deadline'] else None)
+            else 'maximum_hold' if p['exit_deadline'] <= hours[1] else None)
         price = p['premium_target'] if reason=='premium_target' else mark
         net = (price-p['entry'])*100-2*FEE
         pct = net/(p['entry']*100+FEE)*100
@@ -244,14 +261,61 @@ class SwingIdeas:
             p.update(best_pct=pct,peak_at=now)
         p['worst_pct'] = pct if p['worst_pct'] is None else min(p['worst_pct'],pct)
         if reason:
-            return self.finish(c,p,now,reason,price)
+            self.finish(c,p,now,reason,price)
+            return True
         crossed = [level for level in (10,25,50) if pct>=level and level not in p['milestones']]
         if crossed:
             p['milestones'].extend(crossed)
             self.notify(c,p,now,'update_'+str(max(crossed)))
-        elif reopening:
-            self.notify(c,p,now,'reopen_'+day(now))
+        elif d != day(p['opened_at']):
+            self.notify(c,p,now,'reopen_'+d)
         self.save(c,p,now)
+        return False
+
+    def observe(self, c, p, now):
+        """Daily-close marking: evaluate each completed session exactly once.
+
+        A multi-day hold never dies on an intraday quote gap -- there is no
+        gap termination in this path. A session whose close snapshot was
+        never capturable (the feed rolled past it) is recorded as a
+        data_gap day: not a win, not a loss, never a kill; evaluation
+        resumes at the next available close.
+        """
+        now = self.now(now)
+        for field in ('evaluated_days','daily_marks','data_gap_days'):
+            p.setdefault(field,[])
+        self.capture_close(c,p,now)
+        pending_days = [d for d in sessions_between(day(p['opened_at']),day(now))
+                        if d not in p['evaluated_days'] and session(d)[1] <= now]
+        for d in pending_days:
+            snap = p.get('close_snapshot') or {}
+            if snap.get('day') == d:
+                metadata = self.metadata(c,p,now)
+                if metadata not in ('ready','waiting'):
+                    return self.finish(c,p,now,metadata)
+                if metadata == 'waiting':
+                    p['observation_state'] = 'waiting_for_session_contract_metadata'
+                    return self.save(c,p,now)
+                p['evaluated_days'].append(d)
+                if self.evaluate_close(c,p,now,d):
+                    return
+            elif snap.get('day') and snap['day'] > d:
+                p['data_gap_days'].append(d)
+                p['daily_marks'].append(dict(day=d,data_gap=True))
+                if d not in p['sessions_observed']:
+                    p['sessions_observed'].append(d)
+                p['data_gap'] = True
+                p['evaluated_days'].append(d)
+                self.save(c,p,now)
+            else:
+                break  # This session's close is not capturable yet; wait for it.
+        hours = session(day(now))
+        state = ('awaiting_daily_close' if hours and hours[0] <= now < hours[1]
+                 else 'scheduled_market_closure')
+        if p.get('observation_state') != state:
+            p['observation_state'] = state
+            self.save(c,p,now)
+
 
     def discover(self, c, now):
         universe = list(self.cfg.watch_symbols)
@@ -269,7 +333,7 @@ class SwingIdeas:
             self.flow_coverage = dict(query_truncated=len(rows)>5000,vendor_status=matrix.get('status'),
                 freshness=check,
                 vendor_limited=matrix.get('limited'),recovery=self.db.get(c,'recovery:flow:'+day(now),{}),
-                note='Observed filtered records only; missing or unclassified flow cannot confirm a swing')
+                note='Observed filtered records only; flow is recorded as an entry attribute and never gates admission')
             from .swing_study import flow_snapshot
             self.study_flow=flow_snapshot(rows[:5000],matrix,self.flow_coverage,now,
                 self.cfg.swing_min_dte,self.cfg.swing_max_dte)
@@ -298,10 +362,12 @@ class SwingIdeas:
                 price_ready = minute.get('status')=='ready'
             signals = technical_setups(symbol,daily,minute,now) if entry_open else []
             flow = self.flow_cache.get(symbol,{})
-            qualified = [s for s in signals if confirms(flow,s['side'],now)]
-            for signal in qualified:
+            # Every technical candidate is admitted; vendor flow is recorded
+            # on the idea as an attribute and never gates admission.
+            for signal in signals:
                 self.queue(c,signal,flow,now)
-            # Retain every technical candidate even when flow prevents an entry.
+            any_flow_confirmed = any(confirms(flow,s['side'],now) for s in signals)
+            # Retain every technical candidate for the flow study as well.
             for signal in signals:
                 key=identity('swing-technical-v1',symbol,signal['side'],signal['rule'],signal['signal_time'])
                 inserted=self.db.append(c,'swing_candidate','swing_research',symbol,now,
@@ -311,18 +377,18 @@ class SwingIdeas:
                     from .swing_study import register
                     event=c.execute(select(events).where(events.c.key==key)).mappings().one()
                     register(self.db,c,event,self.now(now),snapshot=self.study_flow)
-            scan_state='qualified' if qualified else 'waiting_for_flow' if signals else 'market_closed' if not entry_open else 'warming_up' if daily['status']!='ready' else 'waiting_for_price' if not price_ready else 'scanning'
+            scan_state='queued' if signals else 'market_closed' if not entry_open else 'warming_up' if daily['status']!='ready' else 'waiting_for_price' if not price_ready else 'scanning'
             # Freeze cash-session evidence before overnight refresh overwrites current status.
             if entry_open:
                 self.db.put(c,'swing_session_scan:'+day(now)+':'+symbol,
                     dict(symbol=symbol,at=now,status=scan_state,daily_ready=daily['status']=='ready',
                          price_ready=price_ready,technical_rules=[s['rule'] for s in signals],
-                         flow_confirmed=bool(qualified),flow_coverage=self.flow_coverage))
+                         flow_confirmed=any_flow_confirmed,flow_coverage=self.flow_coverage))
             self.db.put(c,'swing_scan:'+symbol,dict(symbol=symbol,at=now,day=day(now),daily_ready=daily['status']=='ready',
-                status='qualified' if qualified else 'waiting_for_flow' if signals else 'market_closed' if not entry_open else 'warming_up' if daily['status']!='ready' else 'waiting_for_price' if not price_ready else 'scanning',
+                status=scan_state,
                 price_ready=price_ready,
                 reason=daily.get('reason'),daily_history=daily.get('history',{}),technical_rules=[s['rule'] for s in signals],
-                flow_confirmed=bool(qualified),flow_latest=flow.get('latest')))
+                flow_confirmed=any_flow_confirmed,flow_latest=flow.get('latest')))
 
     def tick(self, c, now):
         rows = c.execute(select(swings.c.payload).where(swings.c.status.in_(('pending','open')))
