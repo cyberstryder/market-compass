@@ -135,6 +135,82 @@ def paper_enabled(cfg, detector):
         bool(getattr(cfg, flag, False))
 
 
+def _entry_fresh_age(symbol):
+    """Quote freshness window (seconds) for entry booking.
+
+    Mirrors the per-symbol table in Engine.exits(): index micros print
+    every ~0.5s, SIL/YM can go 2-4s between quotes, the rest in between.
+    """
+    root = str(symbol or '').split('.')[0]
+    if root in ('MNQ', 'MES', 'ES', 'NQ'):
+        return 10
+    if root in ('SIL', 'SI', 'YM'):
+        return 20
+    return 15
+
+
+def _book_entry_price(db, c, symbol, side, signal_entry, spec, now):
+    """Resolve the price a paper entry books at (2026-10-26).
+
+    Paper used to book the detector's bar-derived signal price verbatim,
+    while the live market order fills at the arrival quote — on the
+    2026-10-26 Turtle Soup MCL trade that gap was 102.44 booked vs
+    101.03 filled (paper +$342 vs live +$66 gross). Booking now mirrors
+    exits()' quote handling: exact `quote:<alias>` key, else
+    ict_common.resolve_quote_key (Databento writes futures quotes under
+    dated-contract keys), with exits()' per-symbol freshness ages.
+
+    Booked price: the ask for a long, the bid for a short (the side of
+    the book a market order actually meets). When bid/ask are unusable
+    but the fresh quote carries a last/price mark, that mark books with
+    source 'quote_last'. Anything else — no quote, stale quote, quote
+    from the future — falls back to the signal price unchanged with
+    source 'signal_fallback' (the caller flags the trade unverified).
+
+    entry_slip_ticks convention: signed slip of the booked price vs the
+    signal price in ticks, ADVERSE-positive — positive means the quote
+    booked worse than the signal price (a long paying up, a short
+    selling down); a favorable move books negative. None on fallback.
+
+    Never raises: booking must not block or break a submission, so any
+    failure degrades to the signal price (local fault isolation).
+    """
+    fallback = {'price': signal_entry, 'source': 'signal_fallback',
+                'quote_ts': 0, 'slip_ticks': None}
+    try:
+        q = db.get(c, 'quote:' + symbol)
+        if q is None:
+            from .ict_common import resolve_quote_key
+            resolved = resolve_quote_key(db, c, symbol)
+            if resolved:
+                q = db.get(c, 'quote:' + resolved)
+        if not isinstance(q, dict):
+            return fallback
+        ts = number(q.get('ts'))
+        if ts is None or not -1 <= now - ts <= _entry_fresh_age(symbol):
+            return fallback
+        bid, ask = number(q.get('bid')), number(q.get('ask'))
+        booked, source = None, 'quote'
+        if bid is not None and ask is not None and bid > 0 and ask > 0:
+            booked = ask if side == 'long' else bid
+        else:
+            last = number(q.get('last'))
+            if last is None:
+                last = number(q.get('price'))
+            if last is not None and last > 0:
+                booked, source = last, 'quote_last'
+        if booked is None:
+            return fallback
+        tick = spec['tick']
+        direction = 1 if side == 'long' else -1
+        slip = round((booked - signal_entry) * direction / tick, 2) \
+            if tick else 0.0
+        return {'price': booked, 'source': source, 'quote_ts': ts,
+                'slip_ticks': slip}
+    except Exception:
+        return fallback
+
+
 def submit(db, c, cfg, now, detector, symbol, sig, track=None,
            flatten_at=None):
     """Open a simulated position from a detector signal.
@@ -249,6 +325,18 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                         'adx': round(_reg['adx'], 1) if _reg['adx'] else None}
     except Exception:
         pass
+    # Entry-price booking (2026-10-26): every gate above evaluated on the
+    # SIGNAL price, exactly as before. Now reprice the booked entry from
+    # the freshest live quote (see _book_entry_price) so the paper book
+    # records the price a market order would actually meet. signal_price
+    # keeps the detector price for diagnostics, and the TradersPost
+    # payload is built from signal_price, so the live send is unchanged.
+    # A booked entry that crosses a level still books — stop/target are
+    # structural levels and the exit loop mirrors live bracket behavior.
+    signal_entry = entry
+    booked = _book_entry_price(db, c, symbol, side, signal_entry, spec, now)
+    entry = booked['price']
+    risk_pts = abs(entry - stop)
     per_unit = risk_pts * spec['multiplier'] + 2 * spec['fee'] + \
         2 * spec['tick'] * spec['multiplier']
     if per_unit <= 0:
@@ -295,9 +383,11 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
             'id': trade_id, 'strategy': STRATEGY_TAGS[detector],
             'detector': detector, 'symbol': symbol, 'side': side,
             'asset': 'future', 'signal_time': sig.get('signal_ts'),
-            'decided_at': now, 'signal_price': entry, 'status': 'open',
+            'decided_at': now, 'signal_price': signal_entry, 'status': 'open',
             'entry': entry, 'entered_at': now,
-            'entry_quote_ts': 0, 'last_quote_ts': 0,
+            'entry_quote_ts': booked['quote_ts'], 'last_quote_ts': 0,
+            'entry_price_source': booked['source'],
+            'entry_slip_ticks': booked['slip_ticks'],
             'last_bar_checked': (number(sig.get('signal_ts')) or now) - 60,
             'stop': stop, 'target': leg['target'], 'qty': leg['qty'],
             'leg': leg['leg'], 'group_id': group_id,
@@ -313,6 +403,12 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
         'signal_level': sig.get('level_kind'),
         'source': 'ict_paper',
         }
+        if booked['source'] == 'signal_fallback':
+            # No fresh quote at booking: the entry is the unverified
+            # signal price. Flagged on the trade only — data_gap keeps
+            # its exit-management meaning (set by exits() when exit
+            # quotes fail), so it is not forced here.
+            trade['entry_unverified'] = True
         if track:
             trade['track'] = track
         db.put(c, leg_pos_key, trade)
