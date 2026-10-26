@@ -167,9 +167,25 @@ def _format_smoothers_entry(p,pub,o):
     lines=[f"{LABELS['smoothers']} | ENTRY | {o['underlying']} {o['strike']:g} {o['type']} · {o['expiration']}"]
     stock=[];entry_px=p.get('entry_price');target_px=p.get('target_price') or p.get('underlying_target')
     if numeric(entry_px) and numeric(target_px):
-        stock.append(f"Stock ${entry_px:,.2f} → target ${target_px:,.2f}")
+        # entry_price is the frozen first-hour model reference, never a live
+        # price — label it with its freeze time (2026-10-26 roster lesson).
+        met=p.get('model_entry_time');label='(entry ref)'
+        if numeric(met) and met>0:
+            try:label=f"(ref {datetime.fromtimestamp(met,CT).strftime('%H:%M CT')})"
+            except (OverflowError,OSError,ValueError):pass
+        stock.append(f"Stock ${entry_px:,.2f} {label} → target ${target_px:,.2f}")
     elif numeric(target_px):
         stock.append(f"Target ${target_px:,.2f}")
+    # Live underlying captured in the publication batch, stamped with the
+    # trade's own time; absent whenever the batch read was unavailable,
+    # stale, or carries no trustworthy time — the labeled reference then
+    # stands alone.
+    live=p.get('live_underlying') or {}
+    if live.get('status')=='available' and numeric(live.get('price')) \
+            and numeric(live.get('ts')) and live['ts']>0:
+        seg=(f"live ${live['price']:,.2f} @ "
+             +datetime.fromtimestamp(live['ts'],CT).strftime('%H:%M CT'))
+        stock.append(seg)
     est=p.get('est_return_pct')
     if numeric(est):
         stock.append(f"Est return {est:+.0f}%")

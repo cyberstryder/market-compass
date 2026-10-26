@@ -169,7 +169,7 @@ def _smoothers_entry_payload(**over):
     payload=dict(
         id='sig1',project='smoothers',contract=contract,track='swing',status='native_option_entry',
         entry=7.88,underlying_target=751.61,entry_price=744.17,target_price=751.61,
-        est_return_pct=53.2,week='2026-10-05',
+        est_return_pct=53.2,week='2026-10-05',model_entry_time=NOW+1800,
         quote=dict(bid=7.80,ask=7.95,ts=NOW),
         expires_at=NOW+1800,exit_rule='Underlying target, otherwise Friday close; no premium stop configured',
         publication=dict(trade_id='abc123',category='smoothers',event='ENTRY',contract=contract,horizon='swing'))
@@ -182,7 +182,7 @@ def test_smoothers_entry_compact_format():
     text=format_message(_smoothers_entry_payload())
     lines=text.split('\n')
     assert lines[0]=='SMOOTHERS | ENTRY | META 745 CALL · 2026-10-07'
-    assert lines[1]=='Stock $744.17 → target $751.61 · Est return +53%'
+    assert lines[1]=='Stock $744.17 (ref 09:30 CT) → target $751.61 · Est return +53%'
     assert lines[2]=='Option $7.80/$7.95 · Strike $745 · 3 DTE · enter by 09:30 CT'
     assert lines[3]=='Exit: Underlying target, otherwise Friday close; no premium stop configured'
     assert len(lines)==4
