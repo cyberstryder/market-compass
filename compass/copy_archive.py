@@ -27,6 +27,12 @@ from sqlalchemy import text
 RETENTION = {
     'quote': 7,
     'chain_archive': 30,
+    # EOD option-chain snapshots (compass/chain_eod.py, 2026-10-26): one
+    # snapshot per underlying per day, the project's only chain/IV history.
+    # Copied to R2 by this pump like every retained kind; nothing prunes it
+    # (archive_prune registers it at a permanence horizon) — the archive is
+    # the point, so the small retention only sets how soon the R2 copy lands.
+    'chain_eod': 7,
     'matrix_raw': 90,
     'vendor_flow': 180,
     'flow': 180,

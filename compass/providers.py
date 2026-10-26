@@ -699,7 +699,7 @@ class Collectors:
 
         await asyncio.to_thread(reconcile)
 
-    async def massive_chain(self,symbol,expiry_start=None,expiry_end=None,page_limit=40):
+    async def massive_chain(self,symbol,expiry_start=None,expiry_end=None,page_limit=40,full_greeks=False):
         url="https://api.massive.com/v3/snapshot/options/"+symbol
         params={"apiKey":self.cfg.massive,"limit":250,"expiration_date.gte":expiry_start or day(time.time()),"expiration_date.lte":expiry_end or day(time.time()+self.cfg.chain_dte*86400)}
         out={}
@@ -718,6 +718,13 @@ class Collectors:
                     "gamma_field":"absent" if "gamma" not in g else "null" if g["gamma"] is None else "value",
                     "greek_fields":sorted(k for k in g if k in {"gamma","delta","theta","vega"}),
                     "iv":x.get("implied_volatility"),"volume":x.get("day",{}).get("volume")}
+                # The live chain dict drops theta/vega (nothing intraday
+                # consumes them). The EOD archive snapshot passes
+                # full_greeks=True so the retained chain keeps the full
+                # greek set for retrospective options modeling.
+                if full_greeks:
+                    o["theta"]=g.get("theta")
+                    o["vega"]=g.get("vega")
                 if o["symbol"] and o["expiry"] and o["strike"]:
                     o["quote"]={"ts":ts(q.get("last_updated")),"bid":q.get("bid"),"ask":q.get("ask"),
                         "bid_size":q.get("bid_size",0),"ask_size":q.get("ask_size",0)}

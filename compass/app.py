@@ -65,6 +65,7 @@ CRON_TOKEN_PATHS = {
     "/api/admin/archive-prune-chunk",
     "/api/admin/backtest-futures",
     "/api/admin/backtest-scalp",
+    "/api/admin/chain-eod-snapshot",
 }
 # Kept for callers/tests that import the old name.
 CRON_TOKEN_ENDPOINTS = {(m, p) for p in CRON_TOKEN_PATHS for m in ("GET", "POST")}
@@ -260,7 +261,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -847,6 +848,32 @@ a{color:#888}</style></head><body>
             import logging
             logging.getLogger('uvicorn.error').exception('copy-archive-chunk failed')
             return {'ok': False, 'error': 'Archive chunk failed. Check server logs.'}
+
+    @app.post('/api/admin/chain-eod-snapshot')
+    def post_chain_eod_snapshot(date: str = None):
+        """Start today's end-of-day option-chain snapshot (chain_eod
+        archive; see compass/chain_eod.py). Cron-token gated. Returns
+        immediately; the run proceeds in the background and is idempotent
+        per date — poll GET for the manifest."""
+        from .chain_eod import start_snapshot_background
+        try:
+            return start_snapshot_background(db, cfg, date_str=date)
+        except Exception:
+            import logging
+            logging.getLogger('uvicorn.error').exception('chain-eod-snapshot start failed')
+            return {'ok': False, 'error': 'Snapshot start failed. Check server logs.'}
+
+    @app.get('/api/admin/chain-eod-snapshot')
+    def get_chain_eod_snapshot(date: str = None):
+        """Read one day's snapshot manifest (per-symbol outcomes, totals)."""
+        from .chain_eod import read_manifest
+        from .market import day as _day
+        try:
+            return {'ok': True, **read_manifest(db, date or _day(time.time()))}
+        except Exception:
+            import logging
+            logging.getLogger('uvicorn.error').exception('chain-eod-snapshot read failed')
+            return {'ok': False, 'error': 'Snapshot manifest read failed. Check server logs.'}
 
     @app.get('/api/admin/archive-coverage')
     def get_archive_coverage():
