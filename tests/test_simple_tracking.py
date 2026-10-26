@@ -44,12 +44,11 @@ def test_tracking_empty_db(db):
     assert fb['window_days'] == 28
     assert len(fb['combos']) == 6
     live = {(x['detector'], x['symbol']) for x in fb['combos'] if x['live']}
-    assert live == {('aoi_fade', 'MCL'), ('aoi_fade', 'MES'),
-                    ('turtle_soup', 'MCL')}
+    assert live == {('aoi_fade', 'MCL'), ('aoi_fade', 'MES')}
     paper = {(x['detector'], x['symbol'])
              for x in fb['combos'] if not x['live']}
     assert paper == {('golden_zone', 'MCL'), ('golden_zone', 'MNQ'),
-                     ('rumers_box', 'MYM')}
+                     ('rumers_box', 'MYM'), ('turtle_soup', 'MCL')}
     assert all(x['trades'] == 0 and x['pf'] is None and not x['kill_watch']
                for x in fb['combos'])
     assert fb['kill_watch'] == []
@@ -91,6 +90,7 @@ def test_tracking_futures_book_stats_and_kill_watch(db):
     assert aoi['kill_watch'] is False and aoi['live'] is True
     ts = by[('turtle_soup', 'MCL')]
     assert ts['trades'] == 2 and ts['pf'] == 0.25 and ts['kill_watch'] is True
+    assert ts['live'] is False  # paper-only since 2026-10-26; still tracked
     assert fb['kill_watch'] == ['turtle_soup|MCL']
     gz = by[('golden_zone', 'MCL')]
     assert gz['trades'] == 0 and gz['live'] is False
