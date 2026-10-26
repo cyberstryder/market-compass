@@ -303,7 +303,8 @@ def create_app(cfg=None):
     def health():
         with db.tx() as c: c.execute(text("SELECT 1"))
         return {"status":"ok","service":"market-compass","role":cfg.role,"mode":"SIMULATED",
-                "revision":os.environ.get("COMPASS_REVISION","unknown")}
+                "revision":os.environ.get("COMPASS_REVISION","unknown"),
+                "cron_token":bool(cfg.cron_token)}
 
     @app.get("/login",response_class=HTMLResponse)
     def login_page():

@@ -13,6 +13,12 @@ or changes a trade; enforcement stays a human decision on this evidence.
 Counting rules match the headline stats exactly: closed ICT paper
 trades only, and data_gap trades are excluded (Josh, 2026-10-06 —
 trades without correct data count as neither wins nor losses).
+
+Each combo also carries a traderspost_sent subset (trades/wins/losses/
+net over the trades whose record is flagged traderspost_sent) so the
+paper book and the broker-mirrored book can be read side by side.
+Records without the flag count as not sent — the same convention the
+Simple page futures view uses.
 """
 from .market import number
 
@@ -67,6 +73,18 @@ def combo_stats(trades):
     return out
 
 
+def sent_subset(trades):
+    """TradersPost-sent subset of a combo's trades: counts + net only.
+
+    A trade counts as sent when its record carries a truthy
+    traderspost_sent flag (set by ict_paper when the entry signal was
+    dispatched — or explicitly False for paper-only/skip-marked trades).
+    """
+    s = combo_stats([t for t in trades if t.get('traderspost_sent')])
+    return {'trades': s['trades'], 'wins': s['wins'],
+            'losses': s['losses'], 'net': s['net']}
+
+
 def summarize(db, c, now_ts, days=WINDOW_DAYS):
     """Trailing-window stats per live combo from the trade ledger."""
     since = now_ts - days * 86400
@@ -86,7 +104,8 @@ def summarize(db, c, now_ts, days=WINDOW_DAYS):
         if combo in by_combo:
             by_combo[combo].append(t)
     combos = [{'detector': detector, 'symbol': root,
-               **combo_stats(by_combo[(detector, root)])}
+               **combo_stats(by_combo[(detector, root)]),
+               'traderspost_sent': sent_subset(by_combo[(detector, root)])}
               for detector, root in LIVE_COMBOS]
     return {'asof': now_ts, 'window_days': days, 'since': since,
             'combos': combos,
