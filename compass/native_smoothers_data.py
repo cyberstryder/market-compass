@@ -133,3 +133,32 @@ class Data:
         for offset in range(0,len(contracts),100):
             result.update(self.options.snapshots(contracts[offset:offset+100]))
         return result
+
+    def stock_snapshots(self,symbols):
+        """Publication-time underlying prices: batched latest-trade reads.
+
+        Freshness mirrors AlpacaQuotes.read_snapshot for option quotes: a
+        trade more than 30s old (or >5s in the future) at fetch is
+        'unavailable', never silently aged — callers fall back to the
+        labeled entry reference alone rather than print a stale 'live'."""
+        result={}
+        symbols=sorted({s for s in symbols if s})
+        for offset in range(0,len(symbols),100):
+            batch=symbols[offset:offset+100]
+            data=self.get('https://data.alpaca.markets/v2/stocks/snapshots',
+                          {'symbols':','.join(batch),'feed':'sip'})
+            snaps=data.get('snapshots') or {}
+            fetched=int(time.time()*1000)
+            for symbol in batch:
+                trade=(snaps.get(symbol) or {}).get('latestTrade') or {}
+                try:
+                    price=float(trade['p'])
+                    stamp=datetime.fromisoformat(str(trade['t']).replace('Z','+00:00'))
+                    if stamp.tzinfo is None or not 0<price<float('inf'):raise ValueError('Invalid trade')
+                    trade_ms=int(stamp.timestamp()*1000)
+                except (KeyError,TypeError,ValueError):
+                    result[symbol]={'status':'unavailable','reason':'trade_missing'};continue
+                if not -5000<=fetched-trade_ms<=30000:
+                    result[symbol]={'status':'unavailable','reason':'trade_stale_or_future','trade_at_ms':trade_ms};continue
+                result[symbol]={'status':'available','price':price,'trade_at_ms':trade_ms,'fetched_at_ms':fetched}
+        return result

@@ -125,10 +125,14 @@ def rolling_record(db,c,ticker,week,owned_since):
 
 def queue_signal(db,c,p,event,payload,now,event_time):
     q=p.get('quote' if event=='entry' else 'exit_quote') or {}
+    live=p.get('live_underlying') or {}
     publication=dict(id=p['id'],project='smoothers',contract=p.get('contract'),track='swing',
         status='native_option_entry' if event=='entry' else 'native_option_exit',
         entry=p.get('entry_premium'),underlying_target=p.get('target_price'),
         entry_price=p.get('entry_price'),target_price=p.get('target_price'),
+        model_entry_time=p.get('model_entry_time'),
+        live_underlying=dict(status=live.get('status'),price=live.get('price'),
+            ts=(live.get('trade_at_ms') or 0)/1000),
         est_return_pct=p.get('est_return_pct'),week=p.get('week'),
         signal_status=p.get('status'),exit_underlying=p.get('exit_underlying'),
         quote=dict(bid=q.get('bid'),ask=q.get('ask'),ts=(q.get('quote_at_ms') or 0)/1000),
@@ -142,6 +146,17 @@ def queue_signal(db,c,p,event,payload,now,event_time):
 
 def refresh_entry_quotes(signals,data,now):
     """Freeze the final cohort against quotes fetched together at publication."""
+    # Live underlying for the print, fetched in the same publication batch
+    # as the option quotes. A failed or stale read leaves live_underlying
+    # unavailable and the alerts fall back to the labeled entry reference
+    # alone; it never blocks or delays the batch.
+    tickers=sorted({p['ticker'] for p in signals if p.get('ticker')})
+    if tickers:
+        try:live=data.stock_snapshots(tickers)
+        except Exception as exc:
+            live={t:{'status':'unavailable','reason':type(exc).__name__} for t in tickers}
+        for p in signals:
+            if p.get('ticker') in live:p['live_underlying']=live[p['ticker']]
     contracts=[p['contract'] for p in signals if p.get('contract')]
     if not contracts:return signals
     try:quotes=data.quotes(contracts)
@@ -161,6 +176,13 @@ def refresh_entry_quotes(signals,data,now):
         p.update(score_signal(target_atr_mult=p.get('target_atr_mult'),alltime_wins=stats.get('wins',0),alltime_losses=stats.get('losses',0),
             backtest_wr=p['config'].get('backtest_wr'),entry_premium=p['entry_premium'],est_return_pct=p['est_return_pct']))
     return signals
+
+
+def compact_line(p):
+    """One-liner for the compact batch: same labeled reference + live
+    underlying segment as the roster (messages.stock_text)."""
+    return (f"{p['ticker']} {p['direction']} {messages.stock_text(p)}"
+            f" → ${p['target_price']:.2f} Q{p.get('quality_score',0):.1f}")
 
 
 def schedule(db,data,now):
@@ -239,7 +261,7 @@ def schedule(db,data,now):
     with db.tx() as c:
         # The monitor may resolve a signal while the batch quotes are fetched.
         # Merge only entry fields, preserving its target/premium observations.
-        entry_fields=('quote','entry_premium','est_return_pct','entry_quote_refreshed_at','selection_option_observation',
+        entry_fields=('quote','entry_premium','est_return_pct','entry_quote_refreshed_at','selection_option_observation','live_underlying',
                       'quality_version','quality_score','quality_atr_score','quality_reliability_score','quality_option_adjustment')
         for p in signals:
             current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
@@ -250,13 +272,14 @@ def schedule(db,data,now):
             # Best 10 get individual detailed alerts; rest go in compact format
             if p['ticker'] in BEST_10:
                 queue_signal(db,c,p,'entry',messages.entry(p),now,p['model_entry_time'])
-        # Compact format for non-Best-10 (split for Discord 2000-char limit)
+        # Compact format for non-Best-10 (split for Discord 2000-char limit;
+        # batches of 20 since lines grew with the ref/live stock segment)
         compact=[p for p in ranked if p['ticker'] not in BEST_10]
-        for i in range(0, len(compact), 30):
-            batch=compact[i:i+30]
-            lines=[f"{p['ticker']} {p['direction']} ${p['entry_price']:.2f}→${p['target_price']:.2f} Q{p.get('quality_score',0):.1f}" for p in batch]
-            msg=f"SMOOTHERS | SIGNALS ({i//30+1}/{(len(compact)+29)//30}) | {monday.isoformat()}\n" + " | ".join(lines)
-            queue(db,c,'smoothers',f"{monday.isoformat()}:compact:{i//30}",{'content':msg},now,event_time=first['open']+3600,cohort_time=first['open']+3600)
+        for i in range(0, len(compact), 20):
+            batch=compact[i:i+20]
+            lines=[compact_line(p) for p in batch]
+            msg=f"SMOOTHERS | SIGNALS ({i//20+1}/{(len(compact)+19)//20}) | {monday.isoformat()}\n" + " | ".join(lines)
+            queue(db,c,'smoothers',f"{monday.isoformat()}:compact:{i//20}",{'content':msg},now,event_time=first['open']+3600,cohort_time=first['open']+3600)
         previews=messages.roster(ranked,monday.isoformat(),now,len(state['errors']))
         for i,payload in enumerate(previews):
             event_key=monday.isoformat()+':summary'+(':'+str(i+1) if i else '')

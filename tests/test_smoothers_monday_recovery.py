@@ -68,3 +68,39 @@ def test_final_quotes_preserve_selection_observation_and_fail_closed():
     assert p['entry_premium'] is None and p['est_return_pct'] is None
     assert p['selection_option_observation']['entry_premium']==1
     assert p['quality_option_adjustment']==-7.5
+
+
+def _pub_signal():
+    return dict(id='x',ticker='DEMO',config={'backtest_wr':.75},contract={'symbol':'DEMO260925C00100000','strike':100,'expiration':'2026-09-25'},
+           direction='CALL',entry_price=100,target_price=102,target_atr_mult=.25,stats_at_entry={'wins':2,'losses':1},
+           quote={'status':'available','midpoint':1},entry_premium=1,est_return_pct=10)
+
+
+def test_final_quotes_attach_publication_live_underlying():
+    p=_pub_signal()
+    class Data:
+        def quotes(self,contracts):return {contracts[0]['symbol']:{'status':'available','midpoint':2,'bid':1.9,'ask':2.1,'quote_at_ms':NOW*1000}}
+        def stock_snapshots(self,tickers):return {t:{'status':'available','price':101.5,'trade_at_ms':int(NOW*1000),'fetched_at_ms':int(NOW*1000)} for t in tickers}
+    refresh_entry_quotes([p],Data(),NOW)
+    assert p['entry_premium']==2
+    assert p['live_underlying']['status']=='available' and p['live_underlying']['price']==101.5
+
+
+def test_live_underlying_failure_never_blocks_quote_refresh():
+    p=_pub_signal()
+    class Data:
+        def quotes(self,contracts):return {contracts[0]['symbol']:{'status':'available','midpoint':2,'bid':1.9,'ask':2.1,'quote_at_ms':NOW*1000}}
+        def stock_snapshots(self,tickers):raise RuntimeError('provider down')
+    refresh_entry_quotes([p],Data(),NOW)
+    assert p['entry_premium']==2
+    assert p['live_underlying']['status']=='unavailable' and p['live_underlying']['reason']=='RuntimeError'
+
+
+def test_live_underlying_attached_even_when_quotes_fail():
+    p=_pub_signal()
+    class Data:
+        def quotes(self,contracts):raise TimeoutError()
+        def stock_snapshots(self,tickers):return {t:{'status':'available','price':99.25,'trade_at_ms':int(NOW*1000)} for t in tickers}
+    refresh_entry_quotes([p],Data(),NOW)
+    assert p['entry_premium'] is None
+    assert p['live_underlying']['status']=='available' and p['live_underlying']['price']==99.25

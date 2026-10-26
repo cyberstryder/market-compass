@@ -3,7 +3,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from .market import number,ts
 
-VERSION='smoothers-alerts-v1'
+VERSION='smoothers-alerts-v2'
 TIERS=('A+','A','B','WATCH')
 CT=ZoneInfo('America/Chicago')
 
@@ -60,6 +60,31 @@ def quote_line(p):
     return 'Option quote unavailable'
 
 
+def stock_text(p):
+    """Stock segment for entry alerts: the entry reference, labeled with its
+    freeze time, plus the live underlying captured in the publication batch.
+
+    entry_price is the strategy's model reference — the close of the first
+    session hour, frozen at generation (model_entry_time) — and is never a
+    live price; printing it bare beside fresh option quotes made it read as
+    one (2026-10-26: META printed 636.14 with the market at 643.53). The
+    live segment appears only when refresh_entry_quotes() captured a fresh
+    snapshot (gated at fetch, same 30s convention as option quotes) and is
+    always stamped with the trade's own time; otherwise the labeled
+    reference stands alone."""
+    stamp=quote_stamp(p.get('model_entry_time'))
+    label=f'(ref {stamp})' if stamp!='time unavailable' else '(entry ref)'
+    text=f"{dollar(p.get('entry_price'))} {label}"
+    live=p.get('live_underlying') or {}
+    price=number(live.get('price'))
+    live_stamp=quote_stamp(live.get('trade_at_ms'))
+    # A live price without a trustworthy time is the failure mode being
+    # fixed; it does not print.
+    if live.get('status')=='available' and price is not None and live_stamp!='time unavailable':
+        text+=f" · live {dollar(price)} @ {live_stamp}"
+    return text
+
+
 def envelope(p,event,description,fields,color):
     # A+ Featured gets the old-style emoji title (matches 2026-09-08 format)
     if event == 'ENTRY SIGNAL' and p.get('quality_tier') == 'A+':
@@ -89,7 +114,7 @@ def entry(p):
     quality_line = f"{p.get('quality_tier','WATCH')} • Featured #{p.get('featured_rank') or 0:02d} • Overall Q #{p.get('quality_rank') or 0:02d} • {p.get('quality_score') or 0:.1f}/100"
     fields=[field('Quality Tier', quality_line, False),
         field('A+ selector', 'Raw Target / ATR (lower is better)', False),
-        field('Underlying Entry',dollar(p.get('entry_price'))),field('Underlying Target',dollar(p.get('target_price'))),
+        field('Underlying Entry',stock_text(p)),field('Underlying Target',dollar(p.get('target_price'))),
         *contract_fields(p),field('Option Reference Premium',dollar(p.get('entry_premium'))),
         field('DTE at Entry',f'{dte} days' if dte is not None else 'Unavailable'),
         field('Est return',pct(p.get('est_return_pct'),0))]
@@ -115,7 +140,7 @@ def entry(p):
 def target(p):
     bar=p.get('touch_bar') or {};q=p.get('exit_quote') or {};mid=number(q.get('midpoint'))
     valid=q.get('status') in ('available','wide_spread') and mid is not None
-    fields=[*contract_fields(p),field('Underlying Entry',dollar(p.get('entry_price'))),field('Target Level',dollar(p.get('target_price'))),
+    fields=[*contract_fields(p),field('Underlying Entry',stock_text(p)),field('Target Level',dollar(p.get('target_price'))),
         *[field('1m '+k.title(),dollar(bar.get(k))) for k in ('high','low','close')],
         field('Target Minute',clock(p.get('resolution_time'))),field('Observed At',clock(p.get('touch_detected_at'))),
         field('Option Entry Reference',dollar(p.get('entry_premium')))]
@@ -132,7 +157,7 @@ def close(p):
     incomplete=p.get('status')=='UNRESOLVED'
     return envelope(p,'WEEK CLOSED',
         'Observation incomplete; a target hit cannot be ruled out.' if incomplete else 'Target not observed by the weekly deadline. This strategy outcome is not a verified option loss.',
-        [*contract_fields(p),field('Underlying Entry',dollar(p.get('entry_price'))),field('Underlying Target',dollar(p.get('target_price'))),
+        [*contract_fields(p),field('Underlying Entry',stock_text(p)),field('Underlying Target',dollar(p.get('target_price'))),
          field('Final 1m Close',dollar(p.get('exit_underlying'))),field('Closed At',clock(p.get('resolution_time'))),
          field('Result','Unresolved — missing observations' if incomplete else 'Target not hit',False)],10038562)
 
@@ -151,7 +176,7 @@ def roster(signals,week,now,errors=0):
             # Est return is only meaningful against the displayed quote; a
             # stale modeled return with no usable quote renders Unavailable.
             ret=p.get('est_return_pct') if quote_ok(p) else None
-            blocks.append(f"**{p['ticker']} {p['direction']} · {tier} · "+(f"F{p['featured_rank']:02d}" if p.get('featured_rank') else f"Q{p.get('quality_rank','—')}")+f"**\nStock {dollar(p.get('entry_price'))} → target {dollar(p.get('target_price'))} | Strike {dollar(c.get('strike'))}\n"
+            blocks.append(f"**{p['ticker']} {p['direction']} · {tier} · "+(f"F{p['featured_rank']:02d}" if p.get('featured_rank') else f"Q{p.get('quality_rank','—')}")+f"**\nStock {stock_text(p)} → target {dollar(p.get('target_price'))} | Strike {dollar(c.get('strike'))}\n"
                 f"{quote_line(p)} | Est return {pct(ret,0)} | ATR {p.get('target_atr_mult','Unavailable')} | Score {p.get('quality_score','Unavailable')} | Backtest {pct(config['backtest_wr']*100,0) if config.get('backtest_wr') is not None else 'Unavailable'} | Recorded {record(p.get('stats_at_entry'))}")
     chunks=[];header=f'**SMOOTHERS | WEEKLY ROSTER | {week}**';current=header
     for block in blocks:
