@@ -26,6 +26,7 @@ ICT_FUTURES_PAPER_ENABLED and the detector flag are on.
 from .market import number, day, CT  # noqa: F401  (CT kept for session-math convention)
 from .ict_common import ict_bars, atr, fractal_swings, session_vwap
 from .ict_paper import submit as _paper_submit
+from .ict_declines import record_decline as _record_decline
 
 SCAN_THROTTLE = 120
 ATR_PERIOD = 14
@@ -373,7 +374,8 @@ def scan(db, c, cfg, now):
                    {'signal_ts': sig['signal_ts'], 'date': today,
                     'direction': sig['direction'], 'at': now})
             n_signals += 1
-        _paper_submit(db, c, cfg, now, 'golden_zone', symbol, sig)
+        _res = _paper_submit(db, c, cfg, now, 'golden_zone', symbol, sig)
+        _record_decline(db, c, now, 'golden_zone', symbol, _res, sig)
     db.put(c, 'ict_golden_zone:latest',
            {'at': now, 'rows': rows, 'excluded': excluded, 'params': params,
             'status': 'running' if rows else 'idle'})
