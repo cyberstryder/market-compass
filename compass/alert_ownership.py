@@ -91,6 +91,26 @@ def assess(db,c,row,now):
         return result('research','Underlying-only setup: no selected option contract')
     category,horizon=classification(row,o)
     source=source_key(row); link=db.get(c,'publication:source:'+source)
+    exit_admitted=False
+    if not link and status=='native_option_exit' and p.get('project')=='smoothers':
+        # Josh 2026-10-26: Smoothers exits alert for every tracked position,
+        # even when the entry never had a detailed publication (compact-batch
+        # only, or no detailed entry intent at all). Admit the exit by opening
+        # its publication trade record here, then let the normal linked-exit
+        # path below run. Entry publication is unchanged, other programs keep
+        # the published-entry requirement, and a position whose detailed entry
+        # WAS admitted keeps the existing entry-delivered gates (its link is
+        # found above, so this branch never fires for it). Category/horizon
+        # are the program's own: classification() at exit time would call a
+        # Friday-expiring contract intraday/0DTE and misroute the alert.
+        trade_id=identity(VERSION,row['id']); day=datetime.fromtimestamp(now,CT).date().isoformat()
+        path='publication:trade:'+day+':'+trade_id
+        t=dict(id=trade_id,category='smoothers',horizon='swing',contract=o,state='open',created=now,
+               entry_event_id=str(row['id']),primary_source=row.get('source'),source_id=p.get('id'),
+               supporting_sources=[],entry=p.get('entry'),entry_quote=p.get('last_quote') or p.get('quote'),pnl=None,outcome=None)
+        db.put(c,path,t);db.put(c,'publication:index:'+trade_id,path)
+        db.put(c,'publication:source:'+source,dict(trade_id=trade_id,supporting=False))
+        link=dict(trade_id=trade_id,supporting=False); exit_admitted=True
     if status not in ENTRY and not link:
         return result('research','No published entry for this lifecycle')
     if link:
@@ -112,6 +132,7 @@ def assess(db,c,row,now):
                      pnl=p.get('pnl'),outcome=p.get('outcome'))
         db.put(c,path,t)
         return result('publish',trade_id=t['id'],category=t['category'],event=event,contract=o,
+                      **(dict(exit_admitted_without_entry=True) if exit_admitted else {}),
                       payload={**p,'publication':dict(trade_id=t['id'],category=t['category'],event=event,contract=o,horizon=t['horizon'])})
     q=p.get('last_quote') or p.get('quote')
     reason=quote_error(q,now)
