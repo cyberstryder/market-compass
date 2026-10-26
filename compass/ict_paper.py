@@ -574,6 +574,32 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                 mapped = traderspost.map_symbol(symbol)
                 if mapped == symbol and '.' in symbol:
                     skip_reason = f"skip {symbol}: no TradersPost symbol mapping"
+            guard = None
+            if not skip_reason and symbol and side:
+                # Freshness guard (Josh 2026-10-26, go-live; fitted in
+                # files/freshness-guard-refit-2026-10-26.md): the last
+                # check before a live send queues. Every earlier gate
+                # has passed and the detector is not paper-only, so
+                # this trade WOULD send. The guard reads a fresh
+                # resolved quote and skips the SEND ONLY — the paper
+                # trade stands as a measurable counterfactual — when
+                # the quote is already beyond the approved stop/target
+                # (the thesis has printed) or has moved adversely from
+                # the booked entry by >10% of target distance. It
+                # fails OPEN: kill switch off, no readable quote, or
+                # any guard error leaves the send untouched, with the
+                # verdict stamped on both copies either way.
+                try:
+                    from . import freshness_guard as _fg
+                    guard = _fg.evaluate(db, c, cfg, first_trade, now)
+                except Exception as e:
+                    guard = {'decision': 'send', 'evaluated': False,
+                             'reason': None, 'note': 'error',
+                             'error': '%s: %s' % (type(e).__name__,
+                                                  str(e)[:200])}
+                if guard.get('decision') == 'skip':
+                    skip_reason = 'skip %s: freshness guard (%s)' % (
+                        symbol, guard.get('reason'))
             if skip_reason:
                 # Mark the trades FIRST: db.health() opens its own
                 # transaction, and if it fails (e.g. SQLite lock in tests)
@@ -595,11 +621,36 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                             t = dict(t)
                             t['traderspost_sent'] = False
                             t['traderspost_skip_reason'] = skip_reason
+                            if guard:
+                                t['freshness_guard'] = guard
                             db.put(c, key, t)
                 try:
                     db.health('traderspost_webhook', 'skipped', skip_reason)
                 except Exception:
                     pass
+                if guard and guard.get('decision') == 'skip':
+                    # Persist the guard skip in the ict_decline stream
+                    # (fire-rate audit fix 1) so production skip rates
+                    # are re-readable per signal — the re-fit's stated
+                    # instrument for judging the cap live. record_
+                    # decline dedupes by (detector, symbol, signal,
+                    # reason): exactly one event per skipped signal.
+                    # Details ride in the res dict (scalars only).
+                    try:
+                        from . import ict_declines as _decl
+                        _decl.record_decline(
+                            db, c, now, detector, symbol,
+                            {'submitted': False,
+                             'reason': guard.get('reason'),
+                             'fresh_quote': guard.get('fresh_quote'),
+                             'quote_ts': guard.get('quote_ts'),
+                             'booked_entry': guard.get('booked_entry'),
+                             'stop': guard.get('stop'),
+                             'target': guard.get('target'),
+                             'adverse_pct': guard.get('adverse_pct')},
+                            sig)
+                    except Exception:
+                        pass
             else:
                 # 2026-10-18: Single position (2 contracts) sent to TradersPost.
                 # No 2/2/1 scaling — paper and live both trade the detector's
@@ -613,6 +664,20 @@ def submit(db, c, cfg, now, detector, symbol, sig, track=None,
                 # copies — see the skip branch: exits() overwrites the
                 # trade record from the position record at close.
                 if submitted_ids:
+                    if guard is not None:
+                        # Stamp the guard verdict (evaluated-pass, or
+                        # not-evaluated with its note) on BOTH copies
+                        # before queueing, so the record of every live
+                        # send shows the guard ran — or why it didn't.
+                        for key in ('trade:' + submitted_ids[0],
+                                    leg_pos_keys.get(submitted_ids[0])):
+                            if not key:
+                                continue
+                            t = db.get(c, key)
+                            if t:
+                                t = dict(t)
+                                t['freshness_guard'] = guard
+                                db.put(c, key, t)
                     trade = db.get(c, 'trade:' + submitted_ids[0])
                     if trade:
                         trade = dict(trade)
