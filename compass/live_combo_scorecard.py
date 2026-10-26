@@ -1,8 +1,12 @@
-"""Live-combo scorecard: trailing-28-day stats for the live futures book.
+"""Live-combo scorecard: trailing-28-day stats for the tracked futures book.
 
-Futures plan phase 1 (Josh, 2026-10-24): after the prune, the live book
-is AOI Fade|MCL, Turtle Soup|MCL, Golden Zone|MCL + Golden Zone|MNQ
-(watch status), and Rumers Box|MYM. This module reports, per combo, the
+Futures plan phase 1 (Josh, 2026-10-24): after the prune, the tracked
+book is AOI Fade|MCL, Turtle Soup|MCL, Golden Zone|MCL + Golden Zone|MNQ
+(watch status), and Rumers Box|MYM. Since 2026-10-26 only AOI Fade
+(MCL + MES) routes live to TradersPost; Turtle Soup joined Golden Zone
+and Rumers Box as paper-only carve-outs but stays tracked here, so its
+record (and any case for re-earning a live seat) stays visible. This
+module reports, per combo, the
 closed paper trades of the trailing 28 days — count, win rate, profit
 factor, net $ — and flags any combo with PF < 1.0 as kill_watch. That
 flag is the pre-committed Turtle Soup kill rule (trailing-4-week
@@ -24,11 +28,14 @@ from .market import number
 
 WINDOW_DAYS = 28
 
-# The post-prune live combos: (detector, symbol root). Golden Zone|MNQ is
-# watch-status (paper attribution until 100+ trades); the rest are the
-# proven core plus Rumers Box's one surviving combo. AOI Fade|MES was
-# added 2026-10-25 (Josh: MES activation — it cleared both replay legs)
-# so its live record is tracked from day one.
+# The post-prune tracked combos: (detector, symbol root) — the live
+# combos plus the paper-only carve-outs, all tracked identically.
+# Golden Zone|MNQ is watch-status (paper attribution until 100+
+# trades); the rest are the proven core plus Rumers Box's one
+# surviving combo. AOI Fade|MES was added 2026-10-25 (Josh: MES
+# activation — it cleared both replay legs) so its live record is
+# tracked from day one. Turtle Soup|MCL stays tracked after its
+# 2026-10-26 move to paper-only.
 LIVE_COMBOS = (
     ('aoi_fade', 'MCL'),
     ('aoi_fade', 'MES'),

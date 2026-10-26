@@ -1,17 +1,24 @@
-"""Paper-only detector carve-out (Josh 2026-10-25).
+"""Paper-only detector carve-out (Josh 2026-10-25; Turtle Soup added
+2026-10-26).
 
-Golden Zone and Rumers Box keep paper trading — positions, attribution,
-brake-shadow and the live-combo scorecard all see them — but their
-trades are NEVER mirrored to TradersPost: submit() routes them through
-the standard skip marking (traderspost_sent=False + 'paper-only'
-reason on both the trade and position copies) and never queues a
-signal. Because every broker-close path keys on traderspost_sent, a
-never-sent position can never emit a broker close either — including
-the session-flatten path, which before this change queued a close for
-any -t1 position without checking the flag (now gated, with the sent
-flatten as the positive control below).
+Golden Zone, Rumers Box and Turtle Soup keep paper trading —
+positions, attribution, brake-shadow and the live-combo scorecard all
+see them — but their trades are NEVER mirrored to TradersPost:
+submit() routes them through the standard skip marking
+(traderspost_sent=False + 'paper-only' reason on both the trade and
+position copies) and never queues a signal. Because every broker-close
+path keys on traderspost_sent, a never-sent position can never emit a
+broker close either — including the session-flatten path, which
+before this change queued a close for any -t1 position without
+checking the flag (now gated, with the sent flatten as the positive
+control below).
 
-aoi_fade and turtle_soup mirroring is unchanged.
+aoi_fade mirroring is unchanged — since 2026-10-26 it is the only
+mirrored detector (the live book is AOI Fade {MCL, MES}).
+
+The carve-out gates NEW sends only: a Turtle Soup position opened
+before 2026-10-26 carries traderspost_sent=True, and its broker close
+still fires — the sent-Turtle-Soup flatten control below proves it.
 """
 from datetime import datetime, timezone
 
@@ -84,12 +91,14 @@ def get(db, key):
 # ---------- (a) submit: paper-only detectors never queue ----------
 
 def test_paper_only_set_is_exact():
-    assert ict_paper.PAPER_ONLY_DETECTORS == {'golden_zone', 'rumers_box'}
+    assert ict_paper.PAPER_ONLY_DETECTORS == {'golden_zone', 'rumers_box',
+                                              'turtle_soup'}
 
 
 @pytest.mark.parametrize('detector,symbol', [
     ('golden_zone', 'MCL.v.0'),
     ('rumers_box', 'MYM.c.0'),
+    ('turtle_soup', 'MCL.v.0'),
 ])
 def test_paper_only_submit_never_queues(db, cfg, sent, detector, symbol):
     r = submit(db, cfg, detector, symbol)
@@ -106,9 +115,12 @@ def test_paper_only_submit_never_queues(db, cfg, sent, detector, symbol):
     assert pos['status'] == 'open'
 
 
-@pytest.mark.parametrize('detector', ['aoi_fade', 'turtle_soup'])
-def test_mirrored_detectors_still_queue(db, cfg, sent, detector):
-    r = submit(db, cfg, detector, 'MCL.v.0')
+@pytest.mark.parametrize('detector,symbol', [
+    ('aoi_fade', 'MCL.v.0'),
+    ('aoi_fade', 'MES.c.0'),
+])
+def test_mirrored_detectors_still_queue(db, cfg, sent, detector, symbol):
+    r = submit(db, cfg, detector, symbol)
     assert len(sent) == 1
     trade = get(db, 'trade:' + r['trade_id'] + '-t1')
     assert trade['traderspost_sent'] is True
@@ -125,6 +137,8 @@ GZ_POS_KEY = "position:ict:golden_zone:MNQ.c.0:t1"
 GZ_TRADE_ID = "ict-golden_zone-MNQ-c-0-123-t1"
 RB_POS_KEY = "position:ict:rumers_box:MYM.c.0:t1"
 RB_TRADE_ID = "ict-rumers_box-MYM-c-0-123-t1"
+TS_POS_KEY = "position:ict:turtle_soup:MCL.v.0:t1"
+TS_TRADE_ID = "ict-turtle_soup-MCL-v-0-123-t1"
 
 
 @pytest.fixture
@@ -179,6 +193,7 @@ def test_never_sent_golden_zone_stop_out_fires_no_close(db, close_calls):
 @pytest.mark.parametrize('pos_key,trade_id,symbol', [
     (GZ_POS_KEY, GZ_TRADE_ID, "MNQ.c.0"),
     (RB_POS_KEY, RB_TRADE_ID, "MYM.c.0"),
+    (TS_POS_KEY, TS_TRADE_ID, "MCL.v.0"),
 ])
 def test_never_sent_flatten_fires_no_close(db, close_calls,
                                            pos_key, trade_id, symbol):
@@ -203,3 +218,19 @@ def test_sent_flatten_still_fires_close(db, close_calls):
     p = get(db, GZ_POS_KEY)
     assert p["status"] == "closed" and p["exit_reason"] == "session_flatten"
     assert close_calls == ["MNQ.c.0"]
+
+
+def test_sent_turtle_soup_flatten_still_fires_close(db, close_calls):
+    # Pre-change semantics (2026-10-26 carve-out): a Turtle Soup
+    # position opened BEFORE the carve-out was mirrored, so it carries
+    # traderspost_sent=True. The carve-out gates new sends only — this
+    # position's broker close must still fire at flatten (the
+    # 2026-10-24 rule: every paper close of a sent position sends the
+    # broker close).
+    put_position(db, TS_POS_KEY, TS_TRADE_ID, "MCL.v.0",
+                 flatten_at=stamp("2026-09-14T08:45:00"),
+                 traderspost_sent=True)
+    run_exits(db, "MCL.v.0", bid=100.0, ask=100.25)
+    p = get(db, TS_POS_KEY)
+    assert p["status"] == "closed" and p["exit_reason"] == "session_flatten"
+    assert close_calls == ["MCL.v.0"]

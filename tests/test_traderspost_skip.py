@@ -14,6 +14,10 @@
 mirrored — see tests/test_paper_only_carve_out.py), so the "sent"
 roles below are played by mirrored detectors (aoi_fade, turtle_soup,
 trend_rider). Each test's original purpose is unchanged.
+
+2026-10-26: Turtle Soup became paper-only too (the live book is AOI
+Fade {MCL, MES} only), so its second-detector role below moved to
+trend_rider — mirrored, with no symbol allowlist restriction.
 """
 from datetime import datetime, timezone
 
@@ -90,7 +94,7 @@ def test_first_signal_is_sent_not_self_skipped(db, cfg, sent):
 
 def test_second_detector_same_symbol_is_skipped(db, cfg, sent):
     submit(db, cfg, 'aoi_fade', 'MCL.v.0')
-    _, trade2 = submit(db, cfg, 'turtle_soup', 'MCL.v.0', signal_ts=NOW - 30)
+    _, trade2 = submit(db, cfg, 'trend_rider', 'MCL.v.0', signal_ts=NOW - 30)
     assert len(sent) == 1  # only the first signal went out
     assert trade2['traderspost_sent'] is False
     assert 'already open for aoi_fade' in trade2['traderspost_skip_reason']
