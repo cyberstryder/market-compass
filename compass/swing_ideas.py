@@ -16,6 +16,12 @@ from .flow_recovery import freshness as flow_freshness
 from .quote_collection import VERSION as COLLECTION_VERSION
 
 VERSION = 'swing-ideas-v1'
+# Task 003 Item 4: some contracts' final NBBO stamps at/after the 16:00 ET
+# close (index options quote to 16:15). capture_close accepts such a stamp
+# as the session's close only inside this grace and only for a position
+# whose hold deadline has arrived; ordinary marking keeps the strict
+# in-session window.
+CLOSE_STAMP_GRACE_SECONDS = 1200
 swings = Table('swing_ideas_v1', meta,
     Column('id', String(64), primary_key=True),
     Column('underlying', String(100), nullable=False),
@@ -209,8 +215,21 @@ class SwingIdeas:
             return
         d = day(cq['ts'])
         hours = session(d)
-        if (not hours or not hours[0] <= cq['ts'] < hours[1] or day(uq['ts']) != d
-                or now < hours[1]):
+        if not hours:
+            return
+        in_window = hours[0] <= cq['ts'] < hours[1]
+        if not in_window and hours[1] <= cq['ts'] < hours[1] + CLOSE_STAMP_GRACE_SECONDS:
+            # Task 003 Item 4: a final quote stamped at/after the close is
+            # rejected by the strict window, so the day's snapshot is never
+            # captured; if that repeats, observe() can never reach
+            # evaluate_close and maximum_hold -- a safety exit that lives
+            # only in there -- never fires, hanging the swing open past
+            # expiry. Accept the late stamp as this session's close ONLY
+            # when the position's hold deadline falls at or before this
+            # session's close, so the deadline evaluation can run.
+            deadline = p.get('exit_deadline')
+            in_window = deadline is not None and deadline <= hours[1]
+        if not in_window or day(uq['ts']) != d or now < hours[1]:
             return
         captured = p.get('close_snapshot')
         if captured and (captured['day'] > d
@@ -287,7 +306,7 @@ class SwingIdeas:
         self.capture_close(c,p,now)
         pending_days = [d for d in sessions_between(day(p['opened_at']),day(now))
                         if d not in p['evaluated_days'] and session(d)[1] <= now]
-        for d in pending_days:
+        for idx, d in enumerate(pending_days):
             snap = p.get('close_snapshot') or {}
             if snap.get('day') == d:
                 metadata = self.metadata(c,p,now)
@@ -307,6 +326,27 @@ class SwingIdeas:
                 p['data_gap'] = True
                 p['evaluated_days'].append(d)
                 self.save(c,p,now)
+                # Task 003 Item 5 (Josh, 2026-10-26): the stop evaluates at
+                # the first available post-gap snapshot, not at the next
+                # close. When this gap day is the last pending day before
+                # the snapshot day, evaluate the snapshot day in this same
+                # pass instead of leaving it to its own iteration: there,
+                # a metadata 'waiting' verdict parks the position while
+                # the single-slot close snapshot rolls forward, deferring
+                # the stop check to the next close (or degrading the
+                # snapshot day into another data_gap). A metadata FAILURE
+                # verdict still blocks the early evaluation -- pricing an
+                # exit off a changed contract is the false outcome the
+                # gate exists to prevent -- so that case falls through to
+                # the snapshot day's own iteration, exactly as before.
+                nxt = pending_days[idx+1] if idx+1 < len(pending_days) else None
+                if nxt is not None and nxt == snap['day']:
+                    metadata = self.metadata(c,p,now)
+                    if metadata in ('ready','waiting'):
+                        p['evaluated_days'].append(nxt)
+                        if self.evaluate_close(c,p,now,nxt):
+                            return
+                        return self.save(c,p,now)
             else:
                 break  # This session's close is not capturable yet; wait for it.
         hours = session(day(now))
