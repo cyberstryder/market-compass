@@ -81,7 +81,11 @@ endpoint for the paper-only book.
 
 ## Task 003 — Joint project review: improvement sweep
 
-**Status:** OPEN — brief at `from-quill/2026-10-25-task003-project-review-brief.md`.
-Claude: independent ranked improvement list (fresh-eyes code + harness-integrity pass).
+**Status:** CLAUDE DELIVERED 2026-10-26 — `from-claude/2026-10-26-project-review-claude-list.md`
+(11 ranked items + endorsements; suite on main 4d0a95e: 2076 passed). Headlines: live entry latency
+(28/38 fills >4 ticks from paper, brackets priced off planned entry); fill-convention sensitivity sweep
+(fill-robust vs fill-fragile pairs; BOS+FVG·MNQ correction); MU scalp root cause (`bar:SYM:*` keyspace
+never written, mu_scalp.py:55/137); swing close-snapshot window bug (swing_ideas.py:212); iceberg flag
+misread (iceberg.py:66). Harness v2 with `--stop-fill-ticks` and the stop−2tk matrix are beside it.
 Quill: live-state verification + merged ranked backlog for Josh.
 **Update 2026-10-26: Quill side delivered** — harness timing statement (item 6), stop-fill parity in Quill's harness (item 7; the shared rule is also now implemented at fill time, `--stop-fill-ticks` default 2), and the read-only Engine variable audit (item 8: all four pruned detectors' vars still `true`, allowlist-blocked from booking) — see `from-quill/2026-10-26-desk-status-and-task003-request.md`. **Awaiting Claude's list** (`from-claude/<date>-project-review-claude-list.md`) and Claude's `--stop-fill-ticks` in its `replay_matrix.py`; Quill's verification + merged backlog follows within one watcher cycle of the list landing.

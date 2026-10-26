@@ -1,0 +1,921 @@
+[
+ {
+  "detector": "turtle_soup",
+  "symbol": "MCL",
+  "trades": 123,
+  "win_rate": 0.512,
+  "net": 9380.0,
+  "avg": 76.26,
+  "profit_factor": 1.89,
+  "max_drawdown": -1746.0,
+  "avg_R": 0.4,
+  "exit_reasons": {
+   "session_flatten": 18,
+   "target": 51,
+   "stop": 54
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-22"
+ },
+ {
+  "detector": "trend_rider",
+  "symbol": "MNQ",
+  "trades": 337,
+  "win_rate": 0.163,
+  "net": 7459.43,
+  "avg": 22.13,
+  "profit_factor": 1.28,
+  "max_drawdown": -3768.0,
+  "avg_R": 0.18,
+  "exit_reasons": {
+   "stop": 278,
+   "session_flatten": 28,
+   "target": 31
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "turtle_soup",
+  "symbol": "MNQ",
+  "trades": 470,
+  "win_rate": 0.251,
+  "net": 5649.11,
+  "avg": 12.02,
+  "profit_factor": 1.18,
+  "max_drawdown": -6823.56,
+  "avg_R": 0.1,
+  "exit_reasons": {
+   "stop": 348,
+   "target": 94,
+   "session_flatten": 28
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "turtle_soup",
+  "symbol": "MGC",
+  "trades": 578,
+  "win_rate": 0.258,
+  "net": 5572.6,
+  "avg": 9.64,
+  "profit_factor": 1.16,
+  "max_drawdown": -3364.66,
+  "avg_R": 0.11,
+  "exit_reasons": {
+   "target": 126,
+   "stop": 422,
+   "session_flatten": 30
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "aoi_fade",
+  "symbol": "MCL",
+  "trades": 69,
+  "win_rate": 0.551,
+  "net": 3161.8,
+  "avg": 45.82,
+  "profit_factor": 1.81,
+  "max_drawdown": -818.07,
+  "avg_R": 0.34,
+  "exit_reasons": {
+   "stop": 31,
+   "target": 36,
+   "session_flatten": 2
+  },
+  "first": "2026-09-01",
+  "last": "2026-10-22"
+ },
+ {
+  "detector": "bos_fvg",
+  "symbol": "MNQ",
+  "trades": 695,
+  "win_rate": 0.403,
+  "net": 2623.63,
+  "avg": 3.78,
+  "profit_factor": 1.12,
+  "max_drawdown": -1382.79,
+  "avg_R": 0.02,
+  "exit_reasons": {
+   "target": 278,
+   "stop": 408,
+   "session_flatten": 9
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "aoi_fade",
+  "symbol": "MES",
+  "trades": 73,
+  "win_rate": 0.479,
+  "net": 2216.6,
+  "avg": 30.36,
+  "profit_factor": 1.5,
+  "max_drawdown": -761.33,
+  "avg_R": 0.3,
+  "exit_reasons": {
+   "stop": 36,
+   "target": 34,
+   "session_flatten": 3
+  },
+  "first": "2026-09-01",
+  "last": "2026-10-21"
+ },
+ {
+  "detector": "trend_rider",
+  "symbol": "MCL",
+  "trades": 350,
+  "win_rate": 0.166,
+  "net": 1885.71,
+  "avg": 5.39,
+  "profit_factor": 1.14,
+  "max_drawdown": -1406.0,
+  "avg_R": 0.1,
+  "exit_reasons": {
+   "stop": 288,
+   "session_flatten": 26,
+   "target": 36
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "rumers_box",
+  "symbol": "MYM",
+  "trades": 18,
+  "win_rate": 0.556,
+  "net": 413.86,
+  "avg": 22.99,
+  "profit_factor": 1.67,
+  "max_drawdown": -494.32,
+  "avg_R": 0.24,
+  "exit_reasons": {
+   "target": 6,
+   "session_flatten": 5,
+   "stop": 7
+  },
+  "first": "2026-09-02",
+  "last": "2026-10-20"
+ },
+ {
+  "detector": "golden_zone",
+  "symbol": "MNQ",
+  "trades": 12,
+  "win_rate": 0.75,
+  "net": 246.46,
+  "avg": 20.54,
+  "profit_factor": 2.98,
+  "max_drawdown": -89.46,
+  "avg_R": 0.48,
+  "exit_reasons": {
+   "target": 9,
+   "stop": 3
+  },
+  "first": "2026-09-03",
+  "last": "2026-10-20"
+ },
+ {
+  "detector": "trend_rider",
+  "symbol": "MES",
+  "trades": 340,
+  "win_rate": 0.147,
+  "net": 168.21,
+  "avg": 0.49,
+  "profit_factor": 1.01,
+  "max_drawdown": -2167.36,
+  "avg_R": -0.15,
+  "exit_reasons": {
+   "stop": 288,
+   "session_flatten": 23,
+   "target": 29
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "aoi_zones",
+  "symbol": "MYM",
+  "trades": 211,
+  "win_rate": 0.417,
+  "net": 87.86,
+  "avg": 0.42,
+  "profit_factor": 1.02,
+  "max_drawdown": -590.39,
+  "avg_R": -0.0,
+  "exit_reasons": {
+   "stop": 119,
+   "target": 83,
+   "session_flatten": 9
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "golden_zone",
+  "symbol": "MCL",
+  "trades": 9,
+  "win_rate": 0.778,
+  "net": 48.27,
+  "avg": 5.36,
+  "profit_factor": 2.0,
+  "max_drawdown": -30.14,
+  "avg_R": 0.21,
+  "exit_reasons": {
+   "target": 7,
+   "stop": 2
+  },
+  "first": "2026-09-03",
+  "last": "2026-10-07"
+ },
+ {
+  "detector": "bos_gz_vwap",
+  "symbol": "MCL",
+  "trades": 12,
+  "win_rate": 0.583,
+  "net": 34.55,
+  "avg": 2.88,
+  "profit_factor": 1.28,
+  "max_drawdown": -48.26,
+  "avg_R": 0.07,
+  "exit_reasons": {
+   "stop": 5,
+   "target": 7
+  },
+  "first": "2026-09-04",
+  "last": "2026-10-21"
+ },
+ {
+  "detector": "golden_zone",
+  "symbol": "MGC",
+  "trades": 12,
+  "win_rate": 0.667,
+  "net": 18.19,
+  "avg": 1.52,
+  "profit_factor": 1.09,
+  "max_drawdown": -120.91,
+  "avg_R": 0.21,
+  "exit_reasons": {
+   "target": 8,
+   "stop": 4
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-19"
+ },
+ {
+  "detector": "golden_zone",
+  "symbol": "M2K",
+  "trades": 12,
+  "win_rate": 0.417,
+  "net": 14.53,
+  "avg": 1.21,
+  "profit_factor": 1.33,
+  "max_drawdown": -25.38,
+  "avg_R": -0.07,
+  "exit_reasons": {
+   "stop": 3,
+   "target": 9
+  },
+  "first": "2026-09-02",
+  "last": "2026-10-20"
+ },
+ {
+  "detector": "bos_gz_vwap",
+  "symbol": "MYM",
+  "trades": 20,
+  "win_rate": 0.6,
+  "net": 1.33,
+  "avg": 0.07,
+  "profit_factor": 1.01,
+  "max_drawdown": -57.03,
+  "avg_R": 0.06,
+  "exit_reasons": {
+   "target": 15,
+   "stop": 5
+  },
+  "first": "2026-09-08",
+  "last": "2026-10-21"
+ },
+ {
+  "detector": "golden_zone",
+  "symbol": "MES",
+  "trades": 10,
+  "win_rate": 0.7,
+  "net": -15.15,
+  "avg": -1.52,
+  "profit_factor": 0.79,
+  "max_drawdown": -43.62,
+  "avg_R": -0.02,
+  "exit_reasons": {
+   "stop": 3,
+   "target": 7
+  },
+  "first": "2026-09-07",
+  "last": "2026-10-22"
+ },
+ {
+  "detector": "golden_zone",
+  "symbol": "MYM",
+  "trades": 10,
+  "win_rate": 0.6,
+  "net": -15.54,
+  "avg": -1.55,
+  "profit_factor": 0.77,
+  "max_drawdown": -31.44,
+  "avg_R": -0.14,
+  "exit_reasons": {
+   "stop": 4,
+   "target": 6
+  },
+  "first": "2026-09-02",
+  "last": "2026-10-14"
+ },
+ {
+  "detector": "golden_zone",
+  "symbol": "M6E",
+  "trades": 2,
+  "win_rate": 0.0,
+  "net": -15.87,
+  "avg": -7.94,
+  "profit_factor": 0.0,
+  "max_drawdown": -15.87,
+  "avg_R": -0.69,
+  "exit_reasons": {
+   "target": 1,
+   "stop": 1
+  },
+  "first": "2026-10-07",
+  "last": "2026-10-08"
+ },
+ {
+  "detector": "golden_zone",
+  "symbol": "M6A",
+  "trades": 2,
+  "win_rate": 0.0,
+  "net": -23.34,
+  "avg": -11.67,
+  "profit_factor": 0.0,
+  "max_drawdown": -23.34,
+  "avg_R": -1.0,
+  "exit_reasons": {
+   "stop": 2
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-21"
+ },
+ {
+  "detector": "bos_gz_vwap",
+  "symbol": "M6A",
+  "trades": 7,
+  "win_rate": 0.0,
+  "net": -72.93,
+  "avg": -10.42,
+  "profit_factor": 0.0,
+  "max_drawdown": -72.93,
+  "avg_R": -0.88,
+  "exit_reasons": {
+   "stop": 6,
+   "target": 1
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-18"
+ },
+ {
+  "detector": "bos_gz_vwap",
+  "symbol": "M6E",
+  "trades": 7,
+  "win_rate": 0.0,
+  "net": -84.52,
+  "avg": -12.07,
+  "profit_factor": 0.0,
+  "max_drawdown": -84.52,
+  "avg_R": -0.91,
+  "exit_reasons": {
+   "target": 1,
+   "stop": 6
+  },
+  "first": "2026-09-03",
+  "last": "2026-10-19"
+ },
+ {
+  "detector": "bos_gz_vwap",
+  "symbol": "MNQ",
+  "trades": 11,
+  "win_rate": 0.364,
+  "net": -120.31,
+  "avg": -10.94,
+  "profit_factor": 0.63,
+  "max_drawdown": -170.28,
+  "avg_R": -0.15,
+  "exit_reasons": {
+   "target": 4,
+   "stop": 7
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-15"
+ },
+ {
+  "detector": "bos_gz_vwap",
+  "symbol": "M2K",
+  "trades": 16,
+  "win_rate": 0.438,
+  "net": -128.12,
+  "avg": -8.01,
+  "profit_factor": 0.16,
+  "max_drawdown": -134.01,
+  "avg_R": -0.45,
+  "exit_reasons": {
+   "target": 7,
+   "stop": 9
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-20"
+ },
+ {
+  "detector": "smt_divergence",
+  "symbol": "MES",
+  "trades": 25,
+  "win_rate": 0.16,
+  "net": -152.32,
+  "avg": -6.09,
+  "profit_factor": 0.75,
+  "max_drawdown": -251.16,
+  "avg_R": -0.29,
+  "exit_reasons": {
+   "stop": 21,
+   "session_flatten": 2,
+   "target": 2
+  },
+  "first": "2026-09-03",
+  "last": "2026-10-22"
+ },
+ {
+  "detector": "bos_gz_vwap",
+  "symbol": "MES",
+  "trades": 14,
+  "win_rate": 0.286,
+  "net": -183.52,
+  "avg": -13.11,
+  "profit_factor": 0.32,
+  "max_drawdown": -219.26,
+  "avg_R": -0.47,
+  "exit_reasons": {
+   "stop": 10,
+   "target": 4
+  },
+  "first": "2026-09-10",
+  "last": "2026-10-16"
+ },
+ {
+  "detector": "bos_gz_vwap",
+  "symbol": "MGC",
+  "trades": 12,
+  "win_rate": 0.25,
+  "net": -240.93,
+  "avg": -20.08,
+  "profit_factor": 0.37,
+  "max_drawdown": -347.19,
+  "avg_R": -0.44,
+  "exit_reasons": {
+   "target": 3,
+   "stop": 9
+  },
+  "first": "2026-09-02",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "aoi_zones",
+  "symbol": "M2K",
+  "trades": 180,
+  "win_rate": 0.383,
+  "net": -511.25,
+  "avg": -2.84,
+  "profit_factor": 0.87,
+  "max_drawdown": -672.29,
+  "avg_R": -0.16,
+  "exit_reasons": {
+   "stop": 109,
+   "target": 63,
+   "session_flatten": 8
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-22"
+ },
+ {
+  "detector": "smt_divergence",
+  "symbol": "MNQ",
+  "trades": 32,
+  "win_rate": 0.125,
+  "net": -532.65,
+  "avg": -16.65,
+  "profit_factor": 0.58,
+  "max_drawdown": -894.64,
+  "avg_R": -0.51,
+  "exit_reasons": {
+   "stop": 28,
+   "target": 3,
+   "session_flatten": 1
+  },
+  "first": "2026-09-01",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "aoi_zones",
+  "symbol": "MCL",
+  "trades": 209,
+  "win_rate": 0.378,
+  "net": -609.86,
+  "avg": -2.92,
+  "profit_factor": 0.91,
+  "max_drawdown": -893.36,
+  "avg_R": -0.09,
+  "exit_reasons": {
+   "target": 75,
+   "stop": 130,
+   "session_flatten": 4
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "aoi_zones",
+  "symbol": "M6A",
+  "trades": 69,
+  "win_rate": 0.188,
+  "net": -732.86,
+  "avg": -10.62,
+  "profit_factor": 0.14,
+  "max_drawdown": -732.86,
+  "avg_R": -0.61,
+  "exit_reasons": {
+   "session_flatten": 14,
+   "stop": 43,
+   "target": 12
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-22"
+ },
+ {
+  "detector": "turtle_soup",
+  "symbol": "MYM",
+  "trades": 550,
+  "win_rate": 0.227,
+  "net": -1290.41,
+  "avg": -2.35,
+  "profit_factor": 0.9,
+  "max_drawdown": -2775.99,
+  "avg_R": -0.13,
+  "exit_reasons": {
+   "target": 103,
+   "stop": 419,
+   "session_flatten": 28
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "aoi_zones",
+  "symbol": "M6E",
+  "trades": 178,
+  "win_rate": 0.197,
+  "net": -1903.86,
+  "avg": -10.7,
+  "profit_factor": 0.13,
+  "max_drawdown": -1910.57,
+  "avg_R": -0.66,
+  "exit_reasons": {
+   "stop": 127,
+   "target": 41,
+   "session_flatten": 10
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-22"
+ },
+ {
+  "detector": "turtle_soup",
+  "symbol": "M2K",
+  "trades": 520,
+  "win_rate": 0.248,
+  "net": -1912.93,
+  "avg": -3.68,
+  "profit_factor": 0.81,
+  "max_drawdown": -2424.81,
+  "avg_R": -0.17,
+  "exit_reasons": {
+   "target": 110,
+   "stop": 382,
+   "session_flatten": 28
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "trend_rider",
+  "symbol": "MGC",
+  "trades": 346,
+  "win_rate": 0.13,
+  "net": -1946.29,
+  "avg": -5.63,
+  "profit_factor": 0.93,
+  "max_drawdown": -3404.29,
+  "avg_R": -0.14,
+  "exit_reasons": {
+   "stop": 298,
+   "target": 21,
+   "session_flatten": 27
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "trend_rider",
+  "symbol": "M2K",
+  "trades": 390,
+  "win_rate": 0.128,
+  "net": -2299.71,
+  "avg": -5.9,
+  "profit_factor": 0.71,
+  "max_drawdown": -2584.57,
+  "avg_R": -0.34,
+  "exit_reasons": {
+   "stop": 333,
+   "target": 30,
+   "session_flatten": 27
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "aoi_zones",
+  "symbol": "MES",
+  "trades": 211,
+  "win_rate": 0.308,
+  "net": -2618.14,
+  "avg": -12.41,
+  "profit_factor": 0.68,
+  "max_drawdown": -2847.64,
+  "avg_R": -0.25,
+  "exit_reasons": {
+   "stop": 141,
+   "target": 60,
+   "session_flatten": 10
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "rumers_box",
+  "symbol": "MNQ",
+  "trades": 17,
+  "win_rate": 0.412,
+  "net": -2658.59,
+  "avg": -156.39,
+  "profit_factor": 0.38,
+  "max_drawdown": -3854.64,
+  "avg_R": 0.24,
+  "exit_reasons": {
+   "session_flatten": 4,
+   "target": 7,
+   "stop": 6
+  },
+  "first": "2026-09-01",
+  "last": "2026-10-20"
+ },
+ {
+  "detector": "trend_rider",
+  "symbol": "M6A",
+  "trades": 287,
+  "win_rate": 0.111,
+  "net": -2752.29,
+  "avg": -9.59,
+  "profit_factor": 0.22,
+  "max_drawdown": -2752.29,
+  "avg_R": -0.7,
+  "exit_reasons": {
+   "stop": 252,
+   "target": 17,
+   "session_flatten": 18
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "bos_fvg",
+  "symbol": "MES",
+  "trades": 625,
+  "win_rate": 0.384,
+  "net": -2772.47,
+  "avg": -4.44,
+  "profit_factor": 0.77,
+  "max_drawdown": -2882.08,
+  "avg_R": -0.24,
+  "exit_reasons": {
+   "stop": 381,
+   "target": 234,
+   "session_flatten": 10
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "bos_fvg",
+  "symbol": "MYM",
+  "trades": 714,
+  "win_rate": 0.382,
+  "net": -3071.83,
+  "avg": -4.3,
+  "profit_factor": 0.68,
+  "max_drawdown": -3211.38,
+  "avg_R": -0.29,
+  "exit_reasons": {
+   "target": 276,
+   "stop": 430,
+   "session_flatten": 8
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "bos_fvg",
+  "symbol": "MCL",
+  "trades": 681,
+  "win_rate": 0.38,
+  "net": -3120.18,
+  "avg": -4.58,
+  "profit_factor": 0.78,
+  "max_drawdown": -3195.02,
+  "avg_R": -0.21,
+  "exit_reasons": {
+   "stop": 419,
+   "target": 257,
+   "session_flatten": 5
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "aoi_zones",
+  "symbol": "MGC",
+  "trades": 191,
+  "win_rate": 0.351,
+  "net": -3308.93,
+  "avg": -17.32,
+  "profit_factor": 0.76,
+  "max_drawdown": -4788.79,
+  "avg_R": -0.08,
+  "exit_reasons": {
+   "target": 62,
+   "stop": 118,
+   "session_flatten": 11
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "trend_rider",
+  "symbol": "MYM",
+  "trades": 396,
+  "win_rate": 0.131,
+  "net": -3330.43,
+  "avg": -8.41,
+  "profit_factor": 0.7,
+  "max_drawdown": -3671.14,
+  "avg_R": -0.21,
+  "exit_reasons": {
+   "stop": 340,
+   "session_flatten": 19,
+   "target": 37
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "turtle_soup",
+  "symbol": "MES",
+  "trades": 558,
+  "win_rate": 0.226,
+  "net": -3332.29,
+  "avg": -5.97,
+  "profit_factor": 0.83,
+  "max_drawdown": -3693.79,
+  "avg_R": -0.18,
+  "exit_reasons": {
+   "target": 102,
+   "stop": 430,
+   "session_flatten": 26
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "aoi_zones",
+  "symbol": "MNQ",
+  "trades": 209,
+  "win_rate": 0.321,
+  "net": -3526.96,
+  "avg": -16.88,
+  "profit_factor": 0.79,
+  "max_drawdown": -4784.57,
+  "avg_R": -0.14,
+  "exit_reasons": {
+   "stop": 138,
+   "target": 60,
+   "session_flatten": 11
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "bos_fvg",
+  "symbol": "M6A",
+  "trades": 408,
+  "win_rate": 0.15,
+  "net": -3642.9,
+  "avg": -8.93,
+  "profit_factor": 0.11,
+  "max_drawdown": -3642.9,
+  "avg_R": -0.67,
+  "exit_reasons": {
+   "stop": 283,
+   "target": 111,
+   "session_flatten": 14
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "trend_rider",
+  "symbol": "M6E",
+  "trades": 368,
+  "win_rate": 0.095,
+  "net": -3743.14,
+  "avg": -10.17,
+  "profit_factor": 0.24,
+  "max_drawdown": -3743.14,
+  "avg_R": -0.71,
+  "exit_reasons": {
+   "stop": 332,
+   "target": 22,
+   "session_flatten": 14
+  },
+  "first": "2026-08-31",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "bos_fvg",
+  "symbol": "MGC",
+  "trades": 716,
+  "win_rate": 0.369,
+  "net": -3940.26,
+  "avg": -5.5,
+  "profit_factor": 0.85,
+  "max_drawdown": -4286.91,
+  "avg_R": -0.11,
+  "exit_reasons": {
+   "stop": 448,
+   "target": 259,
+   "session_flatten": 9
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "bos_fvg",
+  "symbol": "M2K",
+  "trades": 690,
+  "win_rate": 0.338,
+  "net": -4763.31,
+  "avg": -6.9,
+  "profit_factor": 0.43,
+  "max_drawdown": -4768.21,
+  "avg_R": -0.42,
+  "exit_reasons": {
+   "stop": 430,
+   "target": 253,
+   "session_flatten": 7
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ },
+ {
+  "detector": "bos_fvg",
+  "symbol": "M6E",
+  "trades": 603,
+  "win_rate": 0.156,
+  "net": -5188.38,
+  "avg": -8.6,
+  "profit_factor": 0.12,
+  "max_drawdown": -5188.38,
+  "avg_R": -0.63,
+  "exit_reasons": {
+   "stop": 404,
+   "target": 193,
+   "session_flatten": 6
+  },
+  "first": "2026-08-30",
+  "last": "2026-10-23"
+ }
+]
