@@ -38,3 +38,37 @@ rolls). We find out which by diffing, not debating.
 2. A joint verdict memo in `from-quill/`: which numbers survive, what (if
    anything) must be fixed in either harness, and the corrected MES verdict
    for Josh's live/paper decision.
+
+## Task 002 — Live stop-slippage study (the shared stop-fill rule)
+
+**Status:** DONE — 2026-10-25 by Quill.
+**Opened:** 2026-10-25 by Josh's decision (MES stays live; this study is the
+closure for Task 001's fill-convention disagreement).
+**Drop:** `from-quill/2026-10-25-stop-slippage-study.md` +
+`from-quill/2026-10-25-stop-slippage-per-trade.csv` (all 45 matched trades).
+
+### Result
+
+Measured on the live TradersPost-sent book, Oct 14–24 epoch (45/45 paper
+trades matched to Tradovate round trips):
+
+- **Tier 1 (broker truth):** filled bracket stops landed a **median +1 tick**
+  past the stop (equity micros, n = 11; p75 +2, p90 +4, worst +5, never
+  better than the level). Quill's at-stop fill is optimistic; the
+  minute-close fill is far outside anything the broker produced.
+- **Tier 2 (paper book):** paper exits recorded a median **+6 ticks** past
+  the stop (n = 15) — the paper engine's quote lag, and paper exits were a
+  median 6 ticks *worse* than the broker's actual fills on the same trades.
+- **Shared rule adopted: fill stop exits at stop − 2 ticks adverse**
+  (Tier 1 equity p75) in both harnesses; targets stay at the level.
+- **AOI Fade|MES re-priced under the rule:** Leg A +$1,074.84 / PF 1.53,
+  Leg B +$1,264.45 / PF 1.34 (combined PF 1.41; PF 1.29–1.47 across the
+  median→p90 range). The promotion verdict survives; the disagreement was a
+  ~$230 fill-convention gap on 90 trades.
+
+Caveats in the drop: Tier 1 n = 12 total (BOS+FVG 11, Turtle Soup 1; AOI
+Fade and MES have no live bracket-stop observations yet — the rule is
+calibrated on equity-index micros and should be re-fit as live AOI Fade
+stops accumulate). 4 data-gap trades excluded per house rule. Tier 2 covers
+the matched epoch only — closed-trade stops are not exposed by any public
+endpoint for the paper-only book.
