@@ -348,6 +348,192 @@ function renderBoard(){
   body.querySelectorAll('.bar i').forEach(function(el){ el.style.width = el.getAttribute('data-w') + '%'; });
 }
 
+/* ---------------- what we're tracking ---------------- */
+var FAMILY_LABEL = { session_sweep_reclaim:'Session sweep reclaim', trend_pullback:'Trend pullback',
+  volume_breakout:'Volume breakout', level_breakdown:'Level breakdown',
+  exposure_level_break:'Exposure level break', flow_price_breakout:'Flow price breakout' };
+function famLabel(f){ return FAMILY_LABEL[f] || f; }
+function pfFmt(x){ return (x === null || x === undefined) ? '—' : Number(x).toFixed(2); }
+function rateFmt(x){ return (x === null || x === undefined) ? '—' : (Math.round(x*10)/10) + '%'; }
+function dollars(n){
+  if(n === null || n === undefined || isNaN(n)) return '—';
+  var v = Math.round(n);
+  return (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US');
+}
+function whenFmt(ts){
+  if(!ts) return '—';
+  return new Date(ts*1000).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+}
+function strikeFmt(x){
+  if(x === null || x === undefined) return '';
+  var v = Number(x);
+  return isNaN(v) ? String(x) : (Math.round(v*100)/100).toLocaleString('en-US');
+}
+
+function renderTracking(){
+  var host = document.getElementById('trackingBody');
+  if(!host) return;
+  var T = SUMMARY && SUMMARY.tracking;
+  if(!T){ host.innerHTML = '<p class="track-note">Tracking view unavailable right now — refresh to retry.</p>'; return; }
+  var html = '';
+
+  /* ---- futures book: live combos + paper-only watch list ---- */
+  var fb = T.futures_book;
+  html += '<div class="track-block"><h3 class="track-h3">Futures book — the live combos and the paper-only watch list</h3>';
+  if(fb && fb.combos && fb.combos.length){
+    html += '<div class="board static"><table><thead><tr>'
+      + '<th>Combo</th><th>Book</th><th class="num">Trades · ' + num(fb.window_days) + 'd</th>'
+      + '<th class="num">Win rate</th><th class="num">PF</th><th class="num">Net</th><th>Watch</th>'
+      + '</tr></thead><tbody>';
+    fb.combos.forEach(function(x){
+      html += '<tr>'
+        + '<td data-l="Combo"><b>' + esc(x.label) + ' · ' + esc(x.symbol) + '</b></td>'
+        + '<td data-l="Book"><span class="pill ' + (x.live ? 'live' : 'test') + '">' + (x.live ? 'Live' : 'Paper only') + '</span></td>'
+        + '<td class="num" data-l="Trades">' + num(x.trades) + '</td>'
+        + '<td class="num" data-l="Win rate">' + rateFmt(x.win_rate) + '</td>'
+        + '<td class="num" data-l="PF">' + pfFmt(x.pf) + '</td>'
+        + '<td class="num" data-l="Net"><b class="' + signCls(x.net) + '">' + money(x.net) + '</b></td>'
+        + '<td data-l="Watch">' + (x.kill_watch ? '<span class="pill warn">Kill watch</span>' : '—') + '</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table></div>'
+      + '<p class="track-note">Trailing ' + num(fb.window_days) + ' days of closed trades per combo. <b>Live</b> combos route to TradersPost (Tradeify); <b>paper only</b> combos are tracked for attribution while they prove themselves. A combo whose profit factor drops under 1.0 goes on kill watch — that is where the disable conversation starts.</p>';
+  } else {
+    html += '<p class="track-note">Futures book unavailable right now.</p>';
+  }
+  html += '</div>';
+
+  /* ---- 0DTE scanner: seats + shadow ---- */
+  var sc = T.scanner;
+  html += '<div class="track-block"><h3 class="track-h3">0DTE scanner — who kept a paper seat, who went to shadow</h3>';
+  if(sc){
+    var seatBits = [];
+    Object.keys(sc.paper_seats || {}).forEach(function(fam){
+      seatBits.push('<b>' + esc(famLabel(fam)) + ' — ' + esc((sc.paper_seats[fam] || []).join(' · ')) + '</b>');
+    });
+    html += '<p class="track-line">' + (sc.available ? 'Paper seats: ' : 'Paper seats decided Oct 25 (split deploying): ')
+      + (seatBits.length ? seatBits.join('; ') : 'none') + '. '
+      + 'Every other scanner cell is shadow-scored — alerts and evidence recorded, outcomes scored on fresh quotes, nothing booked.</p>';
+    var seated = sc.seated || [];
+    var anySeated = seated.some(function(x){ return (x.trades || 0) > 0 || (x.open || 0) > 0; });
+    if(anySeated){
+      html += '<div class="board static"><table><thead><tr>'
+        + '<th>Seated cell</th><th class="num">Trades</th><th class="num">Win rate</th>'
+        + '<th class="num">PF</th><th class="num">Net</th><th class="num">Open</th>'
+        + '</tr></thead><tbody>';
+      seated.forEach(function(x){
+        html += '<tr>'
+          + '<td data-l="Seated cell"><b>' + esc(x.family_label) + ' × ' + esc(x.underlying) + '</b></td>'
+          + '<td class="num" data-l="Trades">' + num(x.trades) + '</td>'
+          + '<td class="num" data-l="Win rate">' + rateFmt(x.win_rate) + '</td>'
+          + '<td class="num" data-l="PF">' + pfFmt(x.pf) + '</td>'
+          + '<td class="num" data-l="Net"><b class="' + signCls(x.net) + '">' + money(x.net) + '</b></td>'
+          + '<td class="num" data-l="Open">' + num(x.open) + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table></div>';
+    } else {
+      html += '<p class="track-note">No seated paper trades yet — the seats start booking with the next session\'s qualifying alerts.</p>';
+    }
+    var sh = sc.shadow;
+    if(sh){
+      var tot = sh.totals || {};
+      if((tot.alerts || 0) > 0){
+        html += '<p class="track-line">Shadow scorecard: <b>' + num(tot.alerts) + '</b> alerts tracked across <b>'
+          + num(sh.cells_tracking) + '</b> cells · <b>' + num(tot.scored) + '</b> scored · <b>' + num(tot.open)
+          + '</b> still open' + (tot.data_gaps ? ' · ' + num(tot.data_gaps) + ' data gaps (excluded)' : '') + '.</p>';
+        if(sh.cells && sh.cells.length){
+          var bar = sh.bar || { min_scored:20, min_pf:1.2 };
+          html += '<div class="board static"><table><thead><tr>'
+            + '<th>Shadow cell</th><th class="num">Alerts</th><th class="num">Scored</th>'
+            + '<th class="num">PF</th><th>Graduation — ' + num(bar.min_scored) + ' scored · PF ≥ ' + pfFmt(bar.min_pf) + '</th>'
+            + '</tr></thead><tbody>';
+          sh.cells.forEach(function(x){
+            var grad;
+            if(x.ready) grad = '<span class="pill live">Ready for a seat decision</span>';
+            else {
+              grad = num(x.scored) + '/' + num(bar.min_scored) + ' scored';
+              if((x.scored_needed || 0) === 0 && !x.pf_met) grad += ' · PF below the bar';
+              else if((x.scored_needed || 0) === 0) grad += ' · family not promoted';
+            }
+            html += '<tr>'
+              + '<td data-l="Shadow cell"><b>' + esc(x.family_label) + ' × ' + esc(x.underlying) + '</b></td>'
+              + '<td class="num" data-l="Alerts">' + num(x.alerts) + '</td>'
+              + '<td class="num" data-l="Scored">' + num(x.scored) + '</td>'
+              + '<td class="num" data-l="PF">' + pfFmt(x.pf) + '</td>'
+              + '<td data-l="Graduation">' + grad + '</td>'
+              + '</tr>';
+          });
+          html += '</tbody></table></div>';
+        }
+        if(sh.ready && sh.ready.length){
+          html += '<p class="track-note">Cleared the graduation bar: <b>' + esc(sh.ready.join(', ')) + '</b> — flagged for a seat decision; promotion is never automatic.</p>';
+        }
+      } else {
+        html += '<p class="track-note">No shadow alerts yet — shadow tracking starts with the next session: every non-seated alert is recorded here and scored on fresh quotes instead of booked.</p>';
+      }
+    } else if(sc.available){
+      html += '<p class="track-note">Shadow scorecard has not reported yet — it starts with the next session\'s alerts.</p>';
+    }
+  } else {
+    html += '<p class="track-note">Scanner split unavailable right now.</p>';
+  }
+  html += '</div>';
+
+  /* ---- iceberg watch ---- */
+  var ib = T.iceberg;
+  html += '<div class="track-block"><h3 class="track-h3">Iceberg watch — hidden institutional options flow</h3>';
+  if(ib){
+    if(ib.diag_present){
+      html += '<p class="track-line">Detector ' + (ib.enabled === false ? 'off' : 'on')
+        + ' · <b>' + num(ib.prints_seen) + '</b> prints seen · tracking <b>' + num(ib.contracts_tracked)
+        + '</b> contracts · <b>' + num(ib.alerts_fired) + '</b> alerts fired'
+        + ((ib.errors || 0) > 0 ? ' · <b class="neg">' + num(ib.errors) + ' errors</b>' : ' · 0 errors') + '.</p>';
+    } else {
+      html += '<p class="track-line">The detector reports in from the Collector while markets stream — no report yet today.</p>';
+    }
+    var latest = ib.latest || [];
+    if(latest.length){
+      html += '<div class="board static"><table><thead><tr>'
+        + '<th>When</th><th>Contract</th><th class="num">Est. size</th>'
+        + '<th class="num">Est. premium</th><th class="num">Score</th><th class="num">At close</th>'
+        + '</tr></thead><tbody>';
+      latest.forEach(function(a){
+        var contract = esc(a.underlying) + ' ' + strikeFmt(a.strike) + ' ' + (a.type === 'call' ? 'Call' : 'Put')
+          + ' <span class="rec-note">exp ' + esc(a.expiry || '') + '</span>';
+        var close = (a.close_ret_pct === null || a.close_ret_pct === undefined) ? 'pending'
+          : '<b class="' + signCls(a.close_ret_pct) + '">' + (a.close_ret_pct >= 0 ? '+' : '') + Number(a.close_ret_pct).toFixed(1) + '%</b>';
+        html += '<tr>'
+          + '<td data-l="When">' + whenFmt(a.alert_ts) + '</td>'
+          + '<td data-l="Contract"><b>' + contract + '</b></td>'
+          + '<td class="num" data-l="Est. size">~' + num(a.est_contracts) + '</td>'
+          + '<td class="num" data-l="Est. premium">' + dollars(a.est_premium) + '</td>'
+          + '<td class="num" data-l="Score">' + (a.score === null || a.score === undefined ? '—' : Number(a.score).toFixed(2)) + '</td>'
+          + '<td class="num" data-l="At close">' + close + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table></div>';
+    } else {
+      html += '<p class="track-note">No iceberg alerts yet — the detector watches the live options stream for a sliced institutional order (≥500 contracts and ≥$25k of premium, mostly at the ask, inside 30 minutes). When accumulation fires, the alert and its scored outcome land here.</p>';
+    }
+    var promo = ib.promotion || {};
+    var closeH = ib.close || {};
+    if((ib.alerts_window || 0) > 0){
+      html += '<p class="track-note">Scored at the close: <b>' + num(closeH.scored) + '</b> alerts'
+        + (closeH.mean_contract_ret_pct !== null && closeH.mean_contract_ret_pct !== undefined
+            ? ' · average contract move <b class="' + signCls(closeH.mean_contract_ret_pct) + '">'
+              + (closeH.mean_contract_ret_pct >= 0 ? '+' : '') + Number(closeH.mean_contract_ret_pct).toFixed(1) + '%</b>' : '')
+        + '. Promotion bar: ≥40 scored with two straight positive 4-week windows — currently <b>'
+        + num(promo.scored_total) + ' scored</b>, ' + (promo.meets_bar ? '<b class="pos">bar met</b>' : 'not met yet') + '.</p>';
+    }
+  } else {
+    html += '<p class="track-note">Iceberg watch unavailable right now.</p>';
+  }
+  html += '</div>';
+
+  host.innerHTML = html;
+}
+
 /* ---------------- calendar ---------------- */
 function apiKey(id){ return TYPES.filter(function(x){ return x.id === id; })[0].api; }
 
@@ -510,6 +696,7 @@ async function init(){
     selectedDay = null;
     renderCards();
     renderBoard();
+    renderTracking();
     renderFilters();
     selectDrill('futures', false);
     await loadMonth();

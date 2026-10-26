@@ -1274,6 +1274,225 @@ def detail(db, c, now, dtype, name):
 # ---------------------------------------------------------------- public
 
 
+# ------------------------------------------------------------- tracking
+#
+# "What we're tracking" (Josh, 2026-10-25): the proving grounds behind
+# the headline scoreboards — the live futures book per combo, the 0DTE
+# scanner seat/shadow split, and the shadow iceberg watch. Read-only;
+# every number comes from the same server-side scorecards the APIs
+# serve (live_combo_scorecard, scanner_shadow, iceberg), never from a
+# second, divergent aggregation.
+
+_DETECTOR_LABELS = {
+    "aoi_fade": "AOI Fade", "turtle_soup": "Turtle Soup",
+    "golden_zone": "Golden Zone", "rumers_box": "Rumers Box",
+}
+
+_FAMILY_LABELS = {
+    "session_sweep_reclaim": "Session sweep reclaim",
+    "trend_pullback": "Trend pullback",
+    "volume_breakout": "Volume breakout",
+    "level_breakdown": "Level breakdown",
+    "exposure_level_break": "Exposure level break",
+    "flow_price_breakout": "Flow price breakout",
+}
+
+# The validated scanner seats (underlying-first validation, 2026-10-25).
+# Fallback for the window before compass/scanner_shadow.py lands; once
+# it has, its scorecard is the source of truth for the effective seats.
+_DEFAULT_PAPER_SEATS = {"session_sweep_reclaim": ["AMD", "MU", "NFLX"]}
+
+
+def _pct1(frac):
+    """Scorecard fractions (0..1) -> the page's percent convention."""
+    return round(100.0 * frac, 1) if frac is not None else None
+
+
+def _tracking_futures_book(db, c, now):
+    from . import live_combo_scorecard
+    from .ict_paper import PAPER_ONLY_DETECTORS
+    card = live_combo_scorecard.summarize(db, c, now)
+    combos = []
+    for x in card["combos"]:
+        combos.append({
+            "detector": x["detector"],
+            "label": _DETECTOR_LABELS.get(x["detector"], x["detector"]),
+            "symbol": x["symbol"],
+            # Post-prune book (2026-10-24/25): Golden Zone and Rumers Box
+            # are paper-only carve-outs; the rest route live to
+            # TradersPost. ict_paper owns that set.
+            "live": x["detector"] not in PAPER_ONLY_DETECTORS,
+            "trades": x["trades"], "wins": x["wins"],
+            "losses": x["losses"], "win_rate": _pct1(x["win_rate"]),
+            "pf": x["pf"], "net": x["net"], "kill_watch": x["kill_watch"],
+        })
+    return {"window_days": card["window_days"], "combos": combos,
+            "kill_watch": card["kill_watch"]}
+
+
+def _seated_stats(db, c, seats):
+    """Paper-book stats for the seated scanner cells. Counting mirrors
+    _0dte exactly: closed, non-data_gap scanner trades carrying an
+    evidence snapshot (the post-2026-10-21 scorecard epoch) count; PF
+    comes from the futures scorecard's aggregation so the conventions
+    match across the page."""
+    from .live_combo_scorecard import combo_stats
+    try:
+        paper = db.prefix(c, "trade:0dte-scan-")
+    except Exception:
+        paper = {}
+    cells = {}
+    for family, names in seats.items():
+        for name in names:
+            cells[(family, str(name).upper())] = {"booked": [], "open": 0}
+    for t in paper.values():
+        if not isinstance(t, dict) or t.get("kind") != "scanner":
+            continue
+        cell = cells.get((t.get("family"),
+                          str(t.get("underlying") or "").upper()))
+        if cell is None:
+            continue
+        if t.get("status") == "closed" or _num(t.get("exited_at")):
+            if t.get("data_gap") or not isinstance(t.get("evidence"), dict):
+                continue
+            cell["booked"].append(t)
+        else:
+            cell["open"] += 1
+    out = []
+    for (family, name), cell in sorted(cells.items()):
+        st = combo_stats(cell["booked"])
+        out.append({
+            "family": family,
+            "family_label": _FAMILY_LABELS.get(family, family),
+            "underlying": name, "trades": st["trades"], "wins": st["wins"],
+            "losses": st["losses"], "win_rate": _pct1(st["win_rate"]),
+            "pf": st["pf"], "net": st["net"], "open": cell["open"],
+        })
+    return out
+
+
+def _tracking_scanner(db, c, now):
+    """The seat/shadow split, readably. Wired against scanner_shadow's
+    scorecard surface; while that build is in flight (module absent or
+    scorecard failing) the section degrades to the validated seats and
+    shadow=None — a clean empty state, never an error."""
+    try:
+        from . import scanner_shadow
+    except Exception:
+        scanner_shadow = None
+    card = None
+    if scanner_shadow is not None:
+        try:
+            from .config import Config
+            cfg = Config()
+        except Exception:
+            cfg = None
+        try:
+            card = scanner_shadow.scorecard(db, c, cfg)
+        except Exception:
+            card = None
+    if card is None:
+        seats = {k: list(v) for k, v in _DEFAULT_PAPER_SEATS.items()}
+        return {"available": scanner_shadow is not None,
+                "paper_seats": seats, "seats_source": None,
+                "promoted_families": sorted(_DEFAULT_PAPER_SEATS),
+                "seated": _seated_stats(db, c, seats), "shadow": None}
+    seats = card.get("paper_seats") or {}
+    cells = card.get("shadow_cells") or []
+    top = sorted(cells, key=lambda x: (-(x.get("scored") or 0),
+                                       -(x.get("alerts") or 0)))[:8]
+    shaped = []
+    for x in top:
+        grad = x.get("graduation") or {}
+        shaped.append({
+            "family": x.get("family"),
+            "family_label": _FAMILY_LABELS.get(x.get("family"),
+                                               x.get("family")),
+            "underlying": x.get("underlying"),
+            "alerts": x.get("alerts"), "open": x.get("open"),
+            "scored": x.get("scored"), "data_gaps": x.get("data_gaps"),
+            "win_rate": _pct1(x.get("win_rate")), "pf": x.get("pf"),
+            "net": x.get("net"),
+            "scored_needed": grad.get("scored_needed"),
+            "pf_met": grad.get("pf_met"),
+            "ready": bool(grad.get("ready_for_josh")),
+        })
+    ready = ["%s × %s" % (_FAMILY_LABELS.get(x.get("family"),
+                                             x.get("family")),
+                          x.get("underlying"))
+             for x in cells
+             if (x.get("graduation") or {}).get("ready_for_josh")]
+    return {"available": True, "paper_seats": seats,
+            "seats_source": card.get("seats_source"),
+            "promoted_families": card.get("promoted_families") or [],
+            "seated": _seated_stats(db, c, seats),
+            "shadow": {"totals": card.get("totals") or {},
+                       "cells_tracking": len(cells), "cells": shaped,
+                       "ready": ready,
+                       "bar": card.get("graduation_bar") or {}}}
+
+
+def _tracking_iceberg(db, c, now):
+    from . import iceberg
+    summ = iceberg.summarize(db, c, now)
+    stat = iceberg.status(db, c, now)
+    diag = stat.get("diag") or {}
+    latest = []
+    for a in reversed(summ.get("recent") or []):
+        close = ((a.get("scores") or {}).get("close") or {})
+        latest.append({
+            "underlying": a.get("underlying"), "symbol": a.get("symbol"),
+            "type": a.get("type"), "strike": a.get("strike"),
+            "expiry": a.get("expiry"), "side": a.get("side"),
+            "alert_ts": a.get("alert_ts"),
+            "est_contracts": a.get("est_parent_contracts"),
+            "est_premium": a.get("est_parent_premium"),
+            "score": a.get("score"), "status": a.get("status"),
+            "close_ret_pct": close.get("contract_ret_pct"),
+        })
+        if len(latest) >= 5:
+            break
+    horizons = summ.get("horizons") or {}
+    promo = summ.get("promotion") or {}
+    return {
+        "diag_present": bool(diag),
+        "enabled": diag.get("enabled"),
+        "prints_seen": diag.get("prints_seen"),
+        "quotes_seen": diag.get("quotes_seen"),
+        "contracts_tracked": diag.get("contracts_tracked"),
+        "alerts_fired": diag.get("alerts_fired"),
+        "errors": diag.get("errors"),
+        "last_alert_at": diag.get("last_alert_at"),
+        "alerts_total": stat.get("alerts_total"),
+        "alerts_open": stat.get("alerts_open"),
+        "alerts_window": summ.get("alerts"),
+        "close": horizons.get("close"), "expiry": horizons.get("expiry"),
+        "promotion": {
+            "alerts_total": promo.get("alerts_total"),
+            "scored_total": promo.get("scored_total"),
+            "two_consecutive_positive":
+                promo.get("two_consecutive_positive"),
+            "meets_bar": promo.get("meets_bar"),
+        },
+        "latest": latest,
+    }
+
+
+def tracking(db, c, now):
+    """The proving grounds behind the scoreboards (Josh, 2026-10-25).
+    Each section fails independently to None so one bad store never
+    blanks the page."""
+    out = {}
+    for key, fn in (("futures_book", _tracking_futures_book),
+                    ("scanner", _tracking_scanner),
+                    ("iceberg", _tracking_iceberg)):
+        try:
+            out[key] = fn(db, c, now)
+        except Exception:
+            out[key] = None
+    return out
+
+
 def summary(db, c, now):
     blocks = {}
     for fn in (_smoothers, _futures, _flow_pulse, _tape, _0dte, _swings):
@@ -1282,7 +1501,12 @@ def summary(db, c, now):
         except Exception:
             continue
         blocks[block["key"]] = block
-    return {"asof": now, "types": blocks}
+    out = {"asof": now, "types": blocks}
+    try:
+        out["tracking"] = tracking(db, c, now)
+    except Exception:
+        out["tracking"] = None
+    return out
 
 
 def calendar(db, c, now, year, month):
