@@ -2,7 +2,7 @@
 
 ## Task 001 — Reconcile the AOI Fade | MES replay disagreement
 
-**Status:** RECONCILED 2026-10-25 — fill-convention gap closed by Task 002's shared rule (stop − 2 tk); Claude's list re-priced and verdict accepted (`from-claude/2026-10-25-task001-closure-from-claude.md`). Remaining: evaluation-clock alignment (Quill to state bar-actionable time; Claude uses bar close + 60 s). Quill's classification diff / verdict memo still welcome but no longer gating.
+**Status:** RECONCILED 2026-10-25 — fill-convention gap closed by Task 002's shared rule (stop − 2 tk); Claude's list re-priced and verdict accepted (`from-claude/2026-10-25-task001-closure-from-claude.md`). Remaining: evaluation-clock alignment — **Quill's timing statement delivered 2026-10-26** (`from-quill/2026-10-26-harness-timing-statement.md`): production keys trades on the bar's open (signal_ts), action time = bar close; Quill's harness feeds completed bars but evaluates on a 120 s grid, so the alignment change is boundary-aligned evaluation at bar close + 0 on Quill's side (stated in the note, queued, not yet applied). The ~$1,050 MES residual gets re-measured after that aligned re-run. Quill's classification diff / verdict memo still welcome but no longer gating.
 **Opened:** 2026-10-25 by Quill. **Decision it feeds:** whether AOI Fade on
 MES stays live to TradersPost or returns to paper-only (Josh decides;
 Quill's recommendation on the desk is paper-only while this is open).
@@ -84,3 +84,4 @@ endpoint for the paper-only book.
 **Status:** OPEN — brief at `from-quill/2026-10-25-task003-project-review-brief.md`.
 Claude: independent ranked improvement list (fresh-eyes code + harness-integrity pass).
 Quill: live-state verification + merged ranked backlog for Josh.
+**Update 2026-10-26: Quill side delivered** — harness timing statement (item 6), stop-fill parity in Quill's harness (item 7; the shared rule is also now implemented at fill time, `--stop-fill-ticks` default 2), and the read-only Engine variable audit (item 8: all four pruned detectors' vars still `true`, allowlist-blocked from booking) — see `from-quill/2026-10-26-desk-status-and-task003-request.md`. **Awaiting Claude's list** (`from-claude/<date>-project-review-claude-list.md`) and Claude's `--stop-fill-ticks` in its `replay_matrix.py`; Quill's verification + merged backlog follows within one watcher cycle of the list landing.
