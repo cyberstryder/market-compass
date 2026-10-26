@@ -55,11 +55,15 @@ DETECTOR_FLAGS = {
 # Mix/match (Josh 2026-10-14): per-detector symbol allowlist based on
 # paper-trading P&L analysis. Only these detector+symbol combos are profitable.
 # - AOI Fade: MCL (+$752) and MNQ (+$288) work; MES (-$220) doesn't
+#   [Oct-14 read — superseded: MES cleared both replay legs and joined
+#   the live book 2026-10-25; MNQ was never added]
 # - AOI Zones: only MES (+$253) is profitable; MCL breakeven, MGC/MNQ/SIL lose
 # - BOS+FVG: MNQ (+$520) works; MCL/MES/MGC lose; SIL dropped 2026-10-15
 #   (Tradeify doesn't support SIL; SI is full-size mini, breaks micros-only)
 # - BOS+GZ/VWAP: only MCL (+$22, 1 trade) — keep for now
 # - Turtle Soup: only MCL (+$445) works; MES/MGC/MNQ lose
+#   [Oct-14 read — superseded 2026-10-26: Turtle Soup is paper-only
+#   now (Josh), not a live combo; see the carve-out note below]
 # - Continuation: loses on ALL symbols — disabled entirely
 # - MGC: loses on every detector (-$3,689 total) — excluded everywhere
 # - SIL: dropped 2026-10-15 — Tradeify doesn't support micro silver;
@@ -89,6 +93,13 @@ DETECTOR_FLAGS = {
 #   production-config backtest (book carried by Turtle Soup|MCL and
 #   AOI Fade|MCL), the full strategy x ticker matrix (only 2 of 112
 #   combos cleared the exploratory bar), and an independent 8-week replay.
+# - CARVE-OUT 2026-10-26 (Josh): Turtle Soup leaves the live book. The
+#   achievable-ledger replay that morning showed its fresh-signal
+#   subset negative in both windows — the paper profit sat in stale
+#   submissions and beyond-target arrivals. It joins Golden Zone and
+#   Rumers Box in PAPER_ONLY_DETECTORS below: paper trading continues
+#   (it can re-earn a seat on fresh evidence), TradersPost mirroring
+#   stops. The live book is AOI Fade {MCL, MES} only.
 DETECTOR_SYMBOL_ALLOWLIST = {
     'aoi_fade': {'MCL', 'MES'},  # 2026-10-24 prune {MCL}; MES added 2026-10-25 (cleared both replay legs: 90 tr, +$2,569)
     'aoi_zones': set(),  # 2026-10-24: default-off; empty blocks re-enable by env
@@ -102,15 +113,28 @@ DETECTOR_SYMBOL_ALLOWLIST = {
     # either disabled or not in the futures mix).
 }
 
-# Paper-only detectors (Josh 2026-10-25): Golden Zone and Rumers Box keep
-# paper trading — positions, attribution, brake-shadow and the live-combo
-# scorecard all see them exactly as before — but their trades are NEVER
-# mirrored to TradersPost (no live orders on the prop account). submit()
-# routes them through the standard skip marking (traderspost_sent=False +
+# Paper-only detectors (Josh 2026-10-25; Turtle Soup added 2026-10-26):
+# Golden Zone, Rumers Box and Turtle Soup keep paper trading —
+# positions, attribution, brake-shadow and the live-combo scorecard all
+# see them exactly as before — but their trades are NEVER mirrored to
+# TradersPost (no live orders on the prop account). submit() routes
+# them through the standard skip marking (traderspost_sent=False +
 # reason on both the trade and position copies), so the exits()/flatten
 # close gates, which key on traderspost_sent, can never emit a broker
-# close for them either.
-PAPER_ONLY_DETECTORS = frozenset({'golden_zone', 'rumers_box'})
+# close for them either. The carve-out gates NEW sends only: a position
+# opened before its detector joined this set keeps traderspost_sent=
+# True, and its broker close still fires normally at stop/target/
+# flatten (the 2026-10-24 rule: every paper close of a sent position
+# sends the broker close).
+#
+# CURRENT STATE (2026-10-26): the live book — the only detectors
+# mirrored to TradersPost — is AOI Fade {MCL, MES}. Every position is a
+# single 2-contract leg at the detector's target (the 2/2/1 scale-out
+# was removed 2026-10-18). Paper entries book at the freshest resolved
+# live quote (ask for a long, bid for a short; see _book_entry_price),
+# not the detector's signal price, which is preserved on the record as
+# signal_price; the TradersPost payload is unchanged.
+PAPER_ONLY_DETECTORS = frozenset({'golden_zone', 'rumers_box', 'turtle_soup'})
 
 def symbol_allowed(detector, symbol):
     """True if this detector is allowed to trade this symbol.
