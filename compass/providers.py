@@ -57,6 +57,11 @@ class Collectors:
         self.history_owner=uuid.uuid4().hex
         self.chain_paging={}
         self.chain_inflight=set()
+        # Shadow iceberg detector (2026-10-25): in-memory print
+        # clustering over both option streams. The streams attach it as
+        # their buffer observer; iceberg_pass persists its alerts.
+        from .iceberg import IcebergDetector
+        self.iceberg=IcebergDetector(cfg)
 
     async def close(self):
         if self.live: self.live.stop()
@@ -144,11 +149,79 @@ class Collectors:
             self.supervise("option_subscriptions",bool(c.massive),self.refresh_option_subscriptions,2),
             self.supervise("tradermatrix",bool(c.matrix),self.matrix,2),
             self.supervise("tradermatrix_flow",bool(c.matrix),self.flow,20),
+            self.supervise("iceberg_detector",bool(getattr(c,'iceberg_detector',True)),self.iceberg_pass,30),
             self.supervise("research",bool(c.matrix and c.research),lambda:collect_research(self),1)]+extra_tasks(self)
 
     async def flow(self):
         # Head, optional yesterday page, forward recovery, then a head recheck.
         return await collect_flow(self,time.time(),page_cap=4)
+
+    async def iceberg_pass(self):
+        """Shadow iceberg detector maintenance, off the stream loop.
+
+        The detector itself does no DB I/O (it is tapped inline from the
+        option stream read loop); this pass drains its fired alerts into
+        state rows, refreshes its open-interest cache from chain
+        snapshots, runs outcome scoring in its own short transaction,
+        and flushes the compact diag snapshot + health row. Every step
+        is independently guarded: a scoring failure never costs the
+        alert drain, and nothing here can reach the stream.
+        """
+        await asyncio.to_thread(self._iceberg_pass_sync)
+
+    def _iceberg_pass_sync(self):
+        from . import iceberg as iceberg_mod
+        det = self.iceberg
+        now = time.time()
+        log = logging.getLogger('uvicorn.error')
+        try:
+            alerts = det.drain_alerts()
+            if alerts:
+                with self.db.tx() as c:
+                    for a in alerts:
+                        self.db.put(c, 'iceberg_alert:' + a['id'], a)
+        except Exception:
+            log.exception('iceberg alert drain failed')
+        try:
+            unders = det.tracked_underlyings()
+            if unders:
+                oi = {}
+                with self.db.tx() as c:
+                    for u in unders[:24]:
+                        ch = self.db.get(c, 'chain:' + u, {}) or {}
+                        for o in ch.get('contracts', []) or []:
+                            sym = o.get('symbol')
+                            v = number(o.get('oi'))
+                            if sym and v is not None:
+                                key = str(sym) if str(sym).startswith('O:') \
+                                    else 'O:' + str(sym)
+                                oi[key] = v
+                det.refresh_oi(oi)
+        except Exception:
+            log.exception('iceberg OI cache refresh failed')
+        try:
+            with self.db.tx() as c:
+                iceberg_mod.score_pass(self.db, c, self.cfg, now)
+        except Exception:
+            log.exception('iceberg score pass failed')
+        try:
+            diag = det.snapshot_diag(now)
+            with self.db.tx() as c:
+                self.db.put(c, 'iceberg:diag', diag)
+            self.db.health(
+                'iceberg_detector',
+                'receiving' if diag['prints_seen'] else 'waiting',
+                'Shadow iceberg detector: prints clustered in memory; '
+                'only alerts + compact diag persisted',
+                diag.get('last_print_ts'),
+                prints_seen=diag['prints_seen'],
+                quotes_seen=diag['quotes_seen'],
+                alerts_fired=diag['alerts_fired'],
+                contracts_tracked=diag['contracts_tracked'],
+                dup_prints=diag['dup_prints'], errors=diag['errors'],
+                last_alert_at=diag.get('last_alert_at'))
+        except Exception:
+            log.exception('iceberg diag flush failed')
 
     @property
     def alpaca_headers(self):

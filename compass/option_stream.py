@@ -41,6 +41,32 @@ class OptionBuffer:
         # persistence queue drops and counts instead of raising — see offer().
         self.dropped_quotes, self.dropped_trades = 0, 0
         self._drop_warned = set()
+        # Shadow iceberg detector tap (2026-10-25): an observer attached
+        # by consume() receives every accepted trade print and every
+        # pre-sample quote. It is pure in-memory aggregation — see
+        # _notify_observer for the never-raise contract.
+        self.trade_observer = None
+        self.observer_errors = 0
+
+    def _notify_observer(self, kind, symbol, stamp, item):
+        """Feed the shadow iceberg detector without ever endangering the
+        stream: the observer contract is already never-raise, and this
+        wrapper is the belt-and-braces layer — any escape is counted and
+        swallowed, exactly like a full persistence queue (2026-10-21)."""
+        obs = self.trade_observer
+        if obs is None:
+            return
+        try:
+            if kind == 'Q':
+                obs.observe_quote(symbol, stamp, item.get('bp'), item.get('ap'))
+            else:
+                obs.observe_trade(symbol, stamp, item)
+        except Exception:
+            self.observer_errors += 1
+            try:
+                obs.note_error()
+            except Exception:
+                pass
 
     def _note_drop(self, kind):
         if kind == 'quotes':
@@ -63,6 +89,9 @@ class OptionBuffer:
             if stamp <= self.sources.get(symbol, 0) or any(number(item.get(k)) is None for k in ('bp','ap')):
                 return
             self.sources[symbol] = stamp
+            # Pre-sample tap: the detector needs the NBBO at print time,
+            # including quotes the 1 Hz sampler will coalesce away.
+            self._notify_observer('Q', symbol, stamp, item)
             value=(symbol,dict(ts=stamp,bid=item['bp'],ask=item['ap'],
                 bid_size=item.get('bs',0),ask_size=item.get('as',0),socket_read_at=now,collection_version=COLLECTION_VERSION,
                 src=item.get('src','massive')),True)
@@ -93,6 +122,7 @@ class OptionBuffer:
                 # reconnect gap plus the resubscribe storm.
                 self._note_drop('trades')
                 return
+            self._notify_observer('T', symbol, stamp, item)
             self.trades.append((symbol,stamp,item))
 
     def flush(self, monotonic):
@@ -177,6 +207,7 @@ def massive_wanted(collector):
 
 async def consume(ws, collector):
     buffer = OptionBuffer()
+    buffer.trade_observer = getattr(collector, 'iceberg', None)
     authenticated = asyncio.Event()
     subscribed = set()
     committed = {'quotes':0,'trades':0}

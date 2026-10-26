@@ -162,6 +162,7 @@ async def consume(ws, collector, buffer=None):
     """Alpaca OPRA consumer. Feeds the shared OptionBuffer; source-tagged."""
     from .option_subscriptions import SubscriptionTrace
     buffer = buffer or OptionBuffer()
+    buffer.trade_observer = getattr(collector, 'iceberg', None)
     authenticated = asyncio.Event()
     subscribed = set()
     committed = {"quotes": 0, "trades": 0}
