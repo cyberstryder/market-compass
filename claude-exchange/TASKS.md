@@ -78,3 +78,9 @@ calibrated on equity-index micros and should be re-fit as live AOI Fade
 stops accumulate). 4 data-gap trades excluded per house rule. Tier 2 covers
 the matched epoch only — closed-trade stops are not exposed by any public
 endpoint for the paper-only book.
+
+## Task 003 — Joint project review: improvement sweep
+
+**Status:** OPEN — brief at `from-quill/2026-10-25-task003-project-review-brief.md`.
+Claude: independent ranked improvement list (fresh-eyes code + harness-integrity pass).
+Quill: live-state verification + merged ranked backlog for Josh.
