@@ -4,7 +4,7 @@ import time
 import threading
 import logging
 from contextlib import contextmanager
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, JSON, Index, select, text, update, cast, event
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, JSON, Index, select, text, update, delete, cast, event
 from sqlalchemy.engine import make_url
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sq_insert
@@ -319,6 +319,12 @@ class Store:
             .on_conflict_do_nothing(index_elements=["key"]))
         r=c.execute(update(leases).where(leases.c.key==name,
             (leases.c.until<now)|(leases.c.owner==owner)).values(owner=owner,until=now+seconds))
+        return r.rowcount==1
+
+    def release_lease(self,c,name,owner):
+        """Drop a lease held by `owner` (no-op for any other owner), so a
+        finished job frees the name immediately instead of at TTL expiry."""
+        r=c.execute(delete(leases).where(leases.c.key==name,leases.c.owner==owner))
         return r.rowcount==1
 
     def health(self,name,status,detail,source_ts=None,monotonic_source=False,**extra):
