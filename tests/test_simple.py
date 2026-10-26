@@ -316,7 +316,8 @@ def test_zero_dte_paper_opens_spy_plan_trade(db):
     from compass.config import Config
     now = _zdtp_now()
     _zdtp_fixtures(db, now)
-    cfg = Config()
+    # Plan enabled explicitly: retired by default since 2026-10-25.
+    cfg = Config(spy_morning_brief=True)
     with db.tx() as c:
         db.put(c, 'zero_dte_paper:spy_ts', now - 7200)  # running system
         out = zdp.scan(db, c, cfg, now)
@@ -327,12 +328,31 @@ def test_zero_dte_paper_opens_spy_plan_trade(db):
     assert t['entry'] == 1.06  # ask + 1c slippage
 
 
-def test_zero_dte_paper_closes_on_spy_target(db):
+def test_zero_dte_paper_spy_plan_retired_by_default(db):
+    """Retirement (Josh, 2026-10-25): with the plan flag off — the code
+    default and the production state — a confirmed SPY plan report books
+    NO plan trade. The scanner path is unaffected (covered by the scanner
+    tests below, which run on a bare Config)."""
     from compass import zero_dte_paper as zdp
     from compass.config import Config
     now = _zdtp_now()
     _zdtp_fixtures(db, now)
     cfg = Config()
+    assert cfg.spy_morning_brief is False
+    with db.tx() as c:
+        db.put(c, 'zero_dte_paper:spy_ts', now - 7200)  # running system
+        out = zdp.scan(db, c, cfg, now)
+    assert out['ran'] is True and out['opened'] == 0
+    with db.tx() as c:
+        assert len(db.prefix(c, 'trade:0dte-')) == 0
+
+
+def test_zero_dte_paper_closes_on_spy_target(db):
+    from compass import zero_dte_paper as zdp
+    from compass.config import Config
+    now = _zdtp_now()
+    _zdtp_fixtures(db, now)
+    cfg = Config(spy_morning_brief=True)
     with db.tx() as c:
         db.put(c, 'zero_dte_paper:spy_ts', now - 7200)
         out1 = zdp.scan(db, c, cfg, now)
@@ -354,7 +374,7 @@ def test_zero_dte_paper_no_backfill(db):
     from compass.config import Config
     now = _zdtp_now()
     _zdtp_fixtures(db, now)
-    cfg = Config()
+    cfg = Config(spy_morning_brief=True)
     with db.tx() as c:
         # fresh DB: watermark starts at now, the hour-old plan is ignored
         out = zdp.scan(db, c, cfg, now)
@@ -368,7 +388,7 @@ def test_zero_dte_paper_no_duplicates(db):
     from compass.config import Config
     now = _zdtp_now()
     _zdtp_fixtures(db, now)
-    cfg = Config()
+    cfg = Config(spy_morning_brief=True)
     with db.tx() as c:
         db.put(c, 'zero_dte_paper:spy_ts', now - 7200)
         zdp.scan(db, c, cfg, now)

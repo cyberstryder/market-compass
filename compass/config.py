@@ -143,6 +143,23 @@ class Config:
     ict_paper_min_stop_atr: float = field(default_factory=lambda: float(env("ICT_PAPER_MIN_STOP_ATR","0.5")))
     ict_paper_cooldown_min: float = field(default_factory=lambda: float(env("ICT_PAPER_COOLDOWN_MIN","15")))
     ict_brake_shadow: bool = field(default_factory=lambda: env("ICT_BRAKE_SHADOW_ENABLED", "true") == "true")
+    # Shadow iceberg detector (2026-10-25): reconstructs institutional
+    # options accumulation from the OPRA print stream. SHADOW ONLY —
+    # logs alerts + scored outcomes, never trades, never alerts Discord
+    # in v1. Defaults: an institutional parent worked in slices over
+    # half an hour is hundreds of contracts, tens of prints, five
+    # figures of premium, predominantly at the ask, spread across
+    # several 5-minute sub-windows; see compass/iceberg.py.
+    iceberg_detector: bool = field(default_factory=lambda: env("ICEBERG_DETECTOR_ENABLED","true")=="true")
+    iceberg_min_contracts_30m: int = field(default_factory=lambda: int(env("ICEBERG_MIN_CONTRACTS_30M","500")))
+    iceberg_min_premium_30m: float = field(default_factory=lambda: float(env("ICEBERG_MIN_PREMIUM_30M","25000")))
+    iceberg_min_prints_30m: int = field(default_factory=lambda: int(env("ICEBERG_MIN_PRINTS_30M","25")))
+    iceberg_min_ask_share: float = field(default_factory=lambda: float(env("ICEBERG_MIN_ASK_SHARE","0.65")))
+    iceberg_min_active_subwindows: int = field(default_factory=lambda: int(env("ICEBERG_MIN_ACTIVE_SUBWINDOWS","3")))
+    iceberg_vol_oi_ratio: float = field(default_factory=lambda: float(env("ICEBERG_VOL_OI_RATIO","0.5")))
+    iceberg_no_concession_tol: float = field(default_factory=lambda: float(env("ICEBERG_NO_CONCESSION_TOL","0.05")))
+    iceberg_cooldown_min: float = field(default_factory=lambda: float(env("ICEBERG_COOLDOWN_MIN","30")))
+    iceberg_max_tracked: int = field(default_factory=lambda: int(env("ICEBERG_MAX_TRACKED_CONTRACTS","5000")))
     ict_symbols: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("ICT_SYMBOLS","MNQ.c.0,MES.c.0,MGC.v.0,MCL.v.0,MYM.c.0,M2K.c.0,M6A.c.0,M6E.c.0").split(",") if s.strip()))
     ict_htf_tradingview: bool = field(default_factory=lambda: env("ICT_HTF_TRADINGVIEW","false")=="true")
     ict_tv_cache_dir: str = field(default_factory=lambda: env("ICT_TV_CACHE_DIR",""))
@@ -284,6 +301,12 @@ class Config:
             raise ValueError("OPTION_ENTRY_CUTOFF_MIN must be >= OPTION_FLATTEN_MIN")
         if not 0<=self.option_0dte_max_dte<=30:
             raise ValueError("OPTION_0DTE_MAX_DTE must be 0-30 days")
+        if self.iceberg_min_contracts_30m<1 or self.iceberg_min_premium_30m<=0 or self.iceberg_min_prints_30m<1:
+            raise ValueError("ICEBERG volume/premium/print thresholds must be positive")
+        if not 0<self.iceberg_min_ask_share<=1 or not 1<=self.iceberg_min_active_subwindows<=6:
+            raise ValueError("ICEBERG ask share must be in (0,1] and active subwindows 1-6")
+        if self.iceberg_vol_oi_ratio<=0 or not 0<=self.iceberg_no_concession_tol<1 or self.iceberg_cooldown_min<0 or self.iceberg_max_tracked<100:
+            raise ValueError("Invalid ICEBERG detector bounds")
         if not 0<=self.discovery_limit<=100 or len(self.discovery_seeds)>100:
             raise ValueError("Discovery limits must be between zero and 100")
         if self.discovery and len(set(self.watch_symbols)|set(self.discovery_seeds))>500:

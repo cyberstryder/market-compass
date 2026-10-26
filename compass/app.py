@@ -260,7 +260,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -1466,6 +1466,43 @@ a{color:#888}</style></head><body>
         except Exception as e:
             import logging
             logging.getLogger('uvicorn.error').exception('brake-shadow failed')
+            return {"ok": False, "error": str(e)}
+
+    @app.get('/api/iceberg-scorecard')
+    def iceberg_scorecard(request: Request):
+        """Shadow iceberg detector scorecard: fired accumulation alerts
+        with scored outcomes (+1h / close / next close / expiry), weekly
+        windows and the promotion-rule view (>=40 scored alerts,
+        positive expectancy in two consecutive 4-week windows).
+        Read-only; the detector never trades. Query param: days
+        (default 90)."""
+        try:
+            import time
+            days = float(request.query_params.get('days', 90))
+            days = max(1.0, min(days, 365.0))
+            with db.tx() as c:
+                from . import iceberg
+                return {"ok": True,
+                        **iceberg.summarize(db, c, time.time(), days=days)}
+        except Exception as e:
+            import logging
+            logging.getLogger('uvicorn.error').exception('iceberg-scorecard failed')
+            return {"ok": False, "error": str(e)}
+
+    @app.get('/api/iceberg-status')
+    def iceberg_status(request: Request):
+        """Shadow iceberg detector diag: stream counters (prints_seen,
+        contracts_tracked, alerts_fired, last_alert_at), the persisted
+        diag snapshot and alert totals. Read-only; this is the
+        one-call production verification surface."""
+        try:
+            import time
+            with db.tx() as c:
+                from . import iceberg
+                return {"ok": True, **iceberg.status(db, c, time.time())}
+        except Exception as e:
+            import logging
+            logging.getLogger('uvicorn.error').exception('iceberg-status failed')
             return {"ok": False, "error": str(e)}
 
     @app.get('/api/live-combo-scorecard')
