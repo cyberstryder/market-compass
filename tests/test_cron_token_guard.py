@@ -147,3 +147,27 @@ def test_pick_check_auto_stays_public_with_token_set(tmp_path, monkeypatch):
         assert r.status_code != 401, (r.status_code, r.text[:200])
     finally:
         client.__exit__(None, None, None)
+
+
+# ---------- /health cron_token presence flag (desk item 9) ----------
+
+def test_health_reports_cron_token_configured(tmp_path, monkeypatch):
+    client = make_client(tmp_path, 'health_set', monkeypatch, token=TOKEN)
+    try:
+        r = client.get('/health')
+        assert r.status_code == 200
+        assert r.json()['cron_token'] is True
+        # Presence only: the token value must never appear in the body.
+        assert TOKEN not in r.text
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_health_reports_cron_token_unconfigured(tmp_path, monkeypatch):
+    client = make_client(tmp_path, 'health_unset', monkeypatch, token=None)
+    try:
+        r = client.get('/health')
+        assert r.status_code == 200
+        assert r.json()['cron_token'] is False
+    finally:
+        client.__exit__(None, None, None)
