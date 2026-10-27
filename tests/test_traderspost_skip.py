@@ -12,12 +12,20 @@
 
 2026-10-25: Golden Zone and Rumers Box became paper-only (never
 mirrored — see tests/test_paper_only_carve_out.py), so the "sent"
-roles below are played by mirrored detectors (aoi_fade, turtle_soup,
-trend_rider). Each test's original purpose is unchanged.
+roles below are played by mirrored detectors (at the time: aoi_fade,
+turtle_soup, trend_rider). Each test's original purpose is unchanged.
 
 2026-10-26: Turtle Soup became paper-only too (the live book is AOI
 Fade {MCL, MES} only), so its second-detector role below moved to
 trend_rider — mirrored, with no symbol allowlist restriction.
+
+2026-10-26 (evening): AOI Fade became paper-only as well — Josh
+paused live TradersPost sends after the corrected 1-year re-run.
+The live book is empty, so the remaining "sent" roles move to
+trend_rider, the last mirrored vehicle available to the tests. AOI
+Fade now plays the open-position counterparty: its paper positions
+still block a mirrored send through the duplicate/hedging scan,
+which reads open positions of every detector, mirrored or not.
 """
 from datetime import datetime, timezone
 
@@ -87,23 +95,27 @@ def submit(db, cfg, detector, symbol, **kw):
 
 
 def test_first_signal_is_sent_not_self_skipped(db, cfg, sent):
-    _, trade = submit(db, cfg, 'aoi_fade', 'MCL.v.0')
+    _, trade = submit(db, cfg, 'trend_rider', 'MCL.v.0')
     assert len(sent) == 1
     assert trade['traderspost_sent'] is True
 
 
 def test_second_detector_same_symbol_is_skipped(db, cfg, sent):
+    # First position is aoi_fade's — paper-only since the 2026-10-26
+    # pause, so it books without sending; the mirrored second signal
+    # must still be blocked by the duplicate scan, which reads open
+    # positions of every detector.
     submit(db, cfg, 'aoi_fade', 'MCL.v.0')
     _, trade2 = submit(db, cfg, 'trend_rider', 'MCL.v.0', signal_ts=NOW - 30)
-    assert len(sent) == 1  # only the first signal went out
+    assert len(sent) == 0  # neither signal went out
     assert trade2['traderspost_sent'] is False
     assert 'already open for aoi_fade' in trade2['traderspost_skip_reason']
 
 
 def test_same_detector_reentry_blocked_at_paper_layer(db, cfg, sent):
-    submit(db, cfg, 'aoi_fade', 'MCL.v.0')
+    submit(db, cfg, 'trend_rider', 'MCL.v.0')
     with db.tx() as c:
-        r = ict_paper.submit(db, c, cfg, NOW, 'aoi_fade', 'MCL.v.0',
+        r = ict_paper.submit(db, c, cfg, NOW, 'trend_rider', 'MCL.v.0',
                              sig(signal_ts=NOW - 30))
     assert r['submitted'] is False
     assert r['reason'] == 'existing_position'
@@ -117,10 +129,13 @@ def test_correlated_opposite_direction_is_hedging_skip(db, cfg, sent):
     # 2026-10-25: golden_zone/rumers_box are paper-only now, so the pair is
     # aoi_fade|MES (long, equity group) vs trend_rider|MNQ (short) —
     # trend_rider has no allowlist entry, hence no symbol restriction.
+    # 2026-10-26 (evening): aoi_fade is paper-only too — its MES long
+    # books as a paper position (nothing sent), and the hedging scan
+    # must still refuse the mirrored trend_rider short against it.
     submit(db, cfg, 'aoi_fade', 'MES.c.0')  # long, equity group
     _, trade2 = submit(db, cfg, 'trend_rider', 'MNQ.c.0', signal_ts=NOW - 30,
                        direction='short', entry=100.0, stop=102.0, target=96.0)
-    assert len(sent) == 1
+    assert len(sent) == 0
     assert trade2['traderspost_sent'] is False
     assert 'hedging' in trade2['traderspost_skip_reason']
 
@@ -132,9 +147,9 @@ def test_sent_flag_survives_exits_copy_over(db, cfg, sent):
     — a flag stored only on the trade record was erased at close, so
     /api/traderspost-skips and the Simple live split showed zero
     sends while live trades filled. The hook must mark both copies."""
-    r, trade = submit(db, cfg, 'aoi_fade', 'MCL.v.0')
+    r, trade = submit(db, cfg, 'trend_rider', 'MCL.v.0')
     assert trade['traderspost_sent'] is True
-    pos_key = 'position:ict:aoi_fade:MCL.v.0:t1'
+    pos_key = 'position:ict:trend_rider:MCL.v.0:t1'
     with db.tx() as c:
         pos = db.get(c, pos_key)
         assert pos['traderspost_sent'] is True
@@ -149,10 +164,12 @@ def test_sent_flag_survives_exits_copy_over(db, cfg, sent):
 
 
 def test_unmapped_symbol_fails_closed(db, cfg, sent):
-    # aoi_fade's allowlist is root-based, so MCL.c.0 is a legal paper
-    # symbol, but SYMBOL_MAP has no MCL.c.0 entry (it maps MCL.v.0):
-    # the raw Compass symbol must never be POSTed to TradersPost.
-    _, trade = submit(db, cfg, 'aoi_fade', 'MCL.c.0')
+    # trend_rider has no allowlist entry, so MCL.c.0 is a legal paper
+    # symbol for it, but SYMBOL_MAP has no MCL.c.0 entry (it maps
+    # MCL.v.0): the raw Compass symbol must never be POSTed to
+    # TradersPost. (Vehicle was aoi_fade until its 2026-10-26 pause;
+    # its root-based allowlist admitted MCL.c.0 the same way.)
+    _, trade = submit(db, cfg, 'trend_rider', 'MCL.c.0')
     assert sent == []
     assert trade['traderspost_sent'] is False
     assert 'no TradersPost symbol mapping' in trade['traderspost_skip_reason']

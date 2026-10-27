@@ -14,6 +14,15 @@ SEND ONLY (the paper trade books normally) when:
 Fail-open: kill switch off (FRESHNESS_GUARD_ENABLED=false), no fresh
 quote readable, or any guard error -> the send proceeds and the
 verdict on the trade record shows the guard was not evaluated.
+
+2026-10-26 (evening): AOI Fade — the submit() integration vehicle
+below — joined the paper-only carve-out when Josh paused live
+TradersPost sends, so the integration tests now run on trend_rider
+(mirrored, no symbol restriction). The guard's production behavior
+is unchanged; with the live book empty it simply has no sends to
+evaluate until a detector re-earns a seat. A dedicated test below
+proves a paper-only AOI submit is never guard-evaluated, exactly
+like Turtle Soup.
 """
 from datetime import datetime, timezone
 
@@ -24,8 +33,8 @@ from compass.config import Config
 from compass import freshness_guard, ict_paper
 
 NOW = datetime(2026, 9, 28, 17, 0, tzinfo=timezone.utc).timestamp()  # Mon 12:00 CT
-SYM = 'MCL.v.0'  # aoi_fade live book: {MCL, MES}
-POS = 'position:ict:aoi_fade:%s:t1' % SYM
+SYM = 'MCL.v.0'  # trend_rider test vehicle: mirrored, unrestricted
+POS = 'position:ict:trend_rider:%s:t1' % SYM
 
 
 @pytest.fixture
@@ -42,6 +51,7 @@ def cfg():
     c.ict_futures_paper = True
     c.ict_aoi_fade = True
     c.ict_turtle_soup = True
+    c.ict_trend_rider = True
     c.traderspost_enabled = True
     return c
 
@@ -73,7 +83,7 @@ def evaluate(db, cfg, t, q=None):
         return freshness_guard.evaluate(db, c, cfg, t, NOW)
 
 
-def submit(db, cfg, q=None, detector='aoi_fade', **kw):
+def submit(db, cfg, q=None, detector='trend_rider', **kw):
     with db.tx() as c:
         if q is not None:
             db.put(c, 'quote:' + SYM, q)
@@ -328,4 +338,20 @@ def test_submit_paper_only_detector_never_guard_evaluated(db, cfg):
                                 detector='turtle_soup')
     assert 'paper-only' in tr['traderspost_skip_reason']
     assert tr.get('freshness_guard') is None
+    assert declines(db) == []
+
+
+def test_submit_aoi_fade_never_guard_evaluated(db, cfg):
+    # AOI Fade joined the carve-out in the 2026-10-26 live-send
+    # pause: same contract as Turtle Soup above — the paper trade
+    # books as a counterfactual with the paper-only skip reason on
+    # both copies, the guard never runs, no decline is persisted.
+    r, tr, pos, outbox = submit(db, cfg, quote(NOW, 104.40, 104.50),
+                                detector='aoi_fade')
+    assert pos['status'] == 'open'  # paper position stands
+    assert 'paper-only' in tr['traderspost_skip_reason']
+    assert 'aoi_fade' in tr['traderspost_skip_reason']
+    assert pos['traderspost_skip_reason'] == tr['traderspost_skip_reason']
+    assert tr.get('freshness_guard') is None
+    assert outbox == {}
     assert declines(db) == []

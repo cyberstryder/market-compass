@@ -1,7 +1,7 @@
 """Paper-only detector carve-out (Josh 2026-10-25; Turtle Soup added
-2026-10-26).
+2026-10-26; AOI Fade added 2026-10-26 evening — the live-send pause).
 
-Golden Zone, Rumers Box and Turtle Soup keep paper trading —
+Golden Zone, Rumers Box, Turtle Soup and AOI Fade keep paper trading —
 positions, attribution, brake-shadow and the live-combo scorecard all
 see them — but their trades are NEVER mirrored to TradersPost:
 submit() routes them through the standard skip marking
@@ -13,12 +13,19 @@ before this change queued a close for any -t1 position without
 checking the flag (now gated, with the sent flatten as the positive
 control below).
 
-aoi_fade mirroring is unchanged — since 2026-10-26 it is the only
-mirrored detector (the live book is AOI Fade {MCL, MES}).
+AOI Fade was the last mirrored detector (the live book was AOI Fade
+{MCL, MES} from 2026-10-26 morning). Josh paused live sends that
+evening after the corrected 1-year re-run put both pairs'
+live-sendable subsets negative on the year; the live book is now
+EMPTY and a seat is re-earned only under the promotion policy. The
+mirrored-queue positive control below is therefore played by
+trend_rider (mirrored, no symbol restriction), and a membership-flip
+test proves set membership is the ONLY thing gating an AOI send.
 
-The carve-out gates NEW sends only: a Turtle Soup position opened
-before 2026-10-26 carries traderspost_sent=True, and its broker close
-still fires — the sent-Turtle-Soup flatten control below proves it.
+The carve-out gates NEW sends only: an AOI Fade position opened
+before the pause carries traderspost_sent=True, and its broker close
+still fires — the sent-AOI flatten and stop-out controls below
+prove it (closes key on the position's flag, never on the set).
 """
 from datetime import datetime, timezone
 
@@ -51,6 +58,7 @@ def cfg():
     c.ict_rumers_box = True
     c.ict_aoi_fade = True
     c.ict_turtle_soup = True
+    c.ict_trend_rider = True
     c.traderspost_enabled = True
     return c
 
@@ -92,13 +100,15 @@ def get(db, key):
 
 def test_paper_only_set_is_exact():
     assert ict_paper.PAPER_ONLY_DETECTORS == {'golden_zone', 'rumers_box',
-                                              'turtle_soup'}
+                                              'turtle_soup', 'aoi_fade'}
 
 
 @pytest.mark.parametrize('detector,symbol', [
     ('golden_zone', 'MCL.v.0'),
     ('rumers_box', 'MYM.c.0'),
     ('turtle_soup', 'MCL.v.0'),
+    ('aoi_fade', 'MCL.v.0'),
+    ('aoi_fade', 'MES.c.0'),
 ])
 def test_paper_only_submit_never_queues(db, cfg, sent, detector, symbol):
     r = submit(db, cfg, detector, symbol)
@@ -116,11 +126,31 @@ def test_paper_only_submit_never_queues(db, cfg, sent, detector, symbol):
 
 
 @pytest.mark.parametrize('detector,symbol', [
-    ('aoi_fade', 'MCL.v.0'),
-    ('aoi_fade', 'MES.c.0'),
+    ('trend_rider', 'MCL.v.0'),
+    ('trend_rider', 'MES.c.0'),
 ])
 def test_mirrored_detectors_still_queue(db, cfg, sent, detector, symbol):
+    # Positive control: a detector NOT in the carve-out set still
+    # mirrors exactly as before (played by trend_rider — mirrored,
+    # no symbol allowlist — since the 2026-10-26 pause left the
+    # production live book empty).
     r = submit(db, cfg, detector, symbol)
+    assert len(sent) == 1
+    trade = get(db, 'trade:' + r['trade_id'] + '-t1')
+    assert trade['traderspost_sent'] is True
+
+
+@pytest.mark.parametrize('symbol', ['MCL.v.0', 'MES.c.0'])
+def test_aoi_fade_queues_when_not_carved_out(db, cfg, sent, monkeypatch,
+                                             symbol):
+    # Set membership is the ONLY gate the pause adds: with aoi_fade
+    # out of the set (the pre-pause world, and the re-entry world if
+    # it re-earns a seat), the identical submit queues and sends
+    # exactly as it did on the morning of 2026-10-26.
+    monkeypatch.setattr(ict_paper, 'PAPER_ONLY_DETECTORS',
+                        frozenset({'golden_zone', 'rumers_box',
+                                   'turtle_soup'}))
+    r = submit(db, cfg, 'aoi_fade', symbol)
     assert len(sent) == 1
     trade = get(db, 'trade:' + r['trade_id'] + '-t1')
     assert trade['traderspost_sent'] is True
@@ -139,6 +169,8 @@ RB_POS_KEY = "position:ict:rumers_box:MYM.c.0:t1"
 RB_TRADE_ID = "ict-rumers_box-MYM-c-0-123-t1"
 TS_POS_KEY = "position:ict:turtle_soup:MCL.v.0:t1"
 TS_TRADE_ID = "ict-turtle_soup-MCL-v-0-123-t1"
+AOI_POS_KEY = "position:ict:aoi_fade:MCL.v.0:t1"
+AOI_TRADE_ID = "ict-aoi_fade-MCL-v-0-123-t1"
 
 
 @pytest.fixture
@@ -194,6 +226,7 @@ def test_never_sent_golden_zone_stop_out_fires_no_close(db, close_calls):
     (GZ_POS_KEY, GZ_TRADE_ID, "MNQ.c.0"),
     (RB_POS_KEY, RB_TRADE_ID, "MYM.c.0"),
     (TS_POS_KEY, TS_TRADE_ID, "MCL.v.0"),
+    (AOI_POS_KEY, AOI_TRADE_ID, "MCL.v.0"),
 ])
 def test_never_sent_flatten_fires_no_close(db, close_calls,
                                            pos_key, trade_id, symbol):
@@ -233,4 +266,44 @@ def test_sent_turtle_soup_flatten_still_fires_close(db, close_calls):
     run_exits(db, "MCL.v.0", bid=100.0, ask=100.25)
     p = get(db, TS_POS_KEY)
     assert p["status"] == "closed" and p["exit_reason"] == "session_flatten"
+    assert close_calls == ["MCL.v.0"]
+
+
+def test_never_sent_aoi_fade_stop_out_fires_no_close(db, close_calls):
+    # A post-pause AOI position was never sent: its paper stop-out
+    # must not emit a broker close.
+    put_position(db, AOI_POS_KEY, AOI_TRADE_ID, "MCL.v.0")
+    run_exits(db, "MCL.v.0", bid=97.0, ask=97.25)  # through the 98.0 stop
+    p = get(db, AOI_POS_KEY)
+    assert p["status"] == "closed" and p["exit_reason"] == "stop"
+    assert close_calls == []
+
+
+def test_sent_aoi_fade_flatten_still_fires_close(db, close_calls):
+    # Pause semantics (2026-10-26 evening): an AOI Fade position
+    # opened BEFORE the pause was mirrored, so it carries
+    # traderspost_sent=True. The carve-out gates new sends only —
+    # exits()/flatten key on the position's own flag, never on the
+    # set — so this position's broker close must still fire at
+    # session flatten.
+    put_position(db, AOI_POS_KEY, AOI_TRADE_ID, "MCL.v.0",
+                 flatten_at=stamp("2026-09-14T08:45:00"),
+                 traderspost_sent=True)
+    run_exits(db, "MCL.v.0", bid=100.0, ask=100.25)
+    p = get(db, AOI_POS_KEY)
+    assert p["status"] == "closed" and p["exit_reason"] == "session_flatten"
+    assert close_calls == ["MCL.v.0"]
+
+
+def test_sent_aoi_fade_stop_out_still_fires_close(db, close_calls):
+    # Same pre-pause sent position, stopped out instead of flattened:
+    # the fail-closed close (2026-10-20 incident fix — every paper
+    # close of a sent position sends the broker close) must still
+    # fire. exits() reads only traderspost_sent; aoi_fade's set
+    # membership is never consulted on the close path.
+    put_position(db, AOI_POS_KEY, AOI_TRADE_ID, "MCL.v.0",
+                 traderspost_sent=True)
+    run_exits(db, "MCL.v.0", bid=97.0, ask=97.25)  # through the 98.0 stop
+    p = get(db, AOI_POS_KEY)
+    assert p["status"] == "closed" and p["exit_reason"] == "stop"
     assert close_calls == ["MCL.v.0"]

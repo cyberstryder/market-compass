@@ -1361,9 +1361,10 @@ def _tracking_futures_book(db, c, now):
             "label": _DETECTOR_LABELS.get(x["detector"], x["detector"]),
             "symbol": x["symbol"],
             # Post-prune book (2026-10-24/25; Turtle Soup carved out
-            # 2026-10-26): Golden Zone, Rumers Box and Turtle Soup are
-            # paper-only carve-outs; AOI Fade routes live to
-            # TradersPost. ict_paper owns that set.
+            # 2026-10-26; AOI Fade carved out 2026-10-26 evening —
+            # live TradersPost sends paused): all four are paper-only
+            # carve-outs; no detector is currently mirrored.
+            # ict_paper owns that set.
             "live": x["detector"] not in PAPER_ONLY_DETECTORS,
             "trades": x["trades"], "wins": x["wins"],
             "losses": x["losses"], "win_rate": _pct1(x["win_rate"]),
