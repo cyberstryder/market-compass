@@ -1,0 +1,30 @@
+--- /home/hatch/workspace/goals/market-compass-trading-improvements/hidden_files/futures-backtest-matrix-2026-10-23/harness/backtest_run.py	2026-10-23 23:22:27.352610612 +0000
++++ backtest_run_FIXED.py	2026-10-26 20:03:32.617915809 +0000
+@@ -291,6 +291,12 @@
+ 
+     # ---------- exits ----------
+     def _close(self, key, p, price, exit_ts, reason, now):
++        # HARD INVARIANT (year-rerun Part A): a trade can never exit before
++        # it was entered. Any violation fails the run loudly.
++        if exit_ts < p["entered_at"]:
++            raise AssertionError(
++                f"harness invariant violated: exited_at {exit_ts} < "
++                f"entered_at {p['entered_at']} for {p.get('id')}")
+         long = p["side"] == "long"
+         pnl = (price - p["entry"]) * (1 if long else -1) * \
+             p["qty"] * p["multiplier"] - 2 * p["fee"] * p["qty"]
+@@ -319,7 +325,13 @@
+                 self._close(key, p, price, now, "session_flatten", now)
+                 continue
+             # walk completed bars after the signal bar, in order
+-            sig_ts = p.get("signal_time") or p["entered_at"] - 60
++            # FIXED 2026-10-26 (year-rerun Part A): the exit walk seeds
++            # at BOOKING (entered_at), never at signal_time. Turtle Soup
++            # signal_time is the sweep-bar ts (median 1.7h, up to 3.3d
++            # before booking) - seeding there let 65/135 recorded TS*MCL
++            # trades exit before they were entered. AOI records carry no
++            # signal_time, so this is a no-op for AOI by construction.
++            sig_ts = p["entered_at"] - 60
+             checked = p.get("_bt_checked", sig_ts)
+             stop, tgt = p["stop"], p.get("target")
+             long = p["side"] == "long"
