@@ -267,8 +267,7 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
                     # Publication categories predate the condensed channels.
                     url=webhooks.get(PUBLICATION_ROUTES.get(decision['category'],decision['category']),'')
                     if not re.fullmatch(r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+',url):continue
-                row=dict(row,payload={'content':publication.format_message(dict(record,payload=decision['payload'])),
-                    'username':'Market Compass','allowed_mentions':{'parse':[]}})
+                row=dict(row,payload=publication.format_payload(dict(record,payload=decision['payload'])))
             mirror_smoothers(db,c,row,d,webhooks,now)
             # 2026-10-14: Allow repair_bypass flag to skip the entry-delivered check.
             # Repaired alerts (e.g., via /api/admin/repair-smoothers-alerts) may not have

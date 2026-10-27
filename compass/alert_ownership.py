@@ -296,6 +296,90 @@ def format_message(row):
     return '\n'.join(lines)[:1950]
 
 
+def _embed_field(name,value,inline=True):return dict(name=name,value=str(value),inline=inline)
+
+
+def _embed_smoothers_entry(p,pub,o):
+    """Rich-embed Smoothers entry (Josh 2026-10-26): the pre-consolidation
+    layout, carrying exactly the fields _format_smoothers_entry shows —
+    no legacy-only fields (quality/history blocks, signal numbers)."""
+    fields=[]
+    entry_px=p.get('entry_price');target_px=p.get('target_price') or p.get('underlying_target')
+    if numeric(entry_px) and numeric(target_px):
+        label='(entry ref)'
+        met=p.get('model_entry_time')
+        if numeric(met) and met>0:
+            try:label=f"(ref {datetime.fromtimestamp(met,CT).strftime('%H:%M CT')})"
+            except (OverflowError,OSError,ValueError):pass
+        fields.append(_embed_field('Underlying Entry',f"${entry_px:,.2f} {label}"))
+    if numeric(target_px):fields.append(_embed_field('Underlying Target',f"${target_px:,.2f}"))
+    live=p.get('live_underlying') or {}
+    if live.get('status')=='available' and numeric(live.get('price')) \
+            and numeric(live.get('ts')) and live['ts']>0:
+        fields.append(_embed_field('Live Underlying',f"${live['price']:,.2f} @ "
+            +datetime.fromtimestamp(live['ts'],CT).strftime('%H:%M CT')))
+    est=p.get('est_return_pct')
+    if numeric(est):fields.append(_embed_field('Est Return',f"{est:+.0f}%"))
+    q=p.get('last_quote') or p.get('quote') or {}
+    fields.append(_embed_field('Option Quote',
+        f"${q['bid']:.2f}/${q['ask']:.2f}" if q and all(numeric(q.get(k)) for k in ('bid','ask')) else 'quote unavailable'))
+    fields.append(_embed_field('Strike',f"${o['strike']:g}"))
+    dte=_smoothers_dte(o,p.get('week'))
+    if dte is not None:fields.append(_embed_field('DTE',f"{dte}"))
+    if p.get('expires_at'):fields.append(_embed_field('Enter By',datetime.fromtimestamp(p['expires_at'],CT).strftime('%H:%M CT')))
+    fields.append(_embed_field('Exit',p.get('exit_rule') or 'Underlying target, otherwise Friday close',False))
+    return dict(title=f"{LABELS['smoothers']} | ENTRY | {o['underlying']} {o['strike']:g} {o['type']} · {o['expiration']}",
+                color=3066993 if o['type']=='CALL' else 15158332,fields=fields)
+
+
+def _embed_smoothers_exit(p,pub,o):
+    """Rich-embed Smoothers exit: same layout rule as the entry embed —
+    exactly the fields _format_smoothers_exit shows, nothing legacy-only."""
+    reason=p.get('exit_reason'); tgt=p.get('underlying_target')
+    q=p.get('last_quote') or p.get('quote') or {}
+    bid,ask,ts=q.get('bid'),q.get('ask'),q.get('ts')
+    quote_ok=all(numeric(v) for v in (bid,ask,ts))
+    entry=p.get('entry'); fields=[]
+    if reason=='target':
+        result=f"Target hit · underlying reached ${tgt:,.2f}" if numeric(tgt) else "Target hit"
+        fields.append(_embed_field('Result',result,False))
+        if quote_ok:
+            fields.append(_embed_field('Option Quote',f"${bid:.2f}/${ask:.2f} @ "
+                +datetime.fromtimestamp(ts,CT).strftime('%H:%M CT')))
+            if numeric(entry) and entry>0:
+                ret=((bid+ask)/2/entry-1)*100
+                fields.append(_embed_field('Modeled Entry',f"${entry:.2f} ({ret:+.0f}% ref)"))
+        else:fields.append(_embed_field('Option Quote','unavailable'))
+        color=2067276
+    else:
+        status=p.get('signal_status')
+        if status=='UNRESOLVED':result="Week closed · outcome unresolved (missing observations)"
+        elif numeric(tgt):result=f"Week closed · target ${tgt:,.2f} not hit"
+        else:result="Week closed · target not hit"
+        fields.append(_embed_field('Result',result,False))
+        final=p.get('exit_underlying')
+        if numeric(final):fields.append(_embed_field('Underlying at Close',f"${final:,.2f}"))
+        color=10038562
+    return dict(title=f"{LABELS['smoothers']} | EXIT | {o['underlying']} {o['strike']:g} {o['type']} · {o['expiration']}",
+                color=color,fields=fields)
+
+
+def format_payload(row):
+    """Discord webhook body for an admitted publication.
+
+    Smoothers ENTRY/EXIT publications render as rich embeds (username
+    'Smoothers', the pre-consolidation layout) with exactly today's field
+    set; every other publication keeps the compact text body. Used by the
+    native outbox sender only — the legacy delivery path keeps
+    format_message text for all categories.
+    """
+    p=row['payload']; pub=p['publication']
+    if pub.get('category')=='smoothers' and pub.get('event') in ('ENTRY','EXIT'):
+        embed=_embed_smoothers_entry(p,pub,pub['contract']) if pub['event']=='ENTRY' else _embed_smoothers_exit(p,pub,pub['contract'])
+        return {'username':'Smoothers','allowed_mentions':{'parse':[]},'embeds':[embed]}
+    return {'content':format_message(row),'username':'Market Compass','allowed_mentions':{'parse':[]}}
+
+
 def entry_delivered(c,t):
     if t.get('native_delivered'):return True
     event=t['entry_event_id']
