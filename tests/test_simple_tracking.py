@@ -40,15 +40,18 @@ def test_tracking_empty_db(db):
     tr = out['tracking']
     assert tr is not None
     # Futures book: the six post-prune combos, live vs paper-only split.
+    # Since the 2026-10-26 evening pause (AOI Fade carved out), NO
+    # combo is live — every detector is a paper-only carve-out.
     fb = tr['futures_book']
     assert fb['window_days'] == 28
     assert len(fb['combos']) == 6
     live = {(x['detector'], x['symbol']) for x in fb['combos'] if x['live']}
-    assert live == {('aoi_fade', 'MCL'), ('aoi_fade', 'MES')}
+    assert live == set()
     paper = {(x['detector'], x['symbol'])
              for x in fb['combos'] if not x['live']}
     assert paper == {('golden_zone', 'MCL'), ('golden_zone', 'MNQ'),
-                     ('rumers_box', 'MYM'), ('turtle_soup', 'MCL')}
+                     ('rumers_box', 'MYM'), ('turtle_soup', 'MCL'),
+                     ('aoi_fade', 'MCL'), ('aoi_fade', 'MES')}
     assert all(x['trades'] == 0 and x['pf'] is None and not x['kill_watch']
                for x in fb['combos'])
     assert fb['kill_watch'] == []
@@ -87,7 +90,8 @@ def test_tracking_futures_book_stats_and_kill_watch(db):
     assert aoi['trades'] == 3 and aoi['wins'] == 2 and aoi['losses'] == 1
     assert aoi['net'] == 120.0 and aoi['pf'] == 5.0
     assert aoi['win_rate'] == round(100.0 * 2 / 3, 1)
-    assert aoi['kill_watch'] is False and aoi['live'] is True
+    assert aoi['kill_watch'] is False
+    assert aoi['live'] is False  # paper-only since the 2026-10-26 pause
     ts = by[('turtle_soup', 'MCL')]
     assert ts['trades'] == 2 and ts['pf'] == 0.25 and ts['kill_watch'] is True
     assert ts['live'] is False  # paper-only since 2026-10-26; still tracked

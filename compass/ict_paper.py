@@ -100,6 +100,13 @@ DETECTOR_FLAGS = {
 #   Rumers Box in PAPER_ONLY_DETECTORS below: paper trading continues
 #   (it can re-earn a seat on fresh evidence), TradersPost mirroring
 #   stops. The live book is AOI Fade {MCL, MES} only.
+# - PAUSE 2026-10-26 (Josh, evening): AOI Fade joins the carve-out
+#   too. The corrected 1-year re-run (261 days, production-current
+#   entries) put the live-sendable subsets negative on the year for
+#   both pairs (MCL PF 0.91, MES PF 0.85) and no pair cleared the
+#   promotion policy, so live TradersPost sends pause until a futures
+#   candidate earns a seat under that policy. Paper trading continues
+#   untouched; the live book is EMPTY until then.
 DETECTOR_SYMBOL_ALLOWLIST = {
     'aoi_fade': {'MCL', 'MES'},  # 2026-10-24 prune {MCL}; MES added 2026-10-25 (cleared both replay legs: 90 tr, +$2,569)
     'aoi_zones': set(),  # 2026-10-24: default-off; empty blocks re-enable by env
@@ -113,8 +120,9 @@ DETECTOR_SYMBOL_ALLOWLIST = {
     # either disabled or not in the futures mix).
 }
 
-# Paper-only detectors (Josh 2026-10-25; Turtle Soup added 2026-10-26):
-# Golden Zone, Rumers Box and Turtle Soup keep paper trading —
+# Paper-only detectors (Josh 2026-10-25; Turtle Soup added 2026-10-26;
+# AOI Fade added 2026-10-26 evening — the live-send pause):
+# Golden Zone, Rumers Box, Turtle Soup and AOI Fade keep paper trading —
 # positions, attribution, brake-shadow and the live-combo scorecard all
 # see them exactly as before — but their trades are NEVER mirrored to
 # TradersPost (no live orders on the prop account). submit() routes
@@ -127,14 +135,19 @@ DETECTOR_SYMBOL_ALLOWLIST = {
 # flatten (the 2026-10-24 rule: every paper close of a sent position
 # sends the broker close).
 #
-# CURRENT STATE (2026-10-26): the live book — the only detectors
-# mirrored to TradersPost — is AOI Fade {MCL, MES}. Every position is a
+# CURRENT STATE (2026-10-26 evening): the live book is EMPTY — no
+# detector is mirrored to TradersPost. AOI Fade {MCL, MES}, the last
+# live book, was paused after the corrected 1-year re-run showed its
+# live-sendable subsets negative on the year; it re-earns a seat only
+# under the adopted promotion policy (Tier-1 fills + p90 survival),
+# like any other candidate. Every position is a
 # single 2-contract leg at the detector's target (the 2/2/1 scale-out
 # was removed 2026-10-18). Paper entries book at the freshest resolved
 # live quote (ask for a long, bid for a short; see _book_entry_price),
 # not the detector's signal price, which is preserved on the record as
 # signal_price; the TradersPost payload is unchanged.
-PAPER_ONLY_DETECTORS = frozenset({'golden_zone', 'rumers_box', 'turtle_soup'})
+PAPER_ONLY_DETECTORS = frozenset({'golden_zone', 'rumers_box', 'turtle_soup',
+                                  'aoi_fade'})
 
 def symbol_allowed(detector, symbol):
     """True if this detector is allowed to trade this symbol.
