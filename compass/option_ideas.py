@@ -95,6 +95,21 @@ class OptionIdeas:
         c.execute(update(ideas).where(ideas.c.id==p['id']).values(
             status=p['status'], updated=now, payload=p))
 
+    @staticmethod
+    def _hole_disqualified(p, option_last, underlying_last, now):
+        """Archived rows rejected inside the hole window, with timestamps —
+        separates 'the market paused' from 'storage dropped it' from
+        'the prints were invalid' at the next investigation."""
+        start = min(option_last, underlying_last)
+        out = []
+        archive = p.get('archive_check') or {}
+        for leg in ('option', 'underlying'):
+            check = archive.get(leg) or {}
+            for row in check.get('disqualified', []):
+                if start < row['ts'] <= now:
+                    out.append(dict(leg=leg, **row))
+        return out[:20]
+
     def queue(self, c, signal, now):
         if (not self.cfg.option_ideas or signal['symbol'] not in self.cfg.watch_symbols
                 or signal.get('side') not in ('long','short') or signal.get('track')=='swing'):
@@ -141,6 +156,18 @@ class OptionIdeas:
         if price is None and recovery.defer(self.db,c,p,now,reason):
             self.save(c,p,now)
             return
+        if (price is None and recovery.is_gap(reason)
+                and p.get('gap_policy') == recovery.VERSION
+                and p.get('flatten_at') and now < p['flatten_at']):
+            # Pause-not-terminate (2026-10-26): past the storage grace the
+            # position stays open and paused instead of dying unresolved;
+            # a resuming quote resolves it on its natural reason (still
+            # data_gap-excluded). At/after flatten_at the guard fails and
+            # the existing backstop below terminates it as a data gap.
+            recovery.pause(p, now)
+            self.save(c,p,now)
+            return
+        recovery.settle_open_hole(p, now)
         if price is None:recovery.register(self.db,c,p,now,reason)
         else:recovery.clear(p)
         p.update(status='closed' if price is not None else 'unresolved',
@@ -217,10 +244,13 @@ class OptionIdeas:
             # not a guess. Too few prints -> tolerance stays unset (legacy).
             from .quote_path import recorded_path
             from .option_continuity import LOOKBACK
+            from .gap_tolerance import tolerance_detail
             for symbol,key in ((o['symbol'],'opt_gap_tol'),(p['underlying'],'und_gap_tol')):
                 path,_,_=recorded_path(self.db,c,symbol,now-LOOKBACK,now)
                 if path:
-                    tol=scaled_tolerance(intervals_between([q['ts'] for q in path]))
+                    intervals=intervals_between([q['ts'] for q in path])
+                    tol=scaled_tolerance(intervals)
+                    p[key+'_detail']=tolerance_detail(intervals)
                     if tol>MAX_GAP:p[key]=tol
             self.notify(c,p,now,'new')
         self.save(c,p,now)
@@ -238,15 +268,24 @@ class OptionIdeas:
         # how this symbol actually prints (flat MAX_GAP killed slow printers).
         if option_path:
             stamps=[p.get('seen_option_ts',p['last_option_ts'])]+[q['ts'] for q in option_path]
-            p['opt_gap_tol']=scaled_tolerance(intervals_between(stamps[-13:]))
+            intervals=intervals_between(stamps[-13:])
+            p['opt_gap_tol']=scaled_tolerance(intervals)
+            from .gap_tolerance import tolerance_detail
+            p['opt_gap_tol_detail']=tolerance_detail(intervals)
         if stock_path:
             stamps=[p.get('seen_underlying_ts',p['last_underlying_ts'])]+[q['ts'] for q in stock_path]
-            p['und_gap_tol']=scaled_tolerance(intervals_between(stamps[-13:]))
+            intervals=intervals_between(stamps[-13:])
+            p['und_gap_tol']=scaled_tolerance(intervals)
+            from .gap_tolerance import tolerance_detail
+            p['und_gap_tol_detail']=tolerance_detail(intervals)
         # Do not consume beyond either stream's loaded prefix.
         frontier=min([now]+([option_path[-1]['ts']] if ot and option_path else [])+
             ([stock_path[-1]['ts']] if ut and stock_path else []))
         if (ot and not option_path) or (ut and not stock_path):
-            p['gap_detail']={'reason':'archive_batch_has_no_usable_quotes'}
+            p['gap_detail']={'reason':'archive_batch_has_no_usable_quotes',
+                'opt_tol_detail':p.get('opt_gap_tol_detail'),'und_tol_detail':p.get('und_gap_tol_detail'),
+                'subscriptions':recovery.subscription_evidence(self.db,c,
+                    [p['contract']['symbol'],p['underlying']])}
             return self.finish(c,p,now,'observation_gap')
         oq=p.get('seen_option_quote',p['last_quote']);uq=p.get('seen_underlying_quote',p['last_underlying_quote'])
         timeline=sorted([(q['ts'],0,q) for q in option_path if q['ts']<=frontier]+
@@ -274,14 +313,40 @@ class OptionIdeas:
         underlying_last=p.get('seen_underlying_ts',p['last_underlying_ts']) if independent else p['last_underlying_ts']
         opt_tol=p.get('opt_gap_tol') or MAX_GAP
         und_tol=p.get('und_gap_tol') or MAX_GAP
-        if (now-option_last>opt_tol and (not current(oq,now) or oq['ts']-option_last>opt_tol)
-                or now-underlying_last>und_tol and (not current(uq,now) or uq['ts']-underlying_last>und_tol)):
+        opt_hole = now-option_last>opt_tol and (not current(oq,now) or oq['ts']-option_last>opt_tol)
+        und_hole = now-underlying_last>und_tol and (not current(uq,now) or uq['ts']-underlying_last>und_tol)
+        if opt_hole or und_hole:
             p['gap_detail']={'checked_at':now,'option_last':option_last,
                 'underlying_last':underlying_last,'option_next':(oq or {}).get('ts'),
                 'underlying_next':(uq or {}).get('ts'),'reason':'missing_continuous_paired_quotes',
-                'opt_tol':opt_tol,'und_tol':und_tol}
-            self.finish(c,p,now,'observation_gap')
-            return
+                'opt_tol':opt_tol,'und_tol':und_tol,
+                'opt_tol_detail':p.get('opt_gap_tol_detail'),'und_tol_detail':p.get('und_gap_tol_detail'),
+                'subscriptions':recovery.subscription_evidence(self.db,c,
+                    [p['contract']['symbol'],p['underlying']]),
+                'hole_disqualified':self._hole_disqualified(p,option_last,underlying_last,now)}
+            if p.get('gap_policy') != recovery.VERSION:
+                self.finish(c,p,now,'observation_gap')
+                return
+            # Pause-not-terminate (2026-10-26): a leg whose closing quote
+            # is in hand has a CLOSED hole — charge it and resume
+            # evaluation on that quote instead of killing the trade. A
+            # leg still open pauses via finish(). Legacy trades never
+            # reach here (no gap_policy): they finish as before.
+            legs = (('option',opt_hole,option_last,oq,opt_tol),
+                    ('underlying',und_hole,underlying_last,uq,und_tol))
+            closed = [(leg,q['ts']-last) for leg,tripped,last,q,tol in legs
+                      if tripped and q is not None and current(q,now) and q['ts']-last>tol]
+            if len(closed) < sum(1 for leg,tripped,last,q,tol in legs if tripped):
+                for leg,seconds in closed:
+                    recovery.account_hole(p,seconds)
+                    q = oq if leg=='option' else uq
+                    if independent:
+                        p.update(**{'seen_option_ts':q['ts'],'seen_option_quote':q} if leg=='option'
+                                   else {'seen_underlying_ts':q['ts'],'seen_underlying_quote':q})
+                self.finish(c,p,now,'observation_gap')
+                return
+            recovery.account_hole(p,max(seconds for _,seconds in closed))
+            # All tripped legs closed: fall through and evaluate this quote.
         if independent:
             # Receipt continuity belongs to each feed, even when the other is
             # too old for a paired mark. Never value an exit with stale quotes.
@@ -301,6 +366,8 @@ class OptionIdeas:
         changed = oq['ts']>p['last_option_ts'] or uq['ts']>p['last_underlying_ts']
         if not changed and now<p['flatten_at']:
             return
+        # A paired evaluation is happening: any pause is over.
+        p.pop('measurement_paused_from', None)
         p['max_gap_seconds'] = max(p['max_gap_seconds'],oq['ts']-option_last,uq['ts']-underlying_last)
         p.update(last_option_ts=oq['ts'],last_underlying_ts=uq['ts'],last_quote=oq,last_underlying_quote=uq)
         p['samples'] += 1

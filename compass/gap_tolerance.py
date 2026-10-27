@@ -29,9 +29,21 @@ def intervals_between(timestamps):
     return [b - a for a, b in zip(ts, ts[1:]) if b > a]
 
 
-def scaled_tolerance(intervals, floor=FLOOR, cap=CAP):
-    """Quote-silence tolerance in seconds for one symbol's observed cadence."""
+def tolerance_detail(intervals, floor=FLOOR, cap=CAP):
+    """Derivation of one symbol's tolerance, recorded in gap_detail so a
+    gap verdict shows WHY the tolerance was what it was (median basis and
+    which bound applied), instead of a bare number to re-derive by hand."""
     clean = [i for i in (intervals or []) if i and i > 0]
     if len(clean) < MIN_SAMPLES:
-        return floor
-    return min(cap, max(floor, statistics.median(clean) * FACTOR))
+        return dict(median=None, samples=len(clean), floor=floor, cap=cap,
+                    factor=FACTOR, basis='insufficient_samples', tolerance=floor)
+    median = statistics.median(clean)
+    scaled = median * FACTOR
+    basis = 'floor' if scaled < floor else 'cap' if scaled > cap else 'scaled'
+    return dict(median=median, samples=len(clean), floor=floor, cap=cap,
+                factor=FACTOR, basis=basis, tolerance=min(cap, max(floor, scaled)))
+
+
+def scaled_tolerance(intervals, floor=FLOOR, cap=CAP):
+    """Quote-silence tolerance in seconds for one symbol's observed cadence."""
+    return tolerance_detail(intervals, floor, cap)['tolerance']

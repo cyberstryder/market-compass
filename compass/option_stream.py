@@ -146,6 +146,33 @@ class OptionBuffer:
                 del mapping[symbol]
 
 
+DROP_WINDOW = 300  # seconds; any persistence drop inside it degrades health
+
+
+def drops_in_window(events, now, window=DROP_WINDOW):
+    """(batches, rows) dropped within the trailing window.
+
+    events are (at, kind, rows) tuples recorded by the stream writers.
+    Fix 4 (2026-10-26): dropped batches used to be counter-only while the
+    stream reported receiving/waiting — silent holes in the recorded
+    path. A drop inside the window now degrades the stream's health."""
+    recent = [(t, n) for t, kind, n in events if 0 <= now - t <= window]
+    return len(recent), sum(n for _, n in recent)
+
+
+def snapshot_hour(now):
+    return time.strftime('%Y-%m-%dT%H', time.gmtime(now))
+
+
+def write_health_snapshot(db, stream, now, **counters):
+    """Hourly snapshot of a stream's drop counters (forensics, 2026-10-26):
+    the live counters reset with each connection, so without an hourly
+    time series intraday drop evidence is unrecoverable by end of day."""
+    with db.tx() as c:
+        db.put(c, 'health_history:%s:%s' % (stream, snapshot_hour(now)),
+               dict(at=now, stream=stream, **counters))
+
+
 async def persist_batch(fn, *args, attempts=3, label='option persistence'):
     """Run one blocking persistence call off-loop for a stream writer.
 
@@ -212,6 +239,8 @@ async def consume(ws, collector):
     subscribed = set()
     committed = {'quotes':0,'trades':0}
     dropped_batches = {'quotes':0,'trades':0}
+    drop_events = []
+    snapshot_state = {'hour':None}
     stored = {}
     trace=SubscriptionTrace(time.time(),collector.cfg.massive)
 
@@ -306,9 +335,18 @@ async def consume(ws, collector):
                 for _ in batch: queue.popleft()
                 if not ok:
                     dropped_batches[kind] += len(batch)
+                    drop_events.append((time.time(), kind, len(batch)))
                     logging.getLogger('uvicorn.error').warning(
                         'Massive %s persistence batch dropped after retries (%s rows)',
                         kind, len(batch))
+                    # Fix 4: a drop is a health failure, not a counter —
+                    # same degraded-row pattern as the stock stream.
+                    try:
+                        await asyncio.to_thread(collector.db.health,'option_stream_persistence','degraded',
+                            'Massive %s batch dropped after a database failure; observation gap recorded'%kind,
+                            dropped_batches=dict(dropped_batches))
+                    except Exception:
+                        logging.getLogger('uvicorn.error').exception('Option stream drop health write failed')
                     continue
                 committed[kind] += len(batch)
                 if kind=='quotes':
@@ -329,17 +367,31 @@ async def consume(ws, collector):
                 now-buffer.diagnostics[s]['last_socket_read_at'] if s in buffer.diagnostics else None}
                 for s in subscribed}
             latest = max((r['last_source_ts'] for r in rows.values() if 'last_source_ts' in r),default=None)
+            recent_batches, recent_rows = drops_in_window(drop_events, now)
             report = dict(at=now,collection_version=COLLECTION_VERSION,subscribed=len(subscribed),quote_queue=len(buffer.quotes),
                 trade_queue=len(buffer.trades),pending_quotes=len(buffer.pending),committed=dict(committed),symbols=rows,
                 persistence_dropped_quotes=buffer.dropped_quotes,persistence_dropped_trades=buffer.dropped_trades,
                 persistence_dropped_batches=dict(dropped_batches),
+                persistence_dropped_recent_batches=recent_batches,persistence_dropped_recent_rows=recent_rows,
+                persistence_drop_window_seconds=DROP_WINDOW,
                 basis='Socket read is local application receipt, not wire arrival; source clocks unchanged')
             report.update(connection_id=trace.connection_id,
                 acknowledged_quote_contracts=sum(bool(trace.snapshot(s)['Q'].get('acknowledged_at')) for s in subscribed),
                 subscription_evidence_pending=len(trace.queue),subscription_evidence_dropped=trace.dropped,
                 subscription_evidence_error=trace.persistence_error)
-            await asyncio.to_thread(collector.db.health,'option_stream','receiving' if latest else 'waiting',
+            await asyncio.to_thread(collector.db.health,'option_stream',
+                'degraded' if recent_batches else 'receiving' if latest else 'waiting',
                 'Independent option receipt; sampled quotes and trades persisted in separate batches',latest,**report)
+            if snapshot_state['hour'] != snapshot_hour(now):
+                snapshot_state['hour'] = snapshot_hour(now)
+                try:
+                    await asyncio.to_thread(write_health_snapshot,collector.db,'option_stream',now,
+                        persistence_dropped_batches=dict(dropped_batches),
+                        persistence_dropped_quotes=buffer.dropped_quotes,
+                        persistence_dropped_trades=buffer.dropped_trades,
+                        committed=dict(committed))
+                except Exception:
+                    logging.getLogger('uvicorn.error').exception('Option stream health snapshot failed')
             if now-last_log>=30:
                 logging.getLogger('uvicorn.error').info('Option stream timing: %s',json.dumps(report,sort_keys=True))
                 last_log=now

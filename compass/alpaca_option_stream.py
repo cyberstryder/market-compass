@@ -47,7 +47,9 @@ import msgpack
 
 from .market import ts, number
 from .diagnostics import redacted_detail
-from .option_stream import OptionBuffer, OptionStreamError, persist_batch
+from .option_stream import (OptionBuffer, OptionStreamError, persist_batch,
+                            drops_in_window, snapshot_hour,
+                            write_health_snapshot, DROP_WINDOW)
 
 ALPACA_OPRA_WS = "wss://stream.data.alpaca.markets/v1beta1/opra"
 
@@ -339,6 +341,25 @@ async def consume(ws, collector, buffer=None):
     # with the buffer raising on a full queue, a slow database converted
     # directly into a zero-data flap loop on 2026-10-21.
     dropped = {"quotes": 0, "trades": 0}
+    drop_events = []
+    snapshot_state = {"hour": None}
+
+    async def note_drop(kind, rows):
+        """Fix 4 (2026-10-26): a persistence drop is a health failure with
+        its own degraded row (the stock-stream pattern), not a counter the
+        stream reports past while claiming to receive."""
+        dropped[kind] += rows
+        drop_events.append((time.time(), kind, rows))
+        try:
+            await asyncio.to_thread(
+                collector.db.health, "alpaca_option_stream_persistence",
+                "degraded",
+                "Alpaca %s batch dropped after a database failure; "
+                "observation gap recorded" % kind,
+                dropped_batches=dict(dropped))
+        except Exception:
+            logging.getLogger("uvicorn.error").exception(
+                "Alpaca option stream drop health write failed")
 
     async def write(kind):
         queue = buffer.quotes if kind == "quotes" else buffer.trades
@@ -370,7 +391,7 @@ async def consume(ws, collector, buffer=None):
                         if ok:
                             committed[kind] += len(rows)
                         else:
-                            dropped[kind] += len(rows)
+                            await note_drop(kind, len(rows))
                             logging.getLogger("uvicorn.error").warning(
                                 "Alpaca %s persistence batch dropped after "
                                 "retries (%s rows)", kind, len(rows))
@@ -387,7 +408,7 @@ async def consume(ws, collector, buffer=None):
                     if ok:
                         committed[kind] += len(batch)
                     else:
-                        dropped[kind] += len(batch)
+                        await note_drop(kind, len(batch))
                         logging.getLogger("uvicorn.error").warning(
                             "Alpaca %s persistence batch dropped after "
                             "retries (%s rows)", kind, len(batch))
@@ -403,22 +424,40 @@ async def consume(ws, collector, buffer=None):
             latest = max((r.get("last_source_ts") for r in
                           buffer.diagnostics.values() if "last_source_ts" in r),
                          default=None)
+            recent_batches, recent_rows = drops_in_window(drop_events, now)
             # 2026-10-14: Wrap health write in try/except so DB failures
             # don't crash the health task and trigger stream restart.
             try:
                 await asyncio.to_thread(
                     collector.db.health, "alpaca_option_stream",
+                    "degraded" if recent_batches else
                     "receiving" if latest else "waiting",
                     "Alpaca OPRA parallel run; source-tagged rows for parity check",
                     latest, subscribed=len(subscribed),
                     committed=dict(committed),
                     diag={**diag,
                           "persistence_dropped_batches": dict(dropped),
+                          "persistence_dropped_recent_batches": recent_batches,
+                          "persistence_dropped_recent_rows": recent_rows,
+                          "persistence_drop_window_seconds": DROP_WINDOW,
                           "buffer_dropped_quotes": buffer.dropped_quotes,
                           "buffer_dropped_trades": buffer.dropped_trades})
             except Exception as e:
                 logging.getLogger('uvicorn.error').warning(
                     'OPRA health write failed: %s', type(e).__name__)
+            if snapshot_state["hour"] != snapshot_hour(now):
+                snapshot_state["hour"] = snapshot_hour(now)
+                try:
+                    await asyncio.to_thread(
+                        write_health_snapshot, collector.db,
+                        "alpaca_option_stream", now,
+                        persistence_dropped_batches=dict(dropped),
+                        buffer_dropped_quotes=buffer.dropped_quotes,
+                        buffer_dropped_trades=buffer.dropped_trades,
+                        committed=dict(committed))
+                except Exception:
+                    logging.getLogger('uvicorn.error').exception(
+                        'Alpaca option stream health snapshot failed')
             await asyncio.sleep(30)
 
     async def authenticate():
