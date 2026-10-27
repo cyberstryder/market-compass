@@ -328,7 +328,7 @@ def prune_status(db):
     done = [(k, p, s) for (k, p), s in pruned.items()
             if s.get('status') == 'done']
     refused = [{'kind': k, 'period': p, 'reason': s.get('reason'),
-                'detail': s.get('detail')}
+                'detail': s.get('detail'), 'attempts': s.get('attempts')}
                for (k, p), s in pruned.items() if s.get('status') == 'refused']
     active = [{'kind': k, 'period': p, 'status': s.get('status'),
                'deleted': s.get('deleted', 0),
@@ -358,6 +358,51 @@ def _refuse(db, kind, pstr, reason, detail):
                       'at': time.time()})
     return {'ok': False, 'action': 'refused', 'kind': kind, 'period': pstr,
             'reason': reason, 'detail': detail}
+
+
+def rearm_verification(db, kind, pstr):
+    """Deliberately re-arm ONE cap-exhausted retryable refusal.
+
+    Josh's decision 2026-10-26: a code path, not a state edit. The
+    W38/W39 refusals were banked under pre-fix verification code (a
+    full-week count that timed out before counting was sliced; a
+    whole-object hash read that truncated before ranged reads), and
+    with attempts >= MAX_VERIFY_ATTEMPTS the candidate filter in
+    prune_next never selects them again — the weeks are wedged even
+    though the code that failed them no longer exists.
+
+    Re-arming resets ONLY the attempt counter on the named entry. The
+    week goes back through the untouched prune-time gate (R2 re-hash +
+    exact live count in _verify_week) before a single row is deleted,
+    and a fresh refusal under current code banks against the fresh
+    budget exactly like any other week. Evidence refusals
+    (sha_mismatch, count_mismatch, final_count_mismatch) are NEVER
+    re-armed here: they are facts about the archive, not about the
+    code that happened to run. Non-refused entries are untouched."""
+    st = _prune_states(_all_copy_state(db)).get((kind, pstr))
+    base = {'kind': kind, 'period': pstr}
+    if st is None:
+        return {'ok': False, 'action': 'rearm_ignored', **base,
+                'detail': 'no prune state for this kind/period'}
+    if st.get('status') != 'refused':
+        return {'ok': False, 'action': 'rearm_ignored', **base,
+                'detail': f"status is {st.get('status')!r}, not 'refused'"}
+    if st.get('reason') not in RETRYABLE_REFUSALS:
+        return {'ok': False, 'action': 'rearm_ignored', **base,
+                'detail': f"refusal reason {st.get('reason')!r} is an "
+                          'evidence refusal and is never re-armed'}
+    attempts = int(st.get('attempts', 0))
+    if attempts < MAX_VERIFY_ATTEMPTS:
+        return {'ok': True, 'action': 'already_eligible', **base,
+                'attempts': attempts}
+    new = dict(st)
+    new['attempts'] = 0
+    new['rearmed_at'] = time.time()
+    new['rearmed_from_attempts'] = attempts
+    new['rearm_count'] = int(st.get('rearm_count', 0)) + 1
+    _set_prune_state(db, kind, pstr, new)
+    return {'ok': True, 'action': 'rearmed', **base,
+            'attempts_before': attempts, 'reason': st.get('reason')}
 
 
 def _verify_week(db, client, bucket, kind, pstr, rec, ws, we, now):

@@ -298,6 +298,111 @@ def test_concurrent_chunk_returns_busy(db, s3):
     assert r['action'] == 'busy'
 
 
+def test_rearm_rearms_cap_exhausted_retryable_refusal(db, s3, monkeypatch):
+    """A retryable refusal that exhausted its attempt cap (the W38/W39
+    wedge: refusals banked under since-fixed verify code) becomes
+    eligible again ONLY through the deliberate re-arm, and then still
+    has to pass the full gate before anything is deleted."""
+    ts = NOW - 400 * DAY
+    add_event(db, 'bar', ts)
+    pstr = archive_week(db, s3, 'bar', ts, rows=1)
+    real_count = apc._count_rows
+
+    def always_fail(db_, kind, lo, hi):
+        raise RuntimeError('database is gone')
+
+    monkeypatch.setattr(apc, '_count_rows', always_fail)
+    for _ in range(apc.MAX_VERIFY_ATTEMPTS):
+        r = apc.prune_next(db, s3, BUCKET, now=NOW)
+        assert r['ok'] is False and r['reason'] == 'verify_error'
+    assert apc.prune_next(db, s3, BUCKET, now=NOW)['action'] == 'idle'
+    refused = apc.prune_status(db)['refused']
+    assert refused[0]['attempts'] == apc.MAX_VERIFY_ATTEMPTS
+
+    r = apc.rearm_verification(db, 'bar', pstr)
+    assert r['ok'] is True and r['action'] == 'rearmed'
+    assert r['attempts_before'] == apc.MAX_VERIFY_ATTEMPTS
+    st = apc._prune_states(apc._all_copy_state(db))[('bar', pstr)]
+    assert st['status'] == 'refused' and st['attempts'] == 0
+    assert count_kind(db, 'bar') == 1  # re-arm itself deletes nothing
+
+    monkeypatch.setattr(apc, '_count_rows', real_count)
+    r = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r['deleted_this_call'] == 1 and r['status'] == 'done'
+    assert count_kind(db, 'bar') == 0
+
+
+def test_rearm_after_rearm_refusal_banks_against_fresh_budget(db, s3,
+                                                            monkeypatch):
+    """A re-armed week that refuses again under current code is not
+    wedged open: the fresh refusal increments from zero."""
+    ts = NOW - 400 * DAY
+    add_event(db, 'bar', ts)
+    pstr = archive_week(db, s3, 'bar', ts, rows=1)
+
+    def always_fail(db_, kind, lo, hi):
+        raise RuntimeError('still gone')
+
+    monkeypatch.setattr(apc, '_count_rows', always_fail)
+    for _ in range(apc.MAX_VERIFY_ATTEMPTS):
+        apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert apc.rearm_verification(db, 'bar', pstr)['action'] == 'rearmed'
+    r = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r['ok'] is False and r['reason'] == 'verify_error'
+    st = apc._prune_states(apc._all_copy_state(db))[('bar', pstr)]
+    assert st['status'] == 'refused' and st['attempts'] == 1
+
+
+def test_rearm_never_rearms_evidence_refusal(db, s3):
+    ts = NOW - 400 * DAY
+    add_event(db, 'bar', ts)
+    pstr = archive_week(db, s3, 'bar', ts, rows=1)
+    s3.objects[f'copy-archive/bar/{pstr}.jsonl.gz'] = b'tampered'
+    r = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r['ok'] is False and r['reason'] == 'sha_mismatch'
+    r = apc.rearm_verification(db, 'bar', pstr)
+    assert r['ok'] is False and r['action'] == 'rearm_ignored'
+    assert apc.prune_next(db, s3, BUCKET, now=NOW)['action'] == 'idle'
+    assert count_kind(db, 'bar') == 1
+
+
+def test_rearm_ignores_non_refused_and_unknown(db, s3):
+    ts = NOW - 400 * DAY
+    add_event(db, 'bar', ts)
+    pstr = archive_week(db, s3, 'bar', ts, rows=1)
+    r = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r['status'] == 'done'
+    r = apc.rearm_verification(db, 'bar', pstr)
+    assert r['ok'] is False and r['action'] == 'rearm_ignored'
+    r = apc.rearm_verification(db, 'bar', '1999-W01')
+    assert r['ok'] is False and r['action'] == 'rearm_ignored'
+
+
+def test_rearm_already_eligible_is_a_noop(db, s3, monkeypatch):
+    ts = NOW - 400 * DAY
+    add_event(db, 'bar', ts)
+    pstr = archive_week(db, s3, 'bar', ts, rows=1)
+
+    def fail_once_factory():
+        real_count = apc._count_rows
+        calls = {'n': 0}
+
+        def flaky(db_, kind, lo, hi):
+            calls['n'] += 1
+            if calls['n'] == 1:
+                raise RuntimeError('one blip')
+            return real_count(db_, kind, lo, hi)
+        return flaky
+
+    monkeypatch.setattr(apc, '_count_rows', fail_once_factory())
+    r = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r['ok'] is False and r['reason'] == 'verify_error'
+    r = apc.rearm_verification(db, 'bar', pstr)
+    assert r['ok'] is True and r['action'] == 'already_eligible'
+    st = apc._prune_states(apc._all_copy_state(db))[('bar', pstr)]
+    assert st['attempts'] == 1  # unchanged: it was never wedged
+
+
 def test_verify_sample_detects_tamper(db, s3):
     ts = NOW - 400 * DAY
     archive_week(db, s3, 'bar', ts, rows=3)

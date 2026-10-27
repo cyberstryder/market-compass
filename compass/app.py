@@ -63,6 +63,7 @@ CRON_TOKEN_PATHS = {
     "/api/admin/simple-archive-chunk",
     "/api/admin/archive-verify-samples",
     "/api/admin/archive-prune-chunk",
+    "/api/admin/archive-prune-rearm",
     "/api/admin/backtest-futures",
     "/api/admin/backtest-scalp",
     "/api/admin/chain-eod-snapshot",
@@ -261,7 +262,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -931,6 +932,28 @@ a{color:#888}</style></head><body>
             import logging
             logging.getLogger('uvicorn.error').exception('archive-prune-status failed')
             return {'ok': False, 'error': 'Prune status failed. Check server logs.'}
+
+    @app.post('/api/admin/archive-prune-rearm')
+    def post_archive_prune_rearm(request: Request):
+        """Deliberately re-arm ONE named week (?kind=&period=) whose
+        retryable refusal exhausted its verify-attempt cap, so prune_next
+        re-runs the full prune-time verification for it. Resets only the
+        attempt counter — no row is deleted by this call, and the week
+        still has to pass the untouched re-hash + exact-count gate.
+        Evidence refusals are never re-armed. Cron-token like the other
+        mutating archive endpoints; safety lives in the gate."""
+        from . import archive_prune_copy
+        kind = (request.query_params.get('kind') or '').strip()
+        pstr = (request.query_params.get('period') or '').strip()
+        if not kind or not pstr:
+            return {'ok': False, 'error': 'kind and period query params are required.'}
+        try:
+            result = archive_prune_copy.rearm_verification(db, kind, pstr)
+            return {'ok': result.get('ok', False), **result}
+        except Exception:
+            import logging
+            logging.getLogger('uvicorn.error').exception('archive-prune-rearm failed')
+            return {'ok': False, 'error': 'Prune re-arm failed. Check server logs.'}
 
     @app.post('/api/admin/archive-trigger')
     @app.get('/api/admin/archive-trigger')
