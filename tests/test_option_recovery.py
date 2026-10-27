@@ -157,7 +157,13 @@ def test_recovery_owns_http_client_on_its_isolated_loop(monkeypatch):
     assert loops['created'] is not loops['main']
 
 
-def test_late_storage_is_not_made_fresh_by_socket_receipt(tmp_path,monkeypatch):
+def test_late_storage_is_judged_by_socket_receipt(tmp_path,monkeypatch):
+    # Reversed 2026-10-26 (fix 3, Josh-approved; desk verdict correction
+    # D flagged the invariant change): a quote stored too late to be
+    # fresh at storage but fresh when the socket read it is usable,
+    # judged at its receipt. The old invariant — fresh when actually
+    # stored, or rejected — manufactured holes that never existed on
+    # the wire and executed trades for them (RDDT 134P, 2026-10-26).
     from compass.quote_path import recorded_path
     db=Store('sqlite:///'+str(tmp_path/'late.db'));db.initialize()
     monkeypatch.setattr('compass.providers.time.time',lambda:NOW+10)
@@ -165,7 +171,9 @@ def test_late_storage_is_not_made_fresh_by_socket_receipt(tmp_path,monkeypatch):
     Collectors.quote_batch(SimpleNamespace(db=db),'alpaca',[('SPY',q,True)])
     with db.tx() as c:
         path,truncated,check=recorded_path(db,c,'SPY',NOW-1,NOW+11)
-    assert not path and not truncated and check['stale_or_invalid_when_recorded']==1
+    assert len(path)==1 and not truncated and path[0]['recorded_at']==NOW+.1
+    assert check['late_storage']==1 and check['late_storage_accepted']==1
+    assert check['stale_or_invalid_when_recorded']==0
     db.engine.dispose()
 
 

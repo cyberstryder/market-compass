@@ -48,6 +48,86 @@ def defer(db,c,p,now,reason):
     return checked-pending['first_detected_at'] < GRACE
 
 
+def pause(p, now):
+    """Pause-not-terminate (2026-10-26, Josh: fix 1 scoped).
+
+    Post-grace state for current-version trades whose hole is still open:
+    the position stays open and unevaluated instead of finishing as
+    unresolved. data_gap was already marked at detection (Josh's
+    2026-10-06 rule — a gap-tainted trade never counts in P&L, even if it
+    later exits on its natural reason). The defer's gap_pending is popped
+    WITHOUT counting a recovery: nothing recovered; measurement paused.
+    Termination still happens at the flatten backstop via finish()."""
+    if not p.get('data_gap'):
+        p['data_gap'] = True
+        p['data_gap_since'] = p.get('evidence_checked_at', now)
+    p.pop('gap_pending', None)
+    if 'measurement_paused_from' not in p:
+        detail = p.get('gap_detail') or {}
+        starts = [detail[k] for k in ('option_last', 'underlying_last', 'last_quote_ts')
+                  if detail.get(k) is not None]
+        p['measurement_paused_from'] = min(starts) if starts else p.get('evidence_checked_at', now)
+    p['gap_paused_at'] = now
+
+
+def account_hole(p, seconds):
+    """A hole closed by a resuming quote: charge its length and resume.
+
+    Called when evaluation picks up a quote beyond the hole — the trade
+    goes on to resolve on its natural target/stop/flatten reason, still
+    carrying data_gap=True (excluded from P&L per the 2026-10-06 rule)."""
+    if seconds and seconds > 0:
+        p['gap_seconds_total'] = p.get('gap_seconds_total', 0) + seconds
+    if not p.get('data_gap'):
+        p['data_gap'] = True
+        p['data_gap_since'] = p.get('evidence_checked_at')
+    # measurement_paused_from is NOT cleared here: with paired legs one
+    # leg's hole can close while the other is still open. The evaluation
+    # paths clear it when a paired mark actually resumes, and
+    # settle_open_hole clears it at termination.
+    p.pop('gap_pending', None)
+
+
+def settle_open_hole(p, now):
+    """Charge the still-open hole's length when a paused trade terminates
+    (flatten backstop), so gap_seconds_total covers the whole silence."""
+    start = p.pop('measurement_paused_from', None)
+    if start is None:
+        return
+    end = min(now, p['flatten_at']) if p.get('flatten_at') else now
+    if end > start:
+        p['gap_seconds_total'] = p.get('gap_seconds_total', 0) + (end - start)
+
+
+def subscription_evidence(db, c, symbols):
+    """Was each symbol carried when a gap tripped? Best-effort, never raises.
+
+    Records selection membership (options:subscriptions) and, for the
+    Massive stream, the per-symbol subscription acknowledgement carried
+    in its health row. The Alpaca stream's health row carries no
+    per-symbol map, so for Alpaca only the health timestamp is recorded —
+    acknowledged-set membership is not currently observable for it."""
+    out = {}
+    try:
+        sel = db.get(c, 'options:subscriptions', {}) or {}
+        selected = set(sel.get('symbols', []))
+        out['selection_at'] = sel.get('at')
+        massive = db.get(c, 'health:option_stream', {}) or {}
+        alpaca = db.get(c, 'health:alpaca_option_stream', {}) or {}
+        for s in symbols:
+            row = (massive.get('symbols') or {}).get(s, {}) or {}
+            sub = row.get('subscription') or {}
+            ack = None
+            if isinstance(sub, dict) and isinstance(sub.get('Q'), dict):
+                ack = sub['Q'].get('acknowledged_at')
+            out[s] = dict(in_selection=s in selected,
+                          massive_acknowledged_at=ack, massive_health_at=massive.get('at'),
+                          alpaca_health_at=alpaca.get('at'))
+    except Exception:
+        return out
+    return out
+
+
 def register(db,c,p,now,reason):
     if p.get('gap_policy') != VERSION or not is_gap(reason):return
     checked=p.get('evidence_checked_at',now)

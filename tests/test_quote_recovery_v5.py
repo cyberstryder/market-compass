@@ -51,28 +51,30 @@ def test_gap_grace_replays_late_visible_fresh_storage_without_relaxing_gap(db,cf
         assert not c.execute(select(gap_followups)).all()
 
 
-def test_real_gap_stays_unresolved_but_later_measurements_continue(db,cfg):
+def test_real_gap_pauses_and_resuming_quote_resolves_naturally(db,cfg):
+    # Supersedes the terminate-and-sample contract (2026-10-26, fix 1
+    # pause-not-terminate): past the grace a real gap PAUSES the trade —
+    # no unresolved finish, no followup — and the first paired quote
+    # after the hole resolves it on its natural reason, still
+    # data_gap-excluded from every stat (Josh's 2026-10-06 rule).
     with db.tx() as c:
         worker,p=opened(db,c,cfg)
         worker.observe(c,p,NOW+16)
         worker.observe(c,p,NOW+200)
-        assert p['status']=='unresolved' and p['pnl'] is None
-        row=c.execute(select(gap_followups.c.payload)).scalar_one()
-        assert row['status']=='active' and row['samples']==0
+        assert p['status']=='open' and p['pnl'] is None
+        assert p['data_gap'] is True and 'measurement_paused_from' in p
+        assert not c.execute(select(gap_followups)).all()
         assert CALL in inventory(db,c,NOW+205)['options']
-        archive(db,c,CALL,NOW+210,5,5.05) # Beyond target, but unknown earlier path.
+        archive(db,c,CALL,NOW+210,5,5.05) # Beyond target, after the hole.
         archive(db,c,'SPY',NOW+210,103,103.02)
-        followups(db,c,NOW+210)
-        row=c.execute(select(gap_followups.c.payload)).scalar_one()
-        assert row['samples']==1 and row['latest']['original_outcome']=='unresolved'
-        assert rows(c)[0]['status']=='unresolved' and rows(c)[0]['pnl'] is None
-        followups(db,c,p['flatten_at']+1)
-        assert c.execute(select(gap_followups.c.status)).scalar_one()=='complete'
+        worker.observe(c,p,NOW+210)
+        assert p['status']=='closed' and p['exit_reason']=='premium_target'
+        assert p['data_gap'] is True and p['gap_seconds_total']==210
         assert CALL not in inventory(db,c,p['flatten_at']+1)['options']
         r=report(db,c,NOW-1,p['flatten_at']+2)
         v=next(x for x in r['cohorts'] if x['study']=='options')
-        assert v['gaps']==1 and v['opened']==1 and v['gap_pct']==100
-        assert r['followups']==[dict(status='complete',records=1,samples=1)]
+        assert v['gaps']==0 and v['opened']==1 and v['completed']==1
+        assert r['followups']==[]
 
 
 def test_late_stored_quotes_do_not_repair_outcomes(db,cfg):
@@ -82,7 +84,12 @@ def test_late_stored_quotes_do_not_repair_outcomes(db,cfg):
         for offset in (5,10,15):
             archive(db,c,CALL,NOW+offset,received=NOW+30)
         worker.observe(c,p,NOW+200)
-        assert p['status']=='unresolved' and p['pnl'] is None
+        # These rows carry no receipt stamp, so fix 3 cannot rescue them
+        # (a receipt-less late row is indistinguishable from a backfill)
+        # and the hole stands — but under fix 1 the trade PAUSES on it
+        # instead of dying: still open, still unmeasured.
+        assert p['status']=='open' and p['pnl'] is None
+        assert p['data_gap'] is True and 'measurement_paused_from' in p
         assert p['archive_check']['option']['stale_or_invalid_when_recorded']==3
 
 
@@ -150,16 +157,21 @@ def test_idle_stock_recovery_clears_old_partial_but_waiting_retry_stays_visible(
         assert db.get(c,'health:stock_recovery')['status']=='partial'
 
 
-def test_grace_does_not_cross_unknown_interval_to_award_target(db,cfg):
+def test_resuming_print_after_hole_resolves_trade_but_stays_excluded(db,cfg):
+    # Supersedes test_grace_does_not_cross_unknown_interval_to_award_target
+    # (2026-10-26, fix 1): the first paired print after a hole resolves
+    # the trade on its natural reason — here a beyond-target print. The
+    # old anti-award rule is replaced by exclusion: data_gap=True (set
+    # at detection, Josh's 2026-10-06 rule) keeps the result out of
+    # every win/loss stat even though the trade now completes.
     with db.tx() as c:
         worker,p=opened(db,c,cfg)
         archive(db,c,CALL,NOW+16,5,5.05)
         archive(db,c,'SPY',NOW+16,103,103.02)
         worker.observe(c,p,NOW+16)
-        assert p['status']=='open' and p['pnl'] is None
-        worker.observe(c,p,NOW+200)
-        assert p['status']=='unresolved' and p['pnl'] is None
-        assert p['samples']==0
+        assert p['status']=='closed' and p['exit_reason']=='premium_target'
+        assert p['data_gap'] is True and p['gap_seconds_total']==16
+        assert p['samples']==1
 
 
 def test_setup_gap_grace_and_followup_preserve_original_bracket(db,cfg):
@@ -176,14 +188,33 @@ def test_setup_gap_grace_and_followup_preserve_original_bracket(db,cfg):
         assert p['status']=='open' and p['gap_pending']
         worker.tick(c,NOW+200)
         p=c.execute(select(trials.c.payload)).scalar_one()
+        # Fix 1 (2026-10-26): past grace the trial PAUSES — the original
+        # bracket is preserved by the trial surviving, not by a followup.
+        assert p['status']=='open' and p['pnl'] is None
+        assert p['data_gap'] is True and 'measurement_paused_from' in p
+        assert not c.execute(select(gap_followups)).all()
+        # Quotes never resume: the flatten backstop still terminates the
+        # trial as a data gap (the pre-existing session_flatten close;
+        # it never carried a followup — followups belong to trades that
+        # terminate on a gap reason). The open hole is settled into
+        # gap_seconds_total at the close.
+        db.put(c,'quote:MESZ6@1',{'ts':NOW,'bid':None,'ask':None})
+        worker.tick(c,p['flatten_at']+1)
+        p=c.execute(select(trials.c.payload)).scalar_one()
         assert p['status']=='unresolved' and p['pnl'] is None
-        assert c.execute(select(gap_followups.c.payload)).scalar_one()['symbol']=='MESZ6@1'
+        assert p['data_gap'] is True and p['gap_seconds_total'] == p['flatten_at']-NOW
 
 
 def test_expired_followup_never_samples_a_later_session(db,cfg):
     with db.tx() as c:
         worker,p=opened(db,c,cfg)
         worker.observe(c,p,NOW+16);worker.observe(c,p,NOW+200)
+        # Fix 1: the trade paused at +200 instead of terminating, so drive
+        # it through the flatten backstop; the followup registers there
+        # with its deadline already past and completes unsampled.
+        worker.observe(c,p,p['flatten_at']+1)
+        worker.observe(c,p,p['flatten_at']+200)
+        assert p['status']=='unresolved'
         archive(db,c,CALL,p['flatten_at']+60)
         followups(db,c,p['flatten_at']+60)
         row=c.execute(select(gap_followups.c.payload)).scalar_one()
@@ -235,7 +266,10 @@ def test_partial_writer_failure_can_retry_without_losing_or_duplicating_quotes(d
         assert db.get(c,'quote:SPY')['ts']==NOW+69
 
 
-def test_v8_entry_keeps_original_processing_grace_and_gap_limit(db,cfg):
+def test_v8_entry_keeps_grace_then_pauses_instead_of_terminating(db,cfg):
+    # Renamed 2026-10-26: the v8 entry still gets the original 180s
+    # processing grace (defer), but past it fix 1 PAUSES the trade
+    # instead of the old gap limit terminating it unresolved.
     from compass.quote_collection import VERSION
     with db.tx() as c:
         seed(db,c)
@@ -247,4 +281,5 @@ def test_v8_entry_keeps_original_processing_grace_and_gap_limit(db,cfg):
         worker.observe(c,p,NOW+16)
         assert p['status']=='open' and p['gap_pending']['first_detected_at']==NOW+16
         worker.observe(c,p,NOW+200)
-        assert p['status']=='unresolved' and p['pnl'] is None
+        assert p['status']=='open' and p['pnl'] is None
+        assert p['data_gap'] is True and 'measurement_paused_from' in p

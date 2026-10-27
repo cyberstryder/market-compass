@@ -131,6 +131,17 @@ class SetupStudy:
         if price is None and recovery.defer(self.db,c,p,now,reason):
             self.save(c,p)
             return
+        if (price is None and recovery.is_gap(reason)
+                and p.get('gap_policy') == recovery.VERSION
+                and p.get('flatten_at') and now < p['flatten_at']):
+            # Pause-not-terminate (2026-10-26): same rule as option_ideas —
+            # past the storage grace the trial stays open and paused; a
+            # resuming quote resolves it naturally (data_gap-excluded).
+            # At/after flatten_at the backstop below terminates it.
+            recovery.pause(p, now)
+            self.save(c,p)
+            return
+        recovery.settle_open_hole(p, now)
         if price is None:recovery.register(self.db,c,p,now,reason)
         else:recovery.clear(p)
         p.update(status='closed' if price is not None else 'unresolved', finished=now,
@@ -174,7 +185,8 @@ class SetupStudy:
                 p['observation_evidence_at'] = observed
                 p['evidence_checked_at'] = observed
                 if truncated and not path:
-                    p['gap_detail'] = {'reason':'recorded_batch_contains_no_usable_quotes','checked_at':observed}
+                    p['gap_detail'] = {'reason':'recorded_batch_contains_no_usable_quotes','checked_at':observed,
+                        'subscriptions':recovery.subscription_evidence(self.db,c,[symbol])}
                     self.finish(c,p,observed,'observation_gap')
                     continue
                 for recorded in path:
@@ -230,9 +242,16 @@ class SetupStudy:
                     self.finish(c, p, observed, 'session_flatten')
                 return
             if observed-last > scaled_tolerance(p.get('quote_gaps')) and not recorded:
+                from .gap_tolerance import tolerance_detail
                 p['gap_detail'] = {'last_quote_ts':last, 'checked_at':observed,
                                    'latest_quote_ts':(q or {}).get('ts'), 'reason':'no_usable_quote',
-                                   'gap_tol':scaled_tolerance(p.get('quote_gaps'))}
+                                   'gap_tol':scaled_tolerance(p.get('quote_gaps')),
+                                   'tol_detail':tolerance_detail(p.get('quote_gaps')),
+                                   'subscriptions':recovery.subscription_evidence(
+                                       self.db,c,[p['symbol']]),
+                                   'hole_disqualified':[
+                                       row for row in (p.get('archive_check') or {}).get('disqualified',[])
+                                       if last < row['ts'] <= observed][:20]}
                 self.finish(c, p, observed, 'observation_gap')
             return
         gap = q['ts']-last
@@ -241,10 +260,27 @@ class SetupStudy:
         # gaps between accepted quotes), not the flat 15s index standard.
         tol = scaled_tolerance(p.get('quote_gaps'))
         if gap > tol or q['ts'] > p['flatten_at']+5:
+            from .gap_tolerance import tolerance_detail
             p['gap_detail'] = {'last_quote_ts':last, 'next_quote_ts':q['ts'],
-                               'checked_at':observed, 'gap_seconds':gap, 'gap_tol':tol, 'reason':'missing_recorded_path'}
-            self.finish(c, p, observed, 'session_quote_missing' if observed >= p['flatten_at'] else 'observation_gap')
-            return
+                               'checked_at':observed, 'gap_seconds':gap, 'gap_tol':tol,
+                               'tol_detail':tolerance_detail(p.get('quote_gaps')),
+                               'subscriptions':recovery.subscription_evidence(
+                                   self.db,c,[p['symbol']]),
+                               'hole_disqualified':[
+                                   row for row in (p.get('archive_check') or {}).get('disqualified',[])
+                                   if last < row['ts'] <= q['ts']][:20],
+                               'reason':'missing_recorded_path'}
+            if (p.get('gap_policy') == recovery.VERSION and gap > tol
+                    and q['ts'] <= p['flatten_at']+5):
+                # Pause-not-terminate (2026-10-26): this quote CLOSES the
+                # hole — charge it and evaluate the quote (the trial
+                # resolves on its natural stop/target/flatten, still
+                # data_gap-excluded) instead of dying on the hole.
+                recovery.account_hole(p, gap)
+                p.pop('measurement_paused_from', None)
+            else:
+                self.finish(c, p, observed, 'session_quote_missing' if observed >= p['flatten_at'] else 'observation_gap')
+                return
         gaps = p.setdefault('quote_gaps', [])
         gaps.append(gap)
         del gaps[:-32]
