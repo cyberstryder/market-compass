@@ -912,10 +912,20 @@ a{color:#888}</style></head><body>
         archive endpoints; safety lives in the gate, not the route."""
         from .copy_archive import _s3_client
         from . import archive_prune_copy
+        import logging
         import os
+        import time as _time
+        _diag = logging.getLogger('uvicorn.error')
+        _t0 = _time.time()
+        _diag.info('PRUNE-DIAG endpoint enter')
         try:
+            client = _s3_client()
+            _diag.info('PRUNE-DIAG client ready elapsed=%.1fs',
+                       _time.time() - _t0)
             result = archive_prune_copy.prune_next(
-                db, _s3_client(), os.environ['ARCHIVE_BUCKET'])
+                db, client, os.environ['ARCHIVE_BUCKET'])
+            _diag.info('PRUNE-DIAG endpoint return action=%s elapsed=%.1fs',
+                       result.get('action'), _time.time() - _t0)
             return {'ok': result.get('ok', False), **result}
         except Exception:
             import logging
