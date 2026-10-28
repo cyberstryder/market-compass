@@ -196,6 +196,24 @@ class SetupStudy:
                     self.observe(c,p,recorded,observed,recorded=True)
                     if p['status'] != 'open' or recovery.blocked(p):
                         break
+                if (p['status'] == 'open' and observed >= p['flatten_at']
+                        and (truncated or recovery.blocked(p) or p.get('data_gap'))):
+                    # Flatten backstop for gap-impeded trials (2026-10-27):
+                    # a paused trial whose recorded path stays truncated, or
+                    # whose hole never fills, never reaches observe()'s own
+                    # flatten branch and hangs open past its session (the
+                    # Oct 27 futures aggregate carried 124 such trials as
+                    # unresolved observation_gap). Terminate it at the
+                    # flatten, priced from the freshest quote on record when
+                    # one exists; an unpriced finish keeps the trial
+                    # data_gap-excluded (neither win nor loss).
+                    last_q = self.db.get(c, 'quote:'+symbol) or {}
+                    price = last_q.get('bid') if p['side'] == 'long' else last_q.get('ask')
+                    if price is not None:
+                        self.finish(c, p, observed, 'session_flatten', price=price, quote_ts=last_q.get('ts'))
+                    else:
+                        self.finish(c, p, observed, 'session_flatten')
+                    continue
                 if recovery.blocked(p):
                     self.save(c,p)
                     continue
