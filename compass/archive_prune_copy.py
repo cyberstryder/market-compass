@@ -141,7 +141,7 @@ def _hash_object(client, bucket, key):
     return hasher.hexdigest(), size
 
 
-_COUNT_SLICE_SECONDS = 6 * 3600  # 28 slices per week
+_COUNT_SLICE_SECONDS = 1 * 3600  # 168 slices per week
 
 
 def _count_rows(db, kind, lo, hi):
@@ -149,9 +149,12 @@ def _count_rows(db, kind, lo, hi):
     transaction. A single COUNT over a big week (21M+ rows) outlived
     every timeout production enforces — statement_timeout first, then
     transaction_timeout, and SET LOCAL lifts of both did not take
-    effect in the deployed service (2026-10-19/20). Six-hour slices
-    scan ~750k rows each (seconds per transaction); the sum is
-    exactly the week's count, so the gate loses no strictness."""
+    effect in the deployed service (2026-10-19/20). Slices were six
+    hours until W42 (2026-10-26/27): its densest six-hour slice still
+    outlived the 30s statement timeout and the week refused with
+    verify_error, so slices are one hour (~125k rows each, seconds per
+    transaction); the sum is exactly the week's count, so the gate
+    loses no strictness."""
     total = 0
     t = lo
     while t < hi:
