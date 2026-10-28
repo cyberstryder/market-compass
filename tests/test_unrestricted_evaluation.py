@@ -63,6 +63,26 @@ def test_non_alerted_candidates_queue_both_option_horizons_without_paper(db,cfg)
         assert db.get(c,'pending_research_options:breakout')['status']=='observed'
 
 
+def test_research_selection_window_is_thirty_minutes(db,cfg):
+    engine=Engine(db,cfg)
+    with db.tx() as c:
+        seed_options(db,c)
+        s={**signal('window',symbol='SPY'),'invalidation':99,'context':{'atr14':1}}
+        engine.observe_setup(c,s,NOW)
+        row=db.get(c,'pending_research_options:window')
+        assert row['expires_at']-row['created_at']==1800
+
+
+def test_research_selection_survives_past_120_seconds(db,cfg):
+    engine=Engine(db,cfg)
+    with db.tx() as c:
+        seed_options(db,c)
+        s={**signal('late',symbol='SPY'),'invalidation':99,'context':{'atr14':1}}
+        engine.observe_setup(c,s,NOW)
+        engine.scanner.retry_options(c,{'SPY':quote(NOW+1500)},NOW+1500,engine)
+        assert db.get(c,'pending_research_options:late')['status']!='expired'
+
+
 def test_wide_spread_measured_but_missing_quotes_not_invented(db,cfg):
     engine=Engine(db,cfg)
     with db.tx() as c:

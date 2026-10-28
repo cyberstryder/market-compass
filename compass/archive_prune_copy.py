@@ -22,6 +22,7 @@ Gate design (Josh's rule, 2026-10-19: verify R2 has the data, THEN prune):
   but can never wedge it silently behind a fieldless error.
 """
 import hashlib
+import logging
 import os
 import threading
 import time
@@ -31,6 +32,8 @@ from sqlalchemy import delete, func, select
 
 from . import copy_archive as ca
 from .store import events
+
+_DIAG = logging.getLogger('uvicorn.error')
 
 PRUNE_PREFIX = 'copy-archive:prune:'
 DAY = 86400
@@ -141,7 +144,7 @@ def _hash_object(client, bucket, key):
     return hasher.hexdigest(), size
 
 
-_COUNT_SLICE_SECONDS = 6 * 3600  # 28 slices per week
+_COUNT_SLICE_SECONDS = 1 * 3600  # 168 slices per week
 
 
 def _count_rows(db, kind, lo, hi):
@@ -149,9 +152,12 @@ def _count_rows(db, kind, lo, hi):
     transaction. A single COUNT over a big week (21M+ rows) outlived
     every timeout production enforces — statement_timeout first, then
     transaction_timeout, and SET LOCAL lifts of both did not take
-    effect in the deployed service (2026-10-19/20). Six-hour slices
-    scan ~750k rows each (seconds per transaction); the sum is
-    exactly the week's count, so the gate loses no strictness."""
+    effect in the deployed service (2026-10-19/20). Slices were six
+    hours until W42 (2026-10-26/27): its densest six-hour slice still
+    outlived the 30s statement timeout and the week refused with
+    verify_error, so slices are one hour (~125k rows each, seconds per
+    transaction); the sum is exactly the week's count, so the gate
+    loses no strictness."""
     total = 0
     t = lo
     while t < hi:
@@ -499,11 +505,18 @@ def prune_next(db, client, bucket, now=None, row_budget=50000):
     a background thread (see module note): a call that kicks one off
     waits inline briefly, then returns action='verifying'; a call that
     finds another chunk in flight returns action='busy'."""
+    _DIAG.info('PRUNE-DIAG enter t=%.3f', time.time())
     if not _CHUNK_LOCK.acquire(blocking=False):
+        _DIAG.info('PRUNE-DIAG lock busy, returning')
         return {'ok': True, 'action': 'busy'}
+    _t0 = time.time()
+    _DIAG.info('PRUNE-DIAG lock acquired')
     try:
-        return _prune_next_locked(db, client, bucket, now=now,
-                                  row_budget=row_budget)
+        result = _prune_next_locked(db, client, bucket, now=now,
+                                    row_budget=row_budget)
+        _DIAG.info('PRUNE-DIAG exit action=%s elapsed=%.1fs',
+                   result.get('action'), time.time() - _t0)
+        return result
     finally:
         _CHUNK_LOCK.release()
 
@@ -529,6 +542,11 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
         return {'ok': True, 'action': 'idle', **prune_status(db)}
     candidates.sort()  # oldest ISO week first
     pstr, kind, rec, st = candidates[0]
+    _DIAG.info('PRUNE-DIAG candidate kind=%s period=%s status=%s '
+               'deleted=%s cursor=%s band_hi=%s expected=%s',
+               kind, pstr, (st or {}).get('status'),
+               (st or {}).get('deleted'), (st or {}).get('delete_cursor'),
+               (st or {}).get('band_hi'), (st or {}).get('expected_rows'))
     ws = _week_start(pstr)
     we = ws + 7 * DAY
 
@@ -551,8 +569,11 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
             args=(db, client, bucket, kind, pstr, rec, ws, we, now),
             daemon=True)
         _VERIFY_THREADS[(kind, pstr)] = thread
+        _DIAG.info('PRUNE-DIAG verify kick kind=%s period=%s', kind, pstr)
         thread.start()
         thread.join(timeout=_VERIFY_INLINE_SECONDS)
+        _DIAG.info('PRUNE-DIAG verify join done alive=%s kind=%s period=%s',
+                   thread.is_alive(), kind, pstr)
         if thread.is_alive():
             return {'ok': True, 'action': 'verifying',
                     'kind': kind, 'period': pstr}
@@ -587,13 +608,17 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
     band_hi = st.get('band_hi')
     band_done = bool(st.get('band_done'))
     if band_hi is None and not band_done and not cursor:
+        _DIAG.info('PRUNE-DIAG band start kind=%s period=%s', kind, pstr)
         band_lo, band_hi = _id_band(db, ws, we)
+        _DIAG.info('PRUNE-DIAG band done lo=%s hi=%s', band_lo, band_hi)
         st['band_lo'] = band_lo
         st['band_hi'] = band_hi
         cursor = max(0, band_lo - 1)
     n_all = 0
     deadline = time.time() + _DELETE_CALL_SECONDS
     probe_exhausted = False
+    _DIAG.info('PRUNE-DIAG walk start kind=%s period=%s cursor=%s '
+               'deleted=%s', kind, pstr, cursor, deleted_before)
     while n_all < row_budget and time.time() < deadline:
         probe_q = (select(events.c.id, events.c.kind, events.c.ts)
                    .where(events.c.id > cursor)
@@ -645,6 +670,8 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
             cursor = last_probe_id
         if stop:
             break
+    _DIAG.info('PRUNE-DIAG walk done kind=%s period=%s n_all=%s '
+               'probe_exhausted=%s', kind, pstr, n_all, probe_exhausted)
     st['delete_cursor'] = 0 if (probe_exhausted
                                 and st['deleted'] < st['expected_rows']
                                 ) else cursor

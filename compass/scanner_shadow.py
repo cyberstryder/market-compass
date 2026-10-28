@@ -28,7 +28,10 @@ a config change at the window boundary, per the spec.
 
 The seated set is ONE structure (PAPER_SEATS / PROMOTED_FAMILIES below,
 env-overridable via SCANNER_PAPER_SEATS / SCANNER_PROMOTED_FAMILIES),
-consulted at the single booking point in zero_dte_paper._open_scanner.
+consulted at both booking points: zero_dte_paper._open_scanner and the
+scanner's own pending_options paper path (scanner.retry_options, gated
+2026-10-27 after that path booked non-seated cells the split had judged
+shadow-only).
 Non-scanner producers that share the options_0dte category (earnings
 plays; the MU scalp has its own book) carry no scanner family and are
 outside this split — their behavior is unchanged.

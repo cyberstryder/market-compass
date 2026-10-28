@@ -234,8 +234,15 @@ def test_hash_object_retries_truncated_ranged_reads():
     assert calls['n'] == 2
 
 
+def test_count_slice_default_is_one_hour():
+    """W42 (2026-10-26/27): the densest six-hour verify slice outlived
+    the 30s statement timeout and the week refused with verify_error.
+    The production slice is one hour, like the completion recount's."""
+    assert apc._COUNT_SLICE_SECONDS == 3600
+
+
 def test_count_rows_slices_sum_exactly(db, monkeypatch):
-    """The week count is a sum of 6h slice counts; boundary rows must
+    """The week count is a sum of slice counts; boundary rows must
     be counted exactly once."""
     monkeypatch.setattr(apc, '_COUNT_SLICE_SECONDS', 3600)
     lo = 1759000000.0

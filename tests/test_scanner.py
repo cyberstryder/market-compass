@@ -271,6 +271,17 @@ def test_setup_dedup_survives_restart_and_has_no_order_route(db):
         assert alerts[0]['payload']['stop']<alerts[0]['payload']['entry']<alerts[0]['payload']['target']
 
 
+def test_scanner_suppression_census_records_unready_symbols(db):
+    cfg=Config(local=True,stocks=('SPY',),futures=(),scanner_paper=False)
+    with db.tx() as c:
+        db.put(c,'latestbar:SPY',{'ts':NOW})
+        db.put(c,'quote:SPY',quote())
+        Scanner(db,cfg).scan(c,NOW,Engine(db,cfg))
+        census=db.get(c,'scanner:suppression:2026-09-14')
+        assert census and census['symbols']['SPY']['status']=='warming_up'
+        assert census['by_status']=={'warming_up':1}
+
+
 def test_pending_options_expire_without_fabricated_fill(db):
     cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=())
     signal={'id':'one','symbol':'SPY','side':'long','invalidation':100,'signal_price':101,'context':{'atr14':1}}
@@ -279,6 +290,41 @@ def test_pending_options_expire_without_fabricated_fill(db):
         Scanner(db,cfg).retry_options(c,{'SPY':quote()},NOW,Engine(db,cfg))
         assert db.get(c,'pending_options:one')['status']=='expired'
         assert db.prefix(c,'position:')=={}
+
+
+def _scanner_signal(**kw):
+    base={'id':'one','symbol':'SPY','side':'long','invalidation':100,'signal_price':101,'context':{'atr14':1}}
+    base.update(kw)
+    return base
+
+
+def test_pending_options_non_seated_scanner_cell_is_skipped_not_booked(db):
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY','MU'),futures=())
+    signal=_scanner_signal(rule='trend_pullback',strategy='compass-scanner-v2:trend_pullback')
+    with db.tx() as c:
+        db.put(c,'pending_options:one',{'signal':signal,'expires_at':NOW+600,'status':'waiting'})
+        Scanner(db,cfg).retry_options(c,{'SPY':quote()},NOW,Engine(db,cfg))
+        row=db.get(c,'pending_options:one')
+        assert row['status']=='skipped_not_seated'
+        assert db.prefix(c,'position:')=={}
+
+
+def test_pending_options_seated_scanner_cell_uses_normal_path(db):
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY','MU'),futures=())
+    signal=_scanner_signal(symbol='MU',rule='session_sweep_reclaim',strategy='compass-scanner-v2:session_sweep_reclaim')
+    with db.tx() as c:
+        db.put(c,'pending_options:one',{'signal':signal,'expires_at':NOW-1,'status':'waiting'})
+        Scanner(db,cfg).retry_options(c,{'MU':quote()},NOW,Engine(db,cfg))
+        assert db.get(c,'pending_options:one')['status']=='expired'
+
+
+def test_pending_research_options_are_not_seat_gated(db):
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=())
+    signal=_scanner_signal(rule='trend_pullback',strategy='compass-scanner-v2:trend_pullback')
+    with db.tx() as c:
+        db.put(c,'pending_research_options:one',{'signal':signal,'expires_at':NOW-1,'status':'waiting','research_only':True})
+        Scanner(db,cfg).retry_options(c,{'SPY':quote()},NOW,Engine(db,cfg))
+        assert db.get(c,'pending_research_options:one')['status']=='expired'
 
 
 def test_late_discord_setup_is_explicitly_expired():

@@ -189,3 +189,29 @@ def test_legacy_trial_still_terminates_on_first_hole(db, study_cfg):
         _insert_trial(db, c, p)
         study.observe(c, p, _sq(T0 + 60, bid=2.25, ask=2.30), T0 + 60)
     assert p['status'] == 'unresolved' and p['exit_reason'] == 'observation_gap'
+
+
+def test_gap_paused_trial_is_terminalized_at_flatten(db, study_cfg):
+    # Flatten backstop (2026-10-27): a recorded-quotes-v2 trial paused on
+    # a hole whose path never fills must not hang open past its flatten;
+    # tick() terminates it as session_flatten, priced from the freshest
+    # quote on record, with data_gap accounting intact.
+    from sqlalchemy import select
+    from compass.setup_study import SetupStudy, trials
+    from test_setup_study import NOW as T0
+    from test_gap_fixes import _insert_trial, _sq
+    study = SetupStudy(db, study_cfg)
+    p = _enabled_trial(T0, observation_model='recorded-quotes-v2',
+                       quote_gaps=[2, 2, 2, 2], flatten_at=T0 + 900)
+    p['data_gap'] = True
+    p['data_gap_since'] = T0
+    with db.tx() as c:
+        _insert_trial(db, c, p)
+        db.put(c, 'quote:' + p['symbol'], _sq(T0 + 900, bid=1.50, ask=1.55))
+        study.tick(c, T0 + 960)
+        saved = c.execute(select(trials.c.payload)
+                          .where(trials.c.id == p['id'])).scalar_one()
+    assert saved['status'] == 'closed'
+    assert saved['exit_reason'] == 'session_flatten'
+    assert saved['exit'] == 1.50
+    assert saved['data_gap'] is True

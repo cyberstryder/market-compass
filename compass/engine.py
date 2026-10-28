@@ -136,7 +136,12 @@ class Engine:
                         'research_only':True,'notify_eligible':alerted and primary},now)
             key='pending_research_options:'+signal['id']
             if stop is not None and not self.db.get(c,key):
-                self.db.put(c,key,dict(signal={**signal,'notify_eligible':alerted and primary},created_at=now,expires_at=now+120,
+                # Selection window 30 minutes (2026-10-27, was 120s): the
+                # funnel audit showed the 120s ticket passing ~0.3% of
+                # signals, with fresh-quote timing the top killer. The
+                # research selection may retry for 30 minutes; the alert
+                # itself (option_setup_new) keeps its 120s freshness.
+                self.db.put(c,key,dict(signal={**signal,'notify_eligible':alerted and primary},created_at=now,expires_at=now+1800,
                     status='waiting',research_only=True))
             from .weekday_candidates import capture
             capture(self.db,c,signal,now,trial)
