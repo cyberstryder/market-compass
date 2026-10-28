@@ -336,6 +336,30 @@ class Scanner:
             if cfg.setup_study and engine.specification(symbol)['asset'] == 'future':
                 observe_bar(db,c,symbol,f,now)
             changed.append(symbol)
+        # Suppression census (2026-10-27): a symbol whose features never
+        # reach 'ready' produces no candidates and, before this record,
+        # left no trace anywhere — Oct 23 ran zero trials on every asset
+        # and the cause was unprovable after the fact. Keep a per-day
+        # census of non-ready states so a silent zero day is diagnosable.
+        unready={symbol:facts[symbol] for symbol in changed
+                 if facts[symbol].get('status')!='ready'}
+        if unready:
+            census_key='scanner:suppression:'+day(now)
+            census=db.get(c,census_key,{'day':day(now),'symbols':{}})
+            for symbol,f in unready.items():
+                row=census['symbols'].get(symbol)
+                if row is None:
+                    census['symbols'][symbol]={'status':f.get('status'),
+                        'reason':f.get('reason'),'first_at':now,'last_at':now,'scans':1}
+                else:
+                    row.update(status=f.get('status'),reason=f.get('reason'),
+                        last_at=now,scans=row.get('scans',0)+1)
+            census['updated_at']=now
+            by_status={}
+            for row in census['symbols'].values():
+                by_status[row['status']]=by_status.get(row['status'],0)+1
+            census['by_status']=by_status
+            db.put(c,census_key,census)
         candidates=[]
         for symbol in changed:
             f=facts[symbol]
@@ -459,6 +483,23 @@ class Scanner:
             signal=pending['signal']
             research_only=pending.get('research_only',False)
             symbol=signal['symbol']
+            if not research_only:
+                # Seat gate (2026-10-27): this path books paper trades for
+                # scanner signals, so it honors the same seat/shadow split
+                # as zero_dte_paper's alert consumer. A scanner-family cell
+                # that is not seated is shadow-scored by the research path
+                # and never books here; producers with no scanner family
+                # book as before. (Oct 26 evidence: this path booked 11
+                # non-seated trades, -$585.30, while the scorecard showed
+                # zero — the split governed only the other consumer.)
+                from . import scanner_shadow
+                family=scanner_shadow.alert_family(signal)
+                if family is not None and not scanner_shadow.is_seated(family,symbol,self.cfg):
+                    pending.update(status='skipped_not_seated',
+                        reason=f'Scanner cell {family} x {symbol} is not seated; shadow-scored via the research path, no paper booking',
+                        updated_at=now)
+                    self.db.put(c,key,pending)
+                    continue
             # Live retries may run seconds after the scan began. Read the current
             # underlying, then sample the same live clock used by entry_check.
             # Explicit-time replay/tests keep their supplied snapshot and clock.
