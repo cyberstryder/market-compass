@@ -545,3 +545,76 @@ def test_pre_fix_w40_state_completes_via_recount(db, s3):
     assert r['status'] == 'done' and r['deleted_this_call'] == 0
     status = apc.prune_status(db)
     assert status['periods_done'] == 1 and status['rows_deleted'] == 5
+
+
+def test_band_timeout_falls_back_to_full_pass(db, s3, monkeypatch):
+    """Regression (2026-10-28): the synchronous _id_band never returned
+    on the production table, wedging every prune call before a single
+    row was deleted. The band is now resolved on a budgeted thread;
+    on timeout the week is marked band_failed and the delete walk
+    proceeds as a banked full pass in the SAME call."""
+    import threading as _t
+    monkeypatch.setattr(apc, '_BAND_INLINE_SECONDS', 0.2)
+    monkeypatch.setattr(apc, '_BAND_RESULTS', {})
+    monkeypatch.setattr(apc, '_BAND_THREADS', {})
+    gate = _t.Event()
+    monkeypatch.setattr(apc, '_id_band',
+                        lambda db_, ws, we: (gate.wait(30), (0, 0))[1])
+    ts = NOW - 400 * DAY
+    for i in range(4):
+        add_event(db, 'bar', ts + i * 60)
+    add_event(db, 'bar', NOW - DAY)  # different week: untouchable
+    pstr = archive_week(db, s3, 'bar', ts, rows=4)
+    r = apc.prune_next(db, s3, BUCKET, now=NOW, row_budget=50)
+    assert r['deleted_this_call'] == 4 and r['status'] == 'done'
+    assert count_kind(db, 'bar') == 1
+    states = apc._prune_states(apc._all_copy_state(db))
+    assert states[('bar', pstr)].get('band_failed') is True
+    gate.set()
+
+
+def test_band_result_adopted_without_recompute(db, s3, monkeypatch):
+    """A band landed by an earlier thread is adopted from _BAND_RESULTS;
+    _id_band must not run again."""
+    monkeypatch.setattr(apc, '_BAND_THREADS', {})
+    def explode(db_, ws, we):
+        raise AssertionError('_id_band must not be called')
+    monkeypatch.setattr(apc, '_id_band', explode)
+    old = NOW - 500 * DAY
+    for i in range(3):
+        add_event(db, 'bar', old + i * 60)   # ids 1-3, older week
+    ts = NOW - 400 * DAY
+    for i in range(4):
+        add_event(db, 'bar', ts + i * 60)    # ids 4-7, archived week
+    add_event(db, 'bar', NOW - DAY)          # id 8, newer week
+    pstr = archive_week(db, s3, 'bar', ts, rows=4)
+    monkeypatch.setattr(apc, '_BAND_RESULTS', {('bar', pstr): (4, 8)})
+    r = apc.prune_next(db, s3, BUCKET, now=NOW, row_budget=50)
+    assert r['deleted_this_call'] == 4 and r['status'] == 'done'
+    assert count_kind(db, 'bar') == 4
+    states = apc._prune_states(apc._all_copy_state(db))
+    assert states[('bar', pstr)]['band_lo'] == 4
+    assert states[('bar', pstr)]['band_hi'] == 8
+
+
+def test_nonmatching_probe_banks_cursor(db, s3, monkeypatch):
+    """A probe that finds no matches must bank its cursor advance, so
+    a call cut short mid-traversal resumes past decided id space
+    instead of re-probing it (previously only deletions banked)."""
+    monkeypatch.setattr(apc, '_DELETE_PROBE', 2)
+    writes = []
+    orig = apc._set_prune_state
+    def rec(db_, kind, pstr, value):
+        writes.append((value.get('delete_cursor'), value.get('deleted')))
+        return orig(db_, kind, pstr, value)
+    monkeypatch.setattr(apc, '_set_prune_state', rec)
+    ts = NOW - 400 * DAY
+    for i in range(2):
+        add_event(db, 'quote', ts + i * 60)  # ids 1-2: in-week ts, wrong kind
+    for i in range(2):
+        add_event(db, 'bar', ts + i * 60)    # ids 3-4: the archived week
+    archive_week(db, s3, 'bar', ts, rows=2)
+    r = apc.prune_next(db, s3, BUCKET, now=NOW, row_budget=50)
+    assert r['deleted_this_call'] == 2 and r['status'] == 'done'
+    first_delete = next(i for i, (_, d) in enumerate(writes) if d)
+    assert (2, 0) in writes[:first_delete]  # banked before any deletion
