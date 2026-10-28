@@ -50,6 +50,18 @@ _CHUNK_LOCK = threading.Lock()
 _VERIFY_THREADS = {}
 _VERIFY_INLINE_SECONDS = float(
     os.environ.get('PRUNE_VERIFY_INLINE_SECONDS', '120'))
+# The id-band binary search (_id_band) gets the same treatment for the
+# same reason (2026-10-28): on the production table — 45M rows deleted
+# out of the middle of the id space — it did not return within 270s,
+# wedging every prune call behind the chunk lock before a single row
+# was deleted (PRUNE-DIAG trace: 'band start' with no 'band done').
+# The band is an optimization, never a gate: it is computed on a daemon
+# thread under a short inline budget; on timeout the week is marked
+# band_failed and the delete walk proceeds as a banked full pass.
+_BAND_THREADS = {}
+_BAND_RESULTS = {}
+_BAND_INLINE_SECONDS = float(
+    os.environ.get('PRUNE_BAND_INLINE_SECONDS', '25'))
 # Deletion walks the primary key in probed ranges and deletes by
 # explicit id list (see _prune_next_locked). _DELETE_SUB_BATCH caps one
 # delete statement; _DELETE_PROBE caps one id-range probe.
@@ -497,6 +509,58 @@ def _id_band(db, ws, we):
             _first_id_with_ts(db, we, lo, hi))
 
 
+def _band_worker(db, kind, pstr, ws, we):
+    try:
+        _BAND_RESULTS[(kind, pstr)] = _id_band(db, ws, we)
+        _DIAG.info('PRUNE-DIAG band thread done kind=%s period=%s',
+                   kind, pstr)
+    except Exception:
+        _BAND_RESULTS[(kind, pstr)] = None
+        _DIAG.exception('PRUNE-DIAG band thread failed kind=%s '
+                        'period=%s', kind, pstr)
+
+
+def _band_for(db, kind, pstr, st, ws, we):
+    """Resolve the week's id band under a hard time budget.
+
+    Returns band_lo (setting st['band_lo']/st['band_hi']) when a band
+    is available: landed from the band thread, or computed within the
+    inline budget. Returns None when the budget expires or the search
+    failed; st then records band_failed so later calls do not re-pay
+    the budget, and the caller walks a banked full pass instead. A
+    late thread result is still adopted by a subsequent call."""
+    got = _BAND_RESULTS.pop((kind, pstr), None)
+    if isinstance(got, tuple):
+        st['band_lo'], st['band_hi'] = got
+        st.pop('band_failed', None)
+        _DIAG.info('PRUNE-DIAG band adopted lo=%s hi=%s kind=%s '
+                   'period=%s', got[0], got[1], kind, pstr)
+        return got[0]
+    if st.get('band_failed'):
+        return None
+    thread = _BAND_THREADS.get((kind, pstr))
+    if thread is None or not thread.is_alive():
+        _DIAG.info('PRUNE-DIAG band kick kind=%s period=%s', kind, pstr)
+        thread = threading.Thread(target=_band_worker,
+                                  args=(db, kind, pstr, ws, we),
+                                  daemon=True)
+        _BAND_THREADS[(kind, pstr)] = thread
+        thread.start()
+    thread.join(timeout=_BAND_INLINE_SECONDS)
+    got = _BAND_RESULTS.pop((kind, pstr), None)
+    if isinstance(got, tuple):
+        st['band_lo'], st['band_hi'] = got
+        st.pop('band_failed', None)
+        _DIAG.info('PRUNE-DIAG band done lo=%s hi=%s kind=%s '
+                   'period=%s', got[0], got[1], kind, pstr)
+        return got[0]
+    st['band_failed'] = True
+    _set_prune_state(db, kind, pstr, st)
+    _DIAG.info('PRUNE-DIAG band budget exceeded; full pass kind=%s '
+               'period=%s', kind, pstr)
+    return None
+
+
 def prune_next(db, client, bucket, now=None, row_budget=50000):
     """Verify (once) and delete one batch of the oldest prunable week.
 
@@ -602,18 +666,22 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
     # Start the walk at the week's id band, not the table's first row:
     # a cursor from 0 spends whole calls traversing older weeks' id
     # space before reaching a single matching row (observed live
-    # 2026-10-21: full 40s calls deleting 0). The band is computed once
-    # and banked; when it is exhausted short of the expected count the
-    # walk falls back to a full pass from 0 for stragglers.
+    # 2026-10-21: full 40s calls deleting 0). The band is resolved
+    # under a budget (_band_for): when it cannot be computed in time
+    # the walk proceeds as a full pass from the banked cursor instead
+    # of wedging (observed live 2026-10-28: the synchronous search
+    # never returned). When the band is exhausted short of the
+    # expected count the walk falls back to a full pass from 0 for
+    # stragglers. Every probe advance is banked, so a call cut short
+    # by its deadline, a disconnect, or a restart resumes where it
+    # stopped rather than re-traversing decided id space.
     band_hi = st.get('band_hi')
     band_done = bool(st.get('band_done'))
     if band_hi is None and not band_done and not cursor:
-        _DIAG.info('PRUNE-DIAG band start kind=%s period=%s', kind, pstr)
-        band_lo, band_hi = _id_band(db, ws, we)
-        _DIAG.info('PRUNE-DIAG band done lo=%s hi=%s', band_lo, band_hi)
-        st['band_lo'] = band_lo
-        st['band_hi'] = band_hi
-        cursor = max(0, band_lo - 1)
+        band_lo = _band_for(db, kind, pstr, st, ws, we)
+        if band_lo is not None:
+            band_hi = st['band_hi']
+            cursor = max(0, band_lo - 1)
     n_all = 0
     deadline = time.time() + _DELETE_CALL_SECONDS
     probe_exhausted = False
@@ -644,6 +712,10 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
                    if r[1] == kind and ws <= (r[2] or 0) < we]
         if not matches:
             cursor = last_probe_id
+            st['delete_cursor'] = cursor
+            st['updated_at'] = time.time()
+            st['status'] = 'deleting'
+            _set_prune_state(db, kind, pstr, st)
             continue
         pos = 0
         stop = False
