@@ -99,7 +99,11 @@ class SwingIdeas:
             daily=signal['daily'],weekly_aligned=signal['weekly_aligned'],flow=flow,
             flow_confirmation=flow_confirmation(self.db,c,flow,signal['side'],now),
             flow_coverage=self.flow_coverage,atr=signal['daily']['atr14'],
-            status='pending',created_at=now,updated_at=now,expires_at=min(now+120,hours[1]-1800),
+            # Session-end fuse (Josh, 2026-10-27): a pending ticket lives until
+            # 30 minutes before the close, not 120 seconds. pending() re-runs
+            # every entry check on each pass, so the longer window only admits
+            # chains/quotes that arrive late; it weakens no entry requirement.
+            status='pending',created_at=now,updated_at=now,expires_at=hours[1]-1800,
             candidates=[],contract=None,entry=None,exit=None,pnl=None,return_pct=None,
             waiting_reason='Refreshing chain and requesting liquid option quotes',
             samples=0,max_gap_seconds=0,milestones=[],best_pct=None,worst_pct=None,
