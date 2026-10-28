@@ -221,7 +221,44 @@ def test_no_option_fill_without_entry_requirements(db,cfg,problem):
         svc.pending(c,records(c)[0],NOW)
         assert records(c)[0]['status']=='pending' and not db.recent(c,'alert')
         svc.pending(c,records(c)[0],NOW+121)
+        assert records(c)[0]['status']=='pending' and records(c)[0]['entry'] is None
+        svc.pending(c,records(c)[0],session(day(NOW))[1]-1800)
         assert records(c)[0]['status']=='excluded' and records(c)[0]['entry'] is None
+
+
+def test_swing_ticket_fuse_runs_to_session_end_not_120_seconds(db,cfg):
+    svc=SwingIdeas(db,cfg)
+    with db.tx() as c:
+        seed(db,c)
+        svc.queue(c,signal(),flow(),NOW)
+        p=records(c)[0]
+        assert p['expires_at']==session(day(NOW))[1]-1800
+        assert p['expires_at']-p['created_at']>120
+
+
+def test_swing_ticket_minted_near_cap_still_expires_at_cap(db,cfg):
+    late=stamp('2026-09-14',15,29)
+    svc=SwingIdeas(db,cfg)
+    with db.tx() as c:
+        seed(db,c,late)
+        svc.queue(c,signal(late),flow(late),late)
+        p=records(c)[0]
+        assert p['expires_at']==session(day(late))[1]-1800==late+60
+
+
+def test_swing_ticket_converts_later_in_session_when_chain_arrives(db,cfg):
+    svc=SwingIdeas(db,cfg)
+    with db.tx() as c:
+        seed(db,c)
+        chain=db.get(c,'chain:SPY');chain['complete']=False;db.put(c,'chain:SPY',chain)
+        svc.queue(c,signal(),flow(),NOW)
+        svc.pending(c,records(c)[0],NOW)
+        assert records(c)[0]['status']=='pending'
+        later=NOW+3600
+        seed(db,c,later)
+        svc.pending(c,records(c)[0],later)
+        p=records(c)[0]
+        assert p['status']=='open' and p['entry'] is not None and p['opened_at']==later
 
 
 @pytest.mark.parametrize('previous,next_day',[('2026-09-11','2026-09-14'),('2026-09-04','2026-09-08'),('2026-11-27','2026-11-30'),('2026-10-30','2026-11-02')])
