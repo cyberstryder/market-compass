@@ -78,14 +78,23 @@ def _occ(root, expiry, right, strike):
                              int(round(strike * 1000)))
 
 
-def _spot(db, symbol):
+def _spot(db, symbol, now=None):
     """Last usable spot for a fallback ladder: fresh quote mid, else last
-    bar close (mirrors the providers chain-reference logic)."""
+    bar close (mirrors the providers chain-reference logic).
+
+    Freshness is judged against the caller's `now` (fallback_symbols'
+    own clock), not the wall clock: with a wall-clock check, a quote
+    that is fresh relative to the evaluated instant silently ages out
+    7 days later, which both broke the deterministic unit test from
+    2026-10-29 (its 2026-10-21 quotes crossed the window) and would
+    misjudge any replayed/backdated evaluation."""
+    if now is None:
+        now = time.time()
     try:
         with db.tx() as c:
             q = db.get(c, "quote:" + symbol)
             if q and 0 < q.get("bid", 0) <= q.get("ask", 0) \
-                    and time.time() - q.get("ts", 0) < 7 * 86400:
+                    and now - q.get("ts", 0) < 7 * 86400:
                 return (q["bid"] + q["ask"]) / 2
             bars = db.recent(c, "bar", symbol, limit=1)
             if bars:
@@ -116,7 +125,7 @@ def fallback_symbols(db, now=None):
             expiry += timedelta(days=1)
     out = []
     for root in ("SPY", "QQQ"):
-        spot = _spot(db, root)
+        spot = _spot(db, root, now)
         if not spot:
             continue
         atm = round(spot / 5.0) * 5
