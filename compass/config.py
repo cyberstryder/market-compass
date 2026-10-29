@@ -145,10 +145,13 @@ class Config:
     # deploy is the enablement act; live sends additionally require the
     # survivors:state tripwire to be un-tripped (see survivors.py).
     survivor_enabled: bool = field(default_factory=lambda: env("SURVIVOR_DETECTORS_ENABLED","true")=="true")
-    # ICE shadow scorecard (2026-10-29): forward-scored evidence for the
-    # two ICE variants that passed the frozen stocks viability study
-    # (base + Max6+RSI). SHADOW ONLY — scored rows, never trades,
-    # alerts, or premium (compass/ice_shadow.py). Default ON.
+    # ICE shadow scorecard (2026-10-29): forward-scored evidence for
+    # ICE base + Max6+RSI. The frozen study's VIABLE verdicts were
+    # WITHDRAWN 2026-10-29 (reconciliation: pooled-R was a
+    # normalisation artifact); this is the forward check on the
+    # residual long-side gross-drift observation. SHADOW ONLY —
+    # scored rows, never trades, alerts, or premium
+    # (compass/ice_shadow.py). Default ON.
     ice_shadow_enabled: bool = field(default_factory=lambda: env("ICE_SHADOW_ENABLED","true")=="true")
     ict_paper_min_stop_atr: float = field(default_factory=lambda: float(env("ICT_PAPER_MIN_STOP_ATR","0.5")))
     ict_paper_cooldown_min: float = field(default_factory=lambda: float(env("ICT_PAPER_COOLDOWN_MIN","15")))

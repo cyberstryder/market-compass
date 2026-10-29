@@ -145,7 +145,9 @@ spy_marks=Table('spy_plan_marks_v1',meta,
 Index('spy_plan_mark_path',spy_marks.c.study_id,spy_marks.c.at,spy_marks.c.id)
 
 # ICE shadow scorecard (2026-10-29): scored evidence rows only — one row
-# per detected fire of the two viable ICE variants, horizons resolved in
+# per detected fire of the ICE base / Max6+RSI variants (their
+# frozen-study VIABLE verdicts were WITHDRAWN 2026-10-29 in the
+# reconciliation — see compass/ice_shadow.py), horizons resolved in
 # place. Dedicated table so retention is managed independently of the
 # events store (compass/ice_shadow.py).
 ice_shadow_fires=Table('ice_shadow_fires_v1',meta,

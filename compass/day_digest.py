@@ -330,9 +330,12 @@ def _survivors(db, c):
 
 
 def _ice_shadow(db, c, start):
-    """ICE shadow scorecard: forward-scored evidence for the two ICE
-    variants that passed the frozen stocks viability study (base +
-    Max6+RSI). Hypothetical underlying outcomes only — no trades."""
+    """ICE shadow scorecard: forward-scored evidence for ICE base +
+    Max6+RSI. The frozen study's VIABLE verdicts were WITHDRAWN
+    2026-10-29 (reconciliation: pooled R was a normalisation
+    artifact); this section is the forward check on the residual
+    long-side gross-drift observation. Hypothetical underlying
+    outcomes only — no trades."""
     lines = []
     try:
         from .ice_shadow import summarize
@@ -357,6 +360,15 @@ def _ice_shadow(db, c, start):
     if lines:
         lines.append("Shadow evidence only — hypothetical underlying "
                      "outcomes; no trades, no premium.")
+        lines.append("Verdicts WITHDRAWN: the frozen study's VIABLE "
+                     "calls for base / Max6+RSI were withdrawn "
+                     "2026-10-29 (reconciliation — pooled R was a "
+                     "normalisation artifact).")
+        lines.append("Purpose now: forward check on the residual "
+                     "long-side gross drift (+1.7 to +2.6 bps @ +60m, "
+                     "both ports/scorings, tail-carried, sub-spread) — "
+                     "readable at vote threshold ≥4 / +120m via the "
+                     "stored vote counts.")
     return _section("ice_shadow", "ICE shadow scorecard", lines)
 
 

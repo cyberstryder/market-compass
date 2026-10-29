@@ -1,7 +1,22 @@
 """ICE shadow scorecard (Josh, 2026-10-29): forward evidence for the two
-ICE direction-shift variants that passed the frozen stocks viability
-study (files/ice-stocks-viability-2026-10-29.md) — base ICE v2.2.2 and
-Max6+RSI. Max6 failed the frozen gates and is NOT tracked here.
+ICE direction-shift variants base ICE v2.2.2 and Max6+RSI. Max6 failed
+the frozen gates and is NOT tracked here.
+
+STATUS OF THE VERDICTS (reconciliation, 2026-10-29,
+files/ice-reconciliation-2026-10-29.md): the frozen stocks study's
+VIABLE verdicts for base and Max6+RSI are WITHDRAWN. On identical
+fires, the driving short side flips sign when scored in dollars
+instead of R (base short +0.0261R -> -0.99 bps; Max6+RSI short
++0.0202R -> -0.37 bps); the pooled-R means were a unit artifact of
+dividing fraction-of-a-cent moves by ~$0.04 ATRs on cheap names.
+This scorecard is NOT validation of a passed strategy. Its remaining
+purpose is the forward check on the reconciliation's residual
+observation: a small LONG-side gross drift (+1.7 to +2.6 bps at
++60m, seen under both ports and both scorings, tail-carried,
+sub-spread, no net gate passes it) — accumulated here as forward
+long-side evidence readable at vote threshold 4 / +120m via the
+stored vote counts. The withdrawal changes framing only: the frozen
+port semantics and what gets recorded are unchanged.
 
 SHADOW ONLY: this module detects fires on live stock bars and scores
 each fire's hypothetical underlying outcome. It never alerts, never
@@ -1092,7 +1107,11 @@ def status(db, c, cfg, now):
     out['at'] = now
     out['basis'] = ('Shadow evidence only: hypothetical underlying '
                     'outcomes of ICE base / Max6+RSI fires; no trades, '
-                    'no alerts, no premium.')
+                    'no alerts, no premium. The frozen study\'s VIABLE '
+                    'verdicts were WITHDRAWN 2026-10-29 (reconciliation: '
+                    'R-normalisation artifact); this scorecard is the '
+                    'forward check on the residual long-side '
+                    'gross-drift observation.')
     # Vote-count capture check (2026-10-29): the newest fire row's
     # stored raw counts, or None when the newest row predates the
     # vote-count build (rows are never backfilled).
