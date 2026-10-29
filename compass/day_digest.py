@@ -303,6 +303,31 @@ def _spy_0dte(db, c, start, date):
 # ---------------------------------------------------------------- assemble
 
 
+def _survivors(db, c):
+    """Claude gauntlet survivors: tripwire state, combined live P&L,
+    fill counter / review flag (compass/survivors.py)."""
+    lines = []
+    try:
+        st = db.get(c, "survivors:state")
+    except Exception:
+        st = None
+    if not isinstance(st, dict):
+        return _section("survivors", "Claude survivors (live)", lines)
+    if st.get("live"):
+        lines.append("LIVE since %s — 4 detectors, 1 contract each"
+                     % (st.get("activated_iso") or "?"))
+    else:
+        lines.append("PAPER-ONLY — tripwire tripped %s"
+                     % (st.get("trip_reason") or ""))
+    lines.append("Combined live P&L: %s · live fills: %s · closed live "
+                 "trades: %s" % (_money(st.get("combined_live_pnl")),
+                                 st.get("live_fills"),
+                                 st.get("live_trades_closed")))
+    if st.get("review_due"):
+        lines.append("REVIEW DUE: ≥50 combined live fills reached")
+    return _section("survivors", "Claude survivors (live)", lines)
+
+
 def assemble(db, c, now):
     date, start = _bounds(now)
     return {
@@ -311,6 +336,7 @@ def assemble(db, c, now):
         "sections": [
             _smoothers(db, c, start),
             _futures(db, c, start),
+            _survivors(db, c),
             _flow_pulse(db, c, start),
             _spy_0dte(db, c, start, date),
         ],

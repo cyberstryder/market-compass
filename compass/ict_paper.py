@@ -37,6 +37,15 @@ STRATEGY_TAGS = {
     'rumers_box': 'yt-rumers-box',
     'aoi_fade': 'ict-aoi-fade',
     'trend_rider': 'ict-trend-rider',
+    # Claude gauntlet survivors (2026-10-28): registered so attribution
+    # and the live-execution guard loop below see their positions.
+    # Deliberately NOT in DETECTOR_FLAGS: paper_enabled() stays False,
+    # so ict_paper.submit can never book them — compass/survivors.py
+    # owns their submit path (1 contract, own gates).
+    'survivor_s1': 'survivor_s1_rvwap_fade',
+    'survivor_s2': 'survivor_s2_asia_low_fade',
+    'survivor_s3': 'survivor_s3_london_mr60',
+    'survivor_s4': 'survivor_s4_ny_mr60_fade',
 }
 
 # detector -> config attr carrying its own enabled flag
