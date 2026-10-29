@@ -1,0 +1,559 @@
+From f2eb2e34c2ed18c0b3fe98ef6cd73986ac4d456e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 28 Oct 2026 22:58:17 -0500
+Subject: [PATCH] =?UTF-8?q?Close=20Momentum=20detector=20(shadow/paper-onl?=
+ =?UTF-8?q?y):=20first-30=20=E2=86=92=20last-45=20continuation,=20YM/MYM?=
+ =?UTF-8?q?=20allowlist?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Basis: Claude year test on data-foundation-v1 — YM +$55/trade, t 3.2, both halves positive,
+max DD −$1,115; NQ negative at every variant (never add). Enters 15:00 CT when sign(09:00−08:30
+open) == sign(15:00−08:30 open), exits at session flatten; protective bracket 0.25/0.5 daily ATR
+only because submit() requires one. Default OFF (ICT_CLOSE_MOMENTUM_ENABLED), paper-only set,
+allowlist {YM, MYM}. Tests: 14 new; paper-only exact-set test updated.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012WE3e5wMGFu4pEBRDTaW8z
+---
+ compass/app.py                     |   8 +-
+ compass/close_momentum.py          | 234 +++++++++++++++++++++++++++++
+ compass/config.py                  |   2 +
+ compass/engine.py                  |   5 +-
+ compass/ict_paper.py               |   5 +-
+ tests/test_close_momentum.py       | 167 ++++++++++++++++++++
+ tests/test_paper_only_carve_out.py |   3 +-
+ 7 files changed, 420 insertions(+), 4 deletions(-)
+ create mode 100644 compass/close_momentum.py
+ create mode 100644 tests/test_close_momentum.py
+
+diff --git a/compass/app.py b/compass/app.py
+index 347c943..938807b 100644
+--- a/compass/app.py
++++ b/compass/app.py
+@@ -1992,6 +1992,12 @@ a{color:#888}</style></head><body>
+         with db.tx() as c:
+             return display(db,c,time.time())
+ 
++    @app.get('/api/ict-close-momentum')
++    def get_ict_close_momentum():
++        from .close_momentum import display
++        with db.tx() as c:
++            return display(db,c,time.time())
++
+     @app.get('/api/ict-tier-a-b')
+     def get_ict_tier_a_b():
+         from .tier_a_b import display
+@@ -2340,7 +2346,7 @@ a{color:#888}</style></head><body>
+             'ict_continuation_signal':'Continuation',
+             'ict_golden_zone_signal':'Golden Zone',
+             'ict_session_liquidity_signal':'Session Liquidity',
+-            'ict_turtle_soup_signal':'Turtle Soup',
++            'ict_turtle_soup_signal':'Turtle Soup','ict_close_momentum_signal':'Close Momentum',
+             'ict_smt_signal':'SMT Divergence',
+             'morning_drive_signal':'Morning Drive','icc_signal':'ICC',
+             'rumers_box_signal':'Rumers Box',
+diff --git a/compass/close_momentum.py b/compass/close_momentum.py
+new file mode 100644
+index 0000000..b04c098
+--- /dev/null
++++ b/compass/close_momentum.py
+@@ -0,0 +1,234 @@
++"""Close Momentum: last-45-minute continuation of the RTH day's direction.
++
++Basis: Gao, Han, Li & Zhou (2018), "Market intraday momentum" — the first
++half-hour return predicts the last half-hour return. Re-tested by Claude on
++the desk's `data-foundation-v1` year (2025-10-27 → 2026-10-26, Databento
++1-min, five micros): same sign on all five instruments; economically viable
++only at full size, and robust only on YM (147 trades, +13.9 ticks gross per
++trade, t = 3.2, both calendar halves positive, max DD two weeks of P&L).
++CL carried one quarter, ES is marginal, NQ is NEGATIVE at every variant.
++Report: claude-exchange/from-claude/2026-10-27-futures-method-search.md.
++
++Rule (all times America/Chicago, one trade per symbol per session):
++  s1 = sign(09:00 open − 08:30 open)        first-30-minute direction
++  s2 = sign(15:00 open − 08:30 open)        day-so-far direction
++  If s1 == s2 ≠ 0 at 15:00: enter in that direction at market.
++  Exit: the engine's 15:45 session flatten. No stop or target is part of
++  the edge (tested; a stop inside the 45-minute hold only adds friction),
++  but ict_paper.submit() requires both, so a wide protective bracket is
++  attached: stop 0.25 × daily ATR(14) (≈ $740 on YM; hit once in the test
++  year), target 0.5 × daily ATR(14) (never hit). Daily ATR comes from the
++  'daily' bar store; when absent, a fixed per-root point table is used.
++
++Economics at the desk fill rule (2 ticks + fees), test year:
++  YM  +$55 / trade,  +$8.1k / yr, max DD −$1,115, worst day −$674.
++  MYM +$2.90 / trade — fees eat it; 5 MYM ≈ $14.70 / trade.
++  NQ/MNQ: do not trade (−$82 / trade on NQ).
++
++Status: SHADOW / paper-only. Promotion is under the adopted policy
++(≥ 50 Tier-1 broker fills, edge surviving p90 stop-slippage repricing).
++Evidence only. This module never alerts, never trades live.
++"""
++from datetime import datetime
++
++from .market import number, CT
++from .ict_common import ict_bars
++
++SCAN_THROTTLE = 30            # seconds between scans (the window is 5 min wide)
++ENTRY_HOUR, ENTRY_MINUTE = 15, 0
++ENTRY_WINDOW_S = 5 * 60       # fire only between 15:00:00 and 15:05:00 CT
++ATR_LEN = 14
++STOP_ATR = 0.25
++TARGET_ATR = 0.50
++
++# Symbols the signal is cleared to run on (paper). YM first; MYM is the
++# same signal at 1/10th size for accounts without a full-size seat.
++# Everything else is research-only until the promotion gate says otherwise.
++SYMBOLS = ('YM.c.0', 'MYM.c.0')
++
++# Fallback stop/target distances in points when daily bars are missing.
++# ≈ 0.25 / 0.5 of the test year's median daily ATR for each root.
++FALLBACK_POINTS = {
++    'YM': (150.0, 300.0), 'MYM': (150.0, 300.0),
++    'ES': (18.0, 36.0), 'MES': (18.0, 36.0),
++    'CL': (0.60, 1.20), 'MCL': (0.60, 1.20),
++    'GC': (30.0, 60.0), 'MGC': (30.0, 60.0),
++}
++
++
++def _root(symbol):
++    return str(symbol or '').split('.')[0].upper()
++
++
++def _ct(ts):
++    return datetime.fromtimestamp(ts, CT)
++
++
++def _session_ts(now, hour, minute):
++    """Epoch of today's (CT calendar day of `now`) hour:minute."""
++    d = _ct(now).replace(hour=hour, minute=minute, second=0, microsecond=0)
++    return d.timestamp()
++
++
++def _open_at(bars, ts):
++    """Open of the 1-min bar whose timestamp is exactly `ts`, else None."""
++    for b in bars:
++        if b['ts'] == ts:
++            return number(b['o'])
++        if b['ts'] > ts:
++            break
++    return None
++
++
++def _sign(x):
++    if x is None:
++        return 0
++    return (x > 0) - (x < 0)
++
++
++def signal(bars, now):
++    """Pure signal from 1-min bars. Returns {'direction', 's1', 's2', 'o830',
++    'o900', 'o1500', 'entry'} or None.
++
++    `bars` are ascending dicts with ts/o/h/l/c. `now` must fall inside the
++    entry window [15:00, 15:05) CT; the 15:00 bar must exist (its open is
++    known the moment it starts forming)."""
++    t1500 = _session_ts(now, ENTRY_HOUR, ENTRY_MINUTE)
++    if not (t1500 <= now < t1500 + ENTRY_WINDOW_S):
++        return None
++    o830 = _open_at(bars, _session_ts(now, 8, 30))
++    o900 = _open_at(bars, _session_ts(now, 9, 0))
++    o1500 = _open_at(bars, t1500)
++    if None in (o830, o900, o1500):
++        return None
++    s1 = _sign(o900 - o830)
++    s2 = _sign(o1500 - o830)
++    if s1 == 0 or s1 != s2:
++        return None
++    return {'direction': 'long' if s1 > 0 else 'short', 's1': s1, 's2': s2,
++            'o830': o830, 'o900': o900, 'o1500': o1500, 'entry': o1500}
++
++
++def daily_atr(db, c, symbol, length=ATR_LEN):
++    """ATR(length) from the 'daily' bar store (prior sessions only). None if short."""
++    try:
++        rows = db.recent(c, 'daily', symbol, limit=length + 5)
++    except Exception:
++        return None
++    bars = []
++    for r in rows or []:
++        p = r.get('payload') or {}
++        h, l, cl = number(p.get('h')), number(p.get('l')), number(p.get('c'))
++        if None in (h, l, cl):
++            continue
++        bars.append((r['ts'], h, l, cl))
++    bars = sorted(set(bars))
++    if len(bars) < length + 1:
++        return None
++    bars = bars[-(length + 1):]
++    trs = []
++    for i in range(1, len(bars)):
++        _, h, l, _ = bars[i]
++        pc = bars[i - 1][3]
++        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
++    return sum(trs) / len(trs) if trs else None
++
++
++def trade_levels(sig, atr_pts, root):
++    """Attach the protective bracket. Returns submit()-shaped levels or None."""
++    entry = number(sig.get('entry'))
++    if not entry:
++        return None
++    if atr_pts and atr_pts > 0:
++        stop_d, tgt_d = STOP_ATR * atr_pts, TARGET_ATR * atr_pts
++        basis = 'daily_atr'
++    else:
++        fb = FALLBACK_POINTS.get(root)
++        if not fb:
++            return None
++        stop_d, tgt_d = fb
++        basis = 'fallback_points'
++    d = 1 if sig['direction'] == 'long' else -1
++    return {'direction': sig['direction'], 'entry': entry,
++            'stop': entry - d * stop_d, 'target': entry + d * tgt_d,
++            'target_kind': 'protective_only', 'stop_basis': basis,
++            'risk_pts': stop_d, 'reward_pts': tgt_d,
++            'level_kind': 'close_momentum', 'level_price': sig['o830'],
++            's1': sig['s1'], 's2': sig['s2'],
++            'o830': sig['o830'], 'o900': sig['o900'], 'o1500': sig['o1500']}
++
++
++def scan(db, c, cfg, now):
++    """Throttled close-momentum scan. One submission per symbol per session."""
++    if not getattr(cfg, 'ict_close_momentum', False):
++        return {'ran': False, 'reason': 'disabled'}
++    if now - db.get(c, 'ict_close_momentum:scanned_at', 0) < SCAN_THROTTLE:
++        return {'ran': False, 'reason': 'throttled'}
++    t1500 = _session_ts(now, ENTRY_HOUR, ENTRY_MINUTE)
++    if not (t1500 <= now < t1500 + ENTRY_WINDOW_S):
++        db.put(c, 'ict_close_momentum:scanned_at', now)
++        return {'ran': False, 'reason': 'outside_window'}
++    symbols = tuple(getattr(cfg, 'ict_close_momentum_symbols', ()) or SYMBOLS)
++    day_iso = _ct(now).date().isoformat()
++    fired = 0
++    signals = 0
++    declined = 0
++    for symbol in symbols:
++        seen_key = 'ict_close_momentum:fired:%s:%s' % (symbol, day_iso)
++        if db.get(c, seen_key):
++            continue
++        bars = ict_bars(db, c, symbol)
++        if len(bars) < 60:
++            continue
++        sig = signal(bars, now)
++        if not sig:
++            # No-signal days are recorded once so the fire-rate audit can
++            # distinguish "skipped by rule" from "never evaluated".
++            if _open_at(bars, t1500) is not None:
++                db.put(c, seen_key, {'at': now, 'no_signal': True})
++            continue
++        signals += 1
++        levels = trade_levels(sig, daily_atr(db, c, symbol), _root(symbol))
++        if not levels:
++            continue
++        from .ict_paper import submit as _paper_submit
++        res = _paper_submit(db, c, cfg, now, 'close_momentum', symbol, levels)
++        if res.get('submitted'):
++            fired += 1
++            db.put(c, seen_key, {'at': now, 'submitted': True})
++            db.append(c, 'ict_close_momentum_signal', 'ict_futures', symbol,
++                      now, dict(levels),
++                      key='ictcm:%s:%s' % (symbol, day_iso))
++        else:
++            declined += 1
++            # Decline reasons that cannot clear today (market_closed, past
++            # flatten, symbol gate) are terminal for the day; transient ones
++            # (quote freshness, existing position) get retried inside the
++            # 5-minute window by leaving seen_key unset.
++            if res.get('reason') in ('symbol_not_allowed', 'paper_disabled',
++                                     'market_closed', 'past_flatten',
++                                     'unknown_detector', 'not_a_future',
++                                     'bad_signal', 'levels_inverted'):
++                db.put(c, seen_key, {'at': now, 'declined': res.get('reason')})
++            try:
++                from .ict_declines import record_decline as _record_decline
++                _record_decline(db, c, now, 'close_momentum', symbol, res,
++                                {**levels, 'signal_ts': t1500})
++            except Exception:
++                pass
++    db.put(c, 'ict_close_momentum:scanned_at', now)
++    db.put(c, 'ict_close_momentum:latest', {'at': now, 'fired': fired,
++                                            'signals': signals,
++                                            'declined': declined})
++    return {'ran': True, 'fired': fired, 'signals': signals,
++            'declined': declined}
++
++
++def display(db, c, now, limit=50):
++    latest = db.get(c, 'ict_close_momentum:latest', {})
++    rows = db.recent(c, 'ict_close_momentum_signal', limit=limit)
++    return {'asof': latest.get('at'), 'fired': latest.get('fired', 0),
++            'symbols': list(SYMBOLS),
++            'signals': [{'symbol': s['symbol'], 'ts': s['ts'], **s['payload']}
++                        for s in rows],
++            'note': 'Close Momentum (first-30 → last-45). Shadow / paper only.'}
+diff --git a/compass/config.py b/compass/config.py
+index e163ff5..0ff7c06 100644
+--- a/compass/config.py
++++ b/compass/config.py
+@@ -118,6 +118,8 @@ class Config:
+     ict_aoi_zones: bool = field(default_factory=lambda: env("ICT_AOI_ZONES_ENABLED","false")=="true")
+     ict_aoi_fade: bool = field(default_factory=lambda: env("ICT_AOI_FADE_ENABLED","true")=="true")
+     ict_trend_rider: bool = field(default_factory=lambda: env("ICT_TREND_RIDER_ENABLED","false")=="true")
++    ict_close_momentum: bool = field(default_factory=lambda: env("ICT_CLOSE_MOMENTUM_ENABLED","false")=="true")
++    ict_close_momentum_symbols: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("ICT_CLOSE_MOMENTUM_SYMBOLS","YM.c.0,MYM.c.0").split(",") if s.strip()))
+     # Gap fade detector (futures): fade overnight gaps at RTH open
+     gap_fade_enabled: bool = field(default_factory=lambda: env("GAP_FADE_ENABLED","false")=="true")
+     gap_fade_min_pct: float = field(default_factory=lambda: float(env("GAP_FADE_MIN_PCT","0.005")))
+diff --git a/compass/engine.py b/compass/engine.py
+index 398c552..1479681 100644
+--- a/compass/engine.py
++++ b/compass/engine.py
+@@ -1010,6 +1010,9 @@ class Engine:
+             if self.cfg.ict_aoi_fade and _should_run('aoi_fade'):
+                 from .aoi_fade import scan as ict_aoi_fade_scan
+                 ict_summaries['aoi_fade'] = _safe_scan('aoi_fade', lambda: ict_aoi_fade_scan(self.db,c,self.cfg,now))
++            if getattr(self.cfg, 'ict_close_momentum', False) and _should_run('close_momentum'):
++                from .close_momentum import scan as ict_close_momentum_scan
++                ict_summaries['close_momentum'] = _safe_scan('close_momentum', lambda: ict_close_momentum_scan(self.db,c,self.cfg,now))
+             if getattr(self.cfg, 'ict_trend_rider', False):
+                 from .trend_rider import scan as ict_trend_rider_scan
+                 ict_summaries['trend_rider'] = _safe_scan('trend_rider', lambda: ict_trend_rider_scan(self.db,c,self.cfg,now))
+@@ -1074,7 +1077,7 @@ class Engine:
+         for _ict_name in ('session_liquidity','htf_levels','turtle_soup','smt_divergence',
+                           'aoi_zones','aoi_fade','tier_a_b',
+                           'golden_zone','bos_fvg','bos_gz_vwap',
+-                          'rumers_box'):
++                          'rumers_box','close_momentum'):
+             _s = ict_summaries.get(_ict_name)
+             if _s and _s.get('ran'):
+                 self.db.health('ict_' + _ict_name, 'running',
+diff --git a/compass/ict_paper.py b/compass/ict_paper.py
+index 0e86ec6..392212e 100644
+--- a/compass/ict_paper.py
++++ b/compass/ict_paper.py
+@@ -37,6 +37,7 @@ STRATEGY_TAGS = {
+     'rumers_box': 'yt-rumers-box',
+     'aoi_fade': 'ict-aoi-fade',
+     'trend_rider': 'ict-trend-rider',
++    'close_momentum': 'ict-close-momentum',
+ }
+ 
+ # detector -> config attr carrying its own enabled flag
+@@ -50,6 +51,7 @@ DETECTOR_FLAGS = {
+     'rumers_box': 'ict_rumers_box',
+     'aoi_fade': 'ict_aoi_fade',
+     'trend_rider': 'ict_trend_rider',
++    'close_momentum': 'ict_close_momentum',
+ }
+ 
+ # Mix/match (Josh 2026-10-14): per-detector symbol allowlist based on
+@@ -116,6 +118,7 @@ DETECTOR_SYMBOL_ALLOWLIST = {
+     'turtle_soup': {'MCL'},  # 2026-10-24 prune: proven core only (MYM out 2026-10-17)
+     'golden_zone': {'MCL', 'MNQ'},  # 2026-10-24: watch status; MGC + eval roots out; NQ was tests-only, now a watch symbol per the plan
+     'rumers_box': {'MYM'},  # Added 2026-10-24: only positive combo; MNQ blocked on stop geometry
++    'close_momentum': {'YM', 'MYM'},  # 2026-10-28: Claude year test; YM is the only full-size survivor, MYM = same signal at 1/10th. NQ/MNQ negative — never add.
+     # Detectors not listed here have no symbol restriction (they're
+     # either disabled or not in the futures mix).
+ }
+@@ -147,7 +150,7 @@ DETECTOR_SYMBOL_ALLOWLIST = {
+ # not the detector's signal price, which is preserved on the record as
+ # signal_price; the TradersPost payload is unchanged.
+ PAPER_ONLY_DETECTORS = frozenset({'golden_zone', 'rumers_box', 'turtle_soup',
+-                                  'aoi_fade'})
++                                  'aoi_fade', 'close_momentum'})
+ 
+ def symbol_allowed(detector, symbol):
+     """True if this detector is allowed to trade this symbol.
+diff --git a/tests/test_close_momentum.py b/tests/test_close_momentum.py
+new file mode 100644
+index 0000000..d5e69f1
+--- /dev/null
++++ b/tests/test_close_momentum.py
+@@ -0,0 +1,167 @@
++"""Tests for the Close Momentum detector (first-30 → last-45, YM shadow)."""
++from datetime import datetime, timezone
++
++import pytest
++
++from compass.close_momentum import (
++    signal, trade_levels, daily_atr, scan, FALLBACK_POINTS, _session_ts,
++)
++from compass.config import Config
++from compass.store import Store
++from compass import ict_paper
++
++
++# Wed 2026-09-30, a regular CBOT session. 15:00 CT = 20:00 UTC (CDT).
++T1500 = datetime(2026, 9, 30, 20, 0, tzinfo=timezone.utc).timestamp()
++T0830 = T1500 - 6.5 * 3600
++SYM = 'YM.c.0'
++
++
++def _day(o830, o900, o1500, start_px=None):
++    """1-min bars 08:00 → 15:00 CT. Opens pinned at 08:30, 09:00, 15:00."""
++    bars = []
++    px = start_px if start_px is not None else o830
++    t = T0830 - 30 * 60
++    while t <= T1500:
++        if t == T0830:
++            px = o830
++        elif t == T0830 + 1800:
++            px = o900
++        elif t == T1500:
++            px = o1500
++        bars.append({'ts': t, 'o': px, 'h': px + 2, 'l': px - 2, 'c': px + 1})
++        t += 60
++    return bars
++
++
++def test_session_ts_is_ct_wall_clock():
++    assert _session_ts(T1500 + 120, 15, 0) == T1500
++    assert _session_ts(T1500 + 120, 8, 30) == T0830
++
++
++def test_signal_long_when_first30_and_day_agree():
++    bars = _day(46000, 46050, 46200)
++    s = signal(bars, T1500 + 30)
++    assert s and s['direction'] == 'long' and s['entry'] == 46200
++
++
++def test_signal_short_when_both_down():
++    s = signal(_day(46000, 45950, 45800), T1500 + 30)
++    assert s and s['direction'] == 'short'
++
++
++def test_no_signal_when_first30_and_day_disagree():
++    assert signal(_day(46000, 46050, 45800), T1500 + 30) is None
++    assert signal(_day(46000, 45950, 46300), T1500 + 30) is None
++
++
++def test_no_signal_on_flat_first30():
++    assert signal(_day(46000, 46000, 46300), T1500 + 30) is None
++
++
++def test_outside_window_is_silent():
++    bars = _day(46000, 46050, 46200)
++    assert signal(bars, T1500 - 60) is None          # 14:59
++    assert signal(bars, T1500 + 5 * 60) is None      # 15:05
++    assert signal(bars, T1500 + 4 * 60 + 59) is not None
++
++
++def test_missing_anchor_bar_is_no_signal():
++    bars = [b for b in _day(46000, 46050, 46200) if b['ts'] != T0830]
++    assert signal(bars, T1500 + 30) is None
++
++
++def test_trade_levels_from_daily_atr():
++    sig = signal(_day(46000, 46050, 46200), T1500 + 30)
++    lv = trade_levels(sig, 600.0, 'YM')
++    assert lv['stop'] == 46200 - 150 and lv['target'] == 46200 + 300
++    assert lv['stop_basis'] == 'daily_atr'
++    lv_s = trade_levels({**sig, 'direction': 'short'}, 600.0, 'YM')
++    assert lv_s['stop'] == 46200 + 150 and lv_s['target'] == 46200 - 300
++
++
++def test_trade_levels_fallback_points():
++    sig = signal(_day(46000, 46050, 46200), T1500 + 30)
++    lv = trade_levels(sig, None, 'YM')
++    assert lv['stop_basis'] == 'fallback_points'
++    assert lv['risk_pts'] == FALLBACK_POINTS['YM'][0]
++    assert trade_levels(sig, None, 'ZZZ') is None
++
++
++def test_registered_in_paper_registries():
++    assert ict_paper.STRATEGY_TAGS['close_momentum'] == 'ict-close-momentum'
++    assert ict_paper.DETECTOR_FLAGS['close_momentum'] == 'ict_close_momentum'
++    assert ict_paper.DETECTOR_SYMBOL_ALLOWLIST['close_momentum'] == {'YM', 'MYM'}
++    assert 'close_momentum' in ict_paper.PAPER_ONLY_DETECTORS
++    assert not ict_paper.symbol_allowed('close_momentum', 'MNQ.c.0')
++    assert not ict_paper.symbol_allowed('close_momentum', 'NQ.c.0')
++
++
++@pytest.fixture
++def db(tmp_path):
++    s = Store('sqlite:///' + str(tmp_path / 'cm.db'))
++    s.initialize()
++    yield s
++    s.engine.dispose()
++
++
++@pytest.fixture
++def cfg():
++    c = Config(local=True, risk=100)
++    c.ict_futures_paper = True
++    c.ict_close_momentum = True
++    c.ict_close_momentum_symbols = (SYM,)
++    return c
++
++
++def _seed(db, bars, quote_px, now):
++    with db.tx() as c:
++        db.put(c, 'bar_window:' + SYM,
++               [(b['ts'], b['o'], b['h'], b['l'], b['c'], 10) for b in bars])
++        db.put(c, 'quote:' + SYM, {'ts': now, 'bid': quote_px - 1,
++                                   'ask': quote_px, 'bid_size': 10,
++                                   'ask_size': 10, 'source': 'fixture'})
++        for i in range(20):
++            ts = T0830 - (20 - i) * 86400
++            db.append(c, 'daily', 'futures', SYM, ts,
++                      {'o': 46000, 'h': 46300, 'l': 45700, 'c': 46100, 'v': 1})
++
++
++def test_daily_atr_from_store(db):
++    _seed(db, _day(46000, 46050, 46200), 46200, T1500 + 30)
++    with db.tx() as c:
++        assert daily_atr(db, c, SYM) == pytest.approx(600.0)
++
++
++def test_scan_submits_once_per_day(db, cfg):
++    now = T1500 + 30
++    _seed(db, _day(46000, 46050, 46200), 46200, now)
++    with db.tx() as c:
++        r = scan(db, c, cfg, now)
++        assert r['ran'] and r['fired'] == 1, r
++        pos = db.get(c, 'position:ict:close_momentum:%s:t1' % SYM, {})
++        assert pos.get('status') == 'open' and pos.get('side') == 'long'
++        assert pos['stop'] == pytest.approx(46200 - 150)
++        # Second pass inside the window: nothing new.
++        r2 = scan(db, c, cfg, now + 60)
++        assert r2['ran'] and r2['fired'] == 0
++        assert len(db.recent(c, 'ict_close_momentum_signal', limit=10)) == 1
++
++
++def test_scan_disabled_and_outside_window(db, cfg):
++    _seed(db, _day(46000, 46050, 46200), 46200, T1500 + 30)
++    with db.tx() as c:
++        cfg.ict_close_momentum = False
++        assert scan(db, c, cfg, T1500 + 30)['reason'] == 'disabled'
++        cfg.ict_close_momentum = True
++        assert scan(db, c, cfg, T1500 - 600)['reason'] == 'outside_window'
++
++
++def test_scan_records_no_signal_day(db, cfg):
++    now = T1500 + 30
++    _seed(db, _day(46000, 46050, 45800), 45800, now)
++    with db.tx() as c:
++        r = scan(db, c, cfg, now)
++        assert r['fired'] == 0
++        seen = db.get(c, 'ict_close_momentum:fired:%s:2026-09-30' % SYM)
++        assert seen and seen.get('no_signal') is True
+diff --git a/tests/test_paper_only_carve_out.py b/tests/test_paper_only_carve_out.py
+index 05ff0ad..d634823 100644
+--- a/tests/test_paper_only_carve_out.py
++++ b/tests/test_paper_only_carve_out.py
+@@ -100,7 +100,8 @@ def get(db, key):
+ 
+ def test_paper_only_set_is_exact():
+     assert ict_paper.PAPER_ONLY_DETECTORS == {'golden_zone', 'rumers_box',
+-                                              'turtle_soup', 'aoi_fade'}
++                                              'turtle_soup', 'aoi_fade',
++                                              'close_momentum'}  # 2026-10-28 shadow
+ 
+ 
+ @pytest.mark.parametrize('detector,symbol', [
+-- 
+2.43.0
+

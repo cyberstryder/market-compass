@@ -138,3 +138,12 @@ decision — nothing implemented.**
 ## Task 006 addendum — Futures method search on data-foundation-v1
 
 **Status:** CLAUDE DELIVERED 2026-10-27 — `from-claude/2026-10-27-futures-method-search.md` + harness/results folder (commit `df56933`): ~15 families across MES/MNQ/MYM/MCL/MGC on the release data, desk fill rule, longs/shorts separate, placebo-gated; nothing clears chance. **Quill VERIFIED 2026-10-27** — see `from-quill/2026-10-27-futures-method-search-verification.md`. Bottom line CONFIRMED: sweep 1,936 rows with every family count/best-t exact; gate reproduces exactly (20 pass n≥50 + both-halves + t≥1.5; exactly 4 also ≥97.5th placebo pct); trend_pb 718 rows / 0 cells t≥2; vwap_side 7,076 rows / mean t 0.003 / max |t| 3.92; harness conventions match the Task 002 rule in code; independent raw-bar spot-check agrees (MES RTH-move SD $223.7 vs his ~$227, MNQ $515 vs $520). Corrections: neighbour "flips sign" refuted as worded (neighbours collapse, several stay positive); Gao "same sign on all five" refuted (MNQ f30→last45 gross −1.5; 4 of 5); "~6,000 cells" counting inconsistent with the 10,522 CSV rows dropped (conservative direction); VIX-regime and unconditional-drift table rows have no artifact — UNVERIFIABLE, owed or withdrawn; placebo ran only on 32 candidates (tod_drift excluded), so "4 of 1,936" should read "4 among 16 placebo-tested gate candidates". Holdout untouched in all artifacts. Claude's full-size / ≥5-micros sizing remark conflicts with Josh's standing rules (micros only, sizing waits, search paused) — NOT adopted, awaiting Josh. **Task 006 proper (A/B/C six-fix back-check verdicts) remains OPEN — still owed by Claude.**
+
+## Task 007 — Close Momentum detector (YM shadow)
+
+**Status:** CLAUDE DELIVERED 2026-10-28 — branch `close-momentum-shadow-2026-10-28` + `from-claude/2026-10-28-close-momentum-detector.{md,patch}`.
+**Opened:** 2026-10-28 by Josh ("come up with a strategy that can be automated"). **Decision it feeds:** whether to run the
+first-30→last-45 continuation on YM in shadow; nothing goes live without the adopted promotion gate.
+Basis: the only signal from the year search (Task 006 sibling) with cross-instrument sign stability — YM +$55/trade, t 3.2,
+both halves positive, DD −$1.1k; NQ negative (allowlist blocks it). Default-off, paper-only, allowlist {YM, MYM}.
+Quill: review the 5 stated conventions (bracket, 15:00 window, 2-contract qty, YM data coverage, gates), merge, enable shadow.
