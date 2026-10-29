@@ -276,6 +276,10 @@ ICT_SETUP_NAMES = {
     'yt-morning-drive': 'Morning-Drive Fade',
     'yt-icc': 'ICC',
     'yt-rumers-box': 'Rumers Box',
+    'survivor_s1_rvwap_fade': 'Survivor S1 · MNQ RTH-VWAP Fade (live)',
+    'survivor_s2_asia_low_fade': 'Survivor S2 · MCL Asia-Low Fade (live)',
+    'survivor_s3_london_mr60': 'Survivor S3 · MGC London MR60 (live)',
+    'survivor_s4_ny_mr60_fade': 'Survivor S4 · MGC NY MR60 Fade (live)',
 }
 FUTURES_EXIT_REASONS = {
     'stop': 'Stopped out',

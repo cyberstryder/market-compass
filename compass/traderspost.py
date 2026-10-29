@@ -226,6 +226,26 @@ def build_payload(cfg, trade):
     target = trade.get('target')
     qty = trade.get('qty', 1)
 
+    # Bracket-less entries (2026-10-28, Claude survivors S1/S3): the
+    # frozen configurations have NO stop/target — exits are engine-fired
+    # close signals (time exit via the position's flatten_at, plus the
+    # 15:45 CT flatten). The payload is a plain market entry. Keyed on
+    # the explicit no_bracket flag: existing trades never set it, so
+    # they stay on the bracketed path below, where a missing stop
+    # still fails closed.
+    if trade.get('no_bracket'):
+        if not entry or not qty or qty < 1:
+            return None
+        return {
+            'ticker': ticker,
+            'action': action,
+            'quantity': qty,
+            'price': entry,
+            'strategy': trade.get('detector', 'compass'),
+            'orderType': 'market',
+            'timeInForce': 'day',
+        }
+
     if not all([entry, stop]):
         return None
     if not qty or qty < 1:

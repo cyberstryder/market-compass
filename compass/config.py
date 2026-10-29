@@ -140,6 +140,11 @@ class Config:
     ict_trend_bias: bool = field(default_factory=lambda: env("ICT_TREND_BIAS_ENABLED","false")=="true")
     ict_trend_bias_sma_len: int = field(default_factory=lambda: int(env("ICT_TREND_BIAS_SMA_LEN","50")))
     ict_futures_paper: bool = field(default_factory=lambda: env("ICT_FUTURES_PAPER_ENABLED","true")=="true")
+    # Claude gauntlet survivors (2026-10-28, Josh's swap decision):
+    # compass/survivors.py detectors S1-S4. Default ON in code — the
+    # deploy is the enablement act; live sends additionally require the
+    # survivors:state tripwire to be un-tripped (see survivors.py).
+    survivor_enabled: bool = field(default_factory=lambda: env("SURVIVOR_DETECTORS_ENABLED","true")=="true")
     ict_paper_min_stop_atr: float = field(default_factory=lambda: float(env("ICT_PAPER_MIN_STOP_ATR","0.5")))
     ict_paper_cooldown_min: float = field(default_factory=lambda: float(env("ICT_PAPER_COOLDOWN_MIN","15")))
     ict_brake_shadow: bool = field(default_factory=lambda: env("ICT_BRAKE_SHADOW_ENABLED", "true") == "true")

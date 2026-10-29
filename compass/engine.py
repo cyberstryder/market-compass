@@ -312,7 +312,11 @@ class Engine:
             price=fill(q,p["side"],p["tick"],False)
             long=p["side"]=="long"
             trigger=(q['bid'] if long else q['ask']) if p.get('fill_version')==FILL_VERSION else price
-            stopped=trigger<=p["stop"] if long else trigger>=p["stop"]
+            # stop=None: bracket-less horizon trades (Claude survivors
+            # S1/S3, 2026-10-28) exit on their flatten_at only. Every
+            # pre-existing record carries a numeric stop, so the guard
+            # is inert for them.
+            stopped=(trigger<=p["stop"] if long else trigger>=p["stop"]) if p.get("stop") is not None else False
             # A position with no fixed target (target None) never
             # target-exits in this loop; it exits on its stop or the
             # session flatten. (The 2/2/1 trailer legs this comment used
@@ -331,7 +335,7 @@ class Engine:
                 if b["ts"]<=p["last_bar_checked"] or b["ts"]<p["entered_at"] or b["ts"]+60>now: continue
                 p["last_bar_checked"]=b["ts"]
                 payload=b["payload"]
-                stop_crossed=payload["l"]<=p["stop"] if long else payload["h"]>=p["stop"]
+                stop_crossed=(payload["l"]<=p["stop"] if long else payload["h"]>=p["stop"]) if p.get("stop") is not None else False
                 target_touched=(payload["h"]>=tgt if long else payload["l"]<=tgt) if tgt is not None else False
                 if stop_crossed:
                     # A bar touching both levels is ambiguous intrabar; the
@@ -1042,6 +1046,12 @@ class Engine:
             if self.cfg.ict_trend_bias:
                 from .trend_bias import scan as ict_trend_bias_scan
                 ict_summaries['trend_bias'] = _safe_scan('trend_bias', lambda: ict_trend_bias_scan(self.db,c,self.cfg,now))
+            # Claude gauntlet survivors (2026-10-28): S1-S4 live
+            # detectors in compass/survivors.py — own submit path,
+            # tripwire-gated TradersPost sends.
+            if getattr(self.cfg, 'survivor_enabled', False):
+                from .survivors import scan as survivor_scan
+                ict_summaries['survivors'] = _safe_scan('survivors', lambda: survivor_scan(self.db,c,self.cfg,now))
             self.ideas.tick(c,now)
             from .observation_recovery import tick as recovery_tick
             recovery_tick(self.db,c,self.clock() if self.clock else now)
@@ -1083,6 +1093,13 @@ class Engine:
         if _tb and _tb.get('ran'):
             self.db.health('trend_bias', 'running',
                            'ran, %d symbols' % (_tb.get('symbols', 0)))
+        _sv = ict_summaries.get('survivors')
+        if _sv and _sv.get('ran'):
+            self.db.health('survivors', 'running',
+                           'live=%s, %d signals, %d submitted, %d sent, %d stale skips' % (
+                               _sv.get('live'), _sv.get('signals', 0),
+                               _sv.get('submitted', 0), _sv.get('sent', 0),
+                               _sv.get('stale_skips', 0)))
         # Runner: trailing stops for ICT positions at 1R+ profit.
         # Lets winners run (overnight trends) instead of fixed 2R exits.
         # 2026-10-24 (audit-adoption deviation): the audit set deleted
