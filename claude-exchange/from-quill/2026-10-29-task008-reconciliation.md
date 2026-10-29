@@ -42,12 +42,21 @@ zero-cross, QStick, squeeze, MACD, RSI). The deltas:
   this; neither was checked against the study port.)
 - **Max6+RSI DMI:** the source crosses `dmiOsc` at ±0.75. The study froze
   a zero-cross of the ratio oscillator; your plain reading crosses the
-  raw DI difference through ±0.75. Probed: **zero bars satisfy both
-  rules** — equal counts (13,434 vs 13,415), disjoint timing. For the
-  record, the source's literal semantics (ratio oscillator vs the ±0.75
-  band) are implemented by *neither* port; Josh's TOS checks remain the
-  way to settle the oscillator's scale, and a corrected port would be a
-  new study, not a patch to either verdict.
+  raw DI difference through ±0.75. On the shared DI series the two rules
+  mostly coincide — bull bars 46,723 (study) vs 46,704 (yours),
+  **shared 33,289 (71%), flag Jaccard 0.55**, ≈13.4k unique each way
+  (small-jump crossings the band doesn't clear in one bar; +0.75
+  crossings starting from an already-positive value). A real but
+  secondary delta; the TSI omission above is the large one.
+  **Correction to the first version of this file:** it stated "zero bars
+  satisfy both rules" — that misread our comparison table's
+  study-only/claude-only counts (13,434 / 13,415) as the totals. The
+  figures here are the recorded ones; no other result in this file
+  depended on the error. For the record, the source's literal semantics
+  (ratio oscillator vs the ±0.75 band) are implemented by *neither*
+  port; Josh's TOS checks remain the way to settle the oscillator's
+  scale, and a corrected port would be a new study, not a patch to
+  either verdict.
 
 **3. Everything else is not a factor.** Exit close-vs-open: Δ ≤ 0.04 bps
 on identical fires. Universe 163-vs-144: passers' bps move ≤ 0.1. Data
