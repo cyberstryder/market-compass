@@ -37,6 +37,7 @@ STRATEGY_TAGS = {
     'rumers_box': 'yt-rumers-box',
     'aoi_fade': 'ict-aoi-fade',
     'trend_rider': 'ict-trend-rider',
+    'close_momentum': 'ict-close-momentum',
 }
 
 # detector -> config attr carrying its own enabled flag
@@ -50,6 +51,7 @@ DETECTOR_FLAGS = {
     'rumers_box': 'ict_rumers_box',
     'aoi_fade': 'ict_aoi_fade',
     'trend_rider': 'ict_trend_rider',
+    'close_momentum': 'ict_close_momentum',
 }
 
 # Mix/match (Josh 2026-10-14): per-detector symbol allowlist based on
@@ -116,6 +118,7 @@ DETECTOR_SYMBOL_ALLOWLIST = {
     'turtle_soup': {'MCL'},  # 2026-10-24 prune: proven core only (MYM out 2026-10-17)
     'golden_zone': {'MCL', 'MNQ'},  # 2026-10-24: watch status; MGC + eval roots out; NQ was tests-only, now a watch symbol per the plan
     'rumers_box': {'MYM'},  # Added 2026-10-24: only positive combo; MNQ blocked on stop geometry
+    'close_momentum': {'YM', 'MYM'},  # 2026-10-28: Claude year test; YM is the only full-size survivor, MYM = same signal at 1/10th. NQ/MNQ negative — never add.
     # Detectors not listed here have no symbol restriction (they're
     # either disabled or not in the futures mix).
 }
@@ -147,7 +150,7 @@ DETECTOR_SYMBOL_ALLOWLIST = {
 # not the detector's signal price, which is preserved on the record as
 # signal_price; the TradersPost payload is unchanged.
 PAPER_ONLY_DETECTORS = frozenset({'golden_zone', 'rumers_box', 'turtle_soup',
-                                  'aoi_fade'})
+                                  'aoi_fade', 'close_momentum'})
 
 def symbol_allowed(detector, symbol):
     """True if this detector is allowed to trade this symbol.

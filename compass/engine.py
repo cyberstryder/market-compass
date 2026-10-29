@@ -1010,6 +1010,9 @@ class Engine:
             if self.cfg.ict_aoi_fade and _should_run('aoi_fade'):
                 from .aoi_fade import scan as ict_aoi_fade_scan
                 ict_summaries['aoi_fade'] = _safe_scan('aoi_fade', lambda: ict_aoi_fade_scan(self.db,c,self.cfg,now))
+            if getattr(self.cfg, 'ict_close_momentum', False) and _should_run('close_momentum'):
+                from .close_momentum import scan as ict_close_momentum_scan
+                ict_summaries['close_momentum'] = _safe_scan('close_momentum', lambda: ict_close_momentum_scan(self.db,c,self.cfg,now))
             if getattr(self.cfg, 'ict_trend_rider', False):
                 from .trend_rider import scan as ict_trend_rider_scan
                 ict_summaries['trend_rider'] = _safe_scan('trend_rider', lambda: ict_trend_rider_scan(self.db,c,self.cfg,now))
@@ -1074,7 +1077,7 @@ class Engine:
         for _ict_name in ('session_liquidity','htf_levels','turtle_soup','smt_divergence',
                           'aoi_zones','aoi_fade','tier_a_b',
                           'golden_zone','bos_fvg','bos_gz_vwap',
-                          'rumers_box'):
+                          'rumers_box','close_momentum'):
             _s = ict_summaries.get(_ict_name)
             if _s and _s.get('ran'):
                 self.db.health('ict_' + _ict_name, 'running',

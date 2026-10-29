@@ -1992,6 +1992,12 @@ a{color:#888}</style></head><body>
         with db.tx() as c:
             return display(db,c,time.time())
 
+    @app.get('/api/ict-close-momentum')
+    def get_ict_close_momentum():
+        from .close_momentum import display
+        with db.tx() as c:
+            return display(db,c,time.time())
+
     @app.get('/api/ict-tier-a-b')
     def get_ict_tier_a_b():
         from .tier_a_b import display
@@ -2340,7 +2346,7 @@ a{color:#888}</style></head><body>
             'ict_continuation_signal':'Continuation',
             'ict_golden_zone_signal':'Golden Zone',
             'ict_session_liquidity_signal':'Session Liquidity',
-            'ict_turtle_soup_signal':'Turtle Soup',
+            'ict_turtle_soup_signal':'Turtle Soup','ict_close_momentum_signal':'Close Momentum',
             'ict_smt_signal':'SMT Divergence',
             'morning_drive_signal':'Morning Drive','icc_signal':'ICC',
             'rumers_box_signal':'Rumers Box',

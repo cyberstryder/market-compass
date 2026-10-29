@@ -118,6 +118,8 @@ class Config:
     ict_aoi_zones: bool = field(default_factory=lambda: env("ICT_AOI_ZONES_ENABLED","false")=="true")
     ict_aoi_fade: bool = field(default_factory=lambda: env("ICT_AOI_FADE_ENABLED","true")=="true")
     ict_trend_rider: bool = field(default_factory=lambda: env("ICT_TREND_RIDER_ENABLED","false")=="true")
+    ict_close_momentum: bool = field(default_factory=lambda: env("ICT_CLOSE_MOMENTUM_ENABLED","false")=="true")
+    ict_close_momentum_symbols: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("ICT_CLOSE_MOMENTUM_SYMBOLS","YM.c.0,MYM.c.0").split(",") if s.strip()))
     # Gap fade detector (futures): fade overnight gaps at RTH open
     gap_fade_enabled: bool = field(default_factory=lambda: env("GAP_FADE_ENABLED","false")=="true")
     gap_fade_min_pct: float = field(default_factory=lambda: float(env("GAP_FADE_MIN_PCT","0.005")))

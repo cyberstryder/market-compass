@@ -100,7 +100,8 @@ def get(db, key):
 
 def test_paper_only_set_is_exact():
     assert ict_paper.PAPER_ONLY_DETECTORS == {'golden_zone', 'rumers_box',
-                                              'turtle_soup', 'aoi_fade'}
+                                              'turtle_soup', 'aoi_fade',
+                                              'close_momentum'}  # 2026-10-28 shadow
 
 
 @pytest.mark.parametrize('detector,symbol', [
