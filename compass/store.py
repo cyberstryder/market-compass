@@ -144,6 +144,19 @@ spy_marks=Table('spy_plan_marks_v1',meta,
     Column('payload',JSON,nullable=False))
 Index('spy_plan_mark_path',spy_marks.c.study_id,spy_marks.c.at,spy_marks.c.id)
 
+# ICE shadow scorecard (2026-10-29): scored evidence rows only — one row
+# per detected fire of the two viable ICE variants, horizons resolved in
+# place. Dedicated table so retention is managed independently of the
+# events store (compass/ice_shadow.py).
+ice_shadow_fires=Table('ice_shadow_fires_v1',meta,
+    Column('id',String(64),primary_key=True),Column('variant',String(16),nullable=False),
+    Column('symbol',String(100),nullable=False),Column('timeframe',String(4),nullable=False),
+    Column('side',String(8),nullable=False),Column('fire_ts',Float,nullable=False),
+    Column('status',String(16),nullable=False),Column('created',Float,nullable=False),
+    Column('r60',Float),Column('payload',JSON,nullable=False))
+Index('ice_shadow_open',ice_shadow_fires.c.status,ice_shadow_fires.c.fire_ts)
+Index('ice_shadow_variant_ts',ice_shadow_fires.c.variant,ice_shadow_fires.c.fire_ts)
+
 def identity(*args):
     return hashlib.sha256(json.dumps(args,sort_keys=True,default=str).encode()).hexdigest()
 

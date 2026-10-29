@@ -56,6 +56,8 @@ class Engine:
         self.scanner=Scanner(db,cfg)
         self.study=SetupStudy(db,cfg,clock)
         self.ideas=OptionIdeas(db,cfg,clock)
+        from .ice_shadow import IceShadow
+        self.ice_shadow=IceShadow(db,cfg)
 
     specification=staticmethod(spec)
 
@@ -916,6 +918,26 @@ class Engine:
                 self.policy_logged=True
             self.study.tick(c,now)
             self.exits(c,now)
+        # ICE shadow scorecard (2026-10-29): its own fault domain — a
+        # failure here must never roll back the study/exits segment or
+        # starve the ICT pass. On any failure the in-memory detector
+        # state is dropped so it reloads from the persisted state (the
+        # rolled-back transaction never advanced it on disk).
+        try:
+            with self.db.tx() as c:
+                self._hold(c)
+                self.ice_shadow.tick(c,now)
+        except Engine.LeaseLost:
+            raise
+        except Exception as e:
+            logging.getLogger('uvicorn.error').error(f'ICE shadow tick failed: {e}')
+            self.ice_shadow.reset()
+            try:
+                with self.db.tx() as c:
+                    self.db.put(c, 'health:ice_shadow_error',
+                                {'error': str(e)[:300], 'at': now})
+            except Exception:
+                pass
         self._levels_pass(now)
         _summaries = {}
         try:
