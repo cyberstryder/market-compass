@@ -3,7 +3,7 @@
 
 Run on the VM where ALPACA keys are already set:
     APCA_API_KEY_ID=... APCA_API_SECRET_KEY=... python3 pull_stock_bars.py \
-        --watchlist watchlist.txt --out ./bars_1m --years 2
+        --watchlist Compass_Combined_Stock_Watchlist_2026-09-16.txt --out ./bars_1m --years 2
 
 Resumable: a symbol whose parquet already exists and ends within 2 days of --end is skipped.
 Output schema (per symbol parquet): ts (UTC, ns), open, high, low, close, volume, vwap, trades.
@@ -83,6 +83,8 @@ def main():
         if f.exists():
             last = pd.read_parquet(f, columns=["ts"])["ts"].max()
             if pd.Timestamp(end, tz="UTC") - last < pd.Timedelta(days=2):
+                ex = pd.read_parquet(f, columns=["ts"])
+                manifest.append({"symbol": s, "rows": len(ex), "first": str(ex.ts.min()), "last": str(ex.ts.max())})
                 print(f"[{i}/{len(syms)}] {s} up to date", flush=True); continue
         t0 = time.time()
         try:
