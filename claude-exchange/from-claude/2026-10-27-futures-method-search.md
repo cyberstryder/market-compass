@@ -68,3 +68,20 @@ That is also why the desk's 8-week studies kept producing PF 1.5–1.9 that evap
 `sweep.py`, `placebo_run.py`, `vwap_event.py`, `vwap_side.py`, `imom.py`, `trend_pb.py`; results
 `sweep_stop2.csv` (1,936 cells), `placebo.csv`, `vwap_event.csv`, `vwap_side.csv`, `imom.csv`, `trend_pb.csv`.
 Re-run: extract the release to `/home/claude/data/year1`, `python3 load.py && python3 sweep.py`.
+
+## Addendum 2026-10-28 — close momentum at full size (`lhm.py`, `fullsize.py`, `fullsize_results.txt`)
+
+Signal: at 15:00 CT, if sign(09:00 open − 08:30 open) == sign(15:00 open − 08:30 open) ≠ 0, enter that direction at
+market; exit at 15:45 flatten. No stop/target. One trade/day. Friction full-size = 2 ticks + $4.50; 5 micros = 5×(2 ticks + $3).
+
+| Contract | n | gross ticks | net/trade full | net/yr | t | H1 / H2 | maxDD | worst day | 5-micro net/trade |
+|---|---|---|---|---|---|---|---|---|---|
+| **YM** | 147 | 13.9 | **$55** | $8,084 | **3.21** | +5,346 / +2,737 | −$1,115 | −$674 | $14.7 |
+| CL | 142 | 8.6 | $61 | $8,661 | 2.09 | +11,269 / −2,608 | −$3,673 | −$1,104 | $17.7 |
+| ES | 149 | 3.7 | $17 | $2,492 | 1.25 | +3,403 / −911 | −$4,110 | −$1,480 | −$4.4 |
+| GC | 142 | 9.6 | $71 | $10,101 | 1.32 | +3,917 / +6,184 | −$9,199 | −$2,464 | $22.8 |
+| NQ | 160 | −13.4 | −$82 | −$13,070 | −0.61 | — | — | — | — |
+
+Only YM survives every check (both halves, 3/5 quarters, DD < 2 weeks of P&L, t > 3 on all 4 predictor variants).
+CL is one quarter (2026Q1 oil spike). NQ is negative at every variant — the Nasdaq last-45 reverses. Recommendation: shadow
+YM for one quarter against broker fills; promote under the adopted Tier-1 gate.
