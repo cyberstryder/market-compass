@@ -13,6 +13,7 @@ stays off. Built 2026-10-05 at Josh's direction: one end-of-day summary per
 type of trade instead of realtime alerts.
 """
 
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -328,6 +329,37 @@ def _survivors(db, c):
     return _section("survivors", "Claude survivors (live)", lines)
 
 
+def _ice_shadow(db, c, start):
+    """ICE shadow scorecard: forward-scored evidence for the two ICE
+    variants that passed the frozen stocks viability study (base +
+    Max6+RSI). Hypothetical underlying outcomes only — no trades."""
+    lines = []
+    try:
+        from .ice_shadow import summarize
+        summary = summarize(db, c, time.time(), start)
+    except Exception:
+        return _section("ice_shadow", "ICE shadow scorecard", lines)
+    names = {"base": "ICE base", "max6rsi": "ICE Max6+RSI"}
+    for variant in ("base", "max6rsi"):
+        v = summary["variants"].get(variant) or {}
+        if not v.get("fires_total"):
+            continue
+        h = v.get("h60") or {}
+        if h.get("n"):
+            stat = ("+60m: n=%d · mean %sR · win %.1f%% · median %sR"
+                    % (h["n"], "%+.3f" % h["mean_r"],
+                       100 * h["win_rate"], "%+.3f" % h["median_r"]))
+        else:
+            stat = "+60m: no scored outcomes yet"
+        lines.append("%s (shadow): %d fires today · %d to date · %s"
+                     % (names[variant], v["fires_today"],
+                        v["fires_total"], stat))
+    if lines:
+        lines.append("Shadow evidence only — hypothetical underlying "
+                     "outcomes; no trades, no premium.")
+    return _section("ice_shadow", "ICE shadow scorecard", lines)
+
+
 def assemble(db, c, now):
     date, start = _bounds(now)
     return {
@@ -337,6 +369,7 @@ def assemble(db, c, now):
             _smoothers(db, c, start),
             _futures(db, c, start),
             _survivors(db, c),
+            _ice_shadow(db, c, start),
             _flow_pulse(db, c, start),
             _spy_0dte(db, c, start, date),
         ],
