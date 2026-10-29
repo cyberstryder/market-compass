@@ -579,17 +579,29 @@ class SeriesState:
         rsi_fin = (fin(s['tsi']) and fin(s['dmi']) and fin(s['sq32'])
                    and fin(s['a48u']) and fin(s['a48d']) and fin(s['qs24'])
                    and fin(s['macd']) and fin(s['rsi']))
+        # Raw vote counts ride on the snapshot and onto every fire row
+        # (2026-10-29, Josh/Claude): with counts stored, the scorecard's
+        # accumulated evidence can later be re-cut by vote threshold
+        # (e.g. >= 4) and side without re-instrumenting the detector.
+        base_bull = tsi_b + dmi_b + sq20_b + a25_b + qs50_b
+        base_bear = tsi_s + dmi_s + sq20_s + a25_s + qs50_s
+        bull_rsi = tsi_b + dmi_b + sq32_b + a48_b + qs24_b + macd_b + rsi_b
+        bear_rsi = tsi_s + dmi_s + sq32_s + a48_s + qs24_s + macd_s + rsi_s
+        s['base_bull'] = int(base_bull)
+        s['base_bear'] = int(base_bear)
+        s['bull_rsi'] = int(bull_rsi)
+        s['bear_rsi'] = int(bear_rsi)
         fires = []
         if idx >= WARMUP:
             if base_fin:
-                if tsi_b + dmi_b + sq20_b + a25_b + qs50_b >= 3:
+                if base_bull >= 3:
                     fires.append(('base', 'long'))
-                if tsi_s + dmi_s + sq20_s + a25_s + qs50_s >= 3:
+                if base_bear >= 3:
                     fires.append(('base', 'short'))
             if rsi_fin:
-                if tsi_b + dmi_b + sq32_b + a48_b + qs24_b + macd_b + rsi_b >= 3:
+                if bull_rsi >= 3:
                     fires.append(('max6rsi', 'long'))
-                if tsi_s + dmi_s + sq32_s + a48_s + qs24_s + macd_s + rsi_s >= 3:
+                if bear_rsi >= 3:
                     fires.append(('max6rsi', 'short'))
         self.prev = {k: s[k] for k in self.KEYS}
         self.count += 1
@@ -636,6 +648,14 @@ def _session_close_ts(d):
     return datetime(d.year, d.month, d.day, 16, 0, tzinfo=ET).timestamp()
 
 
+def _variant_counts(snap, variant):
+    """The (bull, bear) raw vote counts of one variant from a feed
+    snapshot."""
+    if variant == 'base':
+        return snap['base_bull'], snap['base_bear']
+    return snap['bull_rsi'], snap['bear_rsi']
+
+
 class SymbolState:
     """Both timeframe series of one symbol + the in-progress 5M bucket
     + the store watermark (last bar timestamp examined, RTH or not)."""
@@ -650,7 +670,9 @@ class SymbolState:
 
     def feed_1m(self, ts, o, h, l, c, emit=True):
         """Feed one RTH 1-minute bar. Returns fire records:
-        (variant, timeframe, side, fire_ts, atr)."""
+        (variant, timeframe, side, fire_ts, atr, bull_votes,
+        bear_votes) — the counts are the firing variant's raw counts
+        on that bar."""
         out = []
         bts = ts - (ts % 300)
         b = self.bucket
@@ -666,7 +688,9 @@ class SymbolState:
         snap, fires = self.m1.feed(ts, o, h, l, c)
         if emit:
             for variant, side in fires:
-                out.append((variant, '1M', side, ts, snap['atr']))
+                bull, bear = _variant_counts(snap, variant)
+                out.append((variant, '1M', side, ts, snap['atr'],
+                            bull, bear))
         return out
 
     def _flush_bucket(self, emit=True):
@@ -677,8 +701,12 @@ class SymbolState:
         snap, fires = self.m5.feed(b['ts'], b['o'], b['h'], b['l'], b['c'])
         if not emit:
             return []
-        return [(variant, '5M', side, b['ts'], snap['atr'])
-                for variant, side in fires]
+        out = []
+        for variant, side in fires:
+            bull, bear = _variant_counts(snap, variant)
+            out.append((variant, '5M', side, b['ts'], snap['atr'],
+                        bull, bear))
+        return out
 
     def to_dict(self):
         return {'v': 1, 'm1': self.m1.to_dict(), 'm5': self.m5.to_dict(),
@@ -880,11 +908,13 @@ class IceShadow:
 
     def _record_fires(self, c, symbol, fires, now):
         rows = []
-        for variant, tf, side, fire_ts, atr in fires:
+        for variant, tf, side, fire_ts, atr, bull, bear in fires:
             fid = identity('ice_shadow', variant, symbol, tf, side, fire_ts)
             payload = {'version': VERSION, 'variant': variant,
                        'symbol': symbol, 'timeframe': tf, 'side': side,
-                       'fire_ts': fire_ts, 'atr': atr, 'entry': None,
+                       'fire_ts': fire_ts, 'atr': atr,
+                       'bull_votes': bull, 'bear_votes': bear,
+                       'entry': None,
                        'horizons': {str(h): {'status': 'pending'}
                                     for h in HORIZONS},
                        'created': now, 'resolved_at': None}
@@ -1063,4 +1093,18 @@ def status(db, c, cfg, now):
     out['basis'] = ('Shadow evidence only: hypothetical underlying '
                     'outcomes of ICE base / Max6+RSI fires; no trades, '
                     'no alerts, no premium.')
+    # Vote-count capture check (2026-10-29): the newest fire row's
+    # stored raw counts, or None when the newest row predates the
+    # vote-count build (rows are never backfilled).
+    latest = c.execute(
+        select(ice_shadow_fires.c.payload)
+        .order_by(ice_shadow_fires.c.created.desc(),
+                  ice_shadow_fires.c.fire_ts.desc()).limit(1)).first()
+    if latest is None:
+        out['latest_fire_votes'] = None
+    else:
+        p = _payload_dict(latest[0])
+        out['latest_fire_votes'] = {
+            'bull_votes': p.get('bull_votes'),
+            'bear_votes': p.get('bear_votes')}
     return out

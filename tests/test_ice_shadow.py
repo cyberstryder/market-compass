@@ -141,6 +141,23 @@ def test_warmup_gate():
     assert min(i for i, _v, _s in fires) >= 250
 
 
+# Study-harness vote counts (base bull/bear, max6rsi bull/bear) at
+# fixture indices — the counts stored on every fire row so the
+# accumulated evidence can be re-cut by threshold/side later.
+VOTE_COUNTS = {371: (1, 0, 3, 0), 612: (3, 0, 1, 1),
+               2178: (0, 2, 0, 3), 2599: (0, 0, 0, 2)}
+
+
+def test_vote_counts_match_study():
+    st = SeriesState()
+    for i, (o, h, low, c) in enumerate(lcg_bars(2600)):
+        snap, _fires = st.feed(i * 60, o, h, low, c)
+        if i in VOTE_COUNTS:
+            bb, bs, rb, rs = VOTE_COUNTS[i]
+            assert (snap['base_bull'], snap['base_bear']) == (bb, bs)
+            assert (snap['bull_rsi'], snap['bear_rsi']) == (rb, rs)
+
+
 # ---------------------------------------------------------------------
 # Scorer (study CtxStocks.score2 semantics).
 # ---------------------------------------------------------------------
@@ -266,6 +283,9 @@ def test_engine_seed_detect_resolve(tmp_path):
     assert first['status'] == 'done'
     assert first['r60'] == pytest.approx(-7.7608325143, abs=1e-9)
     p = first['payload']
+    # Raw vote counts stored on the row (study counts at this bar:
+    # max6rsi bull 0 / bear 3 — a threshold-3 short fire).
+    assert p['bull_votes'] == 0 and p['bear_votes'] == 3
     assert p['atr'] == pytest.approx(0.2668146854, abs=1e-9)
     assert p['entry']['price'] == bars[2179][0]
     assert p['horizons']['30']['r'] == pytest.approx(-1.118795555, abs=1e-9)
