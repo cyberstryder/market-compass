@@ -17,6 +17,16 @@ def decorate_health(items, workers, markets, now):
     result = []
     for item in items:
         h = {**item}
+        # Health rows come from many producers and not all of them write
+        # the full Store.health shape: the engine's *_error boundaries
+        # historically wrote bare {'error','at'} dicts with no
+        # name/status/detail. One such row persisted in state and 500'd
+        # every /api/state poll on h["name"]. Normalize defensively —
+        # a row missing any subset of those keys must decorate, never
+        # raise.
+        h["name"] = h.get("name") or ""
+        h["status"] = h.get("status") or "unknown"
+        h["detail"] = h.get("detail") or ""
         if h["name"] in {"option_chain", "tradermatrix"}:
             h["source_ts"] = None  # Per-symbol/row clocks are displayed separately from HTTP checks.
         h["source_asof"] = clock(h.get("source_ts"))

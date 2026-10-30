@@ -832,7 +832,9 @@ class Engine:
                 try:
                     with self.db.tx() as c:
                         self.db.put(c,'health:levels_error',
-                                    {'symbol':symbol,'error':str(e)[:300],'at':now})
+                                    {'name':'levels_error','status':'error',
+                                     'detail':str(e)[:300],'checked_at':now,
+                                     'symbol':symbol,'error':str(e)[:300],'at':now})
                 except Exception:
                     pass
 
@@ -989,7 +991,9 @@ class Engine:
             try:
                 with self.db.tx() as c:
                     self.db.put(c, 'health:ice_shadow_error',
-                                {'error': str(e)[:300], 'at': now})
+                                {'name': 'ice_shadow_error', 'status': 'error',
+                                 'detail': str(e)[:300], 'checked_at': now,
+                                 'error': str(e)[:300], 'at': now})
             except Exception:
                 pass
         self._levels_pass(now)
@@ -1005,7 +1009,9 @@ class Engine:
             try:
                 with self.db.tx() as c:
                     self.db.put(c, 'health:pre_ict_error',
-                                {'error': str(e)[:300], 'at': now})
+                                {'name': 'pre_ict_error', 'status': 'error',
+                                 'detail': str(e)[:300], 'checked_at': now,
+                                 'error': str(e)[:300], 'at': now})
             except Exception:
                 pass
         magnet_summary = _summaries.get('magnet_summary')
@@ -1051,7 +1057,9 @@ class Engine:
                         f'Detector {name} crashed: {e}\n{traceback.format_exc(limit=3)}')
                     try:
                         self.db.put(c, f'health:detector_{name}_error',
-                                    {'error': str(e)[:500], 'at': now})
+                                    {'name': f'detector_{name}_error', 'status': 'error',
+                                     'detail': str(e)[:300], 'checked_at': now,
+                                     'error': str(e)[:500], 'at': now})
                     except Exception:
                         pass
                     return None
