@@ -51,6 +51,7 @@ class Engine:
         self.db,self.cfg=db,cfg
         self.clock=clock
         self.owner=uuid.uuid4().hex
+        self._bar_cache={}
         self.policy_logged=False
         from .scanner import Scanner
         self.scanner=Scanner(db,cfg)
@@ -835,12 +836,47 @@ class Engine:
                 except Exception:
                     pass
 
+    def _bar_rows(self,c,symbol,now):
+        """Levels-pass bar window: rolling in-memory cache over db.recent.
+
+        Equivalence contract: returns exactly
+        dedup(db.recent(c,"bar",symbol,limit=8000,since=now-8*86400),now).
+        Events are append-only with monotonic ids, so a cached window
+        misses only in-window rows with id > the cached max id; merging
+        those, re-evicting to [now-8d, ...) and re-capping at the 8000
+        newest by (ts,id) reproduces the fresh-fetch set exactly. Any
+        doubt — increment hits its limit, cache older than an hour, any
+        exception — falls back to the full fetch. Faults raise into
+        _levels_symbol's transaction, so the per-symbol failure boundary
+        in _levels_pass contains them exactly like a database fault.
+        """
+        since=now-8*86400
+        ent=self._bar_cache.get(symbol)
+        if ent is not None and now-ent["built"]<=3600:
+            try:
+                inc=self.db.recent_bars_after(c,symbol,since,ent["max_id"],2000)
+                if len(inc)<2000:
+                    merged=[r for r in ent["rows"] if r["ts"]>=since]+inc
+                    merged.sort(key=lambda r:(r["ts"],r.get("id",0)),reverse=True)
+                    ent["rows"]=merged[:8000]
+                    if inc:
+                        ent["max_id"]=max(ent["max_id"],max(r["id"] for r in inc))
+                    return dedup(ent["rows"],now)
+            except Exception:
+                logging.getLogger('uvicorn.error').warning(
+                    f'Bar-window cache fault for {symbol}; full fetch')
+                self._bar_cache.pop(symbol,None)
+        rows=self.db.recent(c,"bar",symbol,limit=8000,since=since)
+        self._bar_cache[symbol]={"rows":list(rows),
+            "max_id":max((r.get("id",0) for r in rows),default=0),"built":now}
+        return dedup(rows,now)
+
     def _levels_symbol(self,symbol,now):
         with self.db.tx() as c:
             self._hold(c)
             latest=self.db.get(c,"latestbar:"+symbol)
             if latest is not None and latest<=self.db.get(c,"cursor:"+symbol,0): return
-            rows=dedup(self.db.recent(c,"bar",symbol,limit=8000,since=now-8*86400),now)
+            rows=self._bar_rows(c,symbol,now)
             if len(rows)<2: return
             bar=rows[-1]
             if bar["ts"]<=self.db.get(c,"cursor:"+symbol,0): return

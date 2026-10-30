@@ -378,6 +378,18 @@ class Store:
         if since is not None: q=q.where(events.c.ts>=since)
         return [dict(r) for r in c.execute(q.order_by(events.c.ts.desc(),events.c.id.desc()).limit(limit)).mappings()]
 
+    def recent_bars_after(self,c,symbol,since,after_id,limit):
+        """Bar rows with ts >= since and id > after_id, newest first.
+
+        Companion to recent() for the engine's bar-window cache: events
+        are append-only with monotonic ids, so the rows a cached window
+        is missing are exactly the in-window rows with a larger id.
+        """
+        q=(select(events).where(events.c.kind=="bar",events.c.symbol==symbol,
+            events.c.ts>=since,events.c.id>after_id)
+            .order_by(events.c.ts.desc(),events.c.id.desc()).limit(limit))
+        return [dict(r) for r in c.execute(q).mappings()]
+
     def lease(self,c,name,owner,seconds=30):
         now=time.time()
         c.execute(self.insert(leases).values(key=name,owner=owner,until=now+seconds)
