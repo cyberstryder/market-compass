@@ -76,6 +76,18 @@ day_board_push_outbox=Table('day_board_push_outbox_v1',meta,
     Column('created',Float,nullable=False),Column('payload',JSON,nullable=False),
     Column('delivery',JSON,nullable=False))
 Index('day_board_push_pending',day_board_push_outbox.c.status,day_board_push_outbox.c.created)
+# Unified push outbox (code-health bundle 3, 2026-10-30): one table for
+# all five push channels, behind Config.push_outbox_unified (default
+# off). Producers write here instead of their per-channel table when the
+# flag is on; compass/push_outbox.py drains by dispatching to each
+# channel's own deliver_one. Row ids keep their per-channel identity()
+# prefixes, so the shared primary key cannot collide across channels.
+push_outbox=Table('push_outbox_v1',meta,
+    Column('id',String(64),primary_key=True),Column('channel',String(40),nullable=False),
+    Column('status',String(24),nullable=False),Column('created',Float,nullable=False),
+    Column('payload',JSON,nullable=False),Column('delivery',JSON,nullable=False))
+Index('push_outbox_pending',push_outbox.c.status,push_outbox.c.created)
+Index('push_outbox_channel_pending',push_outbox.c.channel,push_outbox.c.status,push_outbox.c.created)
 smoothers_daily=Table('smoothers_daily_comparison_v1',meta,
     Column('id',String(64),primary_key=True),Column('day',String(10),nullable=False),
     Column('family',String(32),nullable=False),Column('symbol',String(16),nullable=False),

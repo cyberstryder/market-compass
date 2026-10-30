@@ -342,7 +342,7 @@ import logging
 import re
 import time as _time
 from sqlalchemy import select as _select
-from .store import gap_push_outbox as _outbox, identity as _identity
+from .store import gap_push_outbox as _outbox, identity as _identity, push_outbox as _push_outbox
 
 _GAP_WEBHOOK_RE = r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+'
 _GAP_MAX_ATTEMPTS = 10
@@ -363,9 +363,15 @@ def _maybe_queue_push(db, c, cfg, symbol, today, now, state):
                'pillars': {k: v.get('status') for k, v in
                            (state.get('pillars') or {}).items()},
                'at': now}
-    c.execute(db.insert(_outbox).values(
-        id=row_id, status='pending', created=now, payload=payload,
-        delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
+    if getattr(cfg, 'push_outbox_unified', False):
+        c.execute(db.insert(_push_outbox).values(
+            id=row_id, channel='gap', status='pending', created=now,
+            payload=payload, delivery={'attempts': 0})
+            .on_conflict_do_nothing(index_elements=['id']))
+    else:
+        c.execute(db.insert(_outbox).values(
+            id=row_id, status='pending', created=now, payload=payload,
+            delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
     return True
 
 
@@ -401,15 +407,24 @@ def format_message(payload):
             'allowed_mentions': {'parse': []}}
 
 
-def deliver_one(db, client, url, now=None, max_attempts=_GAP_MAX_ATTEMPTS):
-    """Attempt one pending row. Returns True if a row was attempted."""
+def deliver_one(db, client, url, now=None, max_attempts=_GAP_MAX_ATTEMPTS,
+                table=None, channel=None):
+    """Attempt one pending row. Returns True if a row was attempted.
+
+    table/channel (bundle 3): unified-drainer mode reads/updates
+    push_outbox rows for `channel`; delivery logic unchanged (incl.
+    this channel's header-based 429 backoff and no-wait POST).
+    """
+    box = table if table is not None else _outbox
     if not re.fullmatch(_GAP_WEBHOOK_RE, url or ''):
         return False
     now = _time.time() if now is None else now
     with db.tx() as c:
-        candidates = c.execute(_select(_outbox)
-            .where(_outbox.c.status.in_(['pending', 'sending']))
-            .order_by(_outbox.c.created).limit(20)).mappings().all()
+        q = (_select(box).where(box.c.status.in_(['pending', 'sending']))
+             .order_by(box.c.created).limit(20))
+        if channel is not None:
+            q = q.where(box.c.channel == channel)
+        candidates = c.execute(q).mappings().all()
         job = None
         for row in candidates:
             d = dict(row['delivery'])
@@ -421,7 +436,7 @@ def deliver_one(db, client, url, now=None, max_attempts=_GAP_MAX_ATTEMPTS):
             return False
         d = dict(job['delivery'])
         d.update(attempts=d.get('attempts', 0) + 1, lease_until=now + 120)
-        c.execute(_outbox.update().where(_outbox.c.id == job['id'])
+        c.execute(box.update().where(box.c.id == job['id'])
                   .values(status='sending', delivery=d))
     message_id, error, status = None, None, 'pending'
     try:
@@ -452,7 +467,7 @@ def deliver_one(db, client, url, now=None, max_attempts=_GAP_MAX_ATTEMPTS):
     with db.tx() as c:
         d = dict(job['delivery'])
         d.update(error=error, message_id=message_id, finished_at=now, lease_until=0)
-        c.execute(_outbox.update().where(_outbox.c.id == job['id'])
+        c.execute(box.update().where(box.c.id == job['id'])
                   .values(status=status, delivery=d))
     return True
 

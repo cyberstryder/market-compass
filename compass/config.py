@@ -84,6 +84,11 @@ class Config:
     flow_pulse_webhook: str = field(default_factory=lambda: env("DISCORD_FLOW_PULSE_WEBHOOK_URL",""))
     ict_push_enabled: bool = field(default_factory=lambda: env("ICT_PUSH_ENABLED","false")=="true")
     ict_push_webhook: str = field(default_factory=lambda: env("DISCORD_ICT_WEBHOOK_URL",""))
+    # Bundle 3 (2026-10-30): route all five push channels through the
+    # unified push_outbox_v1 table + single drainer. Default OFF; the
+    # legacy per-channel tables/loops are the production path until a
+    # supervised flip (see compass/push_outbox.py).
+    push_outbox_unified: bool = field(default_factory=lambda: env("PUSH_OUTBOX_UNIFIED","false")=="true")
     # CrossTrade webhook bridge for live futures automation (2026-10-13)
     # Disabled by default; enable with CROSSTRADE_ENABLED=true
     crosstrade_enabled: bool = field(default_factory=lambda: env("CROSSTRADE_ENABLED","false")=="true")

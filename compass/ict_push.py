@@ -13,7 +13,7 @@ import time
 import httpx
 from sqlalchemy import select
 
-from .store import identity, ict_push_outbox
+from .store import identity, ict_push_outbox, push_outbox
 
 outbox = ict_push_outbox
 MAX_ATTEMPTS = 10
@@ -62,9 +62,15 @@ def maybe_queue(db, c, cfg, trade):
         'time_str': time_str,
         'at': time.time(),
     }
-    c.execute(db.insert(outbox).values(
-        id=row_id, status='pending', created=time.time(), payload=payload,
-        delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
+    if getattr(cfg, 'push_outbox_unified', False):
+        c.execute(db.insert(push_outbox).values(
+            id=row_id, channel='ict', status='pending', created=time.time(),
+            payload=payload, delivery={'attempts': 0})
+            .on_conflict_do_nothing(index_elements=['id']))
+    else:
+        c.execute(db.insert(outbox).values(
+            id=row_id, status='pending', created=time.time(), payload=payload,
+            delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
     return row_id
 
 
@@ -140,9 +146,15 @@ def maybe_queue_exit(db, c, cfg, trade):
         'time_str': time_str,
         'at': time.time(),
     }
-    c.execute(db.insert(outbox).values(
-        id=row_id, status='pending', created=time.time(), payload=payload,
-        delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
+    if getattr(cfg, 'push_outbox_unified', False):
+        c.execute(db.insert(push_outbox).values(
+            id=row_id, channel='ict', status='pending', created=time.time(),
+            payload=payload, delivery={'attempts': 0})
+            .on_conflict_do_nothing(index_elements=['id']))
+    else:
+        c.execute(db.insert(outbox).values(
+            id=row_id, status='pending', created=time.time(), payload=payload,
+            delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
     return row_id
 
 
@@ -171,21 +183,30 @@ def format_exit_message(payload):
             'allowed_mentions': {'parse': []}}
 
 
-def deliver_one(db, client, url, now=None, max_attempts=MAX_ATTEMPTS):
-    """Attempt one pending row. Returns True if a row was attempted."""
+def deliver_one(db, client, url, now=None, max_attempts=MAX_ATTEMPTS,
+                table=None, channel=None):
+    """Attempt one pending row. Returns True if a row was attempted.
+
+    table/channel (bundle 3): unified-drainer mode reads/updates
+    push_outbox rows for `channel`; delivery logic unchanged. Note this
+    module's selection intentionally stays pending-only with no lease
+    or next_attempt check, exactly as the legacy path behaves.
+    """
+    box = table if table is not None else outbox
     if not re.fullmatch(WEBHOOK_RE, url or ''):
         return False
     now = time.time() if now is None else now
     with db.tx() as c:
-        row = c.execute(
-            select(outbox).where(outbox.c.status == 'pending')
-            .order_by(outbox.c.created).limit(1)
-        ).mappings().first()
+        q = (select(box).where(box.c.status == 'pending')
+             .order_by(box.c.created).limit(1))
+        if channel is not None:
+            q = q.where(box.c.channel == channel)
+        row = c.execute(q).mappings().first()
         if not row:
             return False
         d = dict(row['delivery'])
         d['attempts'] = d.get('attempts', 0) + 1
-        c.execute(outbox.update().where(outbox.c.id == row['id']).values(
+        c.execute(box.update().where(box.c.id == row['id']).values(
             status='sending', delivery=d))
         job = dict(row, delivery=d)
     
@@ -213,7 +234,7 @@ def deliver_one(db, client, url, now=None, max_attempts=MAX_ATTEMPTS):
         status = 'failed'
     
     with db.tx() as c:
-        c.execute(outbox.update().where(outbox.c.id == job['id']).values(
+        c.execute(box.update().where(box.c.id == job['id']).values(
             status=status, delivery=job['delivery']))
     return True
 

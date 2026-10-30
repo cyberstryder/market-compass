@@ -161,21 +161,29 @@ def create_app(cfg=None):
             spawn(lambda: run_native_reports(db,cfg),'run_native_reports')
             from .native_outbox import run as run_native_outbox
             spawn(lambda: run_native_outbox(db,cfg),'run_native_outbox')
-            if cfg.magnet_push_enabled:
-                from .magnet_push import run as run_magnet_push
-                spawn(lambda: run_magnet_push(db,cfg),'run_magnet_push')
-            if cfg.flow_pulse_push_enabled:
-                from .flow_pulse import run as run_flow_pulse_push
-                spawn(lambda: run_flow_pulse_push(db,cfg),'run_flow_pulse_push')
-            if cfg.ict_push_enabled:
-                from .ict_push import run as run_ict_push
-                spawn(lambda: run_ict_push(db,cfg),'run_ict_push')
-            if cfg.gap_push_enabled:
-                from .gap_continuation import run as run_gap_push
-                spawn(lambda: run_gap_push(db,cfg),'run_gap_push')
-            if cfg.day_board_push_enabled:
-                from .day_trading_board import run as run_day_board_push
-                spawn(lambda: run_day_board_push(db,cfg),'run_day_board_push')
+            if cfg.push_outbox_unified:
+                # Bundle 3 (2026-10-30): one drainer for all five push
+                # channels (producers write push_outbox_v1 when the
+                # flag is on). Default off — the legacy loops below are
+                # the production path until a supervised flip.
+                from .push_outbox import run as run_push_outbox
+                spawn(lambda: run_push_outbox(db,cfg),'run_push_outbox')
+            else:
+                if cfg.magnet_push_enabled:
+                    from .magnet_push import run as run_magnet_push
+                    spawn(lambda: run_magnet_push(db,cfg),'run_magnet_push')
+                if cfg.flow_pulse_push_enabled:
+                    from .flow_pulse import run as run_flow_pulse_push
+                    spawn(lambda: run_flow_pulse_push(db,cfg),'run_flow_pulse_push')
+                if cfg.ict_push_enabled:
+                    from .ict_push import run as run_ict_push
+                    spawn(lambda: run_ict_push(db,cfg),'run_ict_push')
+                if cfg.gap_push_enabled:
+                    from .gap_continuation import run as run_gap_push
+                    spawn(lambda: run_gap_push(db,cfg),'run_gap_push')
+                if cfg.day_board_push_enabled:
+                    from .day_trading_board import run as run_day_board_push
+                    spawn(lambda: run_day_board_push(db,cfg),'run_day_board_push')
             if cfg.morning_enabled and cfg.morning_token:
                 spawn(lambda: run_native_morning(db,cfg,"intake"),'run_native_morning')
                 spawn(lambda: run_native_morning(db,cfg,"samples"),'run_native_morning')

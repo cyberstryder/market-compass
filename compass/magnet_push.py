@@ -13,7 +13,7 @@ import time
 import httpx
 from sqlalchemy import select, func
 
-from .store import identity, magnet_push_outbox
+from .store import identity, magnet_push_outbox, push_outbox
 
 outbox = magnet_push_outbox
 MAX_ATTEMPTS = 10
@@ -49,9 +49,15 @@ def maybe_queue(db, c, cfg, symbol, row, prev_signal, session_day, now):
         'magnet_score': row.get('magnet_score'), 'tests': row.get('tests'),
         'previous_signal': prev_signal, 'at': now,
     }
-    c.execute(db.insert(outbox).values(
-        id=row_id, status='pending', created=now, payload=payload,
-        delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
+    if getattr(cfg, 'push_outbox_unified', False):
+        c.execute(db.insert(push_outbox).values(
+            id=row_id, channel='magnet', status='pending', created=now,
+            payload=payload, delivery={'attempts': 0})
+            .on_conflict_do_nothing(index_elements=['id']))
+    else:
+        c.execute(db.insert(outbox).values(
+            id=row_id, status='pending', created=now, payload=payload,
+            delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
     return row_id
 
 
@@ -75,15 +81,24 @@ def format_message(payload):
             'allowed_mentions': {'parse': []}}
 
 
-def deliver_one(db, client, url, now=None, max_attempts=MAX_ATTEMPTS):
-    """Attempt one pending row. Returns True if a row was attempted."""
+def deliver_one(db, client, url, now=None, max_attempts=MAX_ATTEMPTS,
+                table=None, channel=None):
+    """Attempt one pending row. Returns True if a row was attempted.
+
+    table/channel (bundle 3): when the unified drainer calls in, read
+    and update push_outbox rows for `channel` instead of this module's
+    own table. The delivery logic itself is unchanged either way.
+    """
+    box = table if table is not None else outbox
     if not re.fullmatch(WEBHOOK_RE, url or ''):
         return False
     now = time.time() if now is None else now
     with db.tx() as c:
-        candidates = c.execute(select(outbox)
-            .where(outbox.c.status.in_(['pending', 'sending']))
-            .order_by(outbox.c.created).limit(20)).mappings().all()
+        q = (select(box).where(box.c.status.in_(['pending', 'sending']))
+             .order_by(box.c.created).limit(20))
+        if channel is not None:
+            q = q.where(box.c.channel == channel)
+        candidates = c.execute(q).mappings().all()
         job = None
         for row in candidates:
             d = dict(row['delivery'])
@@ -92,7 +107,7 @@ def deliver_one(db, client, url, now=None, max_attempts=MAX_ATTEMPTS):
             if d.get('next_attempt', 0) > now:
                 continue
             d.update(attempts=d.get('attempts', 0) + 1, lease_until=now + 30)
-            c.execute(outbox.update().where(outbox.c.id == row['id'])
+            c.execute(box.update().where(box.c.id == row['id'])
                       .values(status='sending', delivery=d))
             job = dict(row, delivery=d)
             break
@@ -130,7 +145,7 @@ def deliver_one(db, client, url, now=None, max_attempts=MAX_ATTEMPTS):
     with db.tx() as c:
         d = dict(job['delivery'])
         d.update(error=error, message_id=message_id, finished_at=now, lease_until=0)
-        c.execute(outbox.update().where(outbox.c.id == job['id'])
+        c.execute(box.update().where(box.c.id == job['id'])
                   .values(status=status, delivery=d))
     return True
 
