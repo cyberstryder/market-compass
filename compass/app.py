@@ -71,6 +71,25 @@ CRON_TOKEN_PATHS = {
 # Kept for callers/tests that import the old name.
 CRON_TOKEN_ENDPOINTS = {(m, p) for p in CRON_TOKEN_PATHS for m in ("GET", "POST")}
 
+def _bars_fallback_stmt(dialect_name):
+    """Events range-scan statement for /api/bars' alias fallback.
+
+    Codepoint bounds on Postgres: under a glibc/ICU database
+    collation '\\uffff' sorts below ordinary letters, so
+    database-order bounds find no "<alias>@<iid>" keys at all (the
+    Store._key() lesson, dd22055; reproduced on a glibc-collated
+    PG 18 cluster, 2026-10-30). SQLite's BINARY collation already
+    is codepoint order, so it keeps the plain form.
+    """
+    if dialect_name == "postgresql":
+        return ("SELECT symbol FROM events WHERE kind='bar' "
+                "AND symbol COLLATE \"C\" >= :lo "
+                "AND symbol COLLATE \"C\" < :hi "
+                "AND ts >= :since ORDER BY ts DESC LIMIT 1")
+    return ("SELECT symbol FROM events WHERE kind='bar' "
+            "AND symbol >= :lo AND symbol < :hi "
+            "AND ts >= :since ORDER BY ts DESC LIMIT 1")
+
 def create_app(cfg=None):
     cfg=cfg or Config()
     db=Store(cfg.db)
@@ -2360,9 +2379,7 @@ a{color:#888}</style></head><body>
                 if not rows:
                     from sqlalchemy import text as sql_text
                     found=c.execute(sql_text(
-                        "SELECT symbol FROM events WHERE kind='bar' AND symbol >= :lo "
-                        "AND symbol < :hi AND ts >= :since "
-                        "ORDER BY ts DESC LIMIT 1"),
+                        _bars_fallback_stmt(c.dialect.name)),
                         {"lo":symbol+"@","hi":symbol+"@\uffff",
                          "since":time.time()-14*86400}).scalar()
                     if found:

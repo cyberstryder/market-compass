@@ -642,9 +642,29 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
 # ---------------------------------------------------------------------
 # Seeding (one-time ATR warm-up from the bar-events store).
 # ---------------------------------------------------------------------
-_SEED_SQL = sql_text(
+_SEED_SQL = (
     "SELECT symbol, ts, payload FROM events WHERE kind='bar' "
     "AND symbol >= :lo AND symbol < :hi AND ts >= :tlo ORDER BY ts")
+_SEED_SQL_PG = (
+    "SELECT symbol, ts, payload FROM events WHERE kind='bar' "
+    "AND symbol COLLATE \"C\" >= :lo AND symbol COLLATE \"C\" < :hi "
+    "AND ts >= :tlo ORDER BY ts")
+
+
+def _seed_stmt(c):
+    """Seed range scan with codepoint (prefix) semantics on Postgres.
+
+    Prefix membership IS codepoint semantics, but under a glibc/ICU
+    database collation (Railway, CI's postgres service) '\\uffff'
+    collates below ordinary letters, so symbol < root+'\\uffff' in
+    database order excludes every dated-contract key and the seed
+    silently installs 0 sessions (reproduced on a glibc-collated
+    PG 18 cluster, 2026-10-30). Postgres therefore compares with
+    COLLATE "C" — the Store._key() treatment from bundle 1 (dd22055);
+    SQLite's default BINARY collation already is codepoint order.
+    """
+    return sql_text(_SEED_SQL_PG if c.dialect.name == "postgresql"
+                    else _SEED_SQL)
 
 
 def _payload(row):
@@ -664,8 +684,8 @@ def seed_history(db, c, feed, root, now):
     partial (holidays/outages) and skipped, like the dataset's degraded
     handling. Returns the number of sessions installed."""
     lo_ts = now - 26 * 86400
-    rows = c.execute(_SEED_SQL, {'lo': root, 'hi': root + '\uffff',
-                                 'tlo': lo_ts})
+    rows = c.execute(_seed_stmt(c), {'lo': root, 'hi': root + '\uffff',
+                                     'tlo': lo_ts})
     sessions = {}
     for row in rows:
         m = dict(row._mapping) if hasattr(row, '_mapping') else dict(row)
