@@ -67,9 +67,49 @@ CRON_TOKEN_PATHS = {
     "/api/admin/backtest-futures",
     "/api/admin/backtest-scalp",
     "/api/admin/chain-eod-snapshot",
+    "/api/admin/db-maintenance",
+    "/api/admin/db-maintenance-log",
 }
 # Kept for callers/tests that import the old name.
 CRON_TOKEN_ENDPOINTS = {(m, p) for p in CRON_TOKEN_PATHS for m in ("GET", "POST")}
+
+def _maintenance_connect_kwargs(url):
+    """psycopg connect kwargs for the db-maintenance job's raw connection.
+
+    Derived from the app's own SQLAlchemy engine URL — the credential
+    source the whole process provably connects with — instead of
+    re-reading DATABASE_URL and hand-editing its scheme string. The
+    endpoint's first version passed str(db.engine.url), whose rendering
+    MASKS the password ('***'), and got 'password authentication failed'
+    for its trouble (Oct 12, cce5a06); the Oct 13 fix re-parsed the env
+    string a second way instead. Accessing the parsed URL's attributes
+    returns the real, percent-decoded components, so the raw connection
+    authenticates with exactly what the engine uses.
+    """
+    if not (url.drivername or "").startswith("postgres"):
+        raise ValueError("db maintenance requires a PostgreSQL DATABASE_URL")
+    kwargs = {"host": url.host, "port": url.port, "user": url.username,
+              "password": url.password, "dbname": url.database}
+    return {k: v for k, v in kwargs.items() if v is not None}
+
+def _maintenance_run_fresh(running, started_at, heartbeat, now, stale_after=900):
+    """True only while a maintenance thread is provably alive.
+
+    The job's running flag lives in the state table and is cleared only
+    by the worker thread's finally block; a redeploy that kills the
+    thread mid-VACUUM/mid-index orphans it (2026-10-30: the 13:24Z run
+    died with that morning's deploys and reported running:true for the
+    rest of the day, blocking every re-trigger). The thread heartbeats
+    while it works, so a flag whose heartbeat (or, before the first
+    heartbeat lands, whose start) is older than stale_after is dead.
+    Mirrors the archive trigger's 2026-10-22 stale-flag guard.
+    """
+    if not running:
+        return False
+    for ts in (heartbeat, started_at):
+        if isinstance(ts, (int, float)) and now - ts < stale_after:
+            return True
+    return False
 
 def _bars_fallback_stmt(dialect_name):
     """Events range-scan statement for /api/bars' alias fallback.
@@ -289,7 +329,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -1249,7 +1289,7 @@ a{color:#888}</style></head><body>
 
     @app.post('/api/admin/db-maintenance')
     def db_maintenance():
-        """Password-gated DB maintenance: VACUUM ANALYZE + DESC index on events.
+        """Cron-token-gated DB maintenance: VACUUM ANALYZE + DESC index on events.
 
         Safe operations only:
         - VACUUM (ANALYZE) events: reclaims dead rows, non-blocking, loses no data
@@ -1257,16 +1297,27 @@ a{color:#888}</style></head><body>
           ORDER BY ts DESC query pattern. Skipped if index already exists.
 
         Runs in background thread. Check /api/admin/db-maintenance-log for progress.
-        NOT in the public list, so requires dashboard access password.
+        Token-gated like the other admin cron endpoints (CRON_TOKEN_PATHS),
+        so it can be triggered and monitored without a console session.
         """
         import threading
         import time
 
         with db.tx() as c:
             running = db.get(c, 'db:maintenance:running', False)
-            if running:
-                return {'ok': False, 'error': 'DB maintenance already running'}
+            started_at = db.get(c, 'db:maintenance:started_at', None)
+            heartbeat = db.get(c, 'db:maintenance:heartbeat', None)
+            now = time.time()
+            if _maintenance_run_fresh(running, started_at, heartbeat, now):
+                return {'ok': False, 'error': 'DB maintenance already running',
+                        'started_at': started_at}
+            # A flag left by a thread a redeploy killed is dead, not
+            # running: fall through and start fresh (its stale log is
+            # replaced below).
             db.put(c, 'db:maintenance:running', True)
+            db.put(c, 'db:maintenance:started_at', now)
+            db.put(c, 'db:maintenance:heartbeat', now)
+            db.put(c, 'db:maintenance:last_error', None)
             db.put(c, 'db:maintenance:log', [f"{time.strftime('%Y-%m-%d %H:%M:%S')}: Started via API"])
 
         def _run():
@@ -1277,26 +1328,39 @@ a{color:#888}</style></head><body>
                 try:
                     with db.tx() as c2:
                         db.put(c2, 'db:maintenance:log', log[-20:])
+                        db.put(c2, 'db:maintenance:heartbeat', time.time())
                 except:
                     pass
+
+            # VACUUM and CREATE INDEX CONCURRENTLY run silently for
+            # tens of minutes; heartbeat every 60s so the running flag
+            # is provably alive (see _maintenance_run_fresh). Without
+            # it, a thread killed by a redeploy leaves a flag that
+            # reports running:true forever.
+            hb_stop = threading.Event()
+            def _heartbeat():
+                while not hb_stop.wait(60):
+                    try:
+                        with db.tx() as c2:
+                            db.put(c2, 'db:maintenance:heartbeat', time.time())
+                    except:
+                        pass
+            threading.Thread(target=_heartbeat, daemon=True).start()
 
             try:
                 log_msg("Background thread started")
                 # Use a raw connection for VACUUM (can't run in transaction block)
-                # and CREATE INDEX CONCURRENTLY (also can't be in transaction)
-                import psycopg, os
-                # Use raw DATABASE_URL (not the SQLAlchemy-parsed engine URL,
-                # which can mangle passwords with special chars).
-                # Convert postgres:// -> postgresql:// for psycopg.
-                raw_url = os.environ.get('DATABASE_URL', '')
-                engine_url = raw_url.replace('postgres://', 'postgresql://', 1)
-                engine_url = engine_url.replace('postgresql+psycopg://', 'postgresql://', 1)
-                engine_url = engine_url.replace('postgresql+psycopg2://', 'postgresql://', 1)
+                # and CREATE INDEX CONCURRENTLY (also can't be in transaction).
+                # Credentials come from the app's own parsed engine URL —
+                # the source this process already connects with — not a
+                # re-read, scheme-edited copy of the env string.
+                import psycopg
                 log_msg(f"Connecting to DB")
 
                 # VACUUM cannot run inside a transaction block, so we need
                 # autocommit mode
-                conn = psycopg.connect(engine_url, autocommit=True)
+                conn = psycopg.connect(autocommit=True,
+                                       **_maintenance_connect_kwargs(db.engine.url))
                 try:
                     with conn.cursor() as cur:
                         log_msg("Running VACUUM (ANALYZE) events...")
@@ -1354,6 +1418,7 @@ a{color:#888}</style></head><body>
                 except:
                     pass
             finally:
+                hb_stop.set()
                 log_msg("Thread finishing, clearing running flag")
                 try:
                     with db.tx() as c2:
@@ -1366,14 +1431,26 @@ a{color:#888}</style></head><body>
 
     @app.get('/api/admin/db-maintenance-log')
     def get_db_maintenance_log():
-        """Password-gated endpoint to see DB maintenance progress."""
+        """Cron-token-gated endpoint to see DB maintenance progress.
+
+        `running` is the EFFECTIVE state: the stored flag counts only
+        while the worker's heartbeat is fresh, so a thread a redeploy
+        killed stops reporting running:true (2026-10-30 fossil) —
+        `running_flag` keeps the raw stored value for diagnosis.
+        """
         try:
             with db.tx() as c:
                 log = db.get(c, 'db:maintenance:log', [])
                 running = db.get(c, 'db:maintenance:running', False)
+                started_at = db.get(c, 'db:maintenance:started_at', None)
+                heartbeat = db.get(c, 'db:maintenance:heartbeat', None)
                 last_result = db.get(c, 'db:maintenance:last_result', None)
                 last_error = db.get(c, 'db:maintenance:last_error', None)
-            return {'ok': True, 'running': running,
+            return {'ok': True,
+                    'running': _maintenance_run_fresh(running, started_at,
+                                                      heartbeat, time.time()),
+                    'running_flag': running, 'started_at': started_at,
+                    'heartbeat': heartbeat,
                     'log': log, 'last_result': last_result, 'last_error': last_error}
         except Exception as e:
             return {'ok': False, 'error': str(e)[:500]}
