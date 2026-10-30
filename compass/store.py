@@ -4,7 +4,7 @@ import time
 import threading
 import logging
 from contextlib import contextmanager
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, JSON, Index, select, text, update, delete, cast, event
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, JSON, Index, select, text, update, delete, cast, event, DDL, func
 from sqlalchemy.engine import make_url
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sq_insert
@@ -20,6 +20,11 @@ events=Table("events",meta,
     Column("received",Float,nullable=False),
     Column("payload",JSON,nullable=False))
 Index("events_kind_symbol_time",events.c.kind,events.c.symbol,events.c.ts)
+# The db.recent() read pattern (ORDER BY ts DESC, id DESC) needs the
+# descending twin; production got it via /api/admin/db-maintenance raw SQL
+# in Oct 2026. Declared here so fresh environments get it from create_all
+# (checkfirst skips it where the maintenance endpoint already built it).
+Index("events_kind_symbol_ts_desc",events.c.kind,events.c.symbol,events.c.ts.desc(),events.c.id.desc())
 discord_jobs=Table('discord_jobs_v1',meta,
     Column('event_id',Integer,primary_key=True),Column('route',String(40),nullable=False),
     Column('status',String(20),nullable=False),Column('queued_at',Float,nullable=False),
@@ -27,6 +32,16 @@ discord_jobs=Table('discord_jobs_v1',meta,
 Index('discord_jobs_route_status_id',discord_jobs.c.route,discord_jobs.c.status,discord_jobs.c.event_id)
 state=Table("state",meta,Column("key",String(240),primary_key=True),
     Column("value",JSON,nullable=False),Column("updated",Float,nullable=False))
+# fillfactor/autovacuum for the tick's hottest table: quote upserts rewrite
+# state rows at stream rate; fillfactor 70 leaves room for HOT updates and
+# aggressive autovacuum keeps dead tuples from bloating prefix scans. Fires
+# only when create_all actually creates the table (fresh environments);
+# existing production tables get the same settings via
+# /api/admin/db-maintenance.
+event.listen(state,"after_create",
+    DDL("ALTER TABLE state SET (fillfactor=70,"
+        " autovacuum_vacuum_scale_factor=0.01,"
+        " autovacuum_vacuum_cost_limit=1000)").execute_if(dialect="postgresql"))
 leases=Table("leases",meta,Column("key",String(100),primary_key=True),
     Column("owner",String(100),nullable=False),Column("until",Float,nullable=False))
 gap_followups=Table('gap_followups_v1',meta,
@@ -320,7 +335,26 @@ class Store:
             where=cast(cast(state.c.value,String),Float)<value))
 
     def prefix(self,c,prefix):
-        return {r.key:r.value for r in c.execute(select(state).where(state.c.key.startswith(prefix)))}
+        # Range bounds, not LIKE: a parameterized LIKE 'prefix%' gets a
+        # generic plan that ignores the key index under non-C collations
+        # (the Oct 2026 events-table freeze lesson; app.py get_bars and
+        # survivors.py already use this idiom). Bounds are exactly
+        # startswith semantics for every key that does not contain '\uffff'.
+        return {r.key:r.value for r in c.execute(select(state).where(
+            state.c.key>=prefix,state.c.key<prefix+"\uffff"))}
+
+    def recent_trades(self,c,limit=100):
+        """Newest `limit` trade: rows by entered_at, bounded in SQL.
+
+        snapshot_fast polls every 3s and used to prefix-fetch EVERY trade
+        since inception to slice [:100] in Python (code-health 2026-10-29).
+        The sort/filter now happens server-side over the key range; a
+        missing entered_at counts as 0, matching the old .get(...,0).
+        """
+        entered=func.coalesce(cast(state.c.value["entered_at"].as_string(),Float),0.0)
+        q=(select(state.c.value).where(state.c.key>="trade:",
+            state.c.key<"trade:"+"\uffff").order_by(entered.desc()).limit(limit))
+        return [r[0] for r in c.execute(q)]
 
     def recent(self,c,kind,symbol=None,limit=100,since=None):
         q=select(events).where(events.c.kind==kind)

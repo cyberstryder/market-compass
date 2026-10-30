@@ -395,7 +395,9 @@ def create_app(cfg=None):
             cutoff=now-7*86400
             positions=[p for p in all_positions
                        if p.get("status")=="open" or p.get("entered_at",0)>=cutoff]
-            trades=sorted(db.prefix(c,"trade:").values(),key=lambda p:p.get("entered_at",0),reverse=True)[:100]
+            # Bounded in SQL (Store.recent_trades): this poll used to pull
+            # every trade since inception into Python to slice 100.
+            trades=db.recent_trades(c,limit=100)
             # The engine writes its live operating policy to the shared DB on
             # every tick; prefer it over this service's own config so the
             # dashboard banner reflects what is actually paper trading.
@@ -1289,6 +1291,25 @@ a{color:#888}</style></head><body>
                                 ON events (kind, symbol, ts DESC, id DESC)
                             """)
                             log_msg("Index creation complete")
+
+                        # Code-health 2026-10-29: state-table storage
+                        # tuning. Quote upserts rewrite state rows at
+                        # stream rate; fillfactor 70 leaves room for HOT
+                        # updates and aggressive autovacuum keeps dead
+                        # tuples from bloating the tick's hottest table.
+                        # ALTER ... SET is metadata-only (no rewrite);
+                        # idempotent, safe to re-run. Read-back of the
+                        # catalog settings is the verification surface.
+                        log_msg("Applying state table storage tuning...")
+                        cur.execute("ALTER TABLE state SET (fillfactor=70, "
+                            "autovacuum_vacuum_scale_factor=0.01, "
+                            "autovacuum_vacuum_cost_limit=1000)")
+                        cur.execute("SELECT reloptions FROM pg_class "
+                            "WHERE relname='state'")
+                        log_msg(f"state reloptions now: {cur.fetchone()}")
+                        log_msg("Running VACUUM (ANALYZE) state...")
+                        cur.execute("VACUUM (ANALYZE) state;")
+                        log_msg("VACUUM state complete")
                 finally:
                     conn.close()
 

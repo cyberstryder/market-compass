@@ -596,8 +596,15 @@ class Engine:
 
         Changed 2026-10-17: Was stock breakout (blocked by options-only rule).
         Now generates options signals: detect breakout, wait for pullback to
-        breakout level or 20 EMA, then buy CALL (bullish) or PUT (bearish)
+        breakout level or 20 SMA, then buy CALL (bullish) or PUT (bearish)
         with 14 DTE. Uses options() to find contract and create alert.
+
+        Changed 2026-10-29 (code-health rider): only the LATEST completed
+        daily bar may act as the pullback bar, and at most one signal fires
+        per symbol per tick. Before this, a pullback bar up to 5 days old
+        fired with its stale close as signal_price (and as the stop-distance
+        basis) even after price had moved away, and multiple breakout bars
+        could each fire in one tick.
         """
         hours=session(day(now))
         if not hours or not hours[0]<=now<hours[1]-1800: return
@@ -619,23 +626,29 @@ class Engine:
                 is_bearish = breakout_bar["payload"]["c"] < breakout_low
                 if not (is_bullish or is_bearish):
                     continue
-                # Check for pullback in subsequent bars (up to today)
+                # Check for a pullback on the latest completed bar only:
+                # an older pullback bar's close is a stale signal price.
+                fired = False
                 for j in range(i+1, len(rows)):
+                    if j < len(rows)-1:
+                        continue
                     pullback_bar = rows[j]
                     current_price = pullback_bar["payload"]["c"]
-                    # 20 EMA (approx from closes)
-                    ema20 = sum(r["payload"]["c"] for r in rows[max(0,j-20):j]) / min(20, j)
-                    # Pullback to breakout level (within 1%) or to 20 EMA (within 1%)
+                    # 20 SMA of the closes before bar j (this was mislabeled
+                    # "EMA" in code; it has always been a simple mean — docs
+                    # corrected 2026-10-27).
+                    sma20 = sum(r["payload"]["c"] for r in rows[max(0,j-20):j]) / min(20, j)
+                    # Pullback to breakout level (within 1%) or to 20 SMA (within 1%)
                     if is_bullish:
                         breakout_level = breakout_high
                         pulled_back = abs(current_price - breakout_level) / breakout_level < 0.01 or \
-                                     abs(current_price - ema20) / ema20 < 0.01
+                                     abs(current_price - sma20) / sma20 < 0.01
                         side = "long"
                         kind = "call"
                     else:
                         breakout_level = breakout_low
                         pulled_back = abs(current_price - breakout_level) / breakout_level < 0.01 or \
-                                     abs(current_price - ema20) / ema20 < 0.01
+                                     abs(current_price - sma20) / sma20 < 0.01
                         side = "short"
                         kind = "put"
                     if not pulled_back:
@@ -662,6 +675,11 @@ class Engine:
                     # Use options() to find contract and create alert (not enter() which blocks stocks)
                     self.options(c, signal, now)
                     self.db.put(c, "seen:"+sid, {"at": now})
+                    fired = True
+                    break
+                if fired:
+                    # One swing signal per symbol per tick, however many
+                    # breakout bars in the lookback matched the same bar.
                     break
 
 
