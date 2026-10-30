@@ -76,7 +76,7 @@ from .simulation import FILL_DESCRIPTION, FILL_VERSION
 log = logging.getLogger('uvicorn.error')
 CT = ZoneInfo("America/Chicago")
 
-VERSION = 'survivors-v2'
+VERSION = 'survivors-v1'
 STATE_KEY = 'survivors:state'
 SCAN_KEY = 'survivors:scanned_at'
 TRIPWIRE_LOSS = 1750.0
@@ -291,13 +291,8 @@ class SurvivorFeed:
         f.prev_z_mr = state['prev_z_mr']
         f.last_ts = state['last_ts']
         f.bar_index = state['bar_index']
-        if state.get('version') == VERSION:
-            f.seeded = bool(state.get('seeded'))
-            f.seed_attempt_at = state.get('seed_attempt_at') or 0
-        # Rows written by an older version latched 'seeded' under a seed
-        # query that silently installed zero sessions (collation bug);
-        # force a re-seed under the fixed query. All other fields load
-        # normally, and seed_history() merges safely on re-run.
+        f.seeded = bool(state.get('seeded'))
+        f.seed_attempt_at = state.get('seed_attempt_at') or 0
         return f
 
 
