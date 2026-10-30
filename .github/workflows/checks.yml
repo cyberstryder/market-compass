@@ -12,7 +12,7 @@ concurrency:
 jobs:
   deployment-preflight:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.RAILWAY_IMAGE_DEPLOY_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: production
     permissions:
@@ -37,7 +37,7 @@ jobs:
               print(name, 'readable; healthcheck:', instance['healthcheckPath'], flush=True)
           PY
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     services:
       postgres:
@@ -118,7 +118,7 @@ jobs:
   publish:
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -169,7 +169,7 @@ jobs:
   deploy:
     needs: [publish, deployment-preflight]
     if: ${{ !cancelled() && needs.publish.result == 'success' && needs.deployment-preflight.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.RAILWAY_IMAGE_DEPLOY_ENABLED == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     environment: production
     permissions:
