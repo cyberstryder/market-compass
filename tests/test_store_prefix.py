@@ -61,3 +61,24 @@ def test_recent_trades_bounded_newest_first(db):
         got=db.recent_trades(c,limit=100)
         assert [t['id'] for t in got]==[f't{i}' for i in range(9,-1,-1)]+['no_ts']
         assert all(t['id']!='not-a-trade' for t in got)
+
+from tests.test_smoothers_postgres_handoff import pg
+
+def test_prefix_and_recent_trades_on_postgres(pg):
+    """Regression (2026-10-30, bundle 1's first CI failure): the CI
+    Postgres database collates glibc-style, where '\uffff' sorts BELOW
+    ordinary letters — range bounds without COLLATE "C" returned {}
+    for real prefixes. Runs only where the pg fixture's isolated
+    service exists (CI); skipped on a bare dev box."""
+    seed(pg)
+    with pg.tx() as c:
+        for p in ('position:','positions:','trade:','quote:','a_b',
+                  'trade:ict-survivor_','trade:ict-'):
+            got=pg.prefix(c,p)
+            want={k:v for k,v in KEYS.items() if k.startswith(p)}
+            assert got==want, p
+    with pg.tx() as c:
+        for i in range(5):
+            pg.put(c,f'trade:pg{i}',{'id':f'pg{i}','entered_at':3000.0+i})
+        got=pg.recent_trades(c,limit=2)
+        assert [t['id'] for t in got]==['pg4','pg3']

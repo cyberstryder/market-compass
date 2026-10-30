@@ -334,14 +334,29 @@ class Store:
             set_={'value':value,'updated':time.time()},
             where=cast(cast(state.c.value,String),Float)<value))
 
+    def _key(self,c):
+        """state.key with codepoint ordering where the dialect needs it.
+
+        Prefix membership IS codepoint (str.startswith) semantics. Under
+        a glibc/ICU database collation (CI's postgres service, Railway)
+        range bounds in database order are NOT startswith: '\uffff'
+        collates below ordinary letters there, so key < prefix+'\uffff'
+        excludes nearly every real key and prefix() comes back empty
+        (proven on a glibc-collated PG 18 cluster, 2026-10-30). Postgres
+        therefore compares with COLLATE "C"; SQLite's default BINARY
+        collation already is codepoint order.
+        """
+        return state.c.key.collate("C") if c.dialect.name=="postgresql" else state.c.key
+
     def prefix(self,c,prefix):
         # Range bounds, not LIKE: a parameterized LIKE 'prefix%' gets a
-        # generic plan that ignores the key index under non-C collations
-        # (the Oct 2026 events-table freeze lesson; app.py get_bars and
-        # survivors.py already use this idiom). Bounds are exactly
-        # startswith semantics for every key that does not contain '\uffff'.
+        # generic plan that ignores the key index (the Oct 2026
+        # events-table freeze lesson; app.py get_bars already uses this
+        # idiom). With _key()'s codepoint ordering the bounds are exactly
+        # startswith semantics for every key not containing '\uffff'.
+        key=self._key(c)
         return {r.key:r.value for r in c.execute(select(state).where(
-            state.c.key>=prefix,state.c.key<prefix+"\uffff"))}
+            key>=prefix,key<prefix+"\uffff"))}
 
     def recent_trades(self,c,limit=100):
         """Newest `limit` trade: rows by entered_at, bounded in SQL.
@@ -352,8 +367,9 @@ class Store:
         missing entered_at counts as 0, matching the old .get(...,0).
         """
         entered=func.coalesce(cast(state.c.value["entered_at"].as_string(),Float),0.0)
-        q=(select(state.c.value).where(state.c.key>="trade:",
-            state.c.key<"trade:"+"\uffff").order_by(entered.desc()).limit(limit))
+        key=self._key(c)
+        q=(select(state.c.value).where(key>="trade:",
+            key<"trade:"+"\uffff").order_by(entered.desc()).limit(limit))
         return [r[0] for r in c.execute(q)]
 
     def recent(self,c,kind,symbol=None,limit=100,since=None):
