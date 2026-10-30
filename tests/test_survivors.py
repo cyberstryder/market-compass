@@ -127,6 +127,44 @@ def test_feed_state_roundtrip_preserves_signals():
     assert len(fired) == 1 and fired[0]['strategy'] == 'S3'
 
 
+def test_v1_state_row_forces_reseed_but_loads_other_fields():
+    feed = survivors.SurvivorFeed('MGC', 0.1)
+    _seed_bars(feed, 4000.0, 1.0)
+    feed.feed({'ts': _ts(23, 120), 'o': 4000.0, 'h': 4000.0, 'l': 4000.0,
+               'c': 4000.0, 'v': 100})
+    state = feed.to_state()
+    # Shape of the rows latched in production at activation: written by
+    # v1, seeded=True (set unconditionally) with an empty/broken history
+    # latch and a recent attempt timestamp.
+    state['version'] = 'survivors-v1'
+    state['seeded'] = True
+    state['seed_attempt_at'] = 1790000000
+    restored = survivors.SurvivorFeed.from_state(state)
+    assert restored.seeded is False
+    assert restored.seed_attempt_at == 0
+    # Everything else loads normally.
+    assert restored.root == state['root'] and restored.tick == state['tick']
+    assert restored.sdate == state['sdate']
+    assert restored.history == state['history']
+    assert restored.atr == state['atr']
+    assert restored.bar_index == state['bar_index']
+    assert list(restored.closes) == state['closes']
+    # And the restored feed re-stamps the current version on save.
+    assert restored.to_state()['version'] == survivors.VERSION
+
+
+def test_v2_state_row_roundtrips_seeded_latch():
+    feed = survivors.SurvivorFeed('MGC', 0.1)
+    _seed_bars(feed, 4000.0, 1.0)
+    feed.seeded = True
+    feed.seed_attempt_at = 1790000000
+    state = feed.to_state()
+    assert state['version'] == survivors.VERSION
+    restored = survivors.SurvivorFeed.from_state(state)
+    assert restored.seeded is True
+    assert restored.seed_attempt_at == 1790000000
+
+
 def test_no_signals_before_atr_warms():
     feed = survivors.SurvivorFeed('MGC', 0.1)
     _seed_bars(feed, 4000.0, 1.0, days=range(7, 17))  # only 10 sessions
