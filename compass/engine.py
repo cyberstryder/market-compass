@@ -1184,33 +1184,6 @@ class Engine:
                                _sv.get('live'), _sv.get('signals', 0),
                                _sv.get('submitted', 0), _sv.get('sent', 0),
                                _sv.get('stale_skips', 0)))
-        # Runner: trailing stops for ICT positions at 1R+ profit.
-        # Lets winners run (overnight trends) instead of fixed 2R exits.
-        # 2026-10-24 (audit-adoption deviation): the audit set deleted
-        # ict_trail; we keep it. At HEAD this block ran on the already-
-        # closed ICT connection (the same bug as the MU scalp block
-        # below) and failed silently every tick. It now runs in its own
-        # transaction segment with the lease re-asserted, and failures
-        # are logged and reported via health:ict_trail instead of
-        # swallowed.
-        try:
-            with self.db.tx() as c:
-                self._hold(c)
-                from .ict_trail import manage_all as _trail_all
-                _trail_result = _trail_all(self.db, c, now)
-            if _trail_result.get('trailed'):
-                self.db.health('ict_trail', 'running',
-                               '%d positions trailing' % _trail_result['trailed'])
-        except Engine.LeaseLost:
-            raise
-        except Exception as e:
-            logging.getLogger('uvicorn.error').error('ICT trail segment failed: %s', e)
-            try:
-                with self.db.tx() as c:
-                    self.db.put(c, 'health:ict_trail', {'name': 'ict_trail', 'status': 'error',
-                                                        'detail': str(e)[:300], 'checked_at': now})
-            except Exception:
-                pass
         # MU / volatile single-stock scalp detectors (Josh 2026-10-08):
         # gap fade premarket, spike fade 9:45-11am ET. Generalized
         # 2026-10-11 to a fixed list of volatile names. Alerts feed the
@@ -1218,15 +1191,15 @@ class Engine:
         # MU_SCALP_ENABLED (default true).
         #
         # 2026-10-23 FIX: this block (and the ict_trail runner that sat
-        # above it) ran AFTER the ICT `with self.db.tx() as c:` block had
+        # above it until its 2026-10-30 deletion) ran AFTER the ICT
+        # `with self.db.tx() as c:` block had
         # exited, so every db call hit a closed SQLAlchemy connection
         # (ResourceClosedError), swallowed by `except Exception: pass`.
         # Net effect: no MU/stock scalp trade was ever recorded in
         # production ("Stock scalp (all): 0 tracked" since 10-12). It now
         # runs in its own transaction segment with the lease re-asserted.
-        # The ict_trail runner directly above got the same treatment
-        # (2026-10-24 adoption deviation: the audit set deleted it; we
-        # keep the feature, fixed onto a live connection).
+        # The ict_trail runner got the same treatment on 2026-10-24;
+        # it was deleted on 2026-10-30 (docs/RETIRED_DETECTORS.md).
         if getattr(self.cfg, 'mu_scalp', True):
             try:
                 with self.db.tx() as c:

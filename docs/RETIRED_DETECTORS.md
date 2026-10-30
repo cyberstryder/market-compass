@@ -92,6 +92,49 @@ its Engine env var on Railway.
 - Restore:
   `git checkout pre-detector-purge -- compass/vwap_fade.py`
 
+## ICT Trail runner (ict_trail) — retired 2026-10-30
+
+Not a detector: the central trailing-stop manager for ICT paper
+positions (activate a 2x ATR trailing stop at 1R profit on the
+`is_trailer` runner leg of the old 2/2/1 scale-out). Deleted on
+2026-10-30 (Josh's decision, after the one-week check below returned
+verdict (b)).
+
+- Module: `compass/ict_trail.py` (157 lines)
+- Test: none dedicated (no test referenced the module).
+- Config flag: none — the runner segment ran unconditionally on
+  every engine tick.
+- Wiring removed: the `Engine.tick` runner segment (its own
+  transaction segment: lazy import of `manage_all`, the
+  `health:ict_trail` 'running' write on trailed positions, and the
+  `health:ict_trail` error-row write on failure). Nothing else
+  referenced it: no config field, no endpoint, no `DETECTOR_FLAGS`
+  entry, no display surface. Two historical comments in the MU
+  scalp block below the segment were updated to point here.
+- Why dead: since the 2026-10-18 single-leg simplification
+  (fb54017), `ict_paper` books exactly one non-trailer leg per
+  signal and no production code sets `is_trailer=True`, so
+  `manage_all` iterated an always-empty leg set. The one-week
+  check Josh set on 2026-10-24 (Decision 2 of 6) verified against
+  live production markers for Mon 2026-10-26 – Fri 2026-10-30:
+  0 trailer legs created, 0 trailed, $0 P&L effect, all symbols
+  (evidence record:
+  `hidden_files/ict-trail-check-2026-10-30/result.md` in the goal
+  workspace). `ict_paper` leg creation is unchanged — single-leg
+  booking stays exactly as-is.
+- Deliberately retained (not wiring): the `exits()` sibling
+  handling that ratchets a `:trail` position's stop when a t1/t2
+  leg target-hits, the `:trail` suffixes in `ict_paper`'s
+  close/cleanup loops, `simple.py`'s legacy 2/2/1 leg display, and
+  the `traderspost` trailer-leg bracket conversion — these
+  describe or guard stored history and shared paths, never fire
+  without a trailer leg, and were out of this retirement's scope.
+- Restore: `git checkout 998e6b8 -- compass/ict_trail.py` and
+  re-add the `Engine.tick` runner segment from the same tree
+  (visible in this retirement commit's diff). A restore only does
+  something if trailer-leg creation is also restored in
+  `ict_paper` — the Oct 18 decision Josh would be reversing.
+
 ## Test adjustments beyond the dedicated files
 
 Three enumeration-style tests listed the retired detectors and were
