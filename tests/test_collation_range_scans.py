@@ -12,12 +12,22 @@ glibc-collated (en_US.utf8) PG 18 cluster before this fix:
 - /api/bars' events fallback: symbol < alias+'@\\uffff' found no
   "<alias>@<iid>" keys.
 
-Both now compare with COLLATE "C" on Postgres (Store._key()'s
-treatment); SQLite's BINARY collation already is codepoint order.
+The /api/bars fallback now compares with COLLATE "C" on Postgres
+(Store._key()'s treatment); SQLite's BINARY collation already is
+codepoint order.
+
+The survivors seed took a second fix the same day: the COLLATE "C"
+range returned the right rows on a small cluster but the
+glibc-collated (kind, symbol, ts) index cannot serve a codepoint
+range, so in production the query seq-scanned the ~45M-row events
+table and died on statement timeout. The seed now discovers dated
+symbols with one DISTINCT lookup ranged in database collation (the
+index's own collation) between the root and its last-letter
+successor, then reads bars per symbol with (kind, symbol) EQUALITY
+plus a ts range — every step index-served, no COLLATE anywhere.
 """
 import time
 from datetime import datetime, timedelta
-from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -39,16 +49,25 @@ def db(tmp_path):
     s.engine.dispose()
 
 
-def _conn(dialect_name):
-    return SimpleNamespace(
-        dialect=SimpleNamespace(name=dialect_name))
+def test_seed_bar_reads_are_equality_only():
+    """Construction pin for the second seed fix: bar reads must be
+    servable from the (kind, symbol, ts) index — equality on symbol,
+    range on ts only. No COLLATE, no LIKE, no symbol range, no
+    '\\uffff' idiom anywhere in the seed's statements."""
+    bars_sql = survivors._SEED_BARS_SQL
+    assert 'symbol = :symbol' in bars_sql
+    assert 'ts >= :tlo' in bars_sql
+    for stmt in (survivors._SEED_BARS_SQL, survivors._SEED_DISCOVER_SQL):
+        assert 'COLLATE' not in stmt
+        assert 'LIKE' not in stmt
+        assert '\uffff' not in stmt
+    assert 'DISTINCT symbol' in survivors._SEED_DISCOVER_SQL
 
 
-def test_seed_stmt_collates_only_on_postgres():
-    pg_sql = str(survivors._seed_stmt(_conn('postgresql')))
-    assert 'COLLATE "C"' in pg_sql
-    lite_sql = str(survivors._seed_stmt(_conn('sqlite')))
-    assert 'COLLATE' not in lite_sql
+def test_root_successor_bounds_the_subtree():
+    assert survivors._root_successor('MNQ') == 'MNR'
+    assert survivors._root_successor('MCL') == 'MCM'
+    assert survivors._root_successor('MGC') == 'MGD'
 
 
 def _append_seed_bars(db):
@@ -100,6 +119,22 @@ def test_seed_history_on_postgres(pg):
     0 sessions before the COLLATE "C" fix. Skipped where the pg
     fixture's isolated service does not exist."""
     _assert_seed(pg)
+
+
+def test_dated_symbol_discovery_filters(db):
+    """Discovery returns exactly the root's dated-contract symbols:
+    bare dated codes and @iid forms are kept; the bare root, dotted
+    alias keys, and non-contract suffixes (W is not a month code) are
+    excluded."""
+    now = time.time()
+    with db.tx() as c:
+        for sym in ('MNQZ6@7', 'MNQH7', 'MNQ.c.0', 'MNQ', 'MNQW6@1'):
+            db.append_bars(c, 'bar', 'databento',
+                           [(sym, now - 60 * i, dict(BAR))
+                            for i in range(3)])
+    with db.tx() as c:
+        found = survivors._dated_symbols(c, 'MNQ', now - 3600)
+    assert found == ['MNQH7', 'MNQZ6@7']
 
 
 def test_bars_fallback_stmt_collates_only_on_postgres():

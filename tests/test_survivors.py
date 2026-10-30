@@ -165,6 +165,81 @@ def test_v2_state_row_roundtrips_seeded_latch():
     assert restored.seed_attempt_at == 1790000000
 
 
+# ---------------------------------------------------------------------
+# Seed isolation (second seed fix, 2026-10-30): the seed runs on a
+# dedicated connection in its own transaction — never inside the
+# tick's — and banks its outcome separately, so one feed's failure
+# can neither abort the tick nor starve the other feeds, and the
+# 600 s retry cadence survives a failed attempt.
+# ---------------------------------------------------------------------
+def _append_dated_sessions(db, symbol):
+    """16 complete CT sessions of dated-contract bars for one symbol,
+    ending in the last few weeks relative to the real clock."""
+    today = datetime.now(CT).date()
+    days = [today - timedelta(days=back) for back in range(18, 2, -1)]
+    bar = {'o': 100.0, 'h': 101.0, 'l': 99.0, 'c': 100.5, 'v': 10}
+    with db.tx() as c:
+        for d in days:
+            base = datetime(d.year, d.month, d.day, 0, 0,
+                            tzinfo=CT).timestamp()
+            db.append_bars(c, 'bar', 'databento',
+                           [(symbol, base + 60 * i, dict(bar))
+                            for i in range(810)])
+    return [d.isoformat() for d in days]
+
+
+def test_seed_isolated_success_installs_and_banks(db):
+    days = _append_dated_sessions(db, 'MNQZ6@7')
+    now = datetime.now(timezone.utc).timestamp()
+    feed = survivors.SurvivorFeed('MNQ', 0.25)
+    assert survivors._seed_isolated(db, 'MNQ.c.0', feed, 'MNQ', now)
+    assert feed.seeded is True
+    assert [s['sdate'] for s in feed.history] == days
+    assert feed.atr == pytest.approx(2.0)
+    with db.tx() as c:
+        banked = db.get(c, 'survivor_engine:MNQ.c.0')
+    assert banked['seeded'] is True
+    assert banked['seed_attempt_at'] == now
+    assert banked['version'] == survivors.VERSION
+    assert len(banked['history']) == 16
+
+
+def test_seed_isolated_failure_banks_attempt_and_isolates(db,
+                                                         monkeypatch):
+    _append_dated_sessions(db, 'MCLZ6@3')
+    now = datetime.now(timezone.utc).timestamp()
+    real_seed = survivors.seed_history
+
+    def flaky(db_, c_, feed_, root_, now_):
+        if root_ == 'MNQ':
+            raise RuntimeError('seed boom')
+        return real_seed(db_, c_, feed_, root_, now_)
+
+    monkeypatch.setattr(survivors, 'seed_history', flaky)
+    bad = survivors.SurvivorFeed('MNQ', 0.25)
+    good = survivors.SurvivorFeed('MCL', 0.1)
+    # A stand-in tick transaction stays open across both attempts;
+    # neither seed may poison it (the first production failure mode:
+    # MNQ's timeout aborted the shared tick transaction and MCL/MGC
+    # never got an attempt).
+    with db.tx() as c:
+        assert not survivors._seed_isolated(db, 'MNQ.c.0', bad,
+                                            'MNQ', now)
+        assert survivors._seed_isolated(db, 'MCL.v.0', good,
+                                        'MCL', now)
+        db.put(c, 'tick:sentinel', {'ok': True})
+    assert bad.seeded is False and bad.seed_attempt_at == now
+    assert good.seeded is True and good.atr == pytest.approx(2.0)
+    with db.tx() as c:
+        banked_bad = db.get(c, 'survivor_engine:MNQ.c.0')
+        assert db.get(c, 'tick:sentinel') == {'ok': True}
+    # The failed attempt's stamp was committed by the bank transaction
+    # alone, so the 600 s retry cadence holds even if the tick segment
+    # around it later aborts.
+    assert banked_bad['seeded'] is False
+    assert banked_bad['seed_attempt_at'] == now
+
+
 def test_no_signals_before_atr_warms():
     feed = survivors.SurvivorFeed('MGC', 0.1)
     _seed_bars(feed, 4000.0, 1.0, days=range(7, 17))  # only 10 sessions

@@ -63,6 +63,7 @@ review_due. Both surface in /api/day-digest.
 """
 import logging
 import math
+import re
 from collections import deque
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -646,30 +647,61 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
 
 # ---------------------------------------------------------------------
 # Seeding (one-time ATR warm-up from the bar-events store).
+#
+# Access-path contract (2026-10-30, second seed fix): every events
+# query below is served by the (kind, symbol, ts) index. Bar reads use
+# EQUALITY on (kind, symbol) with a range on ts only. Symbol discovery
+# is one DISTINCT lookup over the root's subtree, ranged in DATABASE
+# collation (the index's own collation, so the range is index-served).
+# Two earlier shapes failed in production: (1) prefix bounds in
+# database order with a '\uffff' cap silently matched nothing, because
+# glibc/ICU collation sorts '\uffff' below letters; (2) the COLLATE
+# "C" repair (5ba7b6c) returned the right rows but the glibc-collated
+# index cannot serve a codepoint range, so the query seq-scanned the
+# ~45M-row events table and died on statement timeout (verified live
+# 2026-10-30). Neither idiom may come back here.
 # ---------------------------------------------------------------------
-_SEED_SQL = (
-    "SELECT symbol, ts, payload FROM events WHERE kind='bar' "
-    "AND symbol >= :lo AND symbol < :hi AND ts >= :tlo ORDER BY ts")
-_SEED_SQL_PG = (
-    "SELECT symbol, ts, payload FROM events WHERE kind='bar' "
-    "AND symbol COLLATE \"C\" >= :lo AND symbol COLLATE \"C\" < :hi "
-    "AND ts >= :tlo ORDER BY ts")
+_SEED_DISCOVER_SQL = (
+    "SELECT DISTINCT symbol FROM events WHERE kind='bar' "
+    "AND symbol >= :lo AND symbol < :hi AND ts >= :tlo")
+_SEED_BARS_SQL = (
+    "SELECT ts, payload FROM events WHERE kind='bar' "
+    "AND symbol = :symbol AND ts >= :tlo ORDER BY ts")
+
+# Dated-contract event symbols: <ROOT><month code><year>[@<iid>],
+# e.g. MNQU6@4242 — the shape ict_common._DATED_WINDOW matches for
+# bar_window state keys.
+_DATED_SYMBOL = re.compile(r'^([A-Z]+)([FGHJKMNQUVXZ])(\d{1,4})(@.*)?$')
 
 
-def _seed_stmt(c):
-    """Seed range scan with codepoint (prefix) semantics on Postgres.
+def _root_successor(root):
+    """Smallest string strictly above every string that starts with
+    root (its last letter stepped). Subtree bounds must hold in the
+    database collation as well as in codepoint order: unlike
+    root+'\\uffff', stepping the root's own final letter bounds the
+    subtree under both orderings, because the first position where a
+    subtree member and the successor differ is that letter itself."""
+    return root[:-1] + chr(ord(root[-1]) + 1)
 
-    Prefix membership IS codepoint semantics, but under a glibc/ICU
-    database collation (Railway, CI's postgres service) '\\uffff'
-    collates below ordinary letters, so symbol < root+'\\uffff' in
-    database order excludes every dated-contract key and the seed
-    silently installs 0 sessions (reproduced on a glibc-collated
-    PG 18 cluster, 2026-10-30). Postgres therefore compares with
-    COLLATE "C" — the Store._key() treatment from bundle 1 (dd22055);
-    SQLite's default BINARY collation already is codepoint order.
-    """
-    return sql_text(_SEED_SQL_PG if c.dialect.name == "postgresql"
-                    else _SEED_SQL)
+
+def _dated_symbols(c, root, lo_ts):
+    """Full dated-contract event symbols for root with bars at/after
+    lo_ts, discovered through the (kind, symbol, ts) index. Keeps the
+    contract set the old prefix seed aggregated: dated keys only —
+    never the bare root, never dotted alias keys ('MNQ.c.0')."""
+    rows = c.execute(sql_text(_SEED_DISCOVER_SQL),
+                     {'lo': root, 'hi': _root_successor(root),
+                      'tlo': lo_ts})
+    out = []
+    for row in rows:
+        m = dict(row._mapping) if hasattr(row, '_mapping') else dict(row)
+        sym = m.get('symbol') or ''
+        if sym == root or '.' in sym:
+            continue
+        dm = _DATED_SYMBOL.match(sym)
+        if dm and dm.group(1) == root:
+            out.append(sym)
+    return sorted(out)
 
 
 def _payload(row):
@@ -687,28 +719,38 @@ def seed_history(db, c, feed, root, now):
     """Aggregate the last ~26 days of stored 1-min bars into completed
     sessions and install them in the feed. Sessions with < 800 bars are
     partial (holidays/outages) and skipped, like the dataset's degraded
-    handling. Returns the number of sessions installed."""
+    handling. Returns the number of complete sessions found.
+
+    Reads run one dated contract at a time with (kind, symbol)
+    equality + a ts range — see the access-path contract above. Bars
+    are merged across contracts and re-sorted by ts before
+    aggregating, preserving the old single-scan semantics exactly
+    (session close = the last bar by ts, whichever contract printed
+    it)."""
     lo_ts = now - 26 * 86400
-    rows = c.execute(_seed_stmt(c), {'lo': root, 'hi': root + '\uffff',
-                                     'tlo': lo_ts})
+    bars = []
+    for sym in _dated_symbols(c, root, lo_ts):
+        rows = c.execute(sql_text(_SEED_BARS_SQL),
+                         {'symbol': sym, 'tlo': lo_ts})
+        for row in rows:
+            m = dict(row._mapping) if hasattr(row, '_mapping') \
+                else dict(row)
+            p = _payload(m.get('payload'))
+            ts = m.get('ts')
+            if ts is None or p.get('h') is None or p.get('l') is None \
+                    or p.get('c') is None:
+                continue
+            bars.append((ts, p['h'], p['l'], p['c']))
+    bars.sort(key=lambda b: b[0])
     sessions = {}
-    for row in rows:
-        m = dict(row._mapping) if hasattr(row, '_mapping') else dict(row)
-        sym = m.get('symbol') or ''
-        if '.' in sym or sym == root:
-            continue  # dated-contract keys only (no alias rows)
-        p = _payload(m.get('payload'))
-        ts = m.get('ts')
-        if ts is None or p.get('h') is None or p.get('l') is None \
-                or p.get('c') is None:
-            continue
+    for ts, h, l, close in bars:
         _, sdate = _ct_parts(ts)
-        s = sessions.setdefault(sdate, {'sdate': sdate, 'hi': p['h'],
-                                        'lo': p['l'], 'close': p['c'],
+        s = sessions.setdefault(sdate, {'sdate': sdate, 'hi': h,
+                                        'lo': l, 'close': close,
                                         'bars': 0})
-        s['hi'] = max(s['hi'], p['h'])
-        s['lo'] = min(s['lo'], p['l'])
-        s['close'] = p['c']  # rows are ts-ordered: last write wins
+        s['hi'] = max(s['hi'], h)
+        s['lo'] = min(s['lo'], l)
+        s['close'] = close  # bars are ts-ordered: last write wins
         s['bars'] += 1
     cutoff = feed.sdate or _ct_parts(now)[1]
     complete = [s for s in sessions.values()
@@ -716,6 +758,62 @@ def seed_history(db, c, feed, root, now):
     complete.sort(key=lambda s: s['sdate'])
     feed.seed_history(complete[-20:])
     return len(complete)
+
+
+# Raised per-transaction ceilings for the one-off seed load. The pool
+# default statement_timeout is 30 s, sized for tick work; the seed is
+# a bounded 26-day read that only ever runs a handful of times per
+# feed, so it gets headroom — inside its OWN transaction only.
+_SEED_STATEMENT_TIMEOUT_MS = 120000
+_SEED_TRANSACTION_TIMEOUT = '240s'
+
+
+def _seed_isolated(db, symbol, feed, root, now):
+    """Run one feed's seed on a dedicated pooled connection in its own
+    transaction, then bank the outcome in a separate small transaction.
+
+    The first production seed ran inside the tick's shared transaction:
+    its statement timeout aborted the whole tick transaction, the
+    feeds later in scan order never got an attempt, and the aborted
+    transaction never persisted seed_attempt_at — so scan() retried
+    every tick (~80 s) instead of on the 600 s cadence. Isolation
+    contains all three failures: a seed error rolls back only the
+    seed transaction, and the attempt stamp (or, on success, the
+    installed history itself) is committed by the bank transaction
+    even if the surrounding tick segment later aborts. Returns True
+    when the seed completed (feed.seeded set)."""
+    feed.seed_attempt_at = now
+    ok = False
+    try:
+        with db.tx() as sc:
+            if sc.dialect.name == 'postgresql':
+                sc.execute(sql_text(
+                    'SET LOCAL statement_timeout = %d'
+                    % _SEED_STATEMENT_TIMEOUT_MS))
+                version = sc.execute(sql_text(
+                    "SELECT current_setting('server_version_num')::int"
+                )).scalar()
+                if version and version >= 170000:
+                    # The pool sets a 60 s session transaction_timeout
+                    # on PG 17+; raise it for this transaction only.
+                    sc.execute(sql_text(
+                        "SET LOCAL transaction_timeout = '%s'"
+                        % _SEED_TRANSACTION_TIMEOUT))
+            n_seeded = seed_history(db, sc, feed, root, now)
+        feed.seeded = True
+        ok = True
+        if n_seeded:
+            log.info('Survivors: seeded %s ATR history with %d '
+                     'sessions', root, n_seeded)
+    except Exception as e:
+        log.warning('Survivors: seed failed for %s: %s', root, e)
+    try:
+        with db.tx() as pc:
+            db.put(pc, 'survivor_engine:' + symbol, feed.to_state())
+    except Exception as e:
+        log.warning('Survivors: seed state bank failed for %s: %s',
+                    root, e)
+    return ok
 
 
 # ---------------------------------------------------------------------
@@ -744,15 +842,9 @@ def scan(db, c, cfg, now):
         feed = SurvivorFeed.from_state(state) \
             if isinstance(state, dict) else SurvivorFeed(root, spec['tick'])
         if not feed.seeded and now - feed.seed_attempt_at >= 600:
-            feed.seed_attempt_at = now
-            try:
-                n_seeded = seed_history(db, c, feed, root, now)
-                feed.seeded = True
-                if n_seeded:
-                    log.info('Survivors: seeded %s ATR history with %d '
-                             'sessions', root, n_seeded)
-            except Exception as e:
-                log.warning('Survivors: seed failed for %s: %s', root, e)
+            # Isolated on purpose: the seed must never run inside this
+            # tick transaction (see _seed_isolated).
+            _seed_isolated(db, symbol, feed, root, now)
         bars = ict_bars(db, c, symbol, limit=10000)
         fresh_signals = []
         for b in bars:
