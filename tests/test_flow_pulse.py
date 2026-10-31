@@ -450,8 +450,14 @@ def test_track_record_aggregates(db):
 def test_scan_opens_tracking_for_fired_pulse(db):
     from compass.market import day as _day
     now = time.time()
+    live_expiry = _live_expiry(25)
+    # Chain contract must match the prints' live expiry: eligible_contracts
+    # cross-checks the OCC symbol's YYMMDD against the expiry field and
+    # requires 0 <= dte <= 90 against real now, so a hard-coded past
+    # expiry (the shared _chain_contract default) can never be suggested.
+    exp = datetime.strptime(live_expiry, '%m/%d/%y').date()
     rows = [prow(symbol='MRK', option_type='put', sentiment='bullish',
-                 ts=now - 300, expiry=_live_expiry(25), strike=140.0)]
+                 ts=now - 300, expiry=live_expiry, strike=140.0)]
     for r in rows:
         r['payload']['source_ts'] = now - 300
         r['source_ts'] = now - 300
@@ -460,7 +466,8 @@ def test_scan_opens_tracking_for_fired_pulse(db):
     with db.tx() as c:
         db.put(c, 'quote:MRK', {'ts': now, 'bid': 139.90, 'ask': 140.10})
         db.put(c, 'chain:MRK', {'asof': now, 'contracts': [
-            _quoted_contract(symbol='O:MRK261030P00140000', strike=140.0,
+            _quoted_contract(symbol='O:MRK%sP00140000' % exp.strftime('%y%m%d'),
+                             expiry=exp.isoformat(), strike=140.0,
                              delta=-0.50)]})
         out = fp.scan(db, c, TrackCfg(), now)
     assert out['ran'] and out['fired'] == 1
