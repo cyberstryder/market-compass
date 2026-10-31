@@ -94,6 +94,16 @@ def make_client(tmp_path, monkeypatch, token=CRON):
     cfg.db = 'sqlite:///' + db_path
     cfg.password = 'test-password-12345678'
     cfg.local = True
+    # Role 'web' (the fbb8315 pattern, applied 2026-10-31 after this
+    # file lost one test to a seed-time sqlite lock in each of CI runs
+    # 41202431863 and 41208060855): with the default role 'all',
+    # TestClient startup spawns the collectors, the engine and ~25
+    # background writers on the same sqlite file, and seed_state()'s
+    # INSERTs can starve past the 30s busy timeout ('database is
+    # locked'). Role 'web' runs only the heartbeat loop; every test in
+    # this file exercises HTTP handlers (the maintenance job is a
+    # handler-spawned thread), so nothing here depends on role.
+    cfg.role = 'web'
     db = Store(cfg.db)
     db.initialize()
     app = create_app(cfg)
