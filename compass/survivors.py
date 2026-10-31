@@ -548,6 +548,28 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
         filled['target_ticks'] = target_ticks_r
     if booked['source'] == 'signal_fallback':
         filled['entry_unverified'] = True
+    # Discord live label (ict_push): the entry alert is queued below,
+    # BEFORE the TradersPost send block runs, so decide here whether
+    # this booking will be queued to TradersPost — evaluating exactly
+    # the send block's own gates, in its order: master switch,
+    # survivors LIVE state, duplicate/hedge guard, symbol mapping,
+    # freshness guard. Every check is read-only; the send block below
+    # re-evaluates them unchanged and stays the only place that acts.
+    filled['live_send'] = False
+    if getattr(cfg, 'traderspost_enabled', False):
+        _st = get_state(db, c)
+        if _st and _st.get('live') \
+                and guard_check(db, c, filled) is None:
+            from . import traderspost as _tp
+            _mapped = _tp.map_symbol(symbol)
+            if not (_mapped == symbol and '.' in symbol):
+                try:
+                    from . import freshness_guard as _fg
+                    _guard = _fg.evaluate(db, c, cfg, filled, now)
+                except Exception:
+                    _guard = {'decision': 'send'}
+                if _guard.get('decision') != 'skip':
+                    filled['live_send'] = True
     db.put(c, pos_key_base + ':t1', filled)
     db.put(c, 'trade:' + trade_id, filled)
     db.append(c, 'paper_decision', 'survivors', symbol, now,

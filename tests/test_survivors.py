@@ -394,6 +394,47 @@ def test_tripped_state_blocks_live_send_but_books_paper(db, cfg, sent):
     assert trade['traderspost_sent'] is False
 
 
+def test_submit_live_send_flag_set_when_queued(db, cfg, sent):
+    """Discord live label: live_send is set at booking exactly when the
+    booking will be queued to TradersPost (ict_push reads it)."""
+    cfg.traderspost_enabled = True
+    with db.tx() as c:
+        survivors.ensure_state(db, c, NOW)
+        r = survivors.submit_survivor(db, c, cfg, NOW, 'S1', 'MNQ.c.0',
+                                      _sig('S1', close=20000.0))
+    assert r['submitted'] and r['traderspost_queued']
+    with db.tx() as c:
+        pos = db.get(c, 'position:ict:survivor_s1:MNQ.c.0:t1')
+        trade = db.get(c, 'trade:' + r['id'])
+    assert pos['live_send'] is True and trade['live_send'] is True
+
+
+def test_submit_live_send_flag_clear_when_tp_disabled(db, cfg):
+    with db.tx() as c:
+        r = survivors.submit_survivor(db, c, cfg, NOW, 'S2', 'MCL.v.0',
+                                      _sig('S2'))
+    assert r['submitted'] and not r['traderspost_queued']
+    with db.tx() as c:
+        pos = db.get(c, 'position:ict:survivor_s2:MCL.v.0:t1')
+    assert pos['live_send'] is False
+
+
+def test_submit_live_send_flag_clear_when_tripped(db, cfg, sent):
+    cfg.traderspost_enabled = True
+    with db.tx() as c:
+        st = survivors.ensure_state(db, c, NOW)
+        st['live'] = False
+        st['tripped_at'] = NOW
+        db.put(c, survivors.STATE_KEY, st)
+        r = survivors.submit_survivor(db, c, cfg, NOW, 'S2', 'MCL.v.0',
+                                      _sig('S2'))
+    assert r['submitted']
+    assert 'survivor live sends off' in r['traderspost_skip_reason']
+    with db.tx() as c:
+        pos = db.get(c, 'position:ict:survivor_s2:MCL.v.0:t1')
+    assert pos['live_send'] is False
+
+
 # ---------------------------------------------------------------------
 # Tripwire + review accounting
 # ---------------------------------------------------------------------

@@ -21,7 +21,11 @@ WEBHOOK_RE = r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+'
 
 
 def maybe_queue(db, c, cfg, trade):
-    """Queue a Discord alert for a newly opened ICT paper trade.
+    """Queue a Discord alert for a newly opened ICT trade.
+
+    The payload's 'live' flag comes from trade['live_send'] (set at
+    booking when the trade will be queued to TradersPost); the
+    formatter labels live sends instead of calling them paper.
     
     Returns the outbox row id, or None if push is disabled.
     """
@@ -61,6 +65,10 @@ def maybe_queue(db, c, cfg, trade):
         'qty': trade.get('qty', 1),
         'time_str': time_str,
         'at': time.time(),
+        # Live labeling (2026-10-31): set by the booking path when this
+        # trade will be queued to TradersPost (survivors set live_send
+        # at submit). Absent/False = paper, footer unchanged.
+        'live': bool(trade.get('live_send')),
     }
     if getattr(cfg, 'push_outbox_unified', False):
         c.execute(db.insert(push_outbox).values(
@@ -75,8 +83,12 @@ def maybe_queue(db, c, cfg, trade):
 
 
 def format_message(payload):
-    """Discord-safe alert for an ICT paper entry."""
+    """Discord-safe alert for an ICT entry (paper or live)."""
     side_emoji = '🟢' if payload.get('side') == 'LONG' else '🔴'
+    # The alert fires at booking; for a live send the TradersPost
+    # dispatch completes after the tick commits — hence "queued".
+    footer = ('🔴 **LIVE** — order queued to TradersPost'
+              if payload.get('live') else '_Paper trade — watch only_')
     lines = [
         '%s **ICT %s** %s %s' % (
             side_emoji,
@@ -94,7 +106,7 @@ def format_message(payload):
             payload.get('qty', 1),
             payload.get('time_str', ''),
         ),
-        '_Paper trade — watch only_',
+        footer,
     ]
     content = '\n'.join(lines)
     return {'content': content[:1900], 'username': 'ICT Signals',
@@ -102,7 +114,10 @@ def format_message(payload):
 
 
 def maybe_queue_exit(db, c, cfg, trade):
-    """Queue a Discord alert for a closed ICT paper trade.
+    """Queue a Discord alert for a closed ICT trade.
+
+    The payload's 'live' flag comes from the position's recorded
+    traderspost_sent, so a live position's exit is labeled live.
     
     Returns the outbox row id, or None if push is disabled.
     """
@@ -145,6 +160,10 @@ def maybe_queue_exit(db, c, cfg, trade):
         'emoji': emoji,
         'time_str': time_str,
         'at': time.time(),
+        # Live labeling (2026-10-31): keyed off the position's own
+        # recorded traderspost_sent — the same field the engine's
+        # TradersPost close-send gates read. Absent/False = paper.
+        'live': bool(trade.get('traderspost_sent')),
     }
     if getattr(cfg, 'push_outbox_unified', False):
         c.execute(db.insert(push_outbox).values(
@@ -159,7 +178,9 @@ def maybe_queue_exit(db, c, cfg, trade):
 
 
 def format_exit_message(payload):
-    """Discord-safe alert for an ICT paper exit."""
+    """Discord-safe alert for an ICT exit (paper or live)."""
+    footer = ('🔴 **LIVE** — closed via TradersPost'
+              if payload.get('live') else '_Paper trade — watch only_')
     lines = [
         '%s **ICT %s** %s %s — %s' % (
             payload.get('emoji', '📊'),
@@ -176,7 +197,7 @@ def format_exit_message(payload):
             payload.get('pnl_str', '$0.00'),
             payload.get('time_str', ''),
         ),
-        '_Paper trade — watch only_',
+        footer,
     ]
     content = '\n'.join(lines)
     return {'content': content[:1900], 'username': 'ICT Signals',
