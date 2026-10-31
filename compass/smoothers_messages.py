@@ -3,8 +3,15 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from .market import number,ts
 
-VERSION='smoothers-alerts-v2'
+VERSION='smoothers-alerts-v3'
 TIERS=('A+','A','B','WATCH')
+# Shadow-board presentation (Josh-approved Smoothers plan, 2026-10-30):
+# the board is a scored scorecard, not a buy list. Rows are ordered by
+# the executable-cost key (compass/smoothers_cost.py), quality tiers are
+# stored on payloads for audit but never presented as a ranking, and
+# premium scoring closes at the Wednesday horizon.
+BOARD_HEADER='SMOOTHERS — SHADOW BOARD'
+BOARD_TERMS='scored only · not a buy list · Horizon: Wednesday close · ranked by executable cost'
 CT=ZoneInfo('America/Chicago')
 
 
@@ -85,16 +92,43 @@ def stock_text(p):
     return text
 
 
+def cost_text(p):
+    """Board cost segment for one pick: 'Spread x% · Rent y%/day · Cost z',
+    from the generation-time fields smoothers_cost.annotate() stored.
+    Unrankable picks (no usable entry quote) say so instead of a number."""
+    spread=number(p.get('entry_spread_pct'));rent=number(p.get('entry_rent_pct_day'));key=number(p.get('cost_key'))
+    if spread is None or rent is None or key is None:return 'Cost unavailable — entry quote missing'
+    return f'Spread {spread:.1f}% · Rent {rent:.1f}%/day · Cost {key:.1f}'
+
+
+def friction_text(p):
+    if p.get('friction'):return f" ⚠ FRICTION — {p.get('friction_reason') or 'wide spread'}"
+    return ''
+
+
+def horizon_field(p):
+    """Wednesday-horizon scoring outcome, when the pick was scored out
+    before its underlying outcome resolved (or before Friday close)."""
+    h=p.get('horizon') or {}
+    if not h:return None
+    if h.get('status')=='scored':
+        return field('Wednesday Horizon',
+            f"Premium scored out Wed {h.get('date')} at chain bid {dollar(h.get('chain_bid'))} "
+            f"({pct(h.get('premium_pct'))} vs entry ask; net {dollar(h.get('premium_net'))}). "
+            'Later touches are tracked as statistics only.',False)
+    return field('Wednesday Horizon',
+        f"Wednesday chain bid unavailable — premium outcome unmeasurable ({h.get('reason') or 'no_chain_data'}).",False)
+
+
 def envelope(p,event,description,fields,color):
-    # A+ Featured gets the old-style emoji title (matches 2026-09-08 format)
-    if event == 'ENTRY SIGNAL' and p.get('quality_tier') == 'A+':
-        title = f"☀️ A+ Featured #{p.get('featured_rank') or 0:02d} {p.get('direction','')} - {p['ticker']}"
-    else:
-        title = f"SMOOTHERS | {event} | {p['ticker']} · {p.get('direction','Unavailable')}"
+    # Shadow board (2026-10-31): no tier is presented as a recommendation,
+    # so the old 'A+ Featured' entry title is gone; every event uses the
+    # plain scored-notice title.
+    title = f"SMOOTHERS | {event} | {p['ticker']} · {p.get('direction','Unavailable')}"
     return {'username':'Smoothers','allowed_mentions':{'parse':[]},'embeds':[{
         'title':title,
         'description':description,'color':color,'fields':fields,
-        'footer':{'text':f"Smoothers · Weekly swing · Week {p['week']} · Signal {p['id']}"}}]}
+        'footer':{'text':f"Smoothers · Shadow board · Week {p['week']} · Signal {p['id']}"}}]}
 
 
 def contract_fields(p):
@@ -109,11 +143,13 @@ def entry(p):
     if dte is None and contract.get('expiration'):
         # Preserve original inclusive Monday-to-expiry convention.
         dte=(datetime.fromisoformat(contract['expiration']).date()-datetime.fromisoformat(p['week']).date()).days+1
-    # vNext Quality header (matches old A+ Featured style from 2026-09-08)
-    # Field named 'Quality Tier' for backwards compat with tests/dashboard
-    quality_line = f"{p.get('quality_tier','WATCH')} • Featured #{p.get('featured_rank') or 0:02d} • Overall Q #{p.get('quality_rank') or 0:02d} • {p.get('quality_score') or 0:.1f}/100"
-    fields=[field('Quality Tier', quality_line, False),
-        field('A+ selector', 'Raw Target / ATR (lower is better)', False),
+    # Shadow board header (2026-10-31): the board rank is executable cost,
+    # not the quality tier. The tier/score stay on the payload for audit;
+    # they are not presented as a ranking anywhere in the alert.
+    rank=p.get('cost_rank')
+    board_line = (f"Cost #{rank} · "+cost_text(p)+friction_text(p)) if rank else cost_text(p)+friction_text(p)
+    fields=[field('Board Cost', board_line, False),
+        field('Ranking', 'Executable cost at entry: spread % + rent %/day × 1.908 expected days. Cheapest to trade first; all expiries compete head-to-head.', False),
         field('Underlying Entry',stock_text(p)),field('Underlying Target',dollar(p.get('target_price'))),
         *contract_fields(p),field('Option Reference Premium',dollar(p.get('entry_premium'))),
         field('DTE at Entry',f'{dte} days' if dte is not None else 'Unavailable'),
@@ -134,7 +170,7 @@ def entry(p):
         field('Backtest WR',pct(config['backtest_wr']*100,0) if config.get('backtest_wr') is not None else 'Unavailable'),
         field('Quote Time',clock(q.get('quote_at_ms'))),field('Quote Status',q.get('status','unavailable'))]
     if config.get('min_fold_wr') is not None:fields.append(field('Min-fold WR',pct(config['min_fold_wr']*100,0)))
-    return envelope(p,'ENTRY SIGNAL','Signal only · Weekly swing. Underlying levels and option quotes are references, not broker fills. Featured rank uses target / ATR; the score is not a win probability.',fields,3066993 if p.get('direction')=='CALL' else 15158332)
+    return envelope(p,'SCORED ENTRY','Shadow board · scored only — not a buy list. Underlying levels and option quotes are references, not broker fills. Board order is executable cost (spread + rent), not a quality ranking.',fields,3066993 if p.get('direction')=='CALL' else 15158332)
 
 
 def target(p):
@@ -150,35 +186,74 @@ def target(p):
         if number(p.get('entry_premium')) and p['entry_premium']>0:fields.append(field('Option Return vs Entry',pct((mid/p['entry_premium']-1)*100)))
     else:fields.append(field('Option Quote','Unavailable — underlying target observation retained',False))
     if p.get('coverage_missing'):fields.append(field('Coverage','Missing minutes; an earlier target touch cannot be excluded',False))
-    return envelope(p,'TARGET HIT','Exit signal · Weekly swing · Completed 1-minute bar. Target Level is the strategy trigger; High/Low/Close are observed prices. The option snapshot is a reference, not a verified fill or realized profit.',fields,2067276)
+    hf=horizon_field(p)
+    if hf:fields.append(hf)
+    return envelope(p,'SCORED HIT','Scored hit · Shadow board · Completed 1-minute bar. Target Level is the strategy trigger; High/Low/Close are observed prices. The option snapshot is a reference, not a verified fill or realized profit.',fields,2067276)
 
 
 def close(p):
     incomplete=p.get('status')=='UNRESOLVED'
+    fields=[*contract_fields(p),field('Underlying Entry',stock_text(p)),field('Underlying Target',dollar(p.get('target_price'))),
+         field('Final 1m Close',dollar(p.get('exit_underlying'))),field('Closed At',clock(p.get('resolution_time'))),
+         field('Result','Unresolved — missing observations' if incomplete else 'Target not hit',False)]
+    hf=horizon_field(p)
+    if hf:fields.append(hf)
     return envelope(p,'WEEK CLOSED',
         'Observation incomplete; a target hit cannot be ruled out.' if incomplete else 'Target not observed by the weekly deadline. This strategy outcome is not a verified option loss.',
-        [*contract_fields(p),field('Underlying Entry',stock_text(p)),field('Underlying Target',dollar(p.get('target_price'))),
-         field('Final 1m Close',dollar(p.get('exit_underlying'))),field('Closed At',clock(p.get('resolution_time'))),
-         field('Result','Unresolved — missing observations' if incomplete else 'Target not hit',False)],10038562)
+        fields,10038562)
+
+
+def horizon(p):
+    """Wednesday-horizon scoring notice (plain content payload, like the
+    roster): a still-open pick is premium-scored out at Wednesday's chain
+    bid; Thu/Fri touches remain tracked as statistics only."""
+    c=p.get('contract') or {};h=p.get('horizon') or {}
+    strike=c.get('strike');side='C' if p.get('direction')=='CALL' else 'P' if p.get('direction')=='PUT' else ''
+    head=f"WEDNESDAY HORIZON — {p['ticker']} {strike:g}{side}" if isinstance(strike,(int,float)) else f"WEDNESDAY HORIZON — {p['ticker']}"
+    if h.get('status')=='scored':
+        body=(f"Still open at Wed close · Scored out at Wednesday chain bid {dollar(h.get('chain_bid'))} "
+              f"· Premium {pct(h.get('premium_pct'))} vs entry ask (net {dollar(h.get('premium_net'))})\n"
+              'Thu/Fri touches still tracked for stats, but no longer count as premium outcomes')
+    else:
+        body=(f"Still open at Wed close · Wednesday chain bid unavailable — premium outcome "
+              f"unmeasurable ({h.get('reason') or 'no_chain_data'})\n"
+              'Thu/Fri touches still tracked for stats, but no longer count as premium outcomes')
+    return {'username':'Smoothers','content':head+'\n'+body,'allowed_mentions':{'parse':[]}}
 
 
 def roster(signals,week,now,errors=0):
+    """The weekly SHADOW BOARD (2026-10-31): every pick, ordered by
+    executable cost, labeled scored-only. Quality tiers are not shown —
+    they are stored on the payloads for audit, and on the graded record
+    they ranked the book backwards (A+ -$26.49/pick vs WATCH +$75.85)."""
     calls=sum(p['direction']=='CALL' for p in signals);puts=len(signals)-calls
-    blocks=[f'Week {week} · {clock(now)}\n{len(signals)} observations | PUTs: {puts} CALLs: {calls} | Processing errors: {errors}\n'
-        'A+ = top 10 eligible signals by target / ATR. WATCH = research only. Cost and return are option estimates; stock levels are references. Scores and recorded win rates are not win probabilities.']
+    blocks=[f'**{BOARD_HEADER}**\n{BOARD_TERMS}\n'
+        f'Week {week} · {clock(now)}\n{len(signals)} observations | PUTs: {puts} CALLs: {calls} | Processing errors: {errors}\n'
+        'Cost = entry spread % + rent %/day × 1.908 expected days, from each pick\'s own entry quote. '
+        'Premium is scored at executable bid/ask and closes at the Wednesday horizon. Stock levels are references, not fills.']
     if not signals:blocks.append('No signals selected.' if not errors else 'Selection incomplete; review processing errors.')
-    for tier in TIERS:
-        rows=sorted((p for p in signals if p.get('quality_tier','WATCH')==tier),key=lambda p:p.get('featured_rank' if tier=='A+' else 'quality_rank') or 9999)
-        if not rows:continue
-        blocks.append(f'**{tier} ({len(rows)})**')
-        for p in rows:
-            config=p.get('config') or {};c=p.get('contract') or {}
-            # Est return is only meaningful against the displayed quote; a
-            # stale modeled return with no usable quote renders Unavailable.
-            ret=p.get('est_return_pct') if quote_ok(p) else None
-            blocks.append(f"**{p['ticker']} {p['direction']} · {tier} · "+(f"F{p['featured_rank']:02d}" if p.get('featured_rank') else f"Q{p.get('quality_rank','—')}")+f"**\nStock {stock_text(p)} → target {dollar(p.get('target_price'))} | Strike {dollar(c.get('strike'))}\n"
-                f"{quote_line(p)} | Est return {pct(ret,0)} | ATR {p.get('target_atr_mult','Unavailable')} | Score {p.get('quality_score','Unavailable')} | Backtest {pct(config['backtest_wr']*100,0) if config.get('backtest_wr') is not None else 'Unavailable'} | Recorded {record(p.get('stats_at_entry'))}")
-    chunks=[];header=f'**SMOOTHERS | WEEKLY ROSTER | {week}**';current=header
+    ranked=sorted((p for p in signals if p.get('cost_rank')),key=lambda p:p['cost_rank'])
+    unranked=sorted((p for p in signals if not p.get('cost_rank')),key=lambda p:(str(p.get('ticker') or ''),str(p.get('direction') or '')))
+    def row(p):
+        c=p.get('contract') or {}
+        # Est return is only meaningful against the displayed quote; a
+        # stale modeled return with no usable quote renders Unavailable.
+        ret=p.get('est_return_pct') if quote_ok(p) else None
+        rank=f"#{p['cost_rank']}" if p.get('cost_rank') else 'unranked'
+        return (f"**{p['ticker']} {p['direction']} · {rank}** · Strike {dollar(c.get('strike'))} · exp {c.get('expiration') or 'Unavailable'}\n"
+            f"Stock {stock_text(p)} → target {dollar(p.get('target_price'))} | {cost_text(p)}{friction_text(p)}\n"
+            f"{quote_line(p)} | Est return {pct(ret,0)}")
+    top=[p for p in ranked if p['cost_rank']<=10];rest=[p for p in ranked if p['cost_rank']>10]
+    if top:
+        blocks.append(f'**TOP — cheapest to trade ({len(top)})**')
+        blocks.extend(row(p) for p in top)
+    if rest:
+        blocks.append(f'**REST OF BOARD — by executable cost ({len(rest)})**')
+        blocks.extend(row(p) for p in rest)
+    if unranked:
+        blocks.append(f'**UNRANKED — entry quote missing ({len(unranked)})**')
+        blocks.extend(row(p) for p in unranked)
+    chunks=[];header=f'**{BOARD_HEADER} | {week}**';current=header
     for block in blocks:
         if len(current)+len(block)+2>1900:chunks.append(current);current=header+' | CONTINUED'
         current+='\n\n'+block

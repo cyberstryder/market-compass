@@ -104,14 +104,16 @@ def test_level_breakdown_no_signal_on_low_volume():
 
 
 def test_full_watchlist_and_explicit_overrides():
-    assert len(saved_watchlist())==144
+    # 2026-10-31: 144 -> 162 — the 18 Smoothers pick underlyings missing
+    # from the EOD chain snapshot universe were added (archive-rescore.md §3).
+    assert len(saved_watchlist())==162
     assert symbols('NASDAQ:NVDA, NVDA\nNYSE:TSLA')==('NVDA','TSLA')
     cfg=Config(local=False,stocks=('SPY',),watchlist=())
     # 2026-10-15: OPRA filter REVERTED. watch_symbols now returns full watchlist
-    # (144 tickers) in production, not restricted to 16 OPRA tickers.
+    # (162 tickers) in production, not restricted to 16 OPRA tickers.
     # The OPRA filter (d35d433) may have killed 0DTE/Ideas signals on tickers
     # outside the 16. MRNA observation_gap should be handled per-ticker.
-    assert len(cfg.watch_symbols)==144
+    assert len(cfg.watch_symbols)==162
     assert Config(local=True,stocks=('SPY',),watchlist=('TSLA','NVDA')).watch_symbols==('SPY','TSLA','NVDA')
     with pytest.raises(ValueError): symbols('SPY,https://attacker.invalid')
 

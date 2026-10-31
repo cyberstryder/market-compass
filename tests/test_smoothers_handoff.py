@@ -218,7 +218,9 @@ def test_roster_contains_all_76_tickers_with_discord_limits_and_reference_labels
     joined='\n'.join(p['content'] for p in chunks)
     assert all(joined.count('**'+r['ticker']+' ')==1 for r in rows)
     payload=messages.entry(signals[0]);fields={x['name'] for x in payload['embeds'][0]['fields']}
-    assert {'Contract','Expiration','DTE at Entry','Quality Tier','Live WR','WR (last 4)','Backtest WR','Quote Time'}<=fields
+    # 2026-10-31 shadow board: the entry embed headlines 'Board Cost'
+    # (executable-cost rank), not the retired 'Quality Tier' presentation.
+    assert {'Contract','Expiration','DTE at Entry','Board Cost','Live WR','WR (last 4)','Backtest WR','Quote Time'}<=fields
     missing={**signals[0],'exit_quote':{'status':'unavailable'}}
     assert 'Option Quote' in {x['name'] for x in messages.target(missing)['embeds'][0]['fields']}
 

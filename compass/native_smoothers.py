@@ -12,6 +12,9 @@ import pandas as pd
 DROPPED_TICKERS={'COST','WMT','BA','MSFT','TSLA','LLY','AMZN','QCOM','HOOD'}
 # Best 10 by avg return % (5w): get individual detailed alerts, rest get compact format
 # META added 2026-10-03 per Josh (fast 0.3d, 100% WR, benefits from 3 DTE)
+# 2026-10-31 (Smoothers plan): BEST_10 no longer selects the detailed-alert
+# set — the shadow board's top 10 by executable cost does (schedule()).
+# Retained only as the historical record of the old selection rule.
 BEST_10={'AMD','XLE','IWM','GOOGL','NFLX','COP','MCD','MAR','WFC','PLTR','META'}
 # DTE overrides: 14 DTE for slow movers, 2-3 DTE for fast hitters with short expiries available
 DTE_14={'SMCI','UBER'}  # 2.5-3.0d avg to target, need more time
@@ -20,11 +23,13 @@ DTE_SHORT={'IWM':2,'META':3,'GOOGL':3}  # IWM has dailies, META/GOOGL have Mon/W
 # Josh chose 30 minutes 2026-10-05 so the alert stays actionable while read).
 ENTRY_WINDOW_SECS=1800
 from sqlalchemy import Table,Column,String,Float,JSON,select,func
-from .store import meta,identity
+from .store import meta,identity,events
+from .chain_eod import event_key as chain_event_key
 from .native_smoothers_data import Data,ET
 from .smoothers_math import compute_smoother
 from .smoothers_signals import classify_signal,get_week_start_indices
 from .smoothers_quality import score_signal,rank_signals
+from . import smoothers_cost
 from .smoothers_factors import atr
 from .smoothers_blackscholes import value_at_target
 from .native_outbox import queue,owner as delivery_owner
@@ -136,9 +141,16 @@ def queue_signal(db,c,p,event,payload,now,event_time):
         est_return_pct=p.get('est_return_pct'),week=p.get('week'),
         signal_status=p.get('status'),exit_underlying=p.get('exit_underlying'),
         quote=dict(bid=q.get('bid'),ask=q.get('ask'),ts=(q.get('quote_at_ms') or 0)/1000),
-        reason='Weekly Smoothers underlying target / unresolved Friday close',
+        # Shadow-board fields (2026-10-31): the delivery renderer shows
+        # board cost on entries and the Wednesday-horizon outcome on
+        # exits, driven by these publication values.
+        cost_rank=p.get('cost_rank'),cost_key=p.get('cost_key'),
+        entry_spread_pct=p.get('entry_spread_pct'),entry_rent_pct_day=p.get('entry_rent_pct_day'),
+        friction=bool(p.get('friction')),friction_reason=p.get('friction_reason'),
+        horizon=p.get('horizon'),
+        reason='Weekly Smoothers underlying target / Wednesday-close horizon',
         exit_reason=event if event!='entry' else None,expires_at=now+ENTRY_WINDOW_SECS,
-        exit_rule='Underlying target, otherwise Friday close; no premium stop configured',
+        exit_rule='Underlying target, otherwise Wednesday-close horizon scoring; no premium stop configured',
         outcome='unresolved' if event!='entry' else None)
     return queue(db,c,'smoothers',p['id']+':'+event,payload,now,
                  event_time=event_time,cohort_time=p.get('model_entry_time'),publication=publication)
@@ -180,9 +192,11 @@ def refresh_entry_quotes(signals,data,now):
 
 def compact_line(p):
     """One-liner for the compact batch: same labeled reference + live
-    underlying segment as the roster (messages.stock_text)."""
+    underlying segment as the roster (messages.stock_text), plus the
+    shadow-board cost segment (spread / rent / cost + friction flag)
+    in place of the retired quality score."""
     return (f"{p['ticker']} {p['direction']} {messages.stock_text(p)}"
-            f" → ${p['target_price']:.2f} Q{p.get('quality_score',0):.1f}")
+            f" → ${p['target_price']:.2f} · {messages.cost_text(p)}{messages.friction_text(p)}")
 
 
 def schedule(db,data,now):
@@ -267,18 +281,25 @@ def schedule(db,data,now):
             current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
             current.update({k:p[k] for k in entry_fields if k in p});p.update(current)
         ranked=rank_signals(signals)
+        # Shadow board (2026-10-31): annotate executable cost from the
+        # publication-batch entry quotes and order the board by it. The
+        # quality tiers rank_signals assigned stay stored for audit; the
+        # board, the detailed-alert set, and the compact batches all
+        # follow cost order (ranked first, quote-missing last).
+        ranked=smoothers_cost.annotate(ranked)
         for p in ranked:
             save(db,c,p)
-            # Best 10 get individual detailed alerts; rest go in compact format
-            if p['ticker'] in BEST_10:
+            # Top 10 by cost get individual detailed alerts; rest compact.
+            if p.get('cost_rank') and p['cost_rank']<=10:
                 queue_signal(db,c,p,'entry',messages.entry(p),now,p['model_entry_time'])
-        # Compact format for non-Best-10 (split for Discord 2000-char limit;
-        # batches of 20 since lines grew with the ref/live stock segment)
-        compact=[p for p in ranked if p['ticker'] not in BEST_10]
+        # Compact format for the rest of the board (split for Discord
+        # 2000-char limit; batches of 20 since lines grew with the
+        # ref/live stock segment)
+        compact=[p for p in ranked if not (p.get('cost_rank') and p['cost_rank']<=10)]
         for i in range(0, len(compact), 20):
             batch=compact[i:i+20]
             lines=[compact_line(p) for p in batch]
-            msg=f"SMOOTHERS | SIGNALS ({i//20+1}/{(len(compact)+19)//20}) | {monday.isoformat()}\n" + " | ".join(lines)
+            msg=f"SMOOTHERS — SHADOW BOARD (compact {i//20+1}/{(len(compact)+19)//20}) | {monday.isoformat()} · scored only · not a buy list\n" + " | ".join(lines)
             queue(db,c,'smoothers',f"{monday.isoformat()}:compact:{i//20}",{'content':msg},now,event_time=first['open']+3600,cohort_time=first['open']+3600)
         previews=messages.roster(ranked,monday.isoformat(),now,len(state['errors']))
         for i,payload in enumerate(previews):
@@ -287,6 +308,76 @@ def schedule(db,data,now):
         state['summary_messages']=len(previews)
         state.update(state='partial' if state['errors'] else 'complete',finished=now,signals=len(ranked))
         db.put(c,key,state)
+
+
+def wednesday_session(sessions):
+    """The week's Wednesday session: the session dated Monday+2 when the
+    calendar has one, else the third session (holiday-shortened weeks),
+    else None — a week with no third session gets no horizon scoring."""
+    if not sessions:return None
+    try:monday=datetime.fromisoformat(sessions[0]['date']).date()
+    except (KeyError,TypeError,ValueError):return None
+    wed=(monday+timedelta(days=2)).isoformat()
+    for s in sessions:
+        if s.get('date')==wed:return s
+    return sessions[2] if len(sessions)>=3 else None
+
+
+def horizon_score(c,p,wed,now):
+    """Premium-score one still-open pick out at Wednesday's chain close.
+
+    Reads the chain_eod event for (Wednesday, ticker) from the events
+    table — server-side code reads the archive natively; no HTTP surface
+    is involved. Returns the horizon dict to store on the payload, or
+    None when the Wednesday snapshot is not stored yet and the caller
+    should retry on a later pass. A price is never fabricated: a stored
+    snapshot without the pick's contract, a missing bid, or an unusable
+    entry ask records an explicit 'unavailable' outcome with its reason
+    (the pick remains tracked for touches either way)."""
+    from .smoothers_scorecard import FEE_PER_CONTRACT
+    base={'date':wed['date'],'scored_at':now}
+    contract=p.get('contract') or {}
+    if not contract.get('symbol'):
+        return {**base,'status':'unavailable','reason':'no_contract_recorded'}
+    row=c.execute(select(events.c.payload).where(events.c.key==chain_event_key(wed['date'],p['ticker']))).first()
+    if row is None:
+        # The snapshot job fires after Wednesday's close; give it a day
+        # before concluding the archive will never have this symbol.
+        if now<wed['close']+36*3600:return None
+        return {**base,'status':'unavailable','reason':'wednesday_chain_missing'}
+    payload=row[0] or {}
+    match=next((r for r in payload.get('contracts',[]) if r.get('symbol')==contract['symbol']),None)
+    if match is None:
+        return {**base,'status':'unavailable','reason':'contract_not_in_wednesday_chain'}
+    bid=(match.get('quote') or {}).get('bid')
+    ask=(p.get('quote') or {}).get('ask')
+    try:bid=float(bid)
+    except (TypeError,ValueError):bid=None
+    try:ask=float(ask)
+    except (TypeError,ValueError):ask=None
+    if bid is None or bid<0:
+        return {**base,'status':'unavailable','reason':'chain_bid_missing'}
+    if ask is None or ask<=0:
+        return {**base,'status':'unavailable','reason':'entry_ask_missing'}
+    if contract.get('multiplier')!=100:
+        return {**base,'status':'unavailable','reason':'unsupported_contract_multiplier'}
+    net=round((bid-ask)*100-FEE_PER_CONTRACT,2)
+    return {**base,'status':'scored','chain_bid':bid,'entry_ask':ask,
+            'premium_net':net,'premium_pct':round((bid/ask-1)*100,2),'fee':FEE_PER_CONTRACT}
+
+
+def score_horizon(db,p,wed,now):
+    """Persist one pick's horizon outcome (own transaction, row-locked)
+    and queue its WEDNESDAY HORIZON notice. Returns True when scored."""
+    with db.tx() as c:
+        current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
+        if current['status']!='OPEN' or current.get('horizon'):return False
+        h=horizon_score(c,current,wed,now)
+        if h is None:return False
+        current['horizon']=h;save(db,c,current);p.update(current)
+        queue(db,c,'smoothers',p['id']+':horizon',messages.horizon(p),now,
+              event_time=wed['close'],cohort_time=p.get('model_entry_time'))
+    return True
 
 
 def monitor(db,data,now):
@@ -347,6 +438,18 @@ def monitor(db,data,now):
             save(db,c,p)
             db.append(c,'native_target_check','smoothers',p['ticker'],now,{'id':p['id'],'from':start,'through':end,'missing_minutes':len(missing),'last_seen_at':p['last_seen_at'],'status':p['status']})
             if p['status']=='WIN':queue_signal(db,c,p,'target',messages.target(p),now,p['resolution_time']+60)
+    # Wednesday horizon (2026-10-31): picks still OPEN after Wednesday's
+    # close are premium-scored out at Wednesday's chain bid. The pick
+    # itself stays OPEN — Thu/Fri target touches keep resolving as
+    # statistics — only the premium outcome is fixed at the horizon.
+    wed=wednesday_session(sessions)
+    if wed and now>wed['close']+300:
+        with db.tx() as c:
+            open_rows=list(c.execute(select(weekly.c.payload).where(weekly.c.week==monday,weekly.c.status=='OPEN')).scalars())
+        for p in open_rows:
+            if not p.get('horizon'):
+                try:score_horizon(db,p,wed,now)
+                except Exception:logging.getLogger('uvicorn.error').exception('native_smoothers horizon scoring failed for %s',p.get('id'))
     # Recover overdue closures after a restart even when the calendar week changed.
     overdue=[]
     with db.tx() as c:
@@ -357,6 +460,13 @@ def monitor(db,data,now):
             for p in c.execute(select(weekly.c.payload).where(weekly.c.week==open_week,weekly.c.status=='OPEN')).scalars().all():
                 overdue.append((closing,p))
     for closing,p in overdue:
+        # A pick that never got its Wednesday horizon scored while its
+        # week was current (engine down Wed–Fri) is scored now, before
+        # the closure writes its final state.
+        wed=wednesday_session(closing)
+        if wed and not p.get('horizon'):
+            try:score_horizon(db,p,wed,now)
+            except Exception:logging.getLogger('uvicorn.error').exception('native_smoothers horizon scoring failed for %s',p.get('id'))
         # Capture at resolution time, never substitute an old hourly premium:
         # the same quote capture the target-touch path uses, so a LOSS or
         # UNRESOLVED week is measurable (or visibly unmeasurable) instead of

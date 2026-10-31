@@ -390,6 +390,20 @@ class Store:
         if since is not None: q=q.where(events.c.ts>=since)
         return [dict(r) for r in c.execute(q.order_by(events.c.ts.desc(),events.c.id.desc()).limit(limit)).mappings()]
 
+    def export_events(self,c,kind,symbol=None,since=None,until=None,after_id=0,limit=100):
+        """Id-cursor-paged event reads for the admin events-export
+        endpoint (2026-10-31): rows of one kind with id > after_id,
+        ascending, optionally narrowed by symbol and ts range. Events
+        are append-only with monotonic ids, so a caller pages the full
+        matching set by feeding back the last id it saw. Serves the
+        research reads the HTTP surface previously could not make at
+        all (chain_eod payloads, native_premium quote paths)."""
+        q=select(events).where(events.c.kind==kind,events.c.id>after_id)
+        if symbol is not None: q=q.where(events.c.symbol==symbol)
+        if since is not None: q=q.where(events.c.ts>=since)
+        if until is not None: q=q.where(events.c.ts<=until)
+        return [dict(r) for r in c.execute(q.order_by(events.c.id.asc()).limit(limit)).mappings()]
+
     def recent_bars_after(self,c,symbol,since,after_id,limit):
         """Bar rows with ts >= since and id > after_id, newest first.
 

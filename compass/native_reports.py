@@ -218,13 +218,18 @@ def smoothers(db,c,now,limit=100,week='',ticker=''):
     from . import smoothers_messages as messages
     expected={}
     for p in rows:
-        if p.get('is_featured'):expected[p['id']+':entry']=messages.entry(p)
+        # Detailed entry alerts: shadow-board top 10 by executable cost
+        # (2026-10-31); weeks generated before cost annotation fall back
+        # to the featured set they were actually queued under.
+        detailed=(p['cost_rank']<=10) if p.get('cost_rank') else bool(p.get('is_featured'))
+        if detailed:expected[p['id']+':entry']=messages.entry(p)
         if p['status']=='WIN':expected[p['id']+':target']=messages.target(p)
         elif p['status'] in ('LOSS','UNRESOLVED'):expected[p['id']+':close']=messages.close(p)
+        if p.get('horizon'):expected[p['id']+':horizon']=messages.horizon(p)
     if state.get('finished') and not ticker and not truncated:
         for i,payload in enumerate(messages.roster(rows,week,state['finished'],len(state.get('errors',[])))):
             expected[week+':summary'+(':'+str(i+1) if i else '')]=payload
-    keys=[p['id']+':'+event for p in rows for event in ('entry','target','close')]
+    keys=[p['id']+':'+event for p in rows for event in ('entry','target','close','horizon')]
     selector=outbox.c.event_key.in_(keys)
     if not ticker and not truncated:selector=selector|outbox.c.event_key.startswith(week+':summary',autoescape=True)
     intents={r['event_key']:r for r in c.execute(select(outbox).where(outbox.c.program=='smoothers',selector)).mappings()}

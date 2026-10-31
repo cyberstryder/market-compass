@@ -178,6 +178,30 @@ def _smoothers_dte(o,week):
         return None
 
 
+def _smoothers_board_line(p):
+    """Shadow-board cost segment (2026-10-31), present only when the
+    publication carries generation-time cost fields (older publications
+    render exactly as before)."""
+    rank=p.get('cost_rank');spread=p.get('entry_spread_pct');rent=p.get('entry_rent_pct_day');key=p.get('cost_key')
+    if not (numeric(rank) and numeric(spread) and numeric(rent) and numeric(key)):return None
+    line=f"Board cost #{int(rank)} · Spread {spread:.1f}% · Rent {rent:.1f}%/day · Cost {key:.1f}"
+    if p.get('friction'):line+=f" · ⚠ FRICTION — {p.get('friction_reason') or 'wide spread'}"
+    return line
+
+
+def _smoothers_horizon_line(p,reason):
+    """Wednesday-horizon outcome for an exit publication that carries
+    one; None for publications from before the horizon existed."""
+    h=p.get('horizon')
+    if not isinstance(h,dict) or not h:return None
+    if h.get('status')=='scored':
+        line=(f"Wednesday horizon: scored out {h.get('date')} at chain bid ${h['chain_bid']:,.2f} "
+              f"· premium {h['premium_pct']:+.1f}% (net ${h['premium_net']:+,.2f})")
+        if reason=='target':line+=' · this touch is a statistic only'
+        return line
+    return f"Wednesday horizon: chain bid unavailable — premium unmeasurable ({h.get('reason') or 'no_chain_data'})"
+
+
 def _format_smoothers_entry(p,pub,o):
     """Compact human-readable Smoothers entry alert.
 
@@ -211,6 +235,8 @@ def _format_smoothers_entry(p,pub,o):
     if numeric(est):
         stock.append(f"Est return {est:+.0f}%")
     if stock:lines.append(' · '.join(stock))
+    board=_smoothers_board_line(p)
+    if board:lines.append(board)
     q=p.get('last_quote') or p.get('quote') or {}
     opt=[f"${q['bid']:.2f}/${q['ask']:.2f}" if q and all(numeric(q.get(k)) for k in ('bid','ask')) else 'quote unavailable',
          f"Strike ${o['strike']:g}"]
@@ -258,6 +284,8 @@ def _format_smoothers_exit(p,pub,o):
         line3=f"Underlying ${final:,.2f} at close" if numeric(final) else None
     lines=[title,line2]
     if line3:lines.append(line3)
+    horizon=_smoothers_horizon_line(p,reason)
+    if horizon:lines.append(horizon)
     return '\n'.join(lines)[:1950]
 
 
@@ -320,6 +348,8 @@ def _embed_smoothers_entry(p,pub,o):
             +datetime.fromtimestamp(live['ts'],CT).strftime('%H:%M CT')))
     est=p.get('est_return_pct')
     if numeric(est):fields.append(_embed_field('Est Return',f"{est:+.0f}%"))
+    board=_smoothers_board_line(p)
+    if board:fields.append(_embed_field('Board Cost',board))
     q=p.get('last_quote') or p.get('quote') or {}
     fields.append(_embed_field('Option Quote',
         f"${q['bid']:.2f}/${q['ask']:.2f}" if q and all(numeric(q.get(k)) for k in ('bid','ask')) else 'quote unavailable'))
@@ -360,6 +390,8 @@ def _embed_smoothers_exit(p,pub,o):
         final=p.get('exit_underlying')
         if numeric(final):fields.append(_embed_field('Underlying at Close',f"${final:,.2f}"))
         color=10038562
+    horizon=_smoothers_horizon_line(p,reason)
+    if horizon:fields.append(_embed_field('Wednesday Horizon',horizon,False))
     return dict(title=f"{LABELS['smoothers']} | EXIT | {o['underlying']} {o['strike']:g} {o['type']} · {o['expiration']}",
                 color=color,fields=fields)
 

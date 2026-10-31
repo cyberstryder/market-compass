@@ -69,6 +69,7 @@ CRON_TOKEN_PATHS = {
     "/api/admin/chain-eod-snapshot",
     "/api/admin/db-maintenance",
     "/api/admin/db-maintenance-log",
+    "/api/admin/events-export",
 }
 # Kept for callers/tests that import the old name.
 CRON_TOKEN_ENDPOINTS = {(m, p) for p in CRON_TOKEN_PATHS for m in ("GET", "POST")}
@@ -329,7 +330,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/events-export","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -944,6 +945,35 @@ a{color:#888}</style></head><body>
             import logging
             logging.getLogger('uvicorn.error').exception('chain-eod-snapshot read failed')
             return {'ok': False, 'error': 'Snapshot manifest read failed. Check server logs.'}
+
+    @app.get('/api/admin/events-export')
+    def get_events_export(kind: str = None, symbol: str = None,
+                          since: float = None, until: float = None,
+                          after_id: int = 0, limit: int = 100):
+        """Paged raw event reads (cron-token gated). Added 2026-10-31 so
+        research jobs can pull the payloads no endpoint served before —
+        chain_eod per-(date, symbol) chains and native_premium quote
+        paths (the Smoothers archive re-score / cutoff curve were both
+        blocked on exactly this). kind is required; page by feeding the
+        returned next_after_id back as after_id until it comes back
+        null. Payloads can be large (a chain_eod event is ~100 KB), so
+        the page size is capped at 200."""
+        import logging
+        import re as _re
+        if not kind or not _re.fullmatch(r'[a-z0-9_]{1,40}', kind):
+            return JSONResponse({'ok': False, 'error': 'A valid kind is required'}, status_code=400)
+        if after_id < 0 or not 1 <= limit <= 200:
+            return JSONResponse({'ok': False, 'error': 'after_id must be >= 0 and limit 1-200'}, status_code=400)
+        try:
+            with db.tx() as c:
+                rows = db.export_events(c, kind, symbol=symbol, since=since,
+                                        until=until, after_id=after_id, limit=limit)
+            return {'ok': True, 'kind': kind, 'count': len(rows),
+                    'next_after_id': rows[-1]['id'] if len(rows) == limit else None,
+                    'rows': rows}
+        except Exception:
+            logging.getLogger('uvicorn.error').exception('events-export failed')
+            return {'ok': False, 'error': 'Events export failed. Check server logs.'}
 
     @app.get('/api/admin/archive-coverage')
     def get_archive_coverage():

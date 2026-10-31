@@ -64,7 +64,10 @@ def test_entry_embed_shows_ref_and_live():
 def test_compact_line_shows_ref_and_live():
     p = _row(ticker='META', direction='PUT', entry_price=636.14, target_price=629.78,
              quality_score=91.0, live_underlying=dict(LIVE, price=643.53))
-    assert compact_line(p) == 'META PUT $636.14 (ref 09:30 CT) · live $643.53 @ 09:44 CT → $629.78 Q91.0'
+    # 2026-10-31 shadow board: the compact line ends with the cost
+    # segment, not the retired 'Q<quality score>' (this row carries no
+    # cost annotation, so it renders the quote-missing form).
+    assert compact_line(p) == 'META PUT $636.14 (ref 09:30 CT) · live $643.53 @ 09:44 CT → $629.78 · Cost unavailable — entry quote missing'
 
 
 # --- rendering: fallbacks ----------------------------------------------------
@@ -91,7 +94,7 @@ def test_entry_embed_fallback_is_labeled_ref_only():
 
 def test_compact_line_fallback_is_labeled_ref_only():
     p = _row(ticker='META', direction='PUT', entry_price=636.14, target_price=629.78, quality_score=91.0)
-    assert compact_line(p) == 'META PUT $636.14 (ref 09:30 CT) → $629.78 Q91.0'
+    assert compact_line(p) == 'META PUT $636.14 (ref 09:30 CT) → $629.78 · Cost unavailable — entry quote missing'
 
 
 def test_stock_text_without_model_entry_time_says_entry_ref():
