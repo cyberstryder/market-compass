@@ -1,0 +1,141 @@
+//@version=6
+// Blueprint — the "state-machine" futures blueprint made binary. Mirrors blueprint.py (Compass desk harness).
+// Chart: 1-minute, CME micro (MES/MNQ/MYM/MCL/MGC), session timestamps in America/Chicago.
+// Differences from the Python harness you must remember when comparing numbers:
+//   * TradingView fills a limit on TOUCH; the harness requires trade-THROUGH by 1 tick (desk non-fill rule).
+//   * Stops here fill at the stop price; harness fills stop - 2 ticks. Use the slippage input (ticks) to approximate.
+//   * Daily ATR / prior-day H-L here come from the "D" feed (full Globex session), same as the harness session table.
+strategy("Blueprint (time → regime → limit execution)", overlay=true, pyramiding=0,
+     default_qty_type=strategy.fixed, default_qty_value=1, commission_type=strategy.commission.cash_per_contract,
+     commission_value=1.5, slippage=0, calc_on_every_tick=false, process_orders_on_close=false)
+
+// ---------------- inputs (every rule is a switch) ----------------
+useTime    = input.bool(true,  "L1  Time filter 08:30–15:00 CT, flatten 15:45")
+useRegime  = input.bool(true,  "L2  Regime switch: ATR5 > ATR20 → TREND (ORB) else MR (gap fade)")
+useChop    = input.bool(true,  "L2  Chop filter: skip day if ATR14 < 60-day 25th pct")
+useORB     = input.bool(true,  "L3  ORB (30-min range, limit retest at the edge, stop = OR mid, 2R)")
+useGap     = input.bool(true,  "L3  Gap fade (≥0.5% & beyond prior H/L, 15-min wait, limit retrace)")
+orMin      = input.int(30,  "OR minutes", 5, 60)
+orDeadline = input.int(1100, "ORB breakout deadline (HHMM CT)")
+orValid    = input.int(60,  "ORB limit valid (min)")
+orRR       = input.float(2.0, "ORB target (R)")
+gapPct     = input.float(0.5, "Gap min (% of price)") / 100
+gapBeyond  = input.bool(true, "Gap must open beyond prior day H/L")
+gapWait    = input.int(15, "Gap wait (min)")
+gapRetr    = input.float(0.25, "Gap limit retrace into 15-min bar (0–1)")
+gapMinRR   = input.float(2.0, "Gap min R:R (target = prior RTH close)")
+gapValid   = input.int(1030, "Gap limit valid until (HHMM CT)")
+timeStop   = input.int(120, "Time stop (bars)")
+dailyMax   = input.float(150, "Daily max loss $/contract → no new entries")
+maxTrades  = input.int(2, "Max trades/day")
+slipTicks  = input.float(0, "Extra slippage ticks/side (friction test: 1.5)")
+
+tz = "America/Chicago"
+hhmm = hour(time, tz) * 100 + minute(time, tz)
+tod  = hour(time, tz) * 60 + minute(time, tz)
+newSession = ta.change(time("D", "", tz)) != 0 or (hhmm == 1700 and hhmm[1] != 1700)
+
+// ---------------- daily context (prior sessions only) ----------------
+[dHi, dLo, dTR] = request.security(syminfo.tickerid, "D", [high[1], low[1], ta.tr(true)[1]], lookahead=barmerge.lookahead_off)
+atr14 = request.security(syminfo.tickerid, "D", ta.sma(ta.tr(true), 14)[1], lookahead=barmerge.lookahead_off)
+atr5  = request.security(syminfo.tickerid, "D", ta.sma(ta.tr(true), 5)[1],  lookahead=barmerge.lookahead_off)
+atr20 = request.security(syminfo.tickerid, "D", ta.sma(ta.tr(true), 20)[1], lookahead=barmerge.lookahead_off)
+chopFloor = request.security(syminfo.tickerid, "D", ta.percentile_nearest_rank(ta.sma(ta.tr(true), 14), 60, 25)[1], lookahead=barmerge.lookahead_off)
+
+// prior RTH close = last 1-min close before 15:00 CT of the previous session
+var float rthCloseRun = na
+var float pRthClose = na
+if hhmm >= 830 and hhmm < 1500
+    rthCloseRun := close
+if newSession
+    pRthClose := rthCloseRun
+
+// ---------------- per-day state ----------------
+var string regime = "trend"
+var bool   chop = false
+var float  open830 = na
+var float  orH = na, orL = na, b15H = na, b15L = na
+var bool   orbArmed = false, gapArmed = false, orbDone = false, gapDone = false
+var int    orbArmTime = na
+var int    nTrades = 0
+var float  dayStartPnl = 0.0
+var int    entryBar = na
+
+if newSession
+    regime := (not useRegime) or atr5 > atr20 ? "trend" : "mr"
+    chop := useChop and atr14 < chopFloor
+    open830 := na, orH := na, orL := na, b15H := na, b15L := na
+    orbArmed := false, gapArmed := false, orbDone := false, gapDone := false
+    nTrades := 0
+    dayStartPnl := strategy.netprofit
+    strategy.cancel_all()
+
+if hhmm == 830
+    open830 := open
+// build OR and 15-min bar
+if hhmm >= 830 and tod < 8*60+30+orMin
+    orH := na(orH) ? high : math.max(orH, high)
+    orL := na(orL) ? low  : math.min(orL, low)
+if hhmm >= 830 and tod < 8*60+30+gapWait
+    b15H := na(b15H) ? high : math.max(b15H, high)
+    b15L := na(b15L) ? low  : math.min(b15L, low)
+
+dayPnl = strategy.netprofit - dayStartPnl
+canEnter = (not chop) and nTrades < maxTrades and dayPnl > -dailyMax and strategy.position_size == 0 and ((not useTime) or (tod >= 8*60+30 and tod < 15*60))
+slip = slipTicks * syminfo.mintick
+
+// ---------------- MR mode: gap fade ----------------
+gapOK = useGap and (regime == "mr" or not useRegime) and not gapDone and tod == 8*60+30+gapWait and not na(pRthClose)
+if gapOK
+    gap = open830 - pRthClose
+    beyond = (gap > 0 and open830 > dHi) or (gap < 0 and open830 < dLo)
+    if math.abs(gap) / pRthClose >= gapPct and (beyond or not gapBeyond)
+        rng = b15H - b15L
+        if gap > 0
+            lim = b15H - gapRetr * rng, stp = b15H + syminfo.mintick, tgt = pRthClose
+            if (tgt < lim) and (lim - tgt) / (stp - lim) >= gapMinRR and canEnter
+                strategy.entry("GapS", strategy.short, limit=lim - slip)
+                strategy.exit("GapS-x", "GapS", stop=stp + slip, limit=tgt + slip)
+                gapArmed := true
+        else
+            lim = b15L + gapRetr * rng, stp = b15L - syminfo.mintick, tgt = pRthClose
+            if (tgt > lim) and (tgt - lim) / (lim - stp) >= gapMinRR and canEnter
+                strategy.entry("GapL", strategy.long, limit=lim + slip)
+                strategy.exit("GapL-x", "GapL", stop=stp - slip, limit=tgt - slip)
+                gapArmed := true
+    gapDone := true
+if gapArmed and strategy.position_size == 0 and hhmm >= gapValid
+    strategy.cancel("GapS"), strategy.cancel("GapL"), gapArmed := false
+
+// ---------------- TREND mode: ORB limit retest ----------------
+orbOK = useORB and (regime == "trend" or not useRegime) and not orbDone and tod >= 8*60+30+orMin and hhmm < orDeadline and not na(orH)
+if orbOK and canEnter and not gapArmed
+    mid = (orH + orL) / 2
+    if close > orH
+        risk = orH - mid
+        strategy.entry("OrbL", strategy.long, limit=orH + slip)
+        strategy.exit("OrbL-x", "OrbL", stop=mid - slip, limit=orH + orRR * risk - slip)
+        orbArmed := true, orbDone := true, orbArmTime := tod
+    else if close < orL
+        risk = mid - orL
+        strategy.entry("OrbS", strategy.short, limit=orL - slip)
+        strategy.exit("OrbS-x", "OrbS", stop=mid + slip, limit=orL - orRR * risk + slip)
+        orbArmed := true, orbDone := true, orbArmTime := tod
+if orbArmed and strategy.position_size == 0 and not na(orbArmTime) and tod >= orbArmTime + orValid
+    strategy.cancel("OrbL"), strategy.cancel("OrbS"), orbArmed := false
+
+// ---------------- position bookkeeping, time stop, flatten ----------------
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    entryBar := bar_index
+    nTrades += 1
+    orbArmed := false, gapArmed := false
+if strategy.position_size != 0 and timeStop > 0 and bar_index - entryBar >= timeStop
+    strategy.close_all(comment="time")
+if useTime and tod >= 15*60+45
+    strategy.close_all(comment="flatten")
+    strategy.cancel_all()
+
+plot(orH, "OR high", color=color.new(color.orange, 40), style=plot.style_linebr)
+plot(orL, "OR low",  color=color.new(color.orange, 40), style=plot.style_linebr)
+plot(pRthClose, "prior RTH close", color=color.new(color.gray, 50), style=plot.style_linebr)
+bgcolor(chop ? color.new(color.red, 92) : regime == "trend" ? color.new(color.green, 95) : color.new(color.blue, 95))
