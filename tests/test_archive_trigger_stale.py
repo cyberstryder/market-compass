@@ -29,11 +29,25 @@ def make_client(tmp_path, monkeypatch):
     cfg.db = 'sqlite:///' + db_path
     cfg.password = 'test-password-12345678'
     cfg.local = True
+    # Role 'web' + seed-before-start (below) are the fix for the
+    # intermittent "database is locked" failures at seed() (bit
+    # 2026-10-31, CI run 41174152077 and local repro). With the default
+    # role 'all', TestClient.__enter__ runs the lifespan, which spawns
+    # the collectors, the engine and ~25 background loops — all writing
+    # the same sqlite file through the app's own Store. Those writers
+    # held the sqlite write lock past the 30s busy timeout (the app's
+    # own heartbeat and survivors-seed writes failed with the same
+    # error in the captured log), so the test's seed INSERT starved.
+    # Role 'web' spawns only the heartbeat loop — the standard pattern
+    # for TestClient tests in this suite — and the archive-trigger
+    # route under test does not depend on role. Seeding before
+    # __enter__ (the test_readiness_poison_health.py pattern) removes
+    # the remaining race: no app writer exists at seed time.
+    cfg.role = 'web'
     db = Store(cfg.db)
     db.initialize()
     app = create_app(cfg)
     client = TestClient(app, raise_server_exceptions=False)
-    client.__enter__()
     return client, db
 
 
@@ -50,40 +64,34 @@ def seed(db, running, last_run=None, heartbeat_at=None):
 
 def test_fresh_worker_still_blocks(tmp_path, monkeypatch):
     client, db = make_client(tmp_path, monkeypatch)
-    try:
-        now = time.time()
-        seed(db, True, last_run=now - 60, heartbeat_at=now - 30)
+    now = time.time()
+    seed(db, True, last_run=now - 60, heartbeat_at=now - 30)
+    with client:
         r = client.get('/api/admin/archive-trigger', headers=AUTH)
         assert r.status_code == 200
         body = r.json()
         assert body['ok'] is False
         assert 'already running' in body['error']
-    finally:
-        client.__exit__(None, None, None)
 
 
 def test_stale_flag_cleared_and_worker_starts(tmp_path, monkeypatch):
     client, db = make_client(tmp_path, monkeypatch)
-    try:
-        now = time.time()
-        # The 2026-10-22 shape: flag set hours ago, heartbeat frozen
-        # with it (thread killed by a redeploy).
-        seed(db, True, last_run=now - 7200, heartbeat_at=now - 7140)
+    now = time.time()
+    # The 2026-10-22 shape: flag set hours ago, heartbeat frozen
+    # with it (thread killed by a redeploy).
+    seed(db, True, last_run=now - 7200, heartbeat_at=now - 7140)
+    with client:
         r = client.get('/api/admin/archive-trigger', headers=AUTH)
         assert r.status_code == 200
         body = r.json()
         assert body['ok'] is True, body
         assert body['started'] is True
-    finally:
-        client.__exit__(None, None, None)
 
 
 def test_no_flag_starts_normally(tmp_path, monkeypatch):
     client, db = make_client(tmp_path, monkeypatch)
-    try:
-        seed(db, False)
+    seed(db, False)
+    with client:
         r = client.get('/api/admin/archive-trigger', headers=AUTH)
         assert r.status_code == 200
         assert r.json()['ok'] is True
-    finally:
-        client.__exit__(None, None, None)
