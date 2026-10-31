@@ -36,11 +36,19 @@ def make_client(tmp_path, monkeypatch, token=CRON):
     cfg.db = 'sqlite:///' + db_path
     cfg.password = 'test-password-12345678'
     cfg.local = True
+    # Role 'web' + seed-before-start (the fbb8315 pattern): with the
+    # default role 'all', TestClient startup spawns the collectors, the
+    # engine and ~25 background writers on the same sqlite file, and a
+    # test's seed INSERT can starve past the busy timeout ('database is
+    # locked' — this exact race failed this file's paging test and
+    # test_db_maintenance in CI run 41202431863). Role 'web' runs only
+    # the heartbeat loop; the export route is role-independent. Callers
+    # seed first, then enter the client (`with client:`).
+    cfg.role = 'web'
     db = Store(cfg.db)
     db.initialize()
     app = create_app(cfg)
     client = TestClient(app, raise_server_exceptions=False)
-    client.__enter__()
     return client, db
 
 
@@ -64,37 +72,31 @@ def test_export_path_is_cron_token_locked():
 
 def test_export_rejects_missing_and_wrong_token(tmp_path, monkeypatch):
     client, db = make_client(tmp_path, monkeypatch)
-    try:
+    with client:
         assert client.get(PATH, params={'kind': 'chain_eod'}).status_code == 401
         assert client.get(PATH, params={'kind': 'chain_eod'},
                           headers={'Authorization': 'Bearer wrong'}).status_code == 401
-    finally:
-        client.__exit__(None, None, None)
 
 
 def test_export_503_when_token_unconfigured(tmp_path, monkeypatch):
     client, db = make_client(tmp_path, monkeypatch, token=None)
-    try:
+    with client:
         assert client.get(PATH, params={'kind': 'chain_eod'}).status_code == 503
-    finally:
-        client.__exit__(None, None, None)
 
 
 def test_export_requires_a_valid_kind(tmp_path, monkeypatch):
     client, db = make_client(tmp_path, monkeypatch)
-    try:
+    with client:
         assert client.get(PATH, headers=AUTH).status_code == 400
         assert client.get(PATH, params={'kind': 'Bad Kind!'}, headers=AUTH).status_code == 400
         assert client.get(PATH, params={'kind': 'chain_eod', 'limit': 201},
                           headers=AUTH).status_code == 400
-    finally:
-        client.__exit__(None, None, None)
 
 
 def test_export_pages_by_id_cursor_with_filters(tmp_path, monkeypatch):
     client, db = make_client(tmp_path, monkeypatch)
-    seed(db)
-    try:
+    seed(db)  # before client startup: no app writer exists yet
+    with client:
         # Page the 5 AAA chain events two at a time, in id order.
         seen, after = [], 0
         while True:
@@ -121,5 +123,3 @@ def test_export_pages_by_id_cursor_with_filters(tmp_path, monkeypatch):
                                      'since': 1002.0, 'until': 1003.0},
                        headers=AUTH)
         assert [row['payload']['n'] for row in r.json()['rows']] == [2, 3]
-    finally:
-        client.__exit__(None, None, None)
