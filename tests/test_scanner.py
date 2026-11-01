@@ -10,7 +10,7 @@ from compass.store import Store
 from compass.market import NY
 from compass.engine import Engine,spec
 from compass.scanner import (features,technical_candidates,exposure_candidates,
-    flow_candidate,Scanner,snapshot)
+    flow_candidate,Scanner,snapshot,freshness_block_evidence)
 from compass.research import Feed,normalize,apex_levels,collect,FEEDS,catalog,scheduled_feeds
 from compass.providers import Collectors,FeedError
 from compass.flow_recovery import collect as collect_flow
@@ -456,3 +456,61 @@ def test_retired_orb_does_not_emit_with_existing_arms():
     assert disabled==[r for r in enabled if r['rule']!='orb_retest']
     regular,_=technical_candidates(fact(),{},NOW,.01,orb_enabled=False)
     assert any(r['rule']=='volume_breakout' for r in regular)
+
+
+def test_freshness_block_evidence_attributes_each_subreason():
+    # Gate passes: fresh quote stamped at/after the signal bar close.
+    assert freshness_block_evidence(quote(NOW),NOW,NOW) is None
+    # No quote consulted at all.
+    e=freshness_block_evidence(None,NOW,NOW)
+    assert e['blocked_subreason']=='no_quote'
+    assert e['quote_ts'] is None and e['quote_age_s'] is None and e['trigger_quote'] is None
+    assert e['signal_bar_close_ts']==NOW and e['quote_fresh'] is False
+    # Fresh (1s old) but stamped before the signal bar closed.
+    e=freshness_block_evidence(quote(NOW-1),NOW,NOW)
+    assert e['blocked_subreason']=='quote_predates_signal_bar_close'
+    assert e['quote_ts']==NOW-1 and e['quote_age_s']==1 and e['quote_fresh'] is True
+    assert e['trigger_quote']['bid']==101.10 and e['trigger_quote']['ask']==101.11
+    assert e['trigger_quote']['source']=='fixture'
+    # Stamped after the bar close but older than the 5s freshness window.
+    e=freshness_block_evidence(quote(NOW-10),NOW-30,NOW)
+    assert e['blocked_subreason']=='quote_too_old'
+    assert e['quote_age_s']==10 and e['quote_fresh'] is False
+
+
+def test_scan_records_predating_quote_on_blocked_opportunity(db):
+    cfg=Config(local=True,stocks=('SPY',),futures=(),scanner_paper=False)
+    with db.tx() as c:
+        db.put(c,'scanner_features:SPY',fact())
+        db.put(c,'quote:SPY',quote(NOW-1))
+        db.put(c,'matrix:unusual_activity',{'source_ts':NOW-1,'received':NOW,'rows':[{'symbol':'SPY','source_ts':NOW-1,'premium':200000,'score':90,'sentiment':'Bullish','vendor_id':'one'}]})
+        Scanner(db,cfg).scan(c,NOW,Engine(db,cfg))
+        rows=[r for r in db.recent(c,'opportunity') if r['symbol']=='SPY']
+        assert len(rows)==1
+        p=rows[0]['payload']
+        # Gate outcome is unchanged: same status, same reason, no trigger.
+        assert p['status']=='blocked' and p['blocked_reason']=='Fresh quote after trigger required'
+        assert not [r for r in db.recent(c,'alert') if r['payload'].get('status')=='setup_triggered']
+        # The block now records what it consulted and which sub-condition failed.
+        assert p['blocked_subreason']=='quote_predates_signal_bar_close'
+        assert p['signal_bar_close_ts']==NOW and p['quote_ts']==NOW-1 and p['quote_age_s']==1
+        assert p['quote_fresh'] is True
+        assert p['trigger_quote']['bid']==101.10 and p['trigger_quote']['source']=='fixture'
+
+
+def test_scan_records_missing_quote_on_blocked_opportunity(db):
+    cfg=Config(local=True,stocks=('SPY',),futures=(),scanner_paper=False)
+    flat={'o':100.0,'h':100.4,'l':99.8,'c':100.1,'v':100}
+    breakout={'o':100.1,'h':101.2,'l':100.0,'c':101.0,'v':300}
+    items=[('SPY',NOW-(40-i)*60,breakout if i==39 else flat) for i in range(40)]
+    with db.tx() as c:
+        db.append_bars(c,'bar','fixture',items)
+        db.put(c,'latestbar:SPY',{'ts':NOW-60})
+        Scanner(db,cfg).scan(c,NOW,Engine(db,cfg))
+        rows=[r for r in db.recent(c,'opportunity') if r['symbol']=='SPY']
+        assert len(rows)==1
+        p=rows[0]['payload']
+        assert p['status']=='blocked' and p['blocked_reason']=='Fresh quote after trigger required'
+        assert p['blocked_subreason']=='no_quote'
+        assert p['quote_ts'] is None and p['quote_age_s'] is None and p['trigger_quote'] is None
+        assert not [r for r in db.recent(c,'alert') if r['payload'].get('status')=='setup_triggered']

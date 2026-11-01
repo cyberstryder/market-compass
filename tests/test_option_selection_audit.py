@@ -165,3 +165,83 @@ def test_live_retry_expiration_uses_actual_time_not_scan_start(db):
         Scanner(db,cfg).retry_options(c,{'SPY':quote()},NOW,Engine(db,cfg,clock=lambda:NOW+121))
         assert db.get(c,'pending_options:test')['status']=='expired'
         assert not db.prefix(c,'trade:')
+
+
+def _selection_events(db,c):
+    return db.recent(c,'option_selection_diagnostic')
+
+
+def test_selection_rejection_is_emitted_as_event_with_contract_reason(db):
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
+    with db.tx() as c:
+        seed(db,c)
+        db.put(c,'quote:'+CONTRACT,quote(NOW-120,2,2.01))
+        db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
+        Scanner(db,cfg).retry_options(c,{'SPY':quote()},NOW,Engine(db,cfg))
+        events=_selection_events(db,c)
+        assert len(events)==1 and events[0]['symbol']=='SPY'
+        p=events[0]['payload']
+        assert p['signal_id']=='test-selection' and p['final'] is False
+        assert p['chain_age_seconds']==0 and p['checked_contracts']==1
+        assert p['rejections'][0]['symbol']==CONTRACT
+        assert p['rejections'][0]['reason']=='Missing or invalid fresh quote'
+        assert p['rejections'][0]['quote_age_seconds']==120
+        # Recording is additional: gate outcome and the state-row audit are unchanged.
+        pending=db.get(c,'pending_options:test')
+        assert pending['status']=='waiting'
+        assert pending['last_selection']['rejections'][0]['quote_age_seconds']==120
+        assert not db.prefix(c,'trade:')
+
+
+def test_selection_chain_age_is_emitted_as_event(db):
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
+    with db.tx() as c:
+        seed(db,c)
+        chain=db.get(c,'chain:SPY');chain['asof']=NOW-121;db.put(c,'chain:SPY',chain)
+        db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
+        Scanner(db,cfg).retry_options(c,{'SPY':quote()},NOW,Engine(db,cfg))
+        events=_selection_events(db,c)
+        assert len(events)==1
+        p=events[0]['payload']
+        assert p['audit_reason']=='No recent options chain'
+        assert p['chain_age_seconds']==121 and p['rejections']==[]
+        assert db.get(c,'pending_options:test')['status']=='waiting'
+
+
+def test_selection_spread_rejection_is_emitted_as_event(db):
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
+    with db.tx() as c:
+        seed(db,c)
+        db.put(c,'quote:'+CONTRACT,quote(NOW,1,2))
+        db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
+        Scanner(db,cfg).retry_options(c,{'SPY':quote()},NOW,Engine(db,cfg))
+        events=_selection_events(db,c)
+        assert len(events)==1
+        p=events[0]['payload']
+        assert p['rejections'][0]['symbol']==CONTRACT
+        assert p['rejections'][0]['reason']=='Spread exceeds simulation liquidity limit'
+        assert p['rejections'][0]['quote_age_seconds']==0
+
+
+def test_selection_expiry_emits_final_event_carrying_last_rejections(db):
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
+    scanner,engine=Scanner(db,cfg),Engine(db,cfg)
+    with db.tx() as c:
+        seed(db,c)
+        db.put(c,'quote:'+CONTRACT,quote(NOW-6,2,2.01))
+        db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
+        scanner.retry_options(c,{'SPY':quote()},NOW,engine)
+        scanner.retry_options(c,{'SPY':quote(NOW+121)},NOW+121,engine)
+        events=_selection_events(db,c)
+        finals=[e for e in events if e['payload']['final']]
+        assert len(events)==2 and len(finals)==1
+        p=finals[0]['payload']
+        assert 'Option selection window ended' in p['expiry_reason']
+        assert p['rejections'][0]['symbol']==CONTRACT
+        # 6s old is inside the 60s option quote window but predates the
+        # signal, so entry_check's stamp rule is the recorded killer.
+        assert p['rejections'][0]['reason']=='No quote after signal'
+        assert p['rejections'][0]['quote_age_seconds']==6
+        # Expiry behavior is unchanged: one skip alert, no trade.
+        assert db.get(c,'pending_options:test')['status']=='expired'
+        assert len(db.recent(c,'alert'))==1 and not db.prefix(c,'trade:')

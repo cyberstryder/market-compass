@@ -269,6 +269,35 @@ def flow_candidate(f,row,q,now,tick):
     return item
 
 
+def freshness_block_evidence(quote,signal_time,now):
+    """Recording detail for the trigger-time freshness gate (2026-10-31).
+
+    Returns None when the gate passes; otherwise the quote the gate
+    consulted and which sub-condition failed. Recording only: the gate's
+    own expression in Scanner.scan is unchanged and remains the decision.
+    When a quote both predates the signal bar's close and is stale, the
+    predates subreason is recorded (the stamp failure is the more specific
+    structural cause); quote_fresh and quote_age_s are always recorded so
+    any other split remains derivable from the payload.
+    """
+    if quote and quote.get('ts') is not None and fresh(quote,now) \
+            and quote['ts']>=signal_time:
+        return None
+    if not quote or quote.get('ts') is None:
+        subreason='no_quote'
+    elif quote['ts']<signal_time:
+        subreason='quote_predates_signal_bar_close'
+    else:
+        subreason='quote_too_old'
+    return {'blocked_subreason':subreason,
+        'signal_bar_close_ts':signal_time,
+        'quote_ts':quote.get('ts') if quote else None,
+        'quote_age_s':now-quote['ts'] if quote and quote.get('ts') is not None else None,
+        'quote_fresh':bool(quote) and fresh(quote,now),
+        'trigger_quote':({k:quote.get(k) for k in
+            ('bid','ask','bid_size','ask_size','ts','source')} if quote else None)}
+
+
 def context_evidence(f,flow,apex,quotes,features_by_symbol,now):
     evidence=[{'source':'price','kind':'structure','source_ts':f.get('asof'),
         'vwap':f.get('vwap'),'ema9':f.get('ema9'),'ema21':f.get('ema21'),
@@ -417,7 +446,8 @@ class Scanner:
             quote=quotes.get(symbol)
             blocked=(not fresh(quote,now) or quote['ts']<item['signal_time'])
             if blocked:
-                item.update(status='blocked',blocked_reason='Fresh quote after trigger required')
+                item.update(status='blocked',blocked_reason='Fresh quote after trigger required',
+                    **(freshness_block_evidence(quote,item['signal_time'],now) or {}))
             elif abs((quote['bid']+quote['ask'])/2-item['signal_price'])>max(f['atr14']*.5,engine.specification(symbol)['tick']*4):
                 item.update(status='blocked',blocked_reason='Price moved too far from the observed trigger')
             elif now-cool<600:
@@ -515,6 +545,8 @@ class Scanner:
             if reason:
                 pending.update(status='expired',reason=reason,updated_at=now)
                 self.db.put(c,key,pending)
+                self.append_selection_diagnostic(c,key,pending,pending.get('last_selection'),now,
+                    final=True,expiry_reason=reason)
                 if not research_only: engine.alert(c,symbol,{**alert_context(signal),'status':'options_skipped','reason':reason,'parent_signal':signal['id']},'pending-option-expired:'+signal['id'])
             elif fresh(quote,now) and abs((quote['bid']+quote['ask'])/2-signal['signal_price'])<=signal.get('context',{}).get('atr14',float('inf'))*.5:
                 audit={'scan_started_at':scan_started_at,'underlying_checked_at':now}
@@ -553,6 +585,33 @@ class Scanner:
         if signature(audit)!=signature(previous) or now-previous.get('at',0)>=5:
             pending.update(last_selection=audit,updated_at=now)
             self.db.put(c,key,pending)
+            self.append_selection_diagnostic(c,key,pending,audit,now)
+
+    def append_selection_diagnostic(self,c,key,pending,audit,now,final=False,expiry_reason=None):
+        # Recording only (2026-10-31): mirror the selection audit into the
+        # events table so a selection-window death is attributable through
+        # /api/admin/events-export (kind+symbol) instead of living only in
+        # pending state rows no API serves. The state-row write in
+        # save_option_diagnostic stays exactly as it was; this emission is
+        # additional and feeds back into no decision.
+        signal=pending.get('signal') or {}
+        audit=audit or {}
+        payload={'version':'funnel-recording-v1','pending_key':key,
+            'signal_id':signal.get('id'),'strategy':signal.get('strategy'),
+            'research_only':bool(pending.get('research_only')),
+            'final':final,'expiry_reason':expiry_reason,
+            'audit_at':audit.get('at'),'audit_status':audit.get('status'),
+            'audit_reason':audit.get('reason'),
+            'chain_age_seconds':audit.get('chain_age_seconds'),
+            'chain_source':audit.get('chain_source'),
+            'eligible_contracts':audit.get('eligible_contracts'),
+            'checked_contracts':audit.get('checked_contracts'),
+            'selected_contract':audit.get('selected_contract'),
+            'rejections':[{k:r.get(k) for k in
+                ('symbol','reason','quote_age_seconds','quote_source','checked_at')}
+                for r in audit.get('rejections',[])],
+            'underlying_evidence':audit.get('underlying_evidence')}
+        self.db.append(c,'option_selection_diagnostic','scanner',signal.get('symbol'),now,payload)
 
     def manage_opportunities(self,c,quotes,now):
         for key,item in self.db.prefix(c,'opportunity:').items():
