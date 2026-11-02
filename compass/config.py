@@ -229,6 +229,13 @@ class Config:
     swing_max_dte: int = field(default_factory=lambda: int(env("SWING_MAX_DTE","60")))
     swing_target_dte: int = field(default_factory=lambda: int(env("SWING_TARGET_DTE","30")))
     swing_hold_sessions: int = field(default_factory=lambda: int(env("SWING_MAX_HOLD_SESSIONS","10")))
+    # Which swing cells may be admitted (2026-11-01). Defaults keep every
+    # cell on; the two-year underlying replay (claude-exchange/from-claude/
+    # 2026-11-01-swings-0dte) found only daily_reversal long above its
+    # placebo, so the recommended production setting is
+    # SWING_RULES=daily_reversal SWING_SIDES=long. Josh's call; not defaulted.
+    swing_rules: tuple = field(default_factory=lambda: tuple(r.strip() for r in env("SWING_RULES","daily_breakout,pullback_reclaim,daily_reversal").split(",") if r.strip()))
+    swing_sides: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("SWING_SIDES","long,short").split(",") if s.strip()))
     stream_limit: int = field(default_factory=lambda: min(900,max(10,int(env("OPTION_STREAM_CONTRACTS","500")))))
     # Massive's OWN subscription cap, independent of the shared selection
     # size above: both streams subscribe the shared set, so the
@@ -324,6 +331,8 @@ class Config:
             raise ValueError("Options chain horizon must cover the ideas expiration range")
         if not 7<=self.swing_min_dte<=self.swing_target_dte<=self.swing_max_dte<=90 or not 1<=self.swing_hold_sessions<=30:
             raise ValueError("Invalid swing expiration range or holding period")
+        if not set(self.swing_rules)<={'daily_breakout','pullback_reclaim','daily_reversal'} or not set(self.swing_sides)<={'long','short'}:
+            raise ValueError("SWING_RULES must be a subset of daily_breakout,pullback_reclaim,daily_reversal and SWING_SIDES of long,short")
         if self.swing_ideas and self.chain_dte<self.swing_max_dte:
             raise ValueError("Options chain horizon must cover the swing expiration range")
         if not 1<=self.option_focus<=30 or not 1<=self.chain_dte<=180:
