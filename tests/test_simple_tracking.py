@@ -55,12 +55,16 @@ def test_tracking_empty_db(db):
     assert all(x['trades'] == 0 and x['pf'] is None and not x['kill_watch']
                for x in fb['combos'])
     assert fb['kill_watch'] == []
-    # Scanner: the validated seats render even with no data; the shadow
-    # side is either not-yet-landed (None) or a zeroed scorecard.
+    # Scanner: the book renders honestly with no data — no seats by
+    # default under the whole-list book; the shadow side is either
+    # not-yet-landed (None) or a zeroed scorecard.
     sc = tr['scanner']
-    assert sc['paper_seats'] == {'session_sweep_reclaim': ['AMD', 'MU', 'NFLX']}
-    assert len(sc['seated']) == 3
-    assert all(x['trades'] == 0 and x['open'] == 0 for x in sc['seated'])
+    # Whole-list book (respec 2026-11-01): NO default seats — nobody is
+    # grandfathered in; the seated set is empty until an operator seats
+    # a graduated name.
+    assert sc['paper_seats'] == {}
+    assert sc['seated'] == []
+    assert sc['seats_source'] == 'none'
     assert sc['shadow'] is None or sc['shadow']['totals']['alerts'] == 0
     # Iceberg: clean zero state.
     ib = tr['iceberg']
@@ -111,7 +115,11 @@ def _scan_trade(tid, underlying, pnl, family='session_sweep_reclaim', **kw):
     return t
 
 
-def test_tracking_seated_scanner_stats(db):
+def test_tracking_seated_scanner_stats(monkeypatch, db):
+    # Seating is an operator action under the respec; this test seats
+    # the three names explicitly, as production would after graduation.
+    monkeypatch.setenv('ODTE_BOOK_SEATED_NAMES',
+                       'session_sweep_reclaim:MU,AMD,NFLX')
     with db.tx() as c:
         db.put(c, 'trade:0dte-scan-m1',
                _scan_trade('m1', 'MU', 60.0))
@@ -135,6 +143,8 @@ def test_tracking_seated_scanner_stats(db):
     mu = seated[('session_sweep_reclaim', 'MU')]
     assert mu['trades'] == 2 and mu['wins'] == 1 and mu['losses'] == 1
     assert mu['net'] == 20.0 and mu['pf'] == 1.5 and mu['open'] == 1
+    # data_gap rows are counted first-class now, not silently dropped.
+    assert mu['data_gaps'] == 1
     assert seated[('session_sweep_reclaim', 'AMD')]['trades'] == 0
     assert seated[('session_sweep_reclaim', 'NFLX')]['trades'] == 0
 

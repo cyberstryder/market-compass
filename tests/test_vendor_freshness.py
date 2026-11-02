@@ -188,7 +188,7 @@ def test_swing_books_despite_stale_collection_after_queue(db):
     # cannot block the quoted entry, and the queue-time attribute stands.
     from compass.swing_ideas import SwingIdeas
     from test_swing_ideas import seed, signal, flow, records, NOW as SWING_NOW
-    cfg=Config(morning_enabled=True,local=True,stocks=('SPY',),futures=(),scanner_paper=False)
+    cfg=Config(morning_enabled=True,local=True,stocks=('SPY',),futures=(),scanner_paper=False,swing_ideas=True)
     worker=SwingIdeas(db,cfg)
     with db.tx() as c:
         seed(db,c,SWING_NOW)
