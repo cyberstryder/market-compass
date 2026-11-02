@@ -11,6 +11,7 @@ from .market import day,session,fresh,number,NY
 from .swing_signals import summarize_flow
 from .flow_recovery import freshness
 from .tm_study import quote_at,symbol_for
+from . import underlying_path as up
 
 VERSION='swing-flow-study-v1'
 KEY=VERSION
@@ -18,9 +19,9 @@ HORIZONS=('60m','close','1session','3session','5session','9session')
 GROUPS=('fresh_flow','delayed_flow','fresh_vendor_blocked','no_confirming_flow','unavailable')
 PROTOCOL=dict(version=VERSION,primary_horizon='5session',horizons=list(HORIZONS),
     population='Every newly retained Swing technical candidate, before flow/contract admission.',
-    entry='First observed candidate processing; valid underlying midpoint within five seconds; signal within 90 seconds.',
+    entry='First observed candidate processing; valid underlying midpoint within five seconds, else the completed signal bar close (entry_source records which); signal within 90 seconds.',
     fresh_flow_seconds=300,flow_window_seconds=1800,
-    outcome='Directional underlying midpoint change; no modeled option return, stop path, fees or executable fill.',
+    outcome='Directional underlying change at fixed horizons (5-second quote, else the completed 1-minute bar close at target) plus a stop/target path on the underlying (underlying_path); no modeled option return.',
     comparison='Same candidate clock and endpoint for technical-only, fresh, delayed and relaxed flow selections.',
     review='Fixed before outcomes; review by symbol/session. Overlapping candidates are correlated; no automatic rule promotion.')
 
@@ -97,19 +98,30 @@ def register(db,c,event,at,*,snapshot=None,historical=False):
     if not reason and side not in ('long','short'):reason='unknown_direction'
     if not reason and (number(signal.get('signal_price')) or 0)<=0:reason='invalid_signal_reference'
     if not reason and (not 0<=at-first<=30 or signal_at is None or not 0<=at-signal_at<=90):reason='candidate_processing_clock_or_age'
-    if not reason and not (fresh(q,at) and signal_at<=q['ts']<=at and 0<=at-q['ts']<=5 and q.get('received',at)<=at):reason='missing_fresh_candidate_quote'
-    entry=None if reason else (q['bid']+q['ask'])/2
+    # Underlying-first (2026-11-01): the candidate is a completed 1-minute
+    # bar, so its close is a valid reference even when no 5-second quote is
+    # on hand. The quote, when fresh, is still preferred; the fallback only
+    # keeps the candidate measurable instead of 'unavailable'. The old
+    # strict verdict is kept on the record as entry_note for the audit.
+    quote_ok=bool(fresh(q,at) and signal_at<=q['ts']<=at and 0<=at-q['ts']<=5 and q.get('received',at)<=at)
+    entry_source=None if reason else 'quote_mid' if quote_ok else 'signal_bar_close'
+    entry=None if reason else (q['bid']+q['ask'])/2 if quote_ok else number(signal.get('signal_price'))
     scheduled=targets(at) if entry is not None else {}
     risk=abs((number(signal.get('signal_price')) or 0)-(number(signal.get('stop')) or 0))
     atr=number(signal.get('daily',{}).get('atr14'))
     price_context=dict(signal_to_reference_pct=(entry/signal['signal_price']-1)*100,
         within_entry_tolerance=bool(atr and abs(entry-signal['signal_price'])<=.25*atr),
         initial_risk=risk) if entry is not None else {}
+    first_of_day=not old and side in ('long','short') and not c.execute(select(trials.c.id).where(trials.c.version==VERSION,
+        trials.c.origin=='prospective',trials.c.symbol==symbol,trials.c.side==side,trials.c.rule==signal.get('rule','unknown'),
+        trials.c.payload['receipt_day'].as_string()==day(first)).limit(1)).first()
     payload=dict(id=key,version=VERSION,source_id=event['id'],source_key=event['key'],
         first_seen=first,candidate_at=event['ts'],assessed_at=at,signal=signal,
         origin='historical_inventory' if old else 'prospective',flow=flow,
         original_candidate=original,original_flow_confirmed=original.get('flow_confirmed'),
-        entry_mid=entry,entry_quote=dict(q) if entry is not None else None,entry_reason=reason,
+        entry_mid=entry,entry_quote=dict(q) if entry is not None and quote_ok else None,entry_reason=reason,
+        entry_source=entry_source,entry_note=None if reason or quote_ok else 'missing_fresh_candidate_quote; signal bar close used as reference',
+        first_of_day=first_of_day,
         price_context=price_context,checkpoint_targets=scheduled,receipt_day=day(first),
         admission_id=identity('swing-ideas-v1',symbol,side,signal.get('rule'),signal.get('signal_time')),
         note='Common candidate-time price observations; admitted option simulations remain in their original ledger.')
@@ -151,24 +163,66 @@ def observe(db,c,at,limit=300):
         .join(trials,trials.c.id==checkpoints.c.study_id)
         .where(checkpoints.c.status=='pending',checkpoints.c.due_at<=at)
         .order_by(checkpoints.c.due_at,checkpoints.c.study_id).limit(limit)).mappings().all()
-    quotes={};changed=set()
+    quotes={};changed=set();finished={}
     for r in rows:
         k=(r['symbol'],r['target_at'])
         if k not in quotes:quotes[k]=quote_at(c,*k)
         q,reason=quotes[k]
-        reason=reason or basis_reason(c,r['symbol'],r['payload'],r['target_at'])
-        values=dict(status='unavailable' if reason else 'completed',reason=reason,checked_at=at)
-        if not reason:
+        if reason in ('no_timely_usable_checkpoint_quote','quote_window_overflow'):
+            # Underlying-first (2026-11-01): a completed 1-minute bar at the
+            # target is as good a reference as a 5-second quote; the quote
+            # requirement made the sample size a function of stream luck.
+            price=up.price_at(up.bars_between(c,r['symbol'],r['target_at']-900,r['target_at']+1),r['target_at'])
+            if price is not None:q,reason=dict(price=price,source_ts=None,received_at=None),'bar_close_reference'
+        reason=basis_reason(c,r['symbol'],r['payload'],r['target_at']) or reason
+        completed=q is not None and reason in (None,'bar_close_reference')
+        values=dict(status='completed' if completed else 'unavailable',reason=reason,checked_at=at)
+        if completed:
             move=(q['price']/r['payload']['entry_mid']-1)*100
             values.update(**q,raw_return_pct=move,directional_return_pct=move if r['side']=='long' else -move)
         c.execute(update(checkpoints).where(checkpoints.c.study_id==r['study_id'],
             checkpoints.c.horizon==r['horizon'],checkpoints.c.status=='pending').values(**values))
         changed.add(r['study_id'])
+        if r['horizon']=='9session':finished[r['study_id']]=r
     for id in changed:
         counts=Counter(c.execute(select(checkpoints.c.status).where(checkpoints.c.study_id==id)).scalars())
         status='pending' if counts['pending'] else 'complete' if counts['completed']==len(HORIZONS) else 'partial' if counts['completed'] else 'unavailable'
         c.execute(update(trials).where(trials.c.id==id).values(status=status))
+    for id,r in finished.items():
+        score_path(db,c,r['symbol'],r['side'],r['payload'],id)
     return len(rows)
+
+
+def score_path(db,c,symbol,side,payload,trial_id):
+    """Stop/target path and intraday horizons on the underlying, from stored
+    1-minute bars: the production invalidation and 2R target, 10-session
+    hold ending 15 minutes before that session's close (hold_deadline),
+    stop first on a bar touching both. Written once, on the trial payload,
+    when the last fixed horizon resolves. Nothing about the option."""
+    signal=payload.get('signal',{});at=payload.get('assessed_at')
+    stop,target=number(signal.get('stop')),number(signal.get('target'))
+    if at is None or stop is None or target is None or side not in ('long','short'):return None
+    try:
+        sessions=[];start=date.fromisoformat(day(at))
+        for offset in range(45):
+            hours=session((start+timedelta(days=offset)).isoformat())
+            if hours and hours[1]>at:sessions.append(hours)
+            if len(sessions)==10:break
+        end=sessions[9][1]-900
+    except (ValueError,IndexError):return None
+    bars=up.bars_between(c,symbol,at-60,end)
+    i,entry=up.entry_from(bars,at,side)
+    if i is None:
+        result=dict(status='unavailable',reason='no_bars_after_signal',bars=len(bars))
+    else:
+        path=up.bracket(bars,i,entry,side,stop,target,end)
+        result=dict(status='complete' if path['reason'] in ('stop','target','time') else 'incomplete',
+            entry=entry,stop=stop,target=target,end=end,bars=len(bars),**path,
+            horizon_bps={str(m):up.horizon_return(bars,i,entry,side,m) for m in (30,60,120)},
+            basis='Underlying only: next-bar open entry, stop-first bar extremes, 2R target, 10-session time stop')
+    payload=dict(payload,underlying_path=result)
+    c.execute(update(trials).where(trials.c.id==trial_id).values(payload=payload))
+    return result
 
 
 def requested_symbols(c):
