@@ -1,0 +1,26 @@
+all fires 382069 first fires 86972 fires/day universe 754
+ side          level     n    WR         meanR   t_R  bps  h30  h60  t_h60  h120  close  t_close   H1   H2  risk_bps  stop
+ long  overnight_low 31769 0.325 -6.202036e+08 -1.99 -4.0 -2.3 -1.4  -0.64  -3.0   -3.9    -0.83  0.3 -3.3      39.0  0.67
+ long      prior_low 11946 0.326 -9.100000e-02 -4.58 -3.5 -0.0  1.1   0.26   2.0    4.0     0.51  2.0  0.3      47.0  0.67
+short overnight_high 30208 0.320 -9.317895e+07 -1.42 -5.0 -4.0 -5.3  -2.75  -5.8   -9.0    -1.59 -6.9 -3.6      39.0  0.67
+short     prior_high 13049 0.330 -1.078531e+08 -1.00 -3.0 -1.9 -3.7  -1.26  -3.2    2.6     0.47 -7.6 -0.1      48.0  0.67
+
+seated names AMD/MU/NFLX, all levels pooled by side:
+         n     R   bps   h30   h60  close
+side                                     
+long   838 -0.01 -0.86  0.07 -3.21  -4.53
+short  879 -0.05 -3.36  0.22 -2.39 -12.01
+
+by hour CT, longs h60 / shorts h60:
+      count        mean      
+side   long  short long short
+hr                           
+8     24990  24921  0.2  -5.3
+9      9956   9807 -1.1  -2.1
+10     3526   3429 -4.9  -2.4
+11     1927   1788 -3.7  -6.9
+12     1513   1438  2.3 -20.3
+13     1115   1161 -3.7  -2.4
+14        0      0  NaN   NaN
+
+pooled all cells: mean bps -4.1 t -8.12 | h60 -2.76 t -2.48 | close -3.61 t -2.24

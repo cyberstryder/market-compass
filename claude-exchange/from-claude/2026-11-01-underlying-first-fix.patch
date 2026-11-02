@@ -1,0 +1,920 @@
+From abc9f17b3f4c92fdcc94f271002390a8f2f32ad9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 1 Nov 2026 20:49:20 -0600
+Subject: [PATCH] Underlying-first measurement for swings and 0DTE: bar-based
+ references, stop/target path, cell switches
+
+Rebased onto main be6405b (whole-list 0DTE book + swings retirement).
+Both option books scored only the option quote path, so an observation
+existed only when a streamed contract quote arrived in time (swings: 127
+tickets, 0 conversions; 0DTE: 11,311 tickets, 30 observed). The signal was
+never measured in production. This scores every candidate on the underlying
+from stored 1-minute bars, independent of option quotes:
+
+- compass/underlying_path.py: pure helpers (next-bar entry, horizon returns,
+  stop-first bracket with gap fills, bar-close reference at a target).
+- swing_study: register candidates without a 5 s quote using the signal bar
+  close (entry_source), checkpoint fallback to the completed bar close
+  (bar_close_reference), first_of_day flag, score_path writes the production
+  stop/2R/10-session path as underlying_path when the 9-session checkpoint
+  resolves; report aggregates it by rule x side (all fires / first of day).
+- scanner_shadow.score_underlying: every seated or shadow 0DTE record, quoted
+  or data_gap, gets +30/+60/+120/flatten bps and the invalidation/2R bracket
+  once the session ends; scorecard cells carry the summary beside Quill's
+  closed-record _crosscheck (kept; complementary).
+- SWING_RULES / SWING_SIDES switches (defaults unchanged: every cell on;
+  SWING_IDEAS_ENABLED itself stays at Josh's retired default).
+
+No seat, allowlist, booking, alert or premium-P&L behaviour changes.
+Evidence: claude-exchange/from-claude/2026-11-01-swings-0dte.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012WE3e5zGd83u4HvstL2kcs
+---
+ compass/config.py              |   9 ++
+ compass/scanner_shadow.py      | 108 ++++++++++++++-
+ compass/swing_ideas.py         |   3 +
+ compass/swing_study.py         |  72 ++++++++--
+ compass/swing_study_report.py  |  20 +++
+ compass/underlying_path.py     | 134 +++++++++++++++++++
+ docs/live-scanner.md           |  19 +++
+ docs/swing-ideas.md            |  41 ++++++
+ tests/test_research_mode.py    |   7 +-
+ tests/test_swing_study.py      |  20 ++-
+ tests/test_underlying_first.py | 232 +++++++++++++++++++++++++++++++++
+ 11 files changed, 652 insertions(+), 13 deletions(-)
+ create mode 100644 compass/underlying_path.py
+ create mode 100644 tests/test_underlying_first.py
+
+diff --git a/compass/config.py b/compass/config.py
+index bb51f8a..4990a2d 100644
+--- a/compass/config.py
++++ b/compass/config.py
+@@ -229,6 +229,13 @@ class Config:
+     swing_max_dte: int = field(default_factory=lambda: int(env("SWING_MAX_DTE","60")))
+     swing_target_dte: int = field(default_factory=lambda: int(env("SWING_TARGET_DTE","30")))
+     swing_hold_sessions: int = field(default_factory=lambda: int(env("SWING_MAX_HOLD_SESSIONS","10")))
++    # Which swing cells may be admitted (2026-11-01). Defaults keep every
++    # cell on; the two-year underlying replay (claude-exchange/from-claude/
++    # 2026-11-01-swings-0dte) found only daily_reversal long above its
++    # placebo, so the recommended production setting is
++    # SWING_RULES=daily_reversal SWING_SIDES=long. Josh's call; not defaulted.
++    swing_rules: tuple = field(default_factory=lambda: tuple(r.strip() for r in env("SWING_RULES","daily_breakout,pullback_reclaim,daily_reversal").split(",") if r.strip()))
++    swing_sides: tuple = field(default_factory=lambda: tuple(s.strip() for s in env("SWING_SIDES","long,short").split(",") if s.strip()))
+     stream_limit: int = field(default_factory=lambda: min(900,max(10,int(env("OPTION_STREAM_CONTRACTS","500")))))
+     # Massive's OWN subscription cap, independent of the shared selection
+     # size above: both streams subscribe the shared set, so the
+@@ -324,6 +331,8 @@ class Config:
+             raise ValueError("Options chain horizon must cover the ideas expiration range")
+         if not 7<=self.swing_min_dte<=self.swing_target_dte<=self.swing_max_dte<=90 or not 1<=self.swing_hold_sessions<=30:
+             raise ValueError("Invalid swing expiration range or holding period")
++        if not set(self.swing_rules)<={'daily_breakout','pullback_reclaim','daily_reversal'} or not set(self.swing_sides)<={'long','short'}:
++            raise ValueError("SWING_RULES must be a subset of daily_breakout,pullback_reclaim,daily_reversal and SWING_SIDES of long,short")
+         if self.swing_ideas and self.chain_dte<self.swing_max_dte:
+             raise ValueError("Options chain horizon must cover the swing expiration range")
+         if not 1<=self.option_focus<=30 or not 1<=self.chain_dte<=180:
+diff --git a/compass/scanner_shadow.py b/compass/scanner_shadow.py
+index ad32e40..12a3b5d 100644
+--- a/compass/scanner_shadow.py
++++ b/compass/scanner_shadow.py
+@@ -50,6 +50,9 @@ the G1-G4 gate set in compass/odte_book.py.
+ 
+ from . import odte_book
+ from .live_combo_scorecard import combo_stats
++from . import underlying_path as up
++
++UNDERLYING_SCORE_WINDOW = 3 * 86400  # records older than this without a score are marked expired, not retried
+ 
+ # The six families produced by compass/scanner.py.
+ SCANNER_FAMILIES = frozenset({
+@@ -376,9 +379,106 @@ def update(db, c, now):
+         _crosscheck(db, c, now)
+     except Exception:
+         pass
++    try:
++        score_underlying(db, c, now, records)
++    except Exception:
++        pass
+     return closed
+ 
+ 
++def _record_side(t):
++    typ = str(t.get("option_type") or "").lower()
++    if typ in ("call", "c"):
++        return "long"
++    if typ in ("put", "p"):
++        return "short"
++    return None
++
++
++def score_underlying(db, c, now, records=None, prefixes=(SHADOW_PREFIX, "trade:0dte-scan-")):
++    """Underlying-first scoring (2026-11-01) for every scanner-family record,
++    seated or shadow, quoted or data_gap: once the session is over, read
++    the underlying's stored 1-minute bars from the alert to the flatten and
++    record fixed-horizon returns (+30/+60/+120 min, flatten) and the
++    stop/target path (invalidation, 2R, flatten time stop). The denominator
++    becomes alerts, not option-quote arrivals — the 11,311-ticket /
++    30-observed week could never measure the signal. Written once under
++    t['underlying_path']; the option P&L fields are untouched."""
++    if records is None:
++        records = {}
++        for prefix in prefixes:
++            try:
++                records.update(db.prefix(c, prefix))
++            except Exception:
++                continue
++    else:
++        for prefix in prefixes[1:]:
++            try:
++                records.update(db.prefix(c, prefix))
++            except Exception:
++                continue
++    bars_cache = {}
++    scored = 0
++    for key, t in records.items():
++        if not isinstance(t, dict) or t.get("underlying_scored") or not t.get("family"):
++            continue
++        alert_ts = _num(t.get("alert_ts")) or _num(t.get("entered_at"))
++        flatten_at = _num(t.get("flatten_at"))
++        if not alert_ts or not flatten_at or now < flatten_at + 120:
++            continue
++        underlying = t.get("underlying")
++        side = _record_side(t)
++        trig = t.get("trigger") or {}
++        stop = _num(trig.get("invalidation"))
++        result = None
++        if now - alert_ts > UNDERLYING_SCORE_WINDOW:
++            result = {"status": "expired", "reason": "never scored within the scoring window"}
++        elif not underlying or side is None or stop is None:
++            result = {"status": "unavailable", "reason": "missing underlying, option type or invalidation"}
++        else:
++            ck = (underlying, int(alert_ts // 86400))
++            if ck not in bars_cache:
++                bars_cache[ck] = up.bars_between(c, underlying, alert_ts - 60, flatten_at + 60)
++            bars = bars_cache[ck]
++            i, entry = up.entry_from(bars, alert_ts, side)
++            if i is None:
++                result = {"status": "unavailable", "reason": "no underlying bars after the alert", "bars": len(bars)}
++            else:
++                risk = (entry - stop) if side == "long" else (stop - entry)
++                target = entry + 2 * risk if side == "long" else entry - 2 * risk
++                path = up.bracket(bars, i, entry, side, stop, target, flatten_at)
++                # directional bps at the flatten: close of the last bar before it
++                flat = [b for b in bars[i:] if b["ts"] + 60 <= flatten_at]
++                sign = 1 if side == "long" else -1
++                result = {
++                    "status": "complete" if path["reason"] in ("stop", "target", "time") else "incomplete",
++                    "side": side, "entry": entry, "stop": stop, "target": round(target, 4), "risk": round(risk, 4),
++                    "bps": {str(m): up.horizon_return(bars, i, entry, side, m) for m in (30, 60, 120)},
++                    "flatten_bps": round(sign * (flat[-1]["c"] / entry - 1) * 1e4, 2) if flat else None,
++                    "bracket": path, "bars": len(bars),
++                    "basis": "Underlying only: next-bar open entry, invalidation stop, 2R target, flatten time stop",
++                }
++        t["underlying_path"] = result
++        t["underlying_scored"] = now
++        db.put(c, key, t)
++        scored += 1
++    return scored
++
++
++def _underlying_summary(records):
++    done = [t["underlying_path"] for t in records
++            if isinstance(t.get("underlying_path"), dict) and t["underlying_path"].get("status") == "complete"]
++    br = [u["bracket"] for u in done if u.get("bracket")]
++    h60 = [u for u in done if (u.get("bps") or {}).get("60") is not None]
++    out = {"scored": len(done),
++           "bracket": up.summarize(br, "R"),
++           "bps_60m": up.summarize([{"v": u["bps"]["60"]} for u in h60], "v"),
++           "flatten_bps": up.summarize([{"v": u["flatten_bps"]} for u in done if u.get("flatten_bps") is not None], "v")}
++    out["bracket"]["stops"] = sum(1 for b in br if b.get("reason") == "stop")
++    out["bracket"]["targets"] = sum(1 for b in br if b.get("reason") == "target")
++    return out
++
++
+ def scorecard(db, c, cfg=None):
+     """The split, readably: effective seats, per-cell shadow stats, and
+     graduation flags. Scored = closed, non-data_gap shadow records; PF
+@@ -398,8 +498,9 @@ def scorecard(db, c, cfg=None):
+         cell = cells.setdefault((t.get("family") or "unknown",
+                                  t.get("underlying") or "unknown"),
+                                 {"scored_trades": [], "alerts": 0,
+-                                 "open": 0, "data_gaps": 0})
++                                 "open": 0, "data_gaps": 0, "records": []})
+         cell["alerts"] += 1
++        cell["records"].append(t)
+         totals["alerts"] += 1
+         if t.get("status") == "open":
+             cell["open"] += 1
+@@ -433,6 +534,7 @@ def scorecard(db, c, cfg=None):
+             "losses": stats["losses"], "win_rate": stats["win_rate"],
+             "pf": pf, "net": stats["net"],
+             "dte_split": dte_split,
++            "underlying_path": _underlying_summary(cell["records"]),
+             "graduation": {
+                 "bar": {"min_scored": GRADUATION_MIN_SCORED,
+                         "min_pf": GRADUATION_MIN_PF},
+@@ -499,6 +601,10 @@ def scorecard(db, c, cfg=None):
+         "totals": totals,
+         "graduation_bar": {"min_scored": GRADUATION_MIN_SCORED,
+                            "min_pf": GRADUATION_MIN_PF},
++        "underlying_basis": ("Every alert, quoted or not, is scored on the "
++                             "underlying's stored 1-minute bars once the "
++                             "session ends: +60 min and flatten bps, and the "
++                             "invalidation/2R bracket in R (2026-11-01)."),
+         "note": ("Graduation is flagged for Josh's decision, never "
+                  "auto-promoted. data_gap records are excluded from PF "
+                  "(house rule)."),
+diff --git a/compass/swing_ideas.py b/compass/swing_ideas.py
+index 431c5ad..932c9e0 100644
+--- a/compass/swing_ideas.py
++++ b/compass/swing_ideas.py
+@@ -405,6 +405,9 @@ class SwingIdeas:
+                 minute = minute_context(self.db.recent(c,'bar',symbol,limit=8),now)
+                 price_ready = minute.get('status')=='ready'
+             signals = technical_setups(symbol,daily,minute,now) if entry_open else []
++            # Cell switches (2026-11-01): a rule or side turned off is neither
++            # admitted nor registered for the study (SWING_RULES / SWING_SIDES).
++            signals = [s for s in signals if s['rule'] in self.cfg.swing_rules and s['side'] in self.cfg.swing_sides]
+             flow = self.flow_cache.get(symbol,{})
+             # Every technical candidate is admitted; vendor flow is recorded
+             # on the idea as an attribute and never gates admission.
+diff --git a/compass/swing_study.py b/compass/swing_study.py
+index 6542101..7531531 100644
+--- a/compass/swing_study.py
++++ b/compass/swing_study.py
+@@ -11,6 +11,7 @@ from .market import day,session,fresh,number,NY
+ from .swing_signals import summarize_flow
+ from .flow_recovery import freshness
+ from .tm_study import quote_at,symbol_for
++from . import underlying_path as up
+ 
+ VERSION='swing-flow-study-v1'
+ KEY=VERSION
+@@ -18,9 +19,9 @@ HORIZONS=('60m','close','1session','3session','5session','9session')
+ GROUPS=('fresh_flow','delayed_flow','fresh_vendor_blocked','no_confirming_flow','unavailable')
+ PROTOCOL=dict(version=VERSION,primary_horizon='5session',horizons=list(HORIZONS),
+     population='Every newly retained Swing technical candidate, before flow/contract admission.',
+-    entry='First observed candidate processing; valid underlying midpoint within five seconds; signal within 90 seconds.',
++    entry='First observed candidate processing; valid underlying midpoint within five seconds, else the completed signal bar close (entry_source records which); signal within 90 seconds.',
+     fresh_flow_seconds=300,flow_window_seconds=1800,
+-    outcome='Directional underlying midpoint change; no modeled option return, stop path, fees or executable fill.',
++    outcome='Directional underlying change at fixed horizons (5-second quote, else the completed 1-minute bar close at target) plus a stop/target path on the underlying (underlying_path); no modeled option return.',
+     comparison='Same candidate clock and endpoint for technical-only, fresh, delayed and relaxed flow selections.',
+     review='Fixed before outcomes; review by symbol/session. Overlapping candidates are correlated; no automatic rule promotion.')
+ 
+@@ -97,19 +98,30 @@ def register(db,c,event,at,*,snapshot=None,historical=False):
+     if not reason and side not in ('long','short'):reason='unknown_direction'
+     if not reason and (number(signal.get('signal_price')) or 0)<=0:reason='invalid_signal_reference'
+     if not reason and (not 0<=at-first<=30 or signal_at is None or not 0<=at-signal_at<=90):reason='candidate_processing_clock_or_age'
+-    if not reason and not (fresh(q,at) and signal_at<=q['ts']<=at and 0<=at-q['ts']<=5 and q.get('received',at)<=at):reason='missing_fresh_candidate_quote'
+-    entry=None if reason else (q['bid']+q['ask'])/2
++    # Underlying-first (2026-11-01): the candidate is a completed 1-minute
++    # bar, so its close is a valid reference even when no 5-second quote is
++    # on hand. The quote, when fresh, is still preferred; the fallback only
++    # keeps the candidate measurable instead of 'unavailable'. The old
++    # strict verdict is kept on the record as entry_note for the audit.
++    quote_ok=bool(fresh(q,at) and signal_at<=q['ts']<=at and 0<=at-q['ts']<=5 and q.get('received',at)<=at)
++    entry_source=None if reason else 'quote_mid' if quote_ok else 'signal_bar_close'
++    entry=None if reason else (q['bid']+q['ask'])/2 if quote_ok else number(signal.get('signal_price'))
+     scheduled=targets(at) if entry is not None else {}
+     risk=abs((number(signal.get('signal_price')) or 0)-(number(signal.get('stop')) or 0))
+     atr=number(signal.get('daily',{}).get('atr14'))
+     price_context=dict(signal_to_reference_pct=(entry/signal['signal_price']-1)*100,
+         within_entry_tolerance=bool(atr and abs(entry-signal['signal_price'])<=.25*atr),
+         initial_risk=risk) if entry is not None else {}
++    first_of_day=not old and side in ('long','short') and not c.execute(select(trials.c.id).where(trials.c.version==VERSION,
++        trials.c.origin=='prospective',trials.c.symbol==symbol,trials.c.side==side,trials.c.rule==signal.get('rule','unknown'),
++        trials.c.payload['receipt_day'].as_string()==day(first)).limit(1)).first()
+     payload=dict(id=key,version=VERSION,source_id=event['id'],source_key=event['key'],
+         first_seen=first,candidate_at=event['ts'],assessed_at=at,signal=signal,
+         origin='historical_inventory' if old else 'prospective',flow=flow,
+         original_candidate=original,original_flow_confirmed=original.get('flow_confirmed'),
+-        entry_mid=entry,entry_quote=dict(q) if entry is not None else None,entry_reason=reason,
++        entry_mid=entry,entry_quote=dict(q) if entry is not None and quote_ok else None,entry_reason=reason,
++        entry_source=entry_source,entry_note=None if reason or quote_ok else 'missing_fresh_candidate_quote; signal bar close used as reference',
++        first_of_day=first_of_day,
+         price_context=price_context,checkpoint_targets=scheduled,receipt_day=day(first),
+         admission_id=identity('swing-ideas-v1',symbol,side,signal.get('rule'),signal.get('signal_time')),
+         note='Common candidate-time price observations; admitted option simulations remain in their original ledger.')
+@@ -151,26 +163,68 @@ def observe(db,c,at,limit=300):
+         .join(trials,trials.c.id==checkpoints.c.study_id)
+         .where(checkpoints.c.status=='pending',checkpoints.c.due_at<=at)
+         .order_by(checkpoints.c.due_at,checkpoints.c.study_id).limit(limit)).mappings().all()
+-    quotes={};changed=set()
++    quotes={};changed=set();finished={}
+     for r in rows:
+         k=(r['symbol'],r['target_at'])
+         if k not in quotes:quotes[k]=quote_at(c,*k)
+         q,reason=quotes[k]
+-        reason=reason or basis_reason(c,r['symbol'],r['payload'],r['target_at'])
+-        values=dict(status='unavailable' if reason else 'completed',reason=reason,checked_at=at)
+-        if not reason:
++        if reason in ('no_timely_usable_checkpoint_quote','quote_window_overflow'):
++            # Underlying-first (2026-11-01): a completed 1-minute bar at the
++            # target is as good a reference as a 5-second quote; the quote
++            # requirement made the sample size a function of stream luck.
++            price=up.price_at(up.bars_between(c,r['symbol'],r['target_at']-900,r['target_at']+1),r['target_at'])
++            if price is not None:q,reason=dict(price=price,source_ts=None,received_at=None),'bar_close_reference'
++        reason=basis_reason(c,r['symbol'],r['payload'],r['target_at']) or reason
++        completed=q is not None and reason in (None,'bar_close_reference')
++        values=dict(status='completed' if completed else 'unavailable',reason=reason,checked_at=at)
++        if completed:
+             move=(q['price']/r['payload']['entry_mid']-1)*100
+             values.update(**q,raw_return_pct=move,directional_return_pct=move if r['side']=='long' else -move)
+         c.execute(update(checkpoints).where(checkpoints.c.study_id==r['study_id'],
+             checkpoints.c.horizon==r['horizon'],checkpoints.c.status=='pending').values(**values))
+         changed.add(r['study_id'])
++        if r['horizon']=='9session':finished[r['study_id']]=r
+     for id in changed:
+         counts=Counter(c.execute(select(checkpoints.c.status).where(checkpoints.c.study_id==id)).scalars())
+         status='pending' if counts['pending'] else 'complete' if counts['completed']==len(HORIZONS) else 'partial' if counts['completed'] else 'unavailable'
+         c.execute(update(trials).where(trials.c.id==id).values(status=status))
++    for id,r in finished.items():
++        score_path(db,c,r['symbol'],r['side'],r['payload'],id)
+     return len(rows)
+ 
+ 
++def score_path(db,c,symbol,side,payload,trial_id):
++    """Stop/target path and intraday horizons on the underlying, from stored
++    1-minute bars: the production invalidation and 2R target, 10-session
++    hold ending 15 minutes before that session's close (hold_deadline),
++    stop first on a bar touching both. Written once, on the trial payload,
++    when the last fixed horizon resolves. Nothing about the option."""
++    signal=payload.get('signal',{});at=payload.get('assessed_at')
++    stop,target=number(signal.get('stop')),number(signal.get('target'))
++    if at is None or stop is None or target is None or side not in ('long','short'):return None
++    try:
++        sessions=[];start=date.fromisoformat(day(at))
++        for offset in range(45):
++            hours=session((start+timedelta(days=offset)).isoformat())
++            if hours and hours[1]>at:sessions.append(hours)
++            if len(sessions)==10:break
++        end=sessions[9][1]-900
++    except (ValueError,IndexError):return None
++    bars=up.bars_between(c,symbol,at-60,end)
++    i,entry=up.entry_from(bars,at,side)
++    if i is None:
++        result=dict(status='unavailable',reason='no_bars_after_signal',bars=len(bars))
++    else:
++        path=up.bracket(bars,i,entry,side,stop,target,end)
++        result=dict(status='complete' if path['reason'] in ('stop','target','time') else 'incomplete',
++            entry=entry,stop=stop,target=target,end=end,bars=len(bars),**path,
++            horizon_bps={str(m):up.horizon_return(bars,i,entry,side,m) for m in (30,60,120)},
++            basis='Underlying only: next-bar open entry, stop-first bar extremes, 2R target, 10-session time stop')
++    payload=dict(payload,underlying_path=result)
++    c.execute(update(trials).where(trials.c.id==trial_id).values(payload=payload))
++    return result
++
++
+ def requested_symbols(c):
+     return c.execute(select(trials.c.symbol).where(trials.c.origin=='prospective',trials.c.status=='pending')
+         .distinct().order_by(trials.c.symbol).limit(501)).scalars().all()
+diff --git a/compass/swing_study_report.py b/compass/swing_study_report.py
+index 83ca0b3..886be6f 100644
+--- a/compass/swing_study_report.py
++++ b/compass/swing_study_report.py
+@@ -82,6 +82,24 @@ def report(db,c,at,cfg):
+             *(v.label(k) for k,v in measures().items())).select_from(joined)
+             .where(scope(at),prospective).group_by(dimension,checkpoints.c.horizon)).mappings():
+             buckets.append(dict(dimension=name,**finish(r)))
++    # Underlying-first path outcomes (2026-11-01): stop/target R on the
++    # underlying by rule x side, all fires and first-fire-of-day only.
++    pr=trials.c.payload['underlying_path']['R'].as_float()
++    pb=trials.c.payload['underlying_path']['bps'].as_float()
++    preason=trials.c.payload['underlying_path']['reason'].as_string()
++    pstatus=trials.c.payload['underlying_path']['status'].as_string()
++    pfirst=trials.c.payload['first_of_day'].as_boolean()
++    path=[]
++    for label,extra in (('all_fires',true()),('first_fire_of_day',pfirst.is_(True))):
++        for r in c.execute(select(trials.c.rule,trials.c.side,func.count().label('scored'),
++                func.avg(pr).label('mean_r'),func.avg(pb).label('mean_bps'),count(pr>0).label('wins'),
++                count(preason=='stop').label('stops'),count(preason=='target').label('targets'),
++                count(preason=='time').label('time_exits'))
++                .where(scope(at),prospective,pstatus=='complete',extra).group_by(trials.c.rule,trials.c.side)).mappings():
++            d=dict(r);d['win_rate']=d['wins']/d['scored'] if d['scored'] else None;d['sample']=label
++            path.append(d)
++    path_counts=dict(c.execute(select(func.coalesce(pstatus,'not_scored'),func.count()).where(scope(at),prospective)
++        .group_by(func.coalesce(pstatus,'not_scored'))).all())
+     option_join=trials.join(swings,trials.c.payload['admission_id'].as_string()==swings.c.id)
+     option_counts=[dict(r) for r in c.execute(select(trials.c.origin,swings.c.status,func.count().label('count'))
+         .select_from(option_join).where(scope(at)).group_by(trials.c.origin,swings.c.status)).mappings()]
+@@ -92,6 +110,8 @@ def report(db,c,at,cfg):
+     covered=c.execute(select(func.count(func.distinct(trials.c.symbol))).where(needed,trials.c.symbol.in_(collected))).scalar_one()
+     return dict(at=at,since=at-WINDOW_DAYS*86400,window_days=WINDOW_DAYS,version=VERSION,protocol=PROTOCOL,
+         inventory=dict(inv),counts=dict(totals),outcome_counts=outcomes,comparisons=comparisons,buckets=buckets,
++        underlying_path=dict(cells=path,status_counts=path_counts,
++            basis='Underlying-only stop/target path: next-bar open entry, production invalidation, 2R target, 10-session time stop; R per trade. first_fire_of_day dedupes re-fires of the same rule/side/symbol/day.'),
+         option_pipeline=option_counts,coverage='full_window',truncated=False,
+         overdue_checkpoints=c.execute(select(func.count()).select_from(joined).where(scope(at),
+             checkpoints.c.status=='pending',checkpoints.c.due_at<=at)).scalar_one(),
+diff --git a/compass/underlying_path.py b/compass/underlying_path.py
+new file mode 100644
+index 0000000..f09caa9
+--- /dev/null
++++ b/compass/underlying_path.py
+@@ -0,0 +1,134 @@
++"""Underlying-first scoring from stored 1-minute bars.
++
++Both option books (swing ideas, 0DTE scanner shadow) used to score only the
++option quote path, so an observation existed only when a streamed contract
++quote happened to arrive. The 2026-11-01 replay of both books on two years
++of 1-minute bars (claude-exchange/from-claude/2026-11-01-swings-0dte) scored
++the SIGNAL on the underlying instead. This module brings that measurement
++into production: every candidate gets a fixed-horizon return and a
++stop/target path on the underlying from the `bar` events the collector
++already stores, independent of any option quote. Option P&L stays a
++separate, optional measurement.
++
++Conventions (identical to the offline harness):
++  * entry = open of the first completed 1-minute bar after the signal,
++    +/- SLIP in the trade direction;
++  * fixed horizon = open of the bar `minutes` after the entry bar;
++  * bracket = stop/target on bar extremes from the entry bar on, stop first
++    when both are touched in one bar, stop fills SLIP through, a gap past
++    the level fills at that bar's open, time stop at `end`;
++  * R = signed move / initial risk; bps = signed move / entry * 1e4.
++Every function is pure on a list of bar dicts {ts,o,h,l,c} so it can be
++tested without a database; `bars_between` is the only query.
++"""
++from sqlalchemy import select
++from .store import events
++
++SLIP = 0.01
++MAX_REFERENCE_AGE = 300  # a horizon price may come from a bar completed up to 5 min earlier
++
++
++def _num(x):
++    try:
++        v = float(x)
++    except (TypeError, ValueError):
++        return None
++    return v if v == v else None
++
++
++def bars_between(c, symbol, start, end, limit=20000):
++    """Completed 1-minute bars with start <= ts < end, latest revision per
++    minute, ascending. Bounded; a window past `limit` rows is truncated at
++    the newest rows and the caller sees a shorter list."""
++    rows = c.execute(select(events.c.id, events.c.ts, events.c.payload).where(
++        events.c.kind == 'bar', events.c.symbol == symbol,
++        events.c.ts >= start, events.c.ts < end).order_by(events.c.ts.desc(), events.c.id.desc())
++        .limit(limit)).all()
++    latest = {}
++    for rid, ts, p in rows:
++        if ts in latest:
++            continue
++        o, h, l, cl = (_num(p.get(k)) for k in ('o', 'h', 'l', 'c'))
++        if None in (o, h, l, cl) or min(o, h, l, cl) <= 0:
++            continue
++        latest[ts] = dict(ts=ts, o=o, h=h, l=l, c=cl)
++    return [latest[t] for t in sorted(latest)]
++
++
++def entry_from(bars, signal_time, side):
++    """First completed bar that starts at/after the signal bar's close."""
++    sign = 1 if side == 'long' else -1
++    for i, b in enumerate(bars):
++        if b['ts'] >= signal_time:
++            return i, round(b['o'] + sign * SLIP, 4)
++    return None, None
++
++
++def price_at(bars, target):
++    """Close of the last bar completed (ts+60) at or before `target`, if it
++    completed within MAX_REFERENCE_AGE of target."""
++    best = None
++    for b in bars:
++        if b['ts'] + 60 <= target:
++            best = b
++        else:
++            break
++    if best is None or target - (best['ts'] + 60) > MAX_REFERENCE_AGE:
++        return None
++    return best['c']
++
++
++def horizon_return(bars, entry_index, entry, side, minutes):
++    """Directional bps from entry to the open of the bar `minutes` later,
++    None when the window runs past the available bars."""
++    j = entry_index + minutes
++    if j >= len(bars):
++        return None
++    sign = 1 if side == 'long' else -1
++    return sign * (bars[j]['o'] / entry - 1) * 1e4
++
++
++def bracket(bars, entry_index, entry, side, stop, target, end=None):
++    """Walk stop/target on bar extremes from the entry bar. Returns dict with
++    exit, exited_at, reason ('stop'|'target'|'time'|'incomplete'), R, bps."""
++    sign = 1 if side == 'long' else -1
++    risk = sign * (entry - stop)
++    if risk <= 0:
++        return dict(reason='invalid_geometry', R=None, bps=None, exit=None, exited_at=None, risk=risk)
++    last = None
++    for b in bars[entry_index:]:
++        if end is not None and b['ts'] + 60 > end:
++            break
++        last = b
++        hit_stop = b['l'] <= stop if sign == 1 else b['h'] >= stop
++        hit_tgt = b['h'] >= target if sign == 1 else b['l'] <= target
++        if hit_stop:  # stop first when both touch inside one bar
++            px = stop - sign * SLIP
++            if (sign == 1 and b['o'] < stop) or (sign == -1 and b['o'] > stop):
++                px = b['o'] - sign * SLIP
++            return _finish(entry, px, sign, risk, 'stop', b['ts'] + 60)
++        if hit_tgt:
++            px = target - sign * SLIP
++            if (sign == 1 and b['o'] > target) or (sign == -1 and b['o'] < target):
++                px = b['o'] - sign * SLIP
++            return _finish(entry, px, sign, risk, 'target', b['ts'] + 60)
++    if last is None:
++        return dict(reason='incomplete', R=None, bps=None, exit=None, exited_at=None, risk=risk)
++    # time stop only when the bars reach the end of the window
++    complete = end is not None and last['ts'] + 60 >= end - 60
++    return _finish(entry, last['c'] - sign * SLIP, sign, risk, 'time' if complete else 'incomplete', last['ts'] + 60)
++
++
++def _finish(entry, px, sign, risk, reason, at):
++    move = sign * (px - entry)
++    return dict(reason=reason, exit=round(px, 4), exited_at=at, risk=risk,
++                R=round(move / risk, 4), bps=round(move / entry * 1e4, 2))
++
++
++def summarize(items, key='R'):
++    """Mean / win rate / n over records carrying a numeric `key`; None-safe."""
++    vals = [v for v in (i.get(key) for i in items) if isinstance(v, (int, float))]
++    if not vals:
++        return dict(n=0, mean=None, win_rate=None)
++    return dict(n=len(vals), mean=round(sum(vals) / len(vals), 4),
++                win_rate=round(sum(1 for v in vals if v > 0) / len(vals), 4))
+diff --git a/docs/live-scanner.md b/docs/live-scanner.md
+index 53cf933..8980fe8 100644
+--- a/docs/live-scanner.md
++++ b/docs/live-scanner.md
+@@ -116,3 +116,22 @@ The supplied Cipher material remains a visual/methodology reference. No Cipher
+ API or proprietary scanner interface has been verified. Missing site-only
+ capabilities, full order-book/footprint analytics, multi-leg simulation and
+ weekly/monthly option trade selection remain outside the implemented six rules.
++
++
++## Underlying-first scoring of 0DTE records (2026-11-01)
++
++Every scanner-family 0DTE record — seated (`trade:0dte-scan-*`) or shadow
++(`shadow:0dte-*`), quoted or `data_gap` — is scored once the session ends
++on the underlying's stored 1-minute bars: next-bar open entry after the
++alert, directional return at +30/+60/+120 minutes and at the 2:55 PM CT
++flatten, and the invalidation / 2R stop-target path in R. The result is
++written under `underlying_path`; the option P&L fields are untouched and the
++house `data_gap` exclusion still applies to them. The shadow scorecard
++(`compass/scanner_shadow.py`) reports the per-cell underlying summary beside
++the premium PF, so the denominator is alerts, not option-quote arrivals (the
++week of 2026-10-20 had 11,311 tickets and 30 observed option outcomes).
++Records older than three days when first seen without a score are marked
++`expired`; unscorable ones (no bars, no option type, no invalidation) are
++marked once and not retried. The two-year replay of `session_sweep_reclaim`
++on the underlying (`claude-exchange/from-claude/2026-11-01-swings-0dte`) is
++the baseline this forward measurement is compared against.
+diff --git a/docs/swing-ideas.md b/docs/swing-ideas.md
+index cac458d..554d93e 100644
+--- a/docs/swing-ideas.md
++++ b/docs/swing-ideas.md
+@@ -81,6 +81,47 @@ The private dashboard includes recent ideas plus all active observations, readin
+ 
+ No earnings-avoidance rule or fundamental valuation model is asserted by this first version. Daily/weekly technical context plus attributed flow is the entry model. These are forward-test hypotheses; no edge or profitability has been established.
+ 
++## Underlying-first measurement (2026-11-01)
++
++The option ledger above produces an observation only when a streamed option
++quote arrives in time; 127 tickets in October converted zero. The signal is
++therefore also measured on the underlying, independently of any option quote:
++
++- Every retained technical candidate is registered in the swing comparison
++  study with a reference price even when no 5-second quote exists — the
++  completed signal bar's close is the reference and `entry_source` records
++  which was used (`quote_mid` or `signal_bar_close`).
++- Fixed-horizon checkpoints (60m, close, 1/3/5/9 sessions) fall back to the
++  completed 1-minute `bar` close at the target (`reason =
++  bar_close_reference`) when no archived 5-second quote qualifies.
++- When the 9-session checkpoint resolves, the production stop and 2R target
++  are walked on the underlying's stored 1-minute bars (next-bar open entry,
++  stop first on a bar touching both, 10-session time stop 15 minutes before
++  the close) and written to the trial as `underlying_path` with R and the
++  +30/+60/+120-minute returns. The `/api/swing-study` report aggregates it
++  by rule and side, for all fires and for the first fire per
++  symbol/day/rule/side (`first_of_day`); re-fires of one cross are not
++  independent experiments.
++- `SWING_RULES` (subset of `daily_breakout,pullback_reclaim,daily_reversal`)
++  and `SWING_SIDES` (subset of `long,short`) switch cells off before
++  admission and registration. Defaults keep every cell on. The two-year
++  underlying replay (`claude-exchange/from-claude/2026-11-01-swings-0dte`)
++  found only `daily_reversal` long above its placebo; the recommended
++  production setting is `SWING_RULES=daily_reversal SWING_SIDES=long`, as
++  the owner's decision.
++
++The option P&L in the `swing_ideas_v1` ledger is unchanged and remains a
++separate, optional measurement of the expression, not of the signal.
++
++Note: `SWING_IDEAS_ENABLED` defaults to **false** since 2026-11-01 (Josh's
++retirement of the closed three-rule surface; flag layer only). `discover()`
++is the shared feed for both the option ledger and the study, so with the flag
++off nothing is registered and nothing above runs. To keep measuring one cell
++on the underlying without buying any option: `SWING_IDEAS_ENABLED=true`,
++`SWING_RULES=daily_reversal`, `SWING_SIDES=long` — admission still requires a
++streamed contract quote, so in practice that yields the study measurement and
++(as in October) ~zero option entries.
++
+ ## Operations
+ 
+ The separate [Swing candidate comparison](swing-flow-study.md), available at
+diff --git a/tests/test_research_mode.py b/tests/test_research_mode.py
+index 95f4efd..1af22c8 100644
+--- a/tests/test_research_mode.py
++++ b/tests/test_research_mode.py
+@@ -141,10 +141,13 @@ def test_daily_breakout_has_independent_swing_checkpoints(db,cfg,monkeypatch,ava
+         e=Engine(db,cfg)
+         e.enter(c,s,NOW);e.enter(c,s,NOW)
+         p=c.execute(select(swing_trials)).mappings().one()
+-        assert p['status']==('pending' if available else 'unavailable')
++        # Underlying-first (2026-11-01): without a fresh quote the signal price
++        # is the reference, so the checkpoints are still scheduled.
++        assert p['status']=='pending'
++        assert p['payload']['entry_source']==('quote_mid' if available else 'signal_bar_close')
+         checks=c.execute(select(swing_checkpoints)).mappings().all()
+         assert len(checks)==6
+-        assert all(r['status']==('pending' if available else 'unavailable') for r in checks)
++        assert all(r['status']=='pending' for r in checks)
+         assert not db.prefix(c,'trade:')
+         assert len(db.recent(c,'alert'))==1
+ 
+diff --git a/tests/test_swing_study.py b/tests/test_swing_study.py
+index ff2f8b1..174fa0e 100644
+--- a/tests/test_swing_study.py
++++ b/tests/test_swing_study.py
+@@ -91,7 +91,25 @@ def test_freeze_and_restart_do_not_replace_flow_or_price(storage,monkeypatch):
+         assert not storage.recent(c,'alert')
+ 
+ 
+-@pytest.mark.parametrize('case',['stale_quote','future_quote','presignal_quote','late_processing','late_signal','excluded_symbol'])
++@pytest.mark.parametrize('case',['stale_quote','future_quote','presignal_quote'])
++def test_unusable_quote_falls_back_to_signal_bar_close(db,monkeypatch,case):
++    # Underlying-first (2026-11-01): a missing/stale/future/pre-signal quote no
++    # longer makes the candidate unmeasurable; the completed signal bar's close
++    # is the reference and the record says so.
++    monkeypatch.setattr('compass.store.time.time',lambda:NOW)
++    with db.tx() as c:
++        seed(db,c);e=dict(event(db,c))
++        if case=='stale_quote':db.put(c,'quote:SPY',quote(NOW-6))
++        if case=='future_quote':db.put(c,'quote:SPY',quote(NOW+.1))
++        if case=='presignal_quote':db.put(c,'quote:SPY',quote(NOW-1))
++        register(db,c,e,NOW,snapshot=snapshot())
++        saved=c.execute(select(trials)).mappings().one()
++        assert saved['status']=='pending' and saved['payload']['entry_mid']==100
++        assert saved['payload']['entry_source']=='signal_bar_close' and saved['payload']['entry_quote'] is None
++        assert c.execute(select(func.count()).select_from(checkpoints).where(checkpoints.c.status=='pending')).scalar_one()==6
++
++
++@pytest.mark.parametrize('case',['late_processing','late_signal','excluded_symbol'])
+ def test_candidate_clock_failures_stay_unavailable(db,monkeypatch,case):
+     monkeypatch.setattr('compass.store.time.time',lambda:NOW)
+     with db.tx() as c:
+diff --git a/tests/test_underlying_first.py b/tests/test_underlying_first.py
+new file mode 100644
+index 0000000..cca50f5
+--- /dev/null
++++ b/tests/test_underlying_first.py
+@@ -0,0 +1,232 @@
++"""Underlying-first measurement for the swing and 0DTE books (2026-11-01).
++
++Both books used to produce an observation only when a streamed option quote
++arrived. These tests pin the replacement: every candidate is scored on the
++underlying's stored 1-minute bars, independent of option quotes, and the
++option path stays a separate optional measurement.
++"""
++import pytest
++from sqlalchemy import select
++from compass.config import Config
++from compass.store import Store, swing_trials as trials, swing_checkpoints as checkpoints
++from compass import underlying_path as up
++from compass import scanner_shadow
++from compass.swing_study import register, observe, score_path
++from compass.swing_ideas import SwingIdeas, swings
++from test_swing_ideas import NOW, signal, quote, daily, stamp, flow, history
++from compass.swing_signals import daily_context
++from test_swing_study import event, seed, snapshot
++
++
++@pytest.fixture
++def db(tmp_path):
++    db = Store('sqlite:///' + str(tmp_path / 'uf.db')); db.initialize()
++    yield db
++    db.engine.dispose()
++
++
++def bar(ts, o, h, l, c):
++    return dict(ts=ts, o=o, h=h, l=l, c=c)
++
++
++# ---------------------------------------------------------------- pure helpers
++
++def test_bracket_stop_first_when_both_touch_in_one_bar():
++    bars = [bar(0, 100, 100.5, 99.5, 100.2), bar(60, 100.2, 103, 98, 101)]
++    r = up.bracket(bars, 0, 100.01, 'long', 99, 102.03)
++    assert r['reason'] == 'stop' and r['exit'] == pytest.approx(98.99) and r['R'] == pytest.approx(-1.0099, abs=1e-3)
++
++
++def test_bracket_gap_through_stop_fills_at_open_and_target_at_level():
++    bars = [bar(0, 100, 100.5, 99.5, 100.2), bar(60, 97, 97.5, 96.5, 97.2)]
++    r = up.bracket(bars, 0, 100.01, 'long', 99, 102.03)
++    assert r['reason'] == 'stop' and r['exit'] == pytest.approx(96.99)
++    bars = [bar(0, 100, 100.5, 99.5, 100.2), bar(60, 100.2, 102.5, 100.1, 102.4)]
++    r = up.bracket(bars, 0, 100.01, 'long', 99, 102.03)
++    assert r['reason'] == 'target' and r['exit'] == pytest.approx(102.02) and r['R'] == pytest.approx(2.0, abs=.01)
++    s = up.bracket(bars, 0, 99.99, 'short', 101, 97.97)
++    assert s['reason'] == 'stop'
++
++
++def test_bracket_time_stop_and_incomplete_window():
++    bars = [bar(t, 100, 100.3, 99.8, 100.1) for t in range(0, 600, 60)]
++    done = up.bracket(bars, 0, 100.01, 'long', 99, 102.03, end=600)
++    assert done['reason'] == 'time' and done['exit'] == pytest.approx(100.09)
++    short = up.bracket(bars, 0, 100.01, 'long', 99, 102.03, end=3600)
++    assert short['reason'] == 'incomplete'
++    assert up.bracket(bars, 0, 100.01, 'long', 101, 102, end=600)['reason'] == 'invalid_geometry'
++
++
++def test_price_at_uses_completed_bar_within_five_minutes_and_entry_is_next_bar_open():
++    bars = [bar(t, 100 + t / 600, 100.5, 99.5, 100 + t / 600) for t in range(0, 1200, 60)]
++    assert up.price_at(bars, 660) == pytest.approx(bars[10]['c'])  # bar at 600 completes at 660
++    assert up.price_at(bars, 659) == pytest.approx(bars[9]['c'])
++    assert up.price_at(bars, 1260 + 301) is None  # last bar completed at 1260
++    i, entry = up.entry_from(bars, 125, 'long')
++    assert i == 3 and entry == pytest.approx(bars[3]['o'] + .01)
++    assert up.horizon_return(bars, 0, 100.0, 'short', 6) == pytest.approx(-(bars[6]['o'] / 100 - 1) * 1e4)
++    assert up.horizon_return(bars, 0, 100.0, 'long', 60) is None
++
++
++# ---------------------------------------------------------------- swing study
++
++def test_candidate_without_fresh_quote_is_measured_from_signal_bar_close(db, monkeypatch):
++    monkeypatch.setattr('compass.store.time.time', lambda: NOW)
++    with db.tx() as c:
++        db.append(c, 'daily', 'alpaca', 'SPY', stamp(daily()['through'], 0, 0), dict(c=100))  # no quote at all
++        register(db, c, event(db, c), NOW, snapshot=snapshot())
++        saved = c.execute(select(trials)).mappings().one()
++        assert saved['status'] == 'pending'
++        p = saved['payload']
++        assert p['entry_mid'] == 100 and p['entry_source'] == 'signal_bar_close' and p['entry_quote'] is None
++        assert p['entry_reason'] is None and 'missing_fresh_candidate_quote' in p['entry_note'] and p['first_of_day'] is True
++        rows = c.execute(select(checkpoints.c.status)).scalars().all()
++        assert rows and set(rows) == {'pending'} and len(rows) == 6
++        # a second fire of the same rule/side/symbol/day is not first_of_day
++        register(db, c, event(db, c, ident='two', at=NOW + 300), NOW + 300, snapshot=snapshot())
++        second = c.execute(select(trials).where(trials.c.source_id != saved['source_id'])).mappings().one()
++        assert second['payload']['first_of_day'] is False
++
++
++def test_fresh_quote_still_preferred_as_reference(db, monkeypatch):
++    monkeypatch.setattr('compass.store.time.time', lambda: NOW)
++    with db.tx() as c:
++        seed(db, c)
++        register(db, c, event(db, c), NOW, snapshot=snapshot())
++        p = c.execute(select(trials)).mappings().one()['payload']
++        assert p['entry_source'] == 'quote_mid' and p['entry_mid'] == pytest.approx(100.01) and p['entry_note'] is None
++
++
++@pytest.mark.parametrize('side', ['long', 'short'])
++def test_checkpoint_falls_back_to_completed_bar_close(db, monkeypatch, side):
++    clock = [NOW]; monkeypatch.setattr('compass.store.time.time', lambda: clock[0])
++    with db.tx() as c:
++        seed(db, c); register(db, c, event(db, c, side=side), NOW, snapshot=snapshot())
++        target = c.execute(select(checkpoints.c.target_at).where(checkpoints.c.horizon == '60m')).scalar_one()
++        clock[0] = target - 30
++        db.append(c, 'bar', 'fixture', 'SPY', target - 120, dict(o=100.5, h=101.2, l=100.4, c=101, v=10))
++        assert observe(db, c, target + 600) == 1
++        cp = dict(c.execute(select(checkpoints).where(checkpoints.c.horizon == '60m')).mappings().one())
++        assert cp['status'] == 'completed' and cp['reason'] == 'bar_close_reference' and cp['price'] == 101
++        expected = (101 / 100.01 - 1) * 100 * (1 if side == 'long' else -1)
++        assert cp['directional_return_pct'] == pytest.approx(expected)
++
++
++def test_checkpoint_stays_unavailable_without_bars_or_with_stale_bar(db, monkeypatch):
++    clock = [NOW]; monkeypatch.setattr('compass.store.time.time', lambda: clock[0])
++    with db.tx() as c:
++        seed(db, c); register(db, c, event(db, c), NOW, snapshot=snapshot())
++        target = c.execute(select(checkpoints.c.target_at).where(checkpoints.c.horizon == '60m')).scalar_one()
++        db.append(c, 'bar', 'fixture', 'SPY', target - 900, dict(o=100.5, h=101.2, l=100.4, c=101, v=10))  # completed 14 min early
++        assert observe(db, c, target + 600) == 1
++        cp = dict(c.execute(select(checkpoints).where(checkpoints.c.horizon == '60m')).mappings().one())
++        assert cp['status'] == 'unavailable' and cp['reason'] == 'no_timely_usable_checkpoint_quote'
++
++
++def test_score_path_records_underlying_bracket_on_the_trial(db, monkeypatch):
++    monkeypatch.setattr('compass.store.time.time', lambda: NOW)
++    with db.tx() as c:
++        seed(db, c); register(db, c, event(db, c), NOW, snapshot=snapshot())
++        row = c.execute(select(trials)).mappings().one()
++        # signal: long, price 100, stop 96, target 108. Bars: entry bar, drift, then target hit.
++        for k in range(0, 40):
++            db.append(c, 'bar', 'fixture', 'SPY', NOW + 60 * k, dict(o=100 + k * .05, h=100.3 + k * .05, l=99.9 + k * .05, c=100.1 + k * .05, v=5))
++        db.append(c, 'bar', 'fixture', 'SPY', NOW + 60 * 40, dict(o=102, h=108.5, l=101.9, c=108.2, v=5))
++        result = score_path(db, c, 'SPY', 'long', row['payload'], row['id'])
++        assert result['status'] == 'complete' and result['reason'] == 'target'
++        assert result['entry'] == pytest.approx(100.01) and result['exit'] == pytest.approx(107.99)
++        assert result['R'] == pytest.approx((107.99 - 100.01) / (100.01 - 96), abs=1e-3)
++        assert result['horizon_bps']['30'] == pytest.approx((101.5 / 100.01 - 1) * 1e4, abs=.1) and result['horizon_bps']['120'] is None
++        saved = c.execute(select(trials)).mappings().one()['payload']['underlying_path']
++        assert saved['reason'] == 'target' and saved['status'] == 'complete'
++
++
++def breakout_setup(db, c):
++    """Daily history + a completed-minute cross of the 20-session high: a
++    daily_breakout long signal at NOW (same construction as test_swing_ideas)."""
++    rows = history(); context = daily_context(rows, NOW)
++    price = context['high20'] + .1
++    db.put(c, 'matrix:unusual_activity', dict(source_ts=NOW, received=NOW))
++    for row in rows:
++        db.append(c, 'daily', 'alpaca', 'SPY', row['ts'], row['payload'])
++    db.put(c, 'scanner_features:SPY', dict(status='ready', asof=NOW, bar_start=NOW - 60,
++                                           previous_bar=dict(c=context['high20'] - .1), bar=dict(c=price)))
++    db.put(c, 'quote:SPY', quote(NOW, price, price + .02))
++
++
++# ---------------------------------------------------------------- swing cell switches
++
++def test_swing_rule_and_side_switches_drop_cells_before_admission(db):
++    cfg = Config(local=True, stocks=('SPY',), futures=(), extra_futures=(), massive='fixture', alpaca_key='', alpaca_secret='',
++                 databento='', matrix='', discord='', scanner_paper=False, swing_ideas=True, swing_rules=('daily_reversal',), swing_sides=('long',))
++    svc = SwingIdeas(db, cfg)
++    with db.tx() as c:
++        breakout_setup(db, c)
++        svc.discover(c, NOW)
++        assert not c.execute(select(swings)).first()
++        assert db.get(c, 'swing_scan:SPY')['technical_rules'] == []
++        assert not c.execute(select(trials)).first()
++    with pytest.raises(ValueError):
++        Config(local=True, stocks=('SPY',), futures=(), extra_futures=(), swing_rules=('orb',)).validate()
++
++
++def test_swing_switch_default_keeps_every_cell(db):
++    cfg = Config(local=True, stocks=('SPY',), futures=(), extra_futures=(), massive='fixture', alpaca_key='', alpaca_secret='',
++                 databento='', matrix='', discord='', scanner_paper=False, swing_ideas=True)
++    assert set(cfg.swing_rules) == {'daily_breakout', 'pullback_reclaim', 'daily_reversal'} and set(cfg.swing_sides) == {'long', 'short'}
++    svc = SwingIdeas(db, cfg)
++    with db.tx() as c:
++        breakout_setup(db, c)
++        svc.discover(c, NOW)
++        assert db.get(c, 'swing_scan:SPY')['technical_rules'] == ['daily_breakout']
++        assert c.execute(select(swings)).first() is not None
++
++
++# ---------------------------------------------------------------- 0DTE shadow / seat records
++
++def shadow_record(key, alert_ts, flatten_at, option_type='call', stop=99.0, data_gap=True):
++    return {"id": key, "kind": "scanner_shadow", "family": "session_sweep_reclaim", "symbol": "O:SPY261016C00100000",
++            "underlying": "SPY", "side": "long", "entry": None, "entered_at": None, "alert_ts": alert_ts,
++            "option_type": option_type, "trigger": {"signal_price": 100.0, "invalidation": stop},
++            "status": "closed", "data_gap": data_gap, "flatten_at": flatten_at, "pnl": None}
++
++
++def test_shadow_records_are_scored_on_the_underlying_even_when_the_option_never_quoted(db):
++    T = NOW; F = NOW + 3600
++    with db.tx() as c:
++        db.put(c, scanner_shadow.SHADOW_PREFIX + 'a', shadow_record('a', T, F))
++        db.put(c, scanner_shadow.SHADOW_PREFIX + 'b', shadow_record('b', T, F, option_type='put', stop=101.0))
++        db.put(c, 'trade:0dte-scan-c', dict(shadow_record('c', T, F), kind='scanner'))
++        for k in range(0, 60):
++            db.append(c, 'bar', 'alpaca', 'SPY', T + 60 * k, dict(o=100 + k * .02, h=100.1 + k * .02, l=99.95 + k * .02, c=100.05 + k * .02, v=5))
++        db.append(c, 'bar', 'alpaca', 'SPY', T + 60 * 20, dict(o=100.4, h=102.5, l=100.3, c=102.4, v=5))  # later revision: target bar for the call
++        assert scanner_shadow.score_underlying(db, c, F + 60) == 0  # session not over yet
++        assert scanner_shadow.score_underlying(db, c, F + 200) == 3
++        a = db.get(c, scanner_shadow.SHADOW_PREFIX + 'a')['underlying_path']
++        assert a['status'] == 'complete' and a['side'] == 'long' and a['entry'] == pytest.approx(100.01)
++        assert a['bracket']['reason'] == 'target' and a['bracket']['R'] == pytest.approx(2.0, abs=.02)
++        assert a['bps']['60'] is None and a['bps']['30'] == pytest.approx((100.6 / 100.01 - 1) * 1e4, abs=.1)
++        b = db.get(c, scanner_shadow.SHADOW_PREFIX + 'b')['underlying_path']
++        assert b['side'] == 'short' and b['bracket']['reason'] == 'stop'
++        seat = db.get(c, 'trade:0dte-scan-c')
++        assert seat['underlying_path']['status'] == 'complete' and seat['underlying'] == 'SPY' and seat['kind'] == 'scanner'
++        assert scanner_shadow.score_underlying(db, c, F + 300) == 0  # written once
++        card = scanner_shadow.scorecard(db, c)
++        cell = next(x for x in card['shadow_cells'] if x['underlying'] == 'SPY')
++        assert cell['alerts'] == 2 and cell['data_gaps'] == 2 and cell['scored'] == 0
++        assert cell['underlying_path']['scored'] == 2 and cell['underlying_path']['bracket']['n'] == 2
++        assert cell['underlying_path']['bracket']['targets'] == 1 and cell['underlying_path']['bracket']['stops'] == 1
++
++
++def test_shadow_underlying_scoring_marks_unscorable_and_expired_records_once(db):
++    T = NOW; F = NOW + 3600
++    with db.tx() as c:
++        db.put(c, scanner_shadow.SHADOW_PREFIX + 'nobars', shadow_record('nobars', T, F))
++        old = shadow_record('old', T - 5 * 86400, F - 5 * 86400)
++        db.put(c, scanner_shadow.SHADOW_PREFIX + 'old', old)
++        db.put(c, scanner_shadow.SHADOW_PREFIX + 'notype', dict(shadow_record('notype', T, F), option_type=None))
++        assert scanner_shadow.score_underlying(db, c, F + 200) == 3
++        assert db.get(c, scanner_shadow.SHADOW_PREFIX + 'nobars')['underlying_path']['status'] == 'unavailable'
++        assert db.get(c, scanner_shadow.SHADOW_PREFIX + 'old')['underlying_path']['status'] == 'expired'
++        assert db.get(c, scanner_shadow.SHADOW_PREFIX + 'notype')['underlying_path']['status'] == 'unavailable'
++        assert scanner_shadow.score_underlying(db, c, F + 300) == 0
+-- 
+2.43.0
+

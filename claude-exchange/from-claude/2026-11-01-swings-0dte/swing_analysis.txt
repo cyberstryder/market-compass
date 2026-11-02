@@ -1,0 +1,54 @@
+            rule  side    n    WR  meanR   t_R  plac_meanR  plac_pct_R  excessR  s5_bps  t_s5  plac_s5  plac_pct_s5   H1_R   H2_R  stop  tgt  top_sym_share
+  daily_breakout  long 2972 0.332 -0.047 -0.96       0.050         0.0   -0.097    31.2  1.21     77.6          0.2  0.053 -0.120  0.67 0.33           0.24
+  daily_breakout short 1942 0.286 -0.198 -2.44      -0.035         0.0   -0.164  -171.6 -2.46    -43.7          0.0 -0.083 -0.234  0.71 0.28           0.04
+  daily_reversal  long 1667 0.492  0.190  3.61       0.052       100.0    0.138    87.5  2.54     47.7         97.2  0.277  0.154  0.39 0.21           0.06
+  daily_reversal short 1667 0.389 -0.122 -3.03      -0.090        12.4   -0.032   -60.7 -1.86    -56.2         39.5 -0.302 -0.028  0.49 0.13           0.05
+pullback_reclaim  long 2569 0.376 -0.050 -0.95       0.020         0.6   -0.071    62.6  2.21     64.5         45.8  0.049 -0.104  0.57 0.28           0.24
+pullback_reclaim short 2436 0.331 -0.205 -2.95      -0.109         0.0   -0.096   -77.1 -2.11    -48.7          4.4 -0.114 -0.251  0.60 0.23           0.03
+
+== daily_reversal long: by quarter ==
+          n  meanR        s5
+q                           
+2025Q1   23 -0.773 -1094.924
+2025Q2  347  0.436   175.313
+2025Q3   13  0.243   455.237
+2025Q4  208  0.119     5.584
+2026Q1   46  0.879   200.922
+2026Q2  435  0.247   274.364
+2026Q3  449 -0.083   -44.877
+2026Q4  146  0.307   -52.399
+
+by weekly bias (1 bullish, -1 bearish, 0 neutral):
+      count   mean
+bias              
+-1     1548  0.204
+ 1      119  0.013
+
+by hour (CT):
+    count   mean
+hr              
+8     901  0.224
+9     321  0.157
+10    151  0.047
+11    132  0.276
+12     68  0.139
+13     57  0.131
+14     37  0.130
+
+per-symbol concentration: top 10 symbols by summed R
+        count    sum  mean
+symbol                    
+PYPL       17  18.40  1.08
+HON        19  15.50  0.82
+QCOM        9  13.28  1.48
+SLV         9  13.17  1.46
+FANG       10  13.07  1.31
+MSFT        5  12.97  2.59
+MA         23  12.78  0.56
+EMR        16  12.66  0.79
+XLE        11  10.75  0.98
+CVX        18  10.50  0.58
+
+R distribution: p10/p50/p90 [-1.033 -0.033  1.997] mean excl. top 2% trades 0.125
+
+all fires / first fires: 62776 13253 median fires per symbol-day: 4.0
