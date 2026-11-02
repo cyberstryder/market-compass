@@ -224,6 +224,11 @@ class Config:
     # Coupled effect (disclosed, accepted): discover() also stops the
     # swing_candidate study feed. Re-enable only with a new generator.
     swing_ideas: bool = field(default_factory=lambda: env("SWING_IDEAS_ENABLED","false")=="true")
+    # C2 forward premium scorer (2026-11-02, Josh): paper/measurement
+    # only — shadow-fires the gauntlet's C2 weekly momentum and scores
+    # premium from the EOD chain archive. Independent of the retired
+    # swing-ideas flag above; see compass/swings_c2.py.
+    swings_c2: bool = field(default_factory=lambda: env("SWINGS_C2_ENABLED","true")=="true")
     swing_alerts: bool = field(default_factory=lambda: env("SWING_IDEAS_ALERTS","true")=="true")
     swing_min_dte: int = field(default_factory=lambda: int(env("SWING_MIN_DTE","14")))
     swing_max_dte: int = field(default_factory=lambda: int(env("SWING_MAX_DTE","60")))

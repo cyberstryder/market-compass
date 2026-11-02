@@ -31,7 +31,12 @@ def coverage(db, c, cfg, now, refreshed=()):
     subscribed = set(data_symbols(db, c, cfg, now))
     rows = []
     universe=set(connected_symbols(db,c,now,cfg.morning_enabled))
-    if cfg.swing_ideas: universe.update(cfg.watch_symbols)
+    # Daily-bar collection covers the full watchlist regardless of the
+    # retired swing-ideas flag (decoupled 2026-11-02, Josh): the bars feed
+    # odte_book's trailing range and the C2 forward scorer, so collection
+    # must not decay while idea GENERATION stays off (SwingIdeas.tick
+    # still gates discover() on cfg.swing_ideas).
+    universe.update(cfg.watch_symbols)
     from .discovery import requested
     discovery=set(requested(db,c,cfg,now)) if cfg.discovery else set()
     universe.update(discovery)
@@ -42,7 +47,7 @@ def coverage(db, c, cfg, now, refreshed=()):
         universe.add(etf)
         projects.setdefault(etf, set()).add("dayboard")
     for symbol in sorted(universe):
-        if cfg.swing_ideas and symbol in cfg.watch_symbols: projects.setdefault(symbol,set()).add("swing")
+        if symbol in cfg.watch_symbols: projects.setdefault(symbol,set()).add("swing")
         if symbol in discovery: projects.setdefault(symbol,set()).add("discovery")
         daily = daily_context(db, c, symbol, now) if "smoothers" in projects.get(symbol, ()) else {}
         swing=db.get(c,"swing_daily:"+symbol,{})

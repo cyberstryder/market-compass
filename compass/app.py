@@ -212,6 +212,9 @@ def create_app(cfg=None):
             spawn(lambda: engine.study.run_reports(),'engine.study.run_reports')
             spawn(lambda: Secondary(db,cfg,clock=time.time).run(),'Secondary')
             spawn(lambda: SwingIdeas(db,cfg).run(),'SwingIdeas')
+            if cfg.swings_c2:
+                from .swings_c2 import SwingsC2
+                spawn(lambda: SwingsC2(db,cfg).run(),'SwingsC2')
             from .discovery import Discovery
             spawn(lambda: Discovery(db,cfg).run(),'Discovery')
             spawn(lambda: run_obsidian(db,cfg),'run_obsidian')

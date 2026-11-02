@@ -5,12 +5,15 @@ from sqlalchemy import select
 def inventory(db,c,now,include_followups=True):
     from .option_ideas import ideas
     from .swing_ideas import swings
+    from .swings_c2 import episodes as c2_episodes
     from .store import spy_options
     from .spy_timeframes import arms
     from .setup_study import trials
     from .observation_recovery import active
     options=[];stocks=[]
-    for table in (ideas,swings,spy_options,arms):
+    # c2_episodes (2026-11-02): the C2 forward scorer's chosen contracts
+    # pin for their whole open life, like open positions (scorecard §4.1).
+    for table in (ideas,swings,spy_options,arms,c2_episodes):
         for p in c.execute(select(table.c.payload).where(table.c.status=='open').order_by(table.c.created)).scalars():
             if p.get('contract'):options.append(p['contract']['symbol'])
             if p.get('underlying'):stocks.append(p['underlying'])
