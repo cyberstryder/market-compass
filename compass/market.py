@@ -53,8 +53,19 @@ def is_open(now=None,future=False):
             pd.Timestamp(now or time.time(),unit="s",tz="UTC").floor("min")))
     except (ValueError,KeyError): return False
 
+# Vendor quote clocks run ahead of the engine clock: on 2026-11-02 RTH,
+# Alpaca-sourced underlying quotes arrived stamped a median +3s (tail
+# +13s) in the future. fresh() historically allowed only 1s of future
+# skew, so those quotes failed as not fresh at ANY stale bound and the
+# 60s decision-time standard never applied -- 613/781 scanner items
+# blocked in the first RTH hour with negative recorded quote ages.
+# Tolerate bounded future skew (30s: >2x the observed tail, 10x the
+# median); a stamp further ahead than this is corrupt data, not clock
+# skew, and still fails. The stale side (now-ts<=age) is unchanged.
+QUOTE_FUTURE_SKEW_TOLERANCE_S=30
+
 def fresh(q,now,age=5):
-    if not q or q.get("ts") is None or not -1<=now-q["ts"]<=age: return False
+    if not q or q.get("ts") is None or not -QUOTE_FUTURE_SKEW_TOLERANCE_S<=now-q["ts"]<=age: return False
     b,a=number(q.get("bid")),number(q.get("ask"))
     return b is not None and a is not None and 0<b<a and (number(q.get("bid_size")) or 0)>0 and (number(q.get("ask_size")) or 0)>0
 

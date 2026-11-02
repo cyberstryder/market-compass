@@ -102,7 +102,12 @@ def test_archive_evidence_does_not_claim_a_usable_stream_was_missing():
         'underlying: stale or invalid archived samples':1}
 
 
-@pytest.mark.parametrize('offset', [-6, 2])
+# Offsets are quote stamp minus decision time: -6 is beyond the 5s
+# stale bound; +120 is beyond the bounded future-skew tolerance
+# (QUOTE_FUTURE_SKEW_TOLERANCE_S), i.e. corrupt, not clock skew. The
+# old +2 case pinned the pre-2026-11-02 semantics under which vendor
+# stamps a few seconds ahead of the engine clock were rejected.
+@pytest.mark.parametrize('offset', [-6, 120])
 def test_retry_freezes_exact_underlying_clock_and_contemporaneous_loss_lock(db,offset):
     cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
     scanner,engine=Scanner(db,cfg),Engine(db,cfg)
@@ -143,7 +148,7 @@ def test_live_retry_uses_current_underlying_and_clock_after_slow_scan(db):
         assert next(iter(db.prefix(c,'trade:').values()))['entered_at']==at
 
 
-@pytest.mark.parametrize('offset',[-6,2])
+@pytest.mark.parametrize('offset',[-6,120])
 def test_live_retry_still_rejects_truly_stale_or_future_underlying(db,offset):
     cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
     at=NOW+4
@@ -155,6 +160,25 @@ def test_live_retry_still_rejects_truly_stale_or_future_underlying(db,offset):
         assert a['reason']=='Fresh underlying quote required'
         assert a['underlying_evidence']['age_seconds']==-offset
         assert not db.prefix(c,'trade:')
+
+
+def test_live_retry_accepts_vendor_clock_skewed_underlying(db):
+    # Production defect, 2026-11-02: Alpaca underlying quotes stamped
+    # ~3s ahead of the engine clock were rejected as future quotes,
+    # producing 1,717 'Fresh underlying quote required' blocks in one
+    # RTH morning. A stamp inside the bounded skew tolerance is
+    # current data and the retry must proceed on it.
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
+    at=NOW+4
+    with db.tx() as c:
+        seed(db,c);db.put(c,'quote:SPY',quote(at+2))
+        db.put(c,'quote:'+CONTRACT,quote(at,2,2.01))
+        db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
+        Scanner(db,cfg).retry_options(c,{'SPY':quote(at+2)},NOW,Engine(db,cfg,clock=lambda:at))
+        p=db.get(c,'pending_options:test')
+        assert p['status']=='entered'
+        assert p['last_selection']['underlying_evidence']['age_seconds']==-2
+        assert p['last_selection']['underlying_evidence']['fresh'] is True
 
 
 def test_live_retry_expiration_uses_actual_time_not_scan_start(db):

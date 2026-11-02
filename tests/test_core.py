@@ -47,7 +47,11 @@ def signal():
 def test_stale_missing_locked_and_future_quotes_rejected():
     assert fresh(quote(),NOW)
     assert not fresh(quote(NOW-6),NOW)
-    assert not fresh(quote(NOW+2),NOW)
+    # Vendor clock skew: a quote stamped slightly ahead of the engine
+    # clock is current data (2026-11-02: Alpaca median +3s, tail +13s),
+    # but a stamp beyond the bounded skew tolerance is corrupt.
+    assert fresh(quote(NOW+2),NOW)
+    assert not fresh(quote(NOW+3600),NOW)
     assert not fresh(quote(bid=102,ask=102),NOW)
     assert not fresh({**quote(),"ask_size":0},NOW)
     assert not fresh(None,NOW)
