@@ -380,6 +380,150 @@ def score_horizon(db,p,wed,now):
     return True
 
 
+def tuesday_session(sessions):
+    """The week's Tuesday session: the session dated Monday+1 when the
+    calendar has one, else the second session (holiday-shortened weeks),
+    else None — a week with no second session gets no Tuesday cell."""
+    if not sessions:return None
+    try:monday=datetime.fromisoformat(sessions[0]['date']).date()
+    except (KeyError,TypeError,ValueError):return None
+    tue=(monday+timedelta(days=1)).isoformat()
+    for s in sessions:
+        if s.get('date')==tue:return s
+    return sessions[1] if len(sessions)>=2 else None
+
+
+def _chain_contract(c,date_str,ticker,symbol):
+    """One contract row from a day's chain_eod archive event. Returns
+    (row, None), or (None, 'chain_missing' | 'contract_not_in_chain')."""
+    row=c.execute(select(events.c.payload).where(events.c.key==chain_event_key(date_str,ticker))).first()
+    if row is None:return None,'chain_missing'
+    payload=row[0] or {}
+    match=next((r for r in payload.get('contracts',[]) if r.get('symbol')==symbol),None)
+    if match is None:return None,'contract_not_in_chain'
+    return match,None
+
+
+def _chain_px(row,side):
+    try:v=float((row.get('quote') or {}).get(side))
+    except (TypeError,ValueError):return None
+    return v
+
+
+def mark_cohort(ratio):
+    """Monday-mark cohort of a pick: its contract's Monday chain bid as
+    a share of its Monday entry ask. The graded exit-day record (259
+    picks): shallow marks (>=80%) peak on Tuesday; deep marks (<70%)
+    are a Monday-vs-Tuesday wash that decays after Tuesday."""
+    if ratio is None:return 'unknown'
+    if ratio>=0.80:return 'shallow'
+    if ratio<0.70:return 'deep'
+    return 'middle'
+
+
+def tuesday_cell_score(c,p,mon,tue,wed,now):
+    """Tuesday-entry shadow cell for one board pick (2026-11-02).
+
+    Scores the pick as if entered Tuesday instead of Monday: Tuesday's
+    chain_eod snapshot ask in, Wednesday's snapshot bid out — the
+    identical ruler to the Monday arm (entry ask in, Wednesday chain
+    bid out, same fee), both arms carried in the result so the
+    comparison is per-pick. The Monday mark (Monday's chain bid over
+    the Monday entry ask) assigns the cohort. Unlike horizon_score
+    this is status-independent: a pick that resolved on its underlying
+    target Mon–Wed still has both premium arms in the archive.
+
+    Returns the cell dict, or None when a needed snapshot is not
+    stored yet and that day is inside the retry grace (the same 36 h
+    convention horizon_score uses). A price is never fabricated: a
+    missing contract, ask, or bid records an explicit 'unavailable'
+    outcome with its reason. A missing Monday mark never blocks the
+    arms — it only leaves the cohort 'unknown' with its reason."""
+    from .smoothers_scorecard import FEE_PER_CONTRACT
+    base={'tuesday':tue['date'],'wednesday':wed['date'],'scored_at':now}
+    contract=p.get('contract') or {}
+    if not contract.get('symbol'):
+        return {**base,'status':'unavailable','reason':'no_contract_recorded'}
+    if contract.get('multiplier')!=100:
+        return {**base,'status':'unavailable','reason':'unsupported_contract_multiplier'}
+    try:entry_ask=float((p.get('quote') or {}).get('ask'))
+    except (TypeError,ValueError):entry_ask=None
+    if entry_ask is None or entry_ask<=0:
+        return {**base,'status':'unavailable','reason':'entry_ask_missing'}
+    wed_row,why=_chain_contract(c,wed['date'],p['ticker'],contract['symbol'])
+    if wed_row is None:
+        if why=='chain_missing' and now<wed['close']+36*3600:return None
+        return {**base,'status':'unavailable','reason':'wednesday_'+why}
+    wed_bid=_chain_px(wed_row,'bid')
+    if wed_bid is None or wed_bid<0:
+        return {**base,'status':'unavailable','reason':'chain_bid_missing'}
+    tue_row,why=_chain_contract(c,tue['date'],p['ticker'],contract['symbol'])
+    if tue_row is None:
+        if why=='chain_missing' and now<tue['close']+36*3600:return None
+        return {**base,'status':'unavailable','reason':'tuesday_'+why}
+    tue_ask=_chain_px(tue_row,'ask')
+    if tue_ask is None or tue_ask<=0:
+        return {**base,'status':'unavailable','reason':'tuesday_ask_missing'}
+    mon_row,mon_why=_chain_contract(c,mon['date'],p['ticker'],contract['symbol'])
+    mon_bid=_chain_px(mon_row,'bid') if mon_row is not None else None
+    mark_ratio=round(mon_bid/entry_ask,4) if mon_bid is not None and mon_bid>=0 else None
+    monday_net=round((wed_bid-entry_ask)*100-FEE_PER_CONTRACT,2)
+    tuesday_net=round((wed_bid-tue_ask)*100-FEE_PER_CONTRACT,2)
+    return {**base,'status':'scored','entry_ask':entry_ask,'tuesday_ask':tue_ask,
+            'wednesday_bid':wed_bid,'fee':FEE_PER_CONTRACT,
+            'monday_net':monday_net,'tuesday_net':tuesday_net,
+            'delta_net':round(tuesday_net-monday_net,2),
+            'monday_mark_bid':mon_bid,'monday_mark_ratio':mark_ratio,
+            'mark_reason':None if mark_ratio is not None else 'monday_'+(mon_why or 'chain_bid_missing'),
+            'cohort':mark_cohort(mark_ratio),'cost_key':p.get('cost_key')}
+
+
+def score_tuesday_cell(db,p,mon,tue,wed,now):
+    """Persist one pick's Tuesday cell (own transaction, row-locked).
+    No notice is queued: the cell is shadow scoring — stored on the
+    pick and aggregated into the weekly summary only. Returns True
+    when a cell was recorded."""
+    with db.tx() as c:
+        current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
+        if current.get('tuesday_cell'):return False
+        cell=tuesday_cell_score(c,current,mon,tue,wed,now)
+        if cell is None:return False
+        current['tuesday_cell']=cell;save(db,c,current);p.update(current)
+    return True
+
+
+def tuesday_cell_summary(rows):
+    """Aggregate a week's stored cells: full population, Monday-mark
+    cohorts, and executable-cost halves (the board's own cost_key,
+    median split over the week's scored picks, cheap = key <= median,
+    so ties sit with the cheap half). Dollar figures are sums over
+    scored picks of that split."""
+    scored=[p['tuesday_cell'] for p in rows if (p.get('tuesday_cell') or {}).get('status')=='scored']
+    def agg(cells):
+        return {'n':len(cells),
+                'monday_net':round(sum(x['monday_net'] for x in cells),2) if cells else None,
+                'tuesday_net':round(sum(x['tuesday_net'] for x in cells),2) if cells else None,
+                'delta_net':round(sum(x['delta_net'] for x in cells),2) if cells else None}
+    out={'picks':len(rows),'scored':len(scored),'unavailable':len(rows)-len(scored),
+         'all':agg(scored),'cohorts':{},'cost_halves':{}}
+    for name in ('shallow','middle','deep','unknown'):
+        out['cohorts'][name]=agg([x for x in scored if x['cohort']==name])
+    keyed=sorted((x for x in scored if x.get('cost_key') is not None),key=lambda x:x['cost_key'])
+    if keyed:
+        mid=len(keyed)//2
+        median=keyed[mid]['cost_key'] if len(keyed)%2 else (keyed[mid-1]['cost_key']+keyed[mid]['cost_key'])/2
+        out['cost_median']=median
+        out['cost_halves']['cheap']=agg([x for x in keyed if x['cost_key']<=median])
+        out['cost_halves']['dear']=agg([x for x in keyed if x['cost_key']>median])
+    return out
+
+
+def refresh_tuesday_summary(db,week,rows,now):
+    with db.tx() as c:
+        db.put(c,VERSION+':week:'+week+':tuesday_cell',
+               {'week':week,'updated_at':now,**tuesday_cell_summary(rows)})
+
+
 def monitor(db,data,now):
     monday=monday_for(now).isoformat()
     with db.tx() as c:
@@ -450,6 +594,24 @@ def monitor(db,data,now):
             if not p.get('horizon'):
                 try:score_horizon(db,p,wed,now)
                 except Exception:logging.getLogger('uvicorn.error').exception('native_smoothers horizon scoring failed for %s',p.get('id'))
+    # Tuesday-entry shadow cell (2026-11-02): once Wednesday's snapshot
+    # can be read, EVERY board pick — resolved or still open — is also
+    # scored as a Tuesday entry out at the same Wednesday bid, and the
+    # weekly cell summary is refreshed. Storage only: no notice is
+    # queued and nothing about the board or the Monday arm changes.
+    tue=tuesday_session(sessions)
+    if tue and wed and sessions and now>wed['close']+300:
+        with db.tx() as c:
+            all_rows=list(c.execute(select(weekly.c.payload).where(weekly.c.week==monday)).scalars())
+        changed=False
+        for p in all_rows:
+            if not p.get('tuesday_cell'):
+                try:changed=score_tuesday_cell(db,p,sessions[0],tue,wed,now) or changed
+                except Exception:logging.getLogger('uvicorn.error').exception('native_smoothers tuesday cell scoring failed for %s',p.get('id'))
+        if changed or any(p.get('tuesday_cell') for p in all_rows):
+            with db.tx() as c:
+                fresh_rows=list(c.execute(select(weekly.c.payload).where(weekly.c.week==monday)).scalars())
+            refresh_tuesday_summary(db,monday,fresh_rows,now)
     # Recover overdue closures after a restart even when the calendar week changed.
     overdue=[]
     with db.tx() as c:
@@ -459,6 +621,7 @@ def monitor(db,data,now):
             if not closing or now<closing[-1]['close']+300:continue
             for p in c.execute(select(weekly.c.payload).where(weekly.c.week==open_week,weekly.c.status=='OPEN')).scalars().all():
                 overdue.append((closing,p))
+    overdue_weeks=set()
     for closing,p in overdue:
         # A pick that never got its Wednesday horizon scored while its
         # week was current (engine down Wed–Fri) is scored now, before
@@ -467,6 +630,14 @@ def monitor(db,data,now):
         if wed and not p.get('horizon'):
             try:score_horizon(db,p,wed,now)
             except Exception:logging.getLogger('uvicorn.error').exception('native_smoothers horizon scoring failed for %s',p.get('id'))
+        # Same recovery for the Tuesday-entry cell: any overdue pick
+        # that never got its cell while its week was current is scored
+        # now, before closure.
+        tue=tuesday_session(closing)
+        if tue and wed and closing and not p.get('tuesday_cell'):
+            try:
+                if score_tuesday_cell(db,p,closing[0],tue,wed,now):overdue_weeks.add(p['week'])
+            except Exception:logging.getLogger('uvicorn.error').exception('native_smoothers tuesday cell scoring failed for %s',p.get('id'))
         # Capture at resolution time, never substitute an old hourly premium:
         # the same quote capture the target-touch path uses, so a LOSS or
         # UNRESOLVED week is measurable (or visibly unmeasurable) instead of
@@ -485,6 +656,10 @@ def monitor(db,data,now):
             p=current
             save(db,c,p)
             queue_signal(db,c,p,'close',messages.close(p),now,p['resolution_time'])
+    for cell_week in overdue_weeks:
+        with db.tx() as c:
+            week_rows=list(c.execute(select(weekly.c.payload).where(weekly.c.week==cell_week)).scalars())
+        refresh_tuesday_summary(db,cell_week,week_rows,now)
 
 
 def premium(db,data,now):
