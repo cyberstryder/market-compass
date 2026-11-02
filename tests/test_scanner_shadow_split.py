@@ -52,8 +52,28 @@ def _seed_alert(db, c, now, key, family, underlying, opt, quote=True,
     if source_id:
         payload["source_id"] = source_id
     db.append(c, "alert", "setup_study", opt, now - 5, payload, key=key)
+    _seed_daily(db, c, underlying, now)
     if quote:
-        db.put(c, "quote:" + opt, {"ts": now, "bid": 2.0, "ask": 2.1})
+        # Gate-compliant under the whole-list book (respec 2026-11-01):
+        # ask 0.80 <= G1 cap 0.90; spread 0.02 <= max(15% of ask, 0.05);
+        # the seeded daily history gives range20 = 3% so G3 passes and
+        # ask/spot = 0.008 <= range20/2.
+        db.put(c, "quote:" + opt, {"ts": now, "bid": 0.78, "ask": 0.80})
+
+
+def _seed_daily(db, c, symbol, now):
+    # 21 prior sessions of 3% RTH range (25h steps: always distinct
+    # calendar days, DST-proof).
+    bar = {"o": 100.0, "h": 101.5, "l": 98.5, "c": 100.0, "v": 1000}
+    items = [(symbol, now - i * 90000, bar) for i in range(1, 22)]
+    db.append_bars(c, "daily", "fixture", items)
+
+
+def _seated_cfg(*cells):
+    seats = ";".join("%s:%s" % (fam, name) for fam, name in cells)
+    return types.SimpleNamespace(
+        scanner_paper_seats=seats, scanner_promoted_families="",
+        odte_book_seated_names="")
 
 
 def _shadow_key(key):
@@ -64,16 +84,19 @@ def _shadow_key(key):
 
 
 def test_seated_cell_books_exactly_as_before(db):
+    # Respec 2026-11-01: nobody is seated by default (no grandfathering)
+    # — the seat here is the operator action, passed explicitly.
+    cfg = _seated_cfg(("session_sweep_reclaim", "MU"))
     now = time.time()
     with db.tx() as c:
         _seed_alert(db, c, now, "seat1", "session_sweep_reclaim", "MU", MU_OPT)
-        opened = zero_dte_paper._open_scanner(db, c, now, now + 7200)
+        opened = zero_dte_paper._open_scanner(db, c, now, now + 7200, cfg)
         trade = db.get(c, "trade:0dte-scan-seat1")
         shadow = db.get(c, _shadow_key("seat1"))
     assert opened == 1
     assert trade is not None and trade["status"] == "open"
     assert trade["family"] == "session_sweep_reclaim"
-    assert trade["entry"] == 2.11
+    assert trade["entry"] == 0.81
     assert shadow is None
 
 
@@ -91,7 +114,7 @@ def test_sweep_nonseat_name_shadows_without_booking(db):
     assert rec["family"] == "session_sweep_reclaim"
     assert rec["underlying"] == "TSLA"
     assert rec["status"] == "open"
-    assert rec["entry"] == 2.11
+    assert rec["entry"] == 0.81
     assert rec["trigger"]["signal_price"] == 100.0
     assert rec["trigger"]["invalidation"] == 98.0
 
@@ -136,12 +159,19 @@ def test_env_override_changes_the_seats(db):
     assert opened2 == 0 and shadow is not None
 
 
-def test_seat_parsing_falls_back_on_garbage():
-    assert scanner_shadow.paper_seats(None) == dict(scanner_shadow.PAPER_SEATS)
+def test_seat_parsing_fails_closed_on_garbage():
+    # Respec 2026-11-01: the default seated set is EMPTY (no
+    # grandfathering) and an unparseable override seats nobody — fail
+    # closed, the opposite of the old validated-default fallback.
+    assert scanner_shadow.paper_seats(None) == {}
+    assert dict(scanner_shadow.PAPER_SEATS) == {}
     bad = types.SimpleNamespace(scanner_paper_seats="nonsense",
                                 scanner_promoted_families="")
-    assert scanner_shadow.paper_seats(bad) == dict(scanner_shadow.PAPER_SEATS)
-    assert scanner_shadow.seats_source(bad) == "default"
+    assert scanner_shadow.paper_seats(bad) == {}
+    assert scanner_shadow.seats_source(bad) == "none"
+    assert scanner_shadow.is_seated("session_sweep_reclaim", "MU") is False
+    assert scanner_shadow.is_seated("session_sweep_reclaim", "AMD") is False
+    assert scanner_shadow.is_seated("session_sweep_reclaim", "NFLX") is False
 
 
 def test_alert_family_derivation():
@@ -186,7 +216,7 @@ def test_shadow_measured_target_exit_scores(db):
     now = time.time()
     with db.tx() as c:
         rec = _open_shadow(db, c, now)
-        assert rec["status"] == "open" and rec["entry"] == 2.11
+        assert rec["status"] == "open" and rec["entry"] == 0.81
         db.put(c, "quote:" + TSLA_OPT,
                {"ts": now + 595, "bid": 3.30, "ask": 3.40})
         closed = scanner_shadow.update(db, c, now + 600)
@@ -196,7 +226,7 @@ def test_shadow_measured_target_exit_scores(db):
     assert rec["status"] == "closed"
     assert rec["exit_reason"] == "target hit (+50%)"
     assert rec["data_gap"] is False
-    assert rec["pnl"] == 116.70
+    assert rec["pnl"] == 246.70
     cell = card["shadow_cells"][0]
     assert cell["scored"] == 1 and cell["wins"] == 1
     assert cell["data_gaps"] == 0
@@ -252,11 +282,12 @@ def test_seated_entry_without_quote_records_seat_data_gap(db):
     # under the seat book's own trade key (disjoint from the shadow
     # keyspace), so the seat scorecard's denominator stops silently
     # shrinking. Exactly one record, no booking, no shadow row.
+    cfg = _seated_cfg(("session_sweep_reclaim", "MU"))
     now = time.time()
     with db.tx() as c:
         _seed_alert(db, c, now, "seatgap1", "session_sweep_reclaim",
                     "MU", MU_OPT, quote=False)
-        opened = zero_dte_paper._open_scanner(db, c, now, now + 7200)
+        opened = zero_dte_paper._open_scanner(db, c, now, now + 7200, cfg)
         rec = db.get(c, "trade:0dte-scan-seatgap1")
         shadow = db.get(c, _shadow_key("seatgap1"))
         seat_rows = db.prefix(c, "trade:0dte-scan-")
@@ -277,13 +308,14 @@ def test_seated_entry_without_quote_records_seat_data_gap(db):
 def test_seated_stale_quote_also_records_seat_data_gap(db):
     # Same drop, stale-quote flavor: the only quote is older than the
     # fresh-quote window, so _fresh_quote returns None.
+    cfg = _seated_cfg(("session_sweep_reclaim", "NFLX"))
     now = time.time()
     with db.tx() as c:
         _seed_alert(db, c, now, "seatgap2", "session_sweep_reclaim",
                     "NFLX", NFLX_OPT, quote=False)
         db.put(c, "quote:" + NFLX_OPT,
                {"ts": now - 3600, "bid": 2.0, "ask": 2.1})
-        opened = zero_dte_paper._open_scanner(db, c, now, now + 7200)
+        opened = zero_dte_paper._open_scanner(db, c, now, now + 7200, cfg)
         rec = db.get(c, "trade:0dte-scan-seatgap2")
     assert opened == 0
     assert rec is not None and rec["data_gap"] is True
@@ -332,6 +364,11 @@ def test_graduation_flag_math(db):
     aapl = cells[("session_sweep_reclaim", "AAPL")]
     assert aapl["graduation"]["scored_needed"] == 1
     assert aapl["graduation"]["ready_for_josh"] is False
-    assert card["paper_seats"] == {"session_sweep_reclaim":
-                                   ["AMD", "MU", "NFLX"]}
+    # No grandfathering (respec 2026-11-01): the scorecard's seated set
+    # is empty until an operator seats a graduated name.
+    assert card["paper_seats"] == {}
     assert card["promoted_families"] == ["session_sweep_reclaim"]
+    assert card["barred_families"] == ["level_breakdown",
+                                       "trend_pullback",
+                                       "volume_breakout"]
+    assert nflx["graduation"]["family_barred"] is True

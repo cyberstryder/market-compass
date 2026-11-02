@@ -191,6 +191,10 @@ class Engine:
             initial_risk=per_unit*qty
             risk_basis="stop_distance"
         trade={**signal,**s,"status":"open","entry":price,"entered_at":now,"entry_quote_ts":q["ts"],
+            # Stage 1 (2026-11-01): fills carry the consulted quote's
+            # bid/ask/ts/source and computed age, not just blocks.
+            "entry_quote":{"bid":q.get("bid"),"ask":q.get("ask"),"ts":q.get("ts"),
+                "source":q.get("source"),"age_s":round(now-q["ts"],3) if q.get("ts") is not None else None},
             "stop":plan['stop'],"target":plan['target'],"qty":qty,"initial_risk":initial_risk,
             "risk_basis":risk_basis,"fill_model":FILL_DESCRIPTION,"fill_version":FILL_VERSION,
             "last_quote_ts":q["ts"],"last_bar_checked":signal["signal_time"]-60,
@@ -533,6 +537,32 @@ class Engine:
                     except ValueError as error:
                         rejected.append({**evidence,'reason':str(error)})
                         continue
+                    # Whole-list book gates (respec 2026-11-01, section
+                    # 7): scanner-family candidates must clear G1-G3
+                    # (premium cap, spread, movement eligibility) before
+                    # publication — the same gate set zero_dte_paper
+                    # re-evaluates at booking on the fresh quote. A
+                    # failure rejects this contract with the respec's
+                    # reason token; no alert is published for it, so a
+                    # gated-out candidate leaves rejection evidence in
+                    # this audit (and the diagnostic events), never a
+                    # booking or a shadow record. Non-scanner research
+                    # signals are untouched.
+                    selection_quote=None
+                    try:
+                        from . import scanner_shadow as _shadow
+                        book_family=_shadow.alert_family(signal)
+                    except Exception:
+                        book_family=None
+                    if book_family is not None:
+                        from . import odte_book as _book
+                        gate_ok,gate_why,_gate_det=_book.evaluate_candidate(
+                            self.db,c,signal['symbol'],q,
+                            signal.get('signal_price'),checked_at)
+                        if not gate_ok:
+                            rejected.append({**evidence,'reason':gate_why})
+                            continue
+                        selection_quote=_book.quote_evidence(q,checked_at)
                     eligible=signal.get('notify_eligible',False)
                     trial=self.study.start(c,option_signal,checked_at,spec(o['symbol']),alerted=eligible,primary=eligible)
                     if trial:
@@ -556,6 +586,7 @@ class Engine:
                             # Without it, scanner observations never become paper trades.
                             self.db.append(c,'alert','setup_study',o['symbol'],checked_at,
                                 {**saved,'status':'option_setup_new','last_quote':q,
+                                 'selection_quote':selection_quote,
                                  'expires_at':checked_at+120,'underlying_invalidation':signal.get('invalidation'),
                                  'evidence_snapshot':evidence_snapshot,
                                  'publication': {

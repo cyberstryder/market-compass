@@ -298,6 +298,23 @@ def freshness_block_evidence(quote,signal_time,now):
             ('bid','ask','bid_size','ask_size','ts','source')} if quote else None)}
 
 
+def trigger_quote_evidence(quote,signal_time,now,max_age):
+    """Decision-time stamp for the trigger gate (Stage 1, 2026-11-01):
+    the consulted quote's bid/ask/ts/source, its age at the decision,
+    and the bound applied — attached to EVERY grouped item, blocked or
+    not, so the newly-passing population is measurable too. The old
+    gate's verdict (freshness_block_evidence, unchanged) rides along
+    as legacy_block wherever computable, so the 2026-10-31 sub-cause
+    calibration series stays derivable after the standard changed."""
+    return {'bid':quote.get('bid') if quote else None,
+        'ask':quote.get('ask') if quote else None,
+        'ts':quote.get('ts') if quote else None,
+        'source':quote.get('source') if quote else None,
+        'age_s':now-quote['ts'] if quote and quote.get('ts') is not None else None,
+        'max_age_s':max_age,
+        'legacy_block':freshness_block_evidence(quote,signal_time,now)}
+
+
 def context_evidence(f,flow,apex,quotes,features_by_symbol,now):
     evidence=[{'source':'price','kind':'structure','source_ts':f.get('asof'),
         'vwap':f.get('vwap'),'ema9':f.get('ema9'),'ema21':f.get('ema21'),
@@ -444,9 +461,28 @@ class Scanner:
             db.put(c,'focus:'+symbol,{'symbol':symbol,'priority':100,'at':now,'reason':item['rule']})
             cool=db.get(c,'scanner_cooldown:'+symbol+':'+item['side'],0)
             quote=quotes.get(symbol)
-            blocked=(not fresh(quote,now) or quote['ts']<item['signal_time'])
+            # Decision-time freshness standard (Stage 1, 2026-11-01,
+            # Josh's directive): a quote is actionable if its age at
+            # the moment of THIS decision is within the configured
+            # bound (default 60s — the standard the booking layer
+            # already prices this book on; entry_check notes 0DTE
+            # quotes routinely go 15-60s without an update). The old
+            # trigger-time stamp geometry (fresh within 5s AND stamped
+            # at/after the signal bar's close) killed ~95% of all
+            # scanner items Oct 26-30, including quotes 1s old, because
+            # a quote stamped during the signal bar could never satisfy
+            # it. Freshness checking is NOT removed: a quote older than
+            # the bound, or structurally invalid (fresh() still demands
+            # 0 < bid < ask with nonzero sizes), blocks exactly as
+            # before, and the 09ba9da sub-cause fields are still spread
+            # onto blocked items so Monday's calibration series does
+            # not break.
+            trigger_bound=getattr(cfg,'scanner_trigger_quote_max_age',60)
+            item['quote_evidence']=trigger_quote_evidence(
+                quote,item['signal_time'],now,trigger_bound)
+            blocked=not fresh(quote,now,trigger_bound)
             if blocked:
-                item.update(status='blocked',blocked_reason='Fresh quote after trigger required',
+                item.update(status='blocked',blocked_reason='Fresh quote at decision required',
                     **(freshness_block_evidence(quote,item['signal_time'],now) or {}))
             elif abs((quote['bid']+quote['ask'])/2-item['signal_price'])>max(f['atr14']*.5,engine.specification(symbol)['tick']*4):
                 item.update(status='blocked',blocked_reason='Price moved too far from the observed trigger')
@@ -514,19 +550,24 @@ class Scanner:
             research_only=pending.get('research_only',False)
             symbol=signal['symbol']
             if not research_only:
-                # Seat gate (2026-10-27): this path books paper trades for
-                # scanner signals, so it honors the same seat/shadow split
-                # as zero_dte_paper's alert consumer. A scanner-family cell
-                # that is not seated is shadow-scored by the research path
-                # and never books here; producers with no scanner family
-                # book as before. (Oct 26 evidence: this path booked 11
-                # non-seated trades, -$585.30, while the scorecard showed
-                # zero — the split governed only the other consumer.)
+                # Unified booking path (2026-11-01, respec section 7.3):
+                # scanner-family signals book ONLY through the research
+                # selection -> option_setup_new publication ->
+                # zero_dte_paper._open_scanner chain, where the single
+                # G1-G4 gate set lives. This path previously booked
+                # scanner signals a second time via engine.enter (Oct 26
+                # evidence: 11 non-seated trades, -$585.30, while the
+                # scorecard showed zero — the split governed only the
+                # other consumer; the 2026-10-27 seat gate here narrowed
+                # but did not close the double path). The research
+                # pending row for the same signal (created by
+                # observe_setup) owns it now. Producers with no scanner
+                # family book as before.
                 from . import scanner_shadow
                 family=scanner_shadow.alert_family(signal)
-                if family is not None and not scanner_shadow.is_seated(family,symbol,self.cfg):
-                    pending.update(status='skipped_not_seated',
-                        reason=f'Scanner cell {family} x {symbol} is not seated; shadow-scored via the research path, no paper booking',
+                if family is not None:
+                    pending.update(status='routed_to_book_path',
+                        reason=f'Scanner cell {family} x {symbol}: bookings run through the unified alert-consumer path (zero_dte_paper), not engine.enter',
                         updated_at=now)
                     self.db.put(c,key,pending)
                     continue
@@ -646,7 +687,7 @@ def snapshot(db,c,cfg,now):
         'watchlist':list(cfg.watch_symbols),'opportunities':active[:100],
         'feeds':catalog(db,c,cfg,now),
         'focus':focus_for_display(db,c,now),
-        'limits':{'price_quote_max_age_seconds':5,'completed_bar_max_age_seconds':90,
+        'limits':{'price_quote_max_age_seconds':getattr(cfg,'scanner_trigger_quote_max_age',60),'completed_bar_max_age_seconds':90,
             'unusual_flow_max_age_seconds':120,'apex_max_age_seconds':600,
             'entry_window_seconds':120,'same_direction_cooldown_seconds':600},
         'coverage_note':'Live price scanning covers the configured watchlist. Vendor analytics refresh on independent schedules; missing or undated inputs cannot trigger exposure/flow trades.'}

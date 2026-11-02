@@ -695,10 +695,12 @@ def _0dte(db, c, now):
                     _stats(trades)))
     return (_block(
         "0dte", "0DTE",
-        "Same-day-expiry option plans and scanner alerts.",
-        "The SPY plan every morning; scanner alerts intraday.",
+        "Short-dated scanner book (DTE 0-7), flattened the same session.",
+        "Whole-list scanner under one gate set (ask cap, spread, movement, "
+        "caps): every name is shadow-scored; a name books only after it "
+        "graduates and is seated. The SPY morning plan was retired 2026-10-25.",
         "Win = the 1-contract paper trade exited above its entry, after fees. "
-        "Same-session only — 0DTE expires at the close, flat by 2:55pm CT.",
+        "Same-session only — flat by 2:55pm CT.",
         stats, drill), by_day)
 
 
@@ -1231,7 +1233,7 @@ def _detail_0dte(db, c, now, name):
                 "result_cls": "pos" if "target" in outcome.lower() else ("neg" if "stop" in outcome.lower() else ""),
             })
         title = "SPY morning plan — day by day"
-        sub = "Each morning's SPY plan and what happened to it."
+        sub = "Historical record: the SPY morning plan was retired 2026-10-25."
     else:
         try:
             rows = c.execute(select(events).where(
@@ -1339,10 +1341,11 @@ _FAMILY_LABELS = {
     "flow_price_breakout": "Flow price breakout",
 }
 
-# The validated scanner seats (underlying-first validation, 2026-10-25).
-# Fallback for the window before compass/scanner_shadow.py lands; once
-# it has, its scorecard is the source of truth for the effective seats.
-_DEFAULT_PAPER_SEATS = {"session_sweep_reclaim": ["AMD", "MU", "NFLX"]}
+# Whole-list book (respec 2026-11-01): there are no default seats —
+# nobody is grandfathered in; seating is an operator action recorded in
+# scanner_shadow's scorecard, which is the source of truth. This empty
+# fallback only shapes the degraded response if that module is absent.
+_DEFAULT_PAPER_SEATS = {}
 
 
 def _pct1(frac):
@@ -1388,7 +1391,8 @@ def _seated_stats(db, c, seats):
     cells = {}
     for family, names in seats.items():
         for name in names:
-            cells[(family, str(name).upper())] = {"booked": [], "open": 0}
+            cells[(family, str(name).upper())] = {"booked": [], "open": 0,
+                                                  "data_gaps": 0}
     for t in paper.values():
         if not isinstance(t, dict) or t.get("kind") != "scanner":
             continue
@@ -1397,7 +1401,13 @@ def _seated_stats(db, c, seats):
         if cell is None:
             continue
         if t.get("status") == "closed" or _num(t.get("exited_at")):
-            if t.get("data_gap") or not isinstance(t.get("evidence"), dict):
+            if t.get("data_gap"):
+                # First-class (respec section 8): the seated stats used
+                # to drop data_gap rows silently; the count is part of
+                # the cell's honest denominator.
+                cell["data_gaps"] += 1
+                continue
+            if not isinstance(t.get("evidence"), dict):
                 continue
             cell["booked"].append(t)
         else:
@@ -1411,6 +1421,7 @@ def _seated_stats(db, c, seats):
             "underlying": name, "trades": st["trades"], "wins": st["wins"],
             "losses": st["losses"], "win_rate": _pct1(st["win_rate"]),
             "pf": st["pf"], "net": st["net"], "open": cell["open"],
+            "data_gaps": cell["data_gaps"],
         })
     return out
 
@@ -1439,8 +1450,10 @@ def _tracking_scanner(db, c, now):
         seats = {k: list(v) for k, v in _DEFAULT_PAPER_SEATS.items()}
         return {"available": scanner_shadow is not None,
                 "paper_seats": seats, "seats_source": None,
-                "promoted_families": sorted(_DEFAULT_PAPER_SEATS),
-                "seated": _seated_stats(db, c, seats), "shadow": None}
+                "promoted_families": sorted(
+                    scanner_shadow.PROMOTED_FAMILIES) if scanner_shadow else [],
+                "seated": _seated_stats(db, c, seats), "shadow": None,
+                "book": None}
     seats = card.get("paper_seats") or {}
     cells = card.get("shadow_cells") or []
     top = sorted(cells, key=lambda x: (-(x.get("scored") or 0),
@@ -1455,6 +1468,7 @@ def _tracking_scanner(db, c, now):
             "underlying": x.get("underlying"),
             "alerts": x.get("alerts"), "open": x.get("open"),
             "scored": x.get("scored"), "data_gaps": x.get("data_gaps"),
+            "dte_split": x.get("dte_split"),
             "win_rate": _pct1(x.get("win_rate")), "pf": x.get("pf"),
             "net": x.get("net"),
             "scored_needed": grad.get("scored_needed"),
@@ -1469,6 +1483,8 @@ def _tracking_scanner(db, c, now):
     return {"available": True, "paper_seats": seats,
             "seats_source": card.get("seats_source"),
             "promoted_families": card.get("promoted_families") or [],
+            "barred_families": card.get("barred_families") or [],
+            "book": card.get("book"),
             "seated": _seated_stats(db, c, seats),
             "shadow": {"totals": card.get("totals") or {},
                        "cells_tracking": len(cells), "cells": shaped,

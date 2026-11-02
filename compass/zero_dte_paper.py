@@ -20,7 +20,7 @@ import time
 
 from sqlalchemy import select
 
-from . import scanner_shadow
+from . import odte_book, scanner_shadow
 from .market import day, session
 from .store import events
 
@@ -98,6 +98,23 @@ def _open(db, c, key, rec):
         return False
     db.put(c, key, rec)
     return True
+
+
+def _booking_rejected(db, c, now, alert_key, family, underlying, symbol,
+                      reason, quote_ev):
+    """A priced candidate stopped by a book gate (respec sections 4 /
+    7.4): recorded as an event with the reason token and the consulted
+    quote's evidence — never as a state row. The cell's denominator is
+    its alerts plus its data_gap rows; a gate rejection is neither a
+    booking nor a data gap."""
+    try:
+        db.append(c, "alert", "zero_dte_paper", underlying, now, {
+            "status": "booking_rejected", "reason": reason,
+            "family": family, "underlying": underlying, "symbol": symbol,
+            "alert_key": alert_key, "quote_evidence": quote_ev,
+        }, "booking-rejected:%s" % (alert_key or symbol))
+    except Exception:
+        pass
 
 
 def _open_spy_plans(db, c, now, flatten_at):
@@ -191,7 +208,14 @@ def _open_scanner(db, c, now, flatten_at, cfg=None):
     Seat/shadow split (2026-10-25): scanner-family alerts book only from
     a seated family x name cell (compass/scanner_shadow.py); every other
     scanner cell opens a shadow record whose hypothetical outcome is
-    scored instead. Non-scanner producers (no family) book as before."""
+    scored instead. Non-scanner producers (no family) book as before.
+
+    Whole-list book (2026-11-01): scanner-family outcomes pass the
+    unified G1-G4 gate set (compass/odte_book.py) at this booking
+    decision — the same set engine.options evaluated pre-publication.
+    Under the respec's default configuration nobody is seated, so
+    scanner alerts produce gate-checked shadow records until a name
+    graduates and is seated by operator action."""
     since = db.get(c, "zero_dte_paper:scan_ts", 0) or 0
     if not since:
         since = now  # no backfill
@@ -221,53 +245,98 @@ def _open_scanner(db, c, now, flatten_at, cfg=None):
             symbol = (o or {}).get("symbol")
         if not symbol:
             continue
-        if family is not None and not scanner_shadow.is_seated(
-                family, contract.get("underlying"), cfg):
-            # Shadow cell: no booking. Record the alert and score the
-            # hypothetical outcome on fresh quotes (scanner_shadow).
-            skey = "%sscan-%s" % (scanner_shadow.SHADOW_PREFIX,
-                                  r.get("key") or int(ts))
-            if not db.get(c, skey):
-                q = _fresh_quote(db, c, symbol, now)
-                entry = (round(_num(q.get("ask")) + SLIPPAGE, 2)
-                         if q else None)
-                rec = scanner_shadow.new_record(
-                    db, c, skey, payload, family,
-                    contract.get("underlying"), symbol, entry, now, ts,
-                    flatten_at, alert_key=r.get("key"))
-                try:
-                    from .entry_evidence import build as _build_evidence
-                    rec["evidence"] = _build_evidence(
-                        db, c, contract.get("underlying"), now)
-                except Exception:
-                    rec["evidence"] = None
-                _open(db, c, skey, rec)
-            continue
         key = "trade:0dte-scan-%s" % (r.get("key") or int(ts))
-        if db.get(c, key):
-            continue
-        q = _fresh_quote(db, c, symbol, now)
-        if not q:
-            # Seat/shadow denominator parity (Task 003 item 8): a seated
-            # alert dropped here used to leave NO record — scan_ts had
-            # already advanced, so the seat book's denominator silently
-            # shrank — while the shadow path records the identical case
-            # as a closed data_gap row. Record the same accounting for
-            # the seat book: the shadow record shape (built by
-            # scanner_shadow.new_record with entry=None), re-kinded to
-            # "scanner" and stored under the seat book's own trade key
-            # (disjoint from the shadow keyspace), where simple.py's
-            # _0dte already tallies closed data_gap rows separately
-            # from wins/losses. Booking behavior is unchanged.
-            if family is not None:
-                rec = scanner_shadow.new_record(
-                    db, c, key, payload, family,
-                    contract.get("underlying"), symbol, None, now, ts,
-                    flatten_at, alert_key=r.get("key"))
-                rec["kind"] = "scanner"
-                _open(db, c, key, rec)
-            continue
+        if family is not None:
+            # Unified booking gates (respec 2026-11-01, section 7): ONE
+            # gate set for every scanner-book outcome, evaluated here on
+            # the quote consulted at THIS decision — decision-time
+            # freshness (age <= 60s, the book standard Stage 1 set),
+            # then G1-G3 via odte_book.evaluate_candidate (the same call
+            # engine.options made before publishing), then G4 caps for
+            # seated bookings. This closes the audit gap: this consumer
+            # previously booked with NO spread re-check.
+            seated = scanner_shadow.is_seated(
+                family, contract.get("underlying"), cfg)
+            raw_q = db.get(c, "quote:" + symbol)
+            q = _fresh_quote(db, c, symbol, now, max_age=60)
+            if not q:
+                # Quote-gate failure keeps the Task-003 accounting: a
+                # seated alert records a closed data_gap row under the
+                # seat book's trade key (denominator parity with the
+                # shadow path, which records the identical case as a
+                # data_gap shadow record). The consulted quote row —
+                # however old — is stamped on the record either way.
+                if seated:
+                    if not db.get(c, key):
+                        rec = scanner_shadow.new_record(
+                            db, c, key, payload, family,
+                            contract.get("underlying"), symbol, None,
+                            now, ts, flatten_at, alert_key=r.get("key"),
+                            quote=raw_q)
+                        rec["kind"] = "scanner"
+                        _open(db, c, key, rec)
+                else:
+                    skey = "%sscan-%s" % (scanner_shadow.SHADOW_PREFIX,
+                                          r.get("key") or int(ts))
+                    if not db.get(c, skey):
+                        rec = scanner_shadow.new_record(
+                            db, c, skey, payload, family,
+                            contract.get("underlying"), symbol, None,
+                            now, ts, flatten_at, alert_key=r.get("key"),
+                            quote=raw_q)
+                        _open(db, c, skey, rec)
+                continue
+            gate_ok, gate_why, gate_det = odte_book.evaluate_candidate(
+                db, c, contract.get("underlying"), q,
+                payload.get("signal_price"), now)
+            if not gate_ok:
+                _booking_rejected(db, c, now, r.get("key"), family,
+                                  contract.get("underlying"), symbol,
+                                  gate_why,
+                                  odte_book.quote_evidence(q, now))
+                continue
+            planned = gate_det.get("planned_max_loss")
+            if not seated:
+                # Shadow cell: record the alert and score the
+                # hypothetical outcome (scanner_shadow), with the
+                # consulted quote stamped on the record.
+                skey = "%sscan-%s" % (scanner_shadow.SHADOW_PREFIX,
+                                      r.get("key") or int(ts))
+                if not db.get(c, skey):
+                    entry = round(_num(q.get("ask")) + SLIPPAGE, 2)
+                    rec = scanner_shadow.new_record(
+                        db, c, skey, payload, family,
+                        contract.get("underlying"), symbol, entry, now,
+                        ts, flatten_at, alert_key=r.get("key"), quote=q)
+                    rec["selection_quote"] = payload.get("selection_quote")
+                    try:
+                        from .entry_evidence import build as _build_evidence
+                        rec["evidence"] = _build_evidence(
+                            db, c, contract.get("underlying"), now)
+                    except Exception:
+                        rec["evidence"] = None
+                    _open(db, c, skey, rec)
+                continue
+            cap_ok, cap_why = odte_book.check_caps(
+                db, c, contract.get("underlying"), planned, now)
+            if not cap_ok:
+                _booking_rejected(db, c, now, r.get("key"), family,
+                                  contract.get("underlying"), symbol,
+                                  cap_why,
+                                  odte_book.quote_evidence(q, now))
+                continue
+            if db.get(c, key):
+                continue
+            # Fall through to the booking below with q/planned set.
+        else:
+            if db.get(c, key):
+                continue
+            q = _fresh_quote(db, c, symbol, now)
+            if not q:
+                continue
+            planned = None
         entry = _num(q.get("ask")) + SLIPPAGE
+        dte = odte_book.contract_dte(contract.get("expiry"), now)
         rec = {
             "id": key, "kind": "scanner", "symbol": symbol,
             "family": family,
@@ -275,7 +344,18 @@ def _open_scanner(db, c, now, flatten_at, cfg=None):
             "entry": round(entry, 2), "entered_at": now,
             "exit_up_pct": 50.0, "exit_down_pct": -50.0,
             "alert_key": r.get("key"), "alert_event": pub.get("status") or pub.get("event"),
+            "alert_ts": ts,
             "status": "open", "fee": FEE, "flatten_at": flatten_at,
+            # Stage 1 fill stamp + respec book fields: the consulted
+            # quote (bid/ask/ts/source/age), the selection-time quote,
+            # planned max loss, DTE bucket, and the trigger inputs the
+            # underlying cross-check scores against.
+            "entry_quote": odte_book.quote_evidence(q, now),
+            "selection_quote": payload.get("selection_quote"),
+            "planned_max_loss": planned,
+            "dte": dte, "dte_bucket": odte_book.dte_bucket(dte),
+            "trigger": (scanner_shadow._trigger_inputs(db, c, payload)
+                        if family is not None else None),
             **_gex_vex_at_entry(db, c, contract.get("underlying") or "SPY"),
         }
         # Compass evidence snapshot at entry (audit #8): gamma regime, walls,
@@ -390,7 +470,8 @@ def _update_open(db, c, now):
         saw_after_entry = (_num(t.get("last_quote_ts")) or 0) > (_num(t.get("entered_at")) or 0)
         data_gap = quote_age > STALE_EXIT_AGE or not saw_after_entry
         t.update(status="closed", exit=round(exit_px, 2), exited_at=now,
-                 exit_reason=reason, pnl=pnl, data_gap=data_gap)
+                 exit_reason=reason, pnl=pnl, data_gap=data_gap,
+                 exit_quote_age_s=round(quote_age, 1))
         db.put(c, key, t)
         closed += 1
     return closed

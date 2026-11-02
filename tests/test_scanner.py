@@ -300,24 +300,34 @@ def _scanner_signal(**kw):
     return base
 
 
-def test_pending_options_non_seated_scanner_cell_is_skipped_not_booked(db):
+def test_pending_options_non_seated_scanner_cell_is_routed_not_booked(db):
+    # Unified booking path (2026-11-01): a non-seated scanner cell is
+    # routed to the alert-consumer path (shadow-scored there); this
+    # pending path never books it. (Was 'skipped_not_seated' under the
+    # 2026-10-27 seat gate.)
     cfg=Config(paper_trading=True,local=True,stocks=('SPY','MU'),futures=())
     signal=_scanner_signal(rule='trend_pullback',strategy='compass-scanner-v2:trend_pullback')
     with db.tx() as c:
         db.put(c,'pending_options:one',{'signal':signal,'expires_at':NOW+600,'status':'waiting'})
         Scanner(db,cfg).retry_options(c,{'SPY':quote()},NOW,Engine(db,cfg))
         row=db.get(c,'pending_options:one')
-        assert row['status']=='skipped_not_seated'
+        assert row['status']=='routed_to_book_path'
         assert db.prefix(c,'position:')=={}
 
 
-def test_pending_options_seated_scanner_cell_uses_normal_path(db):
-    cfg=Config(paper_trading=True,local=True,stocks=('SPY','MU'),futures=())
+def test_pending_options_seated_scanner_cell_is_also_routed(db):
+    # One code path for ALL scanner bookings (2026-11-01): even a
+    # seated cell no longer books through engine.enter here — the
+    # research selection -> publication -> zero_dte_paper chain owns
+    # scanner bookings, so the two paths can never double-book a cell.
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY','MU'),futures=(),
+               scanner_paper_seats='session_sweep_reclaim:MU')
     signal=_scanner_signal(symbol='MU',rule='session_sweep_reclaim',strategy='compass-scanner-v2:session_sweep_reclaim')
     with db.tx() as c:
         db.put(c,'pending_options:one',{'signal':signal,'expires_at':NOW-1,'status':'waiting'})
         Scanner(db,cfg).retry_options(c,{'MU':quote()},NOW,Engine(db,cfg))
-        assert db.get(c,'pending_options:one')['status']=='expired'
+        assert db.get(c,'pending_options:one')['status']=='routed_to_book_path'
+        assert db.prefix(c,'position:')=={}
 
 
 def test_pending_research_options_are_not_seat_gated(db):
@@ -478,7 +488,13 @@ def test_freshness_block_evidence_attributes_each_subreason():
     assert e['quote_age_s']==10 and e['quote_fresh'] is False
 
 
-def test_scan_records_predating_quote_on_blocked_opportunity(db):
+def test_scan_predating_quote_now_passes_decision_time_standard(db):
+    # Stage 1 (2026-11-01): under the OLD trigger gate this item was
+    # blocked — the quote is fresh (1s old) but stamped 1s BEFORE the
+    # signal bar closed, a stamp geometry the freshest quote stream
+    # could rarely satisfy (it killed ~95% of scanner items Oct 26-30).
+    # The decision-time standard asks only whether the consulted
+    # quote's age at decision time is within the bound (60s).
     cfg=Config(local=True,stocks=('SPY',),futures=(),scanner_paper=False)
     with db.tx() as c:
         db.put(c,'scanner_features:SPY',fact())
@@ -488,14 +504,43 @@ def test_scan_records_predating_quote_on_blocked_opportunity(db):
         rows=[r for r in db.recent(c,'opportunity') if r['symbol']=='SPY']
         assert len(rows)==1
         p=rows[0]['payload']
-        # Gate outcome is unchanged: same status, same reason, no trigger.
-        assert p['status']=='blocked' and p['blocked_reason']=='Fresh quote after trigger required'
+        assert p['status']=='triggered'
+        assert [r for r in db.recent(c,'alert') if r['payload'].get('status')=='setup_triggered']
+        # Every item carries the decision-time quote stamp...
+        ev=p['quote_evidence']
+        assert ev['ts']==NOW-1 and ev['age_s']==1 and ev['max_age_s']==60
+        assert ev['bid']==101.10 and ev['source']=='fixture'
+        # ...and the old gate's verdict stays recorded, so the 2026-10-31
+        # sub-cause calibration series remains derivable.
+        assert ev['legacy_block']['blocked_subreason']=='quote_predates_signal_bar_close'
+        assert ev['legacy_block']['quote_fresh'] is True
+
+
+def test_scan_genuinely_stale_quote_still_blocks(db):
+    # The redesign did not delete freshness checking: a quote older
+    # than the decision-time bound blocks, with the 09ba9da sub-cause
+    # fields spread exactly as before. (Bars fixture, mirroring the
+    # missing-quote test: a stale quote prevents a flow candidate from
+    # forming at all, so the technical path is what reaches the gate.
+    # The quote both predates the bar close and is too old; the
+    # recording's documented precedence reports the predates subreason.)
+    cfg=Config(local=True,stocks=('SPY',),futures=(),scanner_paper=False)
+    flat={'o':100.0,'h':100.4,'l':99.8,'c':100.1,'v':100}
+    breakout={'o':100.1,'h':101.2,'l':100.0,'c':101.0,'v':300}
+    items=[('SPY',NOW-(40-i)*60,breakout if i==39 else flat) for i in range(40)]
+    with db.tx() as c:
+        db.append_bars(c,'bar','fixture',items)
+        db.put(c,'latestbar:SPY',{'ts':NOW-60})
+        db.put(c,'quote:SPY',quote(NOW-120))
+        Scanner(db,cfg).scan(c,NOW,Engine(db,cfg))
+        rows=[r for r in db.recent(c,'opportunity') if r['symbol']=='SPY']
+        assert len(rows)==1
+        p=rows[0]['payload']
+        assert p['status']=='blocked' and p['blocked_reason']=='Fresh quote at decision required'
         assert not [r for r in db.recent(c,'alert') if r['payload'].get('status')=='setup_triggered']
-        # The block now records what it consulted and which sub-condition failed.
         assert p['blocked_subreason']=='quote_predates_signal_bar_close'
-        assert p['signal_bar_close_ts']==NOW and p['quote_ts']==NOW-1 and p['quote_age_s']==1
-        assert p['quote_fresh'] is True
-        assert p['trigger_quote']['bid']==101.10 and p['trigger_quote']['source']=='fixture'
+        assert p['quote_age_s']==120 and p['quote_fresh'] is False
+        assert p['quote_evidence']['age_s']==120 and p['quote_evidence']['max_age_s']==60
 
 
 def test_scan_records_missing_quote_on_blocked_opportunity(db):
@@ -510,7 +555,8 @@ def test_scan_records_missing_quote_on_blocked_opportunity(db):
         rows=[r for r in db.recent(c,'opportunity') if r['symbol']=='SPY']
         assert len(rows)==1
         p=rows[0]['payload']
-        assert p['status']=='blocked' and p['blocked_reason']=='Fresh quote after trigger required'
+        assert p['status']=='blocked' and p['blocked_reason']=='Fresh quote at decision required'
         assert p['blocked_subreason']=='no_quote'
         assert p['quote_ts'] is None and p['quote_age_s'] is None and p['trigger_quote'] is None
+        assert p['quote_evidence']['ts'] is None and p['quote_evidence']['age_s'] is None
         assert not [r for r in db.recent(c,'alert') if r['payload'].get('status')=='setup_triggered']

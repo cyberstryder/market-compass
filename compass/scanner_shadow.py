@@ -35,8 +35,20 @@ shadow-only).
 Non-scanner producers that share the options_0dte category (earnings
 plays; the MU scalp has its own book) carry no scanner family and are
 outside this split — their behavior is unchanged.
+
+SUPERSEDED IN PART, 2026-11-01 (whole-list book respec): the universe
+is now the full watchlist, not the 15-name study universe, and there
+is NO grandfathering — PAPER_SEATS defaults to EMPTY and AMD/MU/NFLX
+start in Shadow. The family gate is unchanged (session_sweep_reclaim
+is the only promoted family; the three dead families are explicitly
+BARRED from graduating in BARRED_FAMILIES). Seating is an operator
+action via ODTE_BOOK_SEATED_NAMES after a name clears the unchanged
+name gate (>= 20 scored PREMIUM shadow trades at PF >= 1.2), which
+this scorecard flags as ready_for_josh. Bookings additionally pass
+the G1-G4 gate set in compass/odte_book.py.
 """
 
+from . import odte_book
 from .live_combo_scorecard import combo_stats
 
 # The six families produced by compass/scanner.py.
@@ -45,11 +57,23 @@ SCANNER_FAMILIES = frozenset({
     "level_breakdown", "exposure_level_break", "flow_price_breakout",
 })
 
-# Validation verdict, 2026-10-25: the only promoted family, and its seats.
+# Validation verdict, 2026-10-25: the only promoted family.
 PROMOTED_FAMILIES = frozenset({"session_sweep_reclaim"})
-PAPER_SEATS = {
-    "session_sweep_reclaim": frozenset({"AMD", "MU", "NFLX"}),
-}
+
+# Dead families (underlying-first validation, 2026-10-25): shadow-only,
+# BARRED from graduating regardless of their shadow record. The
+# unvalidatable pair (exposure_level_break, flow_price_breakout) is
+# shadow-only by virtue of never holding promotion status.
+BARRED_FAMILIES = frozenset({
+    "trend_pullback", "volume_breakout", "level_breakdown",
+})
+
+# Whole-list book (respec 2026-11-01): NO grandfathering — the seated
+# set starts EMPTY and AMD/MU/NFLX start in Shadow like every other
+# name. Seating is an operator action (env ODTE_BOOK_SEATED_NAMES, or
+# the legacy SCANNER_PAPER_SEATS) taken after a name-gate flag; this
+# constant is the default and it seats nobody.
+PAPER_SEATS = {}
 
 SHADOW_PREFIX = "shadow:0dte-"
 GRADUATION_MIN_SCORED = 20
@@ -71,12 +95,18 @@ def _parse_seats(raw):
 
 
 def paper_seats(cfg=None):
-    """Effective seated cells: env override when it parses to a non-empty
-    map, else the validated default. A typo must not silently shadow (or
-    seat) the whole book, so an empty/invalid override falls back."""
-    raw = getattr(cfg, "scanner_paper_seats", "") if cfg is not None else ""
-    parsed = _parse_seats(raw)
-    return parsed if parsed else dict(PAPER_SEATS)
+    """Effective seated cells: an OPERATOR action, never a default.
+    cfg.odte_book_seated_names (env ODTE_BOOK_SEATED_NAMES) wins; the
+    legacy SCANNER_PAPER_SEATS override is honored when the new one is
+    unset. Default EMPTY (no grandfathering). An unparseable override
+    seats nobody — fail closed, deliberately the opposite of the old
+    fallback: a typo must never silently seat a book."""
+    for attr in ("odte_book_seated_names", "scanner_paper_seats"):
+        raw = getattr(cfg, attr, "") if cfg is not None else ""
+        parsed = _parse_seats(raw)
+        if parsed:
+            return parsed
+    return dict(PAPER_SEATS)
 
 
 def promoted_families(cfg=None):
@@ -87,8 +117,7 @@ def promoted_families(cfg=None):
 
 
 def seats_source(cfg=None):
-    raw = getattr(cfg, "scanner_paper_seats", "") if cfg is not None else ""
-    return "env" if _parse_seats(raw) else "default"
+    return "env" if paper_seats(cfg) else "none"
 
 
 def alert_family(payload):
@@ -109,7 +138,12 @@ def alert_family(payload):
 
 
 def is_seated(family, underlying, cfg=None):
+    """A cell books only when its family holds promotion status, is not
+    barred, AND the name has been seated by the operator action. Under
+    the respec's default configuration nobody is seated."""
     if family not in SCANNER_FAMILIES or not underlying:
+        return False
+    if family in BARRED_FAMILIES or family not in promoted_families(cfg):
         return False
     return str(underlying).upper() in paper_seats(cfg).get(family, frozenset())
 
@@ -150,15 +184,19 @@ def _trigger_inputs(db, c, payload):
 
 
 def new_record(db, c, key, payload, family, underlying, symbol, entry, now,
-               alert_ts, flatten_at, alert_key=None):
+               alert_ts, flatten_at, alert_key=None, quote=None):
     """Build the shadow record for one non-seated scanner alert. `entry`
     is the fresh-quote hypothetical entry (ask + slippage) or None when
     no fresh quote existed — then the record is a data gap from birth
-    and can never be scored."""
+    and can never be scored. `quote` is the consulted quote at the
+    booking decision: its bid/ask/ts/source/age are stamped on the
+    record (Stage 1: fills carry the evidence too, not just blocks),
+    along with the planned max loss and the contract's DTE bucket."""
     from . import zero_dte_paper as zp  # lazy: zp imports this module
 
     pub = payload.get("publication") or {}
     contract = pub.get("contract") or {}
+    dte = odte_book.contract_dte(contract.get("expiry"), now)
     rec = {
         "id": key, "kind": "scanner_shadow", "family": family,
         "symbol": symbol, "underlying": underlying,
@@ -171,11 +209,105 @@ def new_record(db, c, key, payload, family, underlying, symbol, entry, now,
         "trigger": _trigger_inputs(db, c, payload),
         "status": "open" if entry is not None else "closed",
         "fee": zp.FEE, "flatten_at": flatten_at,
+        "dte": dte, "dte_bucket": odte_book.dte_bucket(dte),
+        "entry_quote": odte_book.quote_evidence(quote, now),
+        "planned_max_loss": None,
     }
+    if rec["entry_quote"] and rec["entry_quote"].get("ask") is not None:
+        rec["planned_max_loss"] = odte_book.planned_max_loss(
+            rec["entry_quote"]["ask"])
     if entry is None:
         rec.update(exit=None, exited_at=now, pnl=None, data_gap=True,
                    exit_reason="entry quote unavailable (data gap)")
     return rec
+
+
+def _crosscheck(db, c, now):
+    """Underlying cross-check (respec section 8): on every closed,
+    non-data_gap booked trade and shadow record, stamp the underlying's
+    R at signal+120m and at the signal day's close (R denominator:
+    signal price to invalidation), computed from stored 1-minute bars.
+    When the bars are no longer retrievable the record is marked
+    unavailable and counted — never silently skipped. Statuses:
+    stamped (both marks), partial (one mark; retried on later passes),
+    unavailable. Records older than 7 days finalize with what exists."""
+    from .market import day as _day
+
+    targets = []
+    try:
+        targets += list(db.prefix(c, SHADOW_PREFIX).items())
+    except Exception:
+        pass
+    try:
+        targets += [(k, t) for k, t in
+                    db.prefix(c, "trade:0dte-scan-").items()
+                    if isinstance(t, dict) and t.get("kind") == "scanner"]
+    except Exception:
+        pass
+    done = 0
+    for key, t in targets:
+        if done >= 25:
+            break
+        if not isinstance(t, dict) or t.get("status") != "closed" \
+                or t.get("data_gap"):
+            continue
+        if t.get("crosscheck_status") in ("stamped", "unavailable"):
+            continue
+        alert_ts = _num(t.get("alert_ts")) or _num(t.get("entered_at"))
+        trig = t.get("trigger") or {}
+        sig = _num(trig.get("signal_price"))
+        inv = _num(trig.get("invalidation"))
+        und = t.get("underlying")
+        if not alert_ts or sig is None or inv is None or not und \
+                or sig == inv:
+            t["crosscheck_status"] = "unavailable"
+            db.put(c, key, t)
+            done += 1
+            continue
+        if now - alert_ts < 7200:
+            continue  # the +120m mark cannot exist yet
+        try:
+            rows = db.recent(c, "bar", und, limit=1800)
+        except Exception:
+            rows = []
+        bars = sorted(
+            (r for r in rows if isinstance(r.get("payload"), dict)),
+            key=lambda r: r.get("ts") or 0)
+        direction = 1 if sig > inv else -1
+        risk = abs(sig - inv)
+        alert_day = _day(alert_ts)
+
+        def price_at(target):
+            for r in bars:
+                if (r.get("ts") or 0) >= target:
+                    return _num(r["payload"].get("c"))
+            return None
+
+        if "underlying_r_120m" not in t:
+            p120 = price_at(alert_ts + 7200)
+            if p120 is not None:
+                t["underlying_r_120m"] = round(
+                    (p120 - sig) * direction / risk, 3)
+        if "underlying_r_close" not in t and _day(now) > alert_day:
+            day_bars = [r for r in bars
+                        if _day(r.get("ts") or 0) == alert_day]
+            if day_bars:
+                pc = _num(day_bars[-1]["payload"].get("c"))
+                if pc is not None:
+                    t["underlying_r_close"] = round(
+                        (pc - sig) * direction / risk, 3)
+        have = ("underlying_r_120m" in t, "underlying_r_close" in t)
+        if all(have):
+            t["crosscheck_status"] = "stamped"
+        elif not any(have):
+            t["crosscheck_status"] = "unavailable"
+        elif now - alert_ts > 7 * 86400:
+            t["crosscheck_status"] = "stamped"
+        else:
+            t["crosscheck_status"] = "partial"
+        db.put(c, key, t)
+        done += 1
+    return done
 
 
 def update(db, c, now):
@@ -236,9 +368,14 @@ def update(db, c, now):
                            > (_num(t.get("entered_at")) or 0))
         data_gap = quote_age > zp.STALE_EXIT_AGE or not saw_after_entry
         t.update(status="closed", exit=round(exit_px, 2), exited_at=now,
-                 exit_reason=reason, pnl=pnl, data_gap=data_gap)
+                 exit_reason=reason, pnl=pnl, data_gap=data_gap,
+                 exit_quote_age_s=round(quote_age, 1))
         db.put(c, key, t)
         closed += 1
+    try:
+        _crosscheck(db, c, now)
+    except Exception:
+        pass
     return closed
 
 
@@ -279,8 +416,15 @@ def scorecard(db, c, cfg=None):
         scored = stats["trades"]
         pf = stats["pf"]
         family_promoted = family in promoted
-        ready = (family_promoted and scored >= GRADUATION_MIN_SCORED
+        family_barred = family in BARRED_FAMILIES
+        ready = (family_promoted and not family_barred
+                 and scored >= GRADUATION_MIN_SCORED
                  and pf is not None and pf >= GRADUATION_MIN_PF)
+        dte_split = {"0": 0, "1-7": 0}
+        for t in cell["scored_trades"]:
+            bucket = t.get("dte_bucket")
+            if bucket in dte_split:
+                dte_split[bucket] += 1
         out_cells.append({
             "family": family, "underlying": underlying,
             "alerts": cell["alerts"], "open": cell["open"],
@@ -288,21 +432,70 @@ def scorecard(db, c, cfg=None):
             "scored": scored, "wins": stats["wins"],
             "losses": stats["losses"], "win_rate": stats["win_rate"],
             "pf": pf, "net": stats["net"],
+            "dte_split": dte_split,
             "graduation": {
                 "bar": {"min_scored": GRADUATION_MIN_SCORED,
                         "min_pf": GRADUATION_MIN_PF},
                 "family_promoted": family_promoted,
+                "family_barred": family_barred,
                 "scored_needed": max(0, GRADUATION_MIN_SCORED - scored),
                 "pf_met": pf is not None and pf >= GRADUATION_MIN_PF,
                 "ready_for_josh": ready,
             },
+        })
+    # The seated book itself, readably (respec section 5.4): booked
+    # stats INCLUDE the data_gap count (the pre-respec surface dropped
+    # it), the DTE split is surfaced, and a seated name whose last-20
+    # closed booked trades fall below PF 1.0 is flagged as a demotion
+    # candidate — unseating stays an operator action, never automatic.
+    book = {"cells": [], "totals": {"booked": 0, "open": 0, "data_gaps": 0},
+            "dte_split": {"0": 0, "1-7": 0}}
+    try:
+        trades = db.prefix(c, "trade:0dte-scan-")
+    except Exception:
+        trades = {}
+    booked_cells = {}
+    for t in trades.values():
+        if not isinstance(t, dict) or t.get("kind") != "scanner":
+            continue
+        cell = booked_cells.setdefault(
+            (t.get("family") or "unknown", t.get("underlying") or "unknown"),
+            {"scored_trades": [], "open": 0, "data_gaps": 0})
+        if t.get("status") == "open":
+            cell["open"] += 1
+            book["totals"]["open"] += 1
+        elif t.get("data_gap"):
+            cell["data_gaps"] += 1
+            book["totals"]["data_gaps"] += 1
+        elif t.get("status") == "closed":
+            cell["scored_trades"].append(t)
+            bucket = t.get("dte_bucket")
+            if bucket in book["dte_split"]:
+                book["dte_split"][bucket] += 1
+    for (family, underlying), cell in sorted(booked_cells.items()):
+        stats = combo_stats(cell["scored_trades"])
+        book["totals"]["booked"] += stats["trades"]
+        last20 = sorted(cell["scored_trades"],
+                        key=lambda t: _num(t.get("exited_at")) or 0)[-20:]
+        last20_stats = combo_stats(last20)
+        demotion = (len(last20) >= 20 and last20_stats["pf"] is not None
+                    and last20_stats["pf"] < 1.0)
+        book["cells"].append({
+            "family": family, "underlying": underlying,
+            "open": cell["open"], "data_gaps": cell["data_gaps"],
+            "scored": stats["trades"], "wins": stats["wins"],
+            "losses": stats["losses"], "win_rate": stats["win_rate"],
+            "pf": stats["pf"], "net": stats["net"],
+            "demotion_candidate": demotion,
         })
     return {
         "paper_seats": {fam: sorted(names) for fam, names in
                         sorted(seats.items())},
         "seats_source": seats_source(cfg),
         "promoted_families": sorted(promoted),
+        "barred_families": sorted(BARRED_FAMILIES),
         "shadow_cells": out_cells,
+        "book": book,
         "totals": totals,
         "graduation_bar": {"min_scored": GRADUATION_MIN_SCORED,
                            "min_pf": GRADUATION_MIN_PF},

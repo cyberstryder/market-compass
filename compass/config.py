@@ -71,6 +71,13 @@ class Config:
     # format: "family:NAME,NAME;family2:NAME" (seats) / "family,family".
     scanner_paper_seats: str = field(default_factory=lambda: env("SCANNER_PAPER_SEATS",""))
     scanner_promoted_families: str = field(default_factory=lambda: env("SCANNER_PROMOTED_FAMILIES",""))
+    # Whole-list 0DTE book (respec 2026-11-01): decision-time freshness
+    # bound for the scanner trigger gate, and the operator seating action.
+    # Seats default EMPTY — no grandfathering: AMD/MU/NFLX start in
+    # Shadow under the respec and are seated only by an explicit env
+    # action after a name-gate flag. Format matches SCANNER_PAPER_SEATS.
+    scanner_trigger_quote_max_age: int = field(default_factory=lambda: int(env("SCANNER_TRIGGER_QUOTE_MAX_AGE","60")))
+    odte_book_seated_names: str = field(default_factory=lambda: env("ODTE_BOOK_SEATED_NAMES",""))
     darkpool: bool = field(default_factory=lambda: env("DARKPOOL_ENABLED","true")=="true")
     iv_rank: bool = field(default_factory=lambda: env("IV_RANK_ENABLED","true")=="true")
     squeeze: bool = field(default_factory=lambda: env("SQUEEZE_ENABLED","true")=="true")
@@ -317,6 +324,8 @@ class Config:
             raise ValueError("Invalid options focus or expiration horizon")
         if not 1<=self.option_quote_max_age<=600:
             raise ValueError("OPTION_QUOTE_MAX_AGE must be 1-600 seconds")
+        if not 1<=self.scanner_trigger_quote_max_age<=600:
+            raise ValueError("SCANNER_TRIGGER_QUOTE_MAX_AGE must be 1-600 seconds")
         if not 0.01<=self.option_max_spread_pct<=0.50:
             raise ValueError("OPTION_MAX_SPREAD_PCT must be 0.01-0.50")
         if not 0<=self.option_entry_cutoff_min<=120:
