@@ -160,7 +160,10 @@ def test_recovery_committing_during_bar_query_does_not_validate_old_snapshot(db,
 
 
 def test_postgres_collector_refresh_completes_while_scanner_holds_cache_lock(pg,monkeypatch):
-    cfg=Config(local=True,stocks=('ZZZ','AAA'),discovery=False)
+    # Exercises the collector/scanner cache-lock interplay for the
+    # ENABLED swing surface (enrollment is flag-gated since the
+    # 2026-11-01 retirement made the default off).
+    cfg=Config(local=True,stocks=('ZZZ','AAA'),discovery=False,swing_ideas=True)
     for symbol in cfg.watch_symbols:archive(pg,symbol)
     scanner_locked=Event();release_scanner=Event()
     put=pg.put
