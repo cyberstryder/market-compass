@@ -526,10 +526,25 @@ def _swings(db, c, now):
             s))
     all_trades = [t for trades in per_rule.values() for t in trades]
     stats = _stats(all_trades)
+    try:
+        from .config import Config
+        swings_enabled = Config().swing_ideas
+    except Exception:
+        swings_enabled = True
+    if swings_enabled:
+        desc = "Bullish and bearish daily setups with fresh options flow."
+        how = "Fresh vendor-classified flow + technical setup align."
+    else:
+        # Retired 2026-11-01: generation off at the flag layer; the
+        # surface renders its preserved history as closed.
+        desc = ("RETIRED 2026-11-01 — idea generation is off (the "
+                "generator was the closed three-rule family). History "
+                "preserved; nothing below is a live signal.")
+        how = "No new ideas are generated. Past ideas remain as recorded."
     return (_block(
         "swings", "Swings",
-        "Bullish and bearish daily setups with fresh options flow.",
-        "Fresh vendor-classified flow + technical setup align.",
+        desc,
+        how,
         "Win = target hit before stop/invalidation. Paper-tracked, 1 contract.",
         stats, drill), by_day)
 
@@ -1291,8 +1306,15 @@ def _detail_swings(db, c, now, name):
             "sub": _ts(ts), "rows": orows,
             "result": outcome, "result_cls": "win" if outcome == "win" else "loss" if outcome == "loss" else "",
         })
+    try:
+        from .config import Config
+        swings_enabled = Config().swing_ideas
+    except Exception:
+        swings_enabled = True
     title = "Swings — idea by idea"
-    sub = "Every swing idea (1-21 DTE), newest first."
+    sub = ("Every swing idea (1-21 DTE), newest first." if swings_enabled
+           else "RETIRED 2026-11-01 — generation off; preserved history, "
+                "newest first.")
     return {"type": "swings", "name": name, "title": title, "sub": sub, "items": items}
 
 

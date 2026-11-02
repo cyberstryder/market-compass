@@ -26,7 +26,7 @@ def db(tmp_path):
 def storage(request):return request.getfixturevalue('db' if request.param=='sqlite' else 'pg')
 
 
-def cfg():return Config(local=True,stocks=('SPY',),futures=(),extra_futures=())
+def cfg():return Config(local=True,stocks=('SPY',),futures=(),extra_futures=(),swing_ideas=True)
 
 
 def snapshot(age=20,**changes):

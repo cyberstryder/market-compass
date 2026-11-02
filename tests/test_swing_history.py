@@ -86,7 +86,11 @@ def test_short_history_requires_completed_source_evidence(db):
 
 @pytest.mark.parametrize('failure',[None,'timeout','pagination','invalid'])
 def test_recovery_commits_real_bars_refreshes_stale_cache_and_records_failures(db,monkeypatch,failure):
-    cfg=Config(local=True,stocks=('SPY',),discovery=False)
+    # The collector maintains the swing recovery cache for the ENABLED
+    # surface (secondary_data enrolls watch symbols in the swing
+    # project only while swing_ideas is on) — this test exercises that
+    # configuration explicitly.
+    cfg=Config(local=True,stocks=('SPY',),discovery=False,swing_ideas=True)
     source=[r for r in history() if day(r['ts'])<day(NOW)][-80:]
     with db.tx() as c:
         db.put(c,'swing_daily:SPY',dict(day=day(NOW),computed_at=NOW,status='warming_up',reason='old cache'))

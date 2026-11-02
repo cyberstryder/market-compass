@@ -27,8 +27,12 @@ PUT='O:SPY261016P00100000'
 
 @pytest.fixture
 def cfg():
+    # These tests exercise the swing machinery ENABLED; production's
+    # default flipped to retired on 2026-11-01 (SWING_IDEAS_ENABLED),
+    # so the fixture opts in explicitly.
     return Config(local=True,stocks=('SPY',),futures=(),extra_futures=(),massive='fixture',
-        alpaca_key='',alpaca_secret='',databento='',matrix='',discord='',scanner_paper=False)
+        alpaca_key='',alpaca_secret='',databento='',matrix='',discord='',scanner_paper=False,
+        swing_ideas=True)
 
 
 def quote(t=NOW,bid=100,ask=100.02):

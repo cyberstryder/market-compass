@@ -217,7 +217,13 @@ class Config:
     ideas_min_dte: int = field(default_factory=lambda: int(env("OPTION_IDEAS_MIN_DTE","1")))
     ideas_max_dte: int = field(default_factory=lambda: int(env("OPTION_IDEAS_MAX_DTE","21")))
     ideas_target_dte: int = field(default_factory=lambda: int(env("OPTION_IDEAS_TARGET_DTE","7")))
-    swing_ideas: bool = field(default_factory=lambda: env("SWING_IDEAS_ENABLED","true")=="true")
+    # RETIRED 2026-11-01 (Josh): the swing-ideas surface's generator is
+    # the closed three-rule family (closure 2026-10-29); the surface
+    # tracked 410 ideas with zero ever opening. Flag layer only, SPY-plan
+    # precedent: code and history preserved, generation off by default.
+    # Coupled effect (disclosed, accepted): discover() also stops the
+    # swing_candidate study feed. Re-enable only with a new generator.
+    swing_ideas: bool = field(default_factory=lambda: env("SWING_IDEAS_ENABLED","false")=="true")
     swing_alerts: bool = field(default_factory=lambda: env("SWING_IDEAS_ALERTS","true")=="true")
     swing_min_dte: int = field(default_factory=lambda: int(env("SWING_MIN_DTE","14")))
     swing_max_dte: int = field(default_factory=lambda: int(env("SWING_MAX_DTE","60")))
