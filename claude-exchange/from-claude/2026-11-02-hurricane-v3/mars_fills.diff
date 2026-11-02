@@ -1,0 +1,566 @@
+--- /mnt/user-data/uploads/hurricane_v3_mars.py	2026-11-02 08:49:49.094487418 -0600
++++ hurricane_v3_mars_fills.py	2026-11-02 09:05:35.530222255 -0600
+@@ -1,6 +1,28 @@
+ """
+-hurricane_v3_mars.py — MARS BUILD
+-======================================
++hurricane_v3_mars_fills.py — MARS BUILD, honest-fill harness (2026-11-02)
++==========================================================================
++Same signal logic as hurricane_v3_mars.py. Execution model replaced:
++
++  ENTRY  : _entry() returns a resting BUY LIMIT. It is NOT filled on the signal bar.
++           It fills on a LATER 1s bar of that instrument only if a print occurred
++           below the limit (strict: low < lim; relaxed: low <= lim and vol >= min_fill_volume).
++           Unfilled after entry_order_life_secs → cancelled. fill_delay recorded.
++  EXIT   : _monitor() decides a reason at bar t; the SELL executes on the NEXT bar
++           with a print: market exits fill at that bar's `exit_market_px` ('low' = bid-side
++           proxy, 'close'), rounded DOWN to the tick, minus extra_slippage_ticks.
++           OSC_PROFIT is a resting sell limit at exit_target: fills only if a print went
++           THROUGH the target (strict: high > target). No ceil-rounding anywhere on sells.
++  PFMACD : uses the last COMPLETED 6s bucket (k < t6), not the in-progress one.
++  WINDOWS: volume gate / stop reference / bail are wall-clock (t_sec), not print-count.
++  SPX    : spx_5m.parquet is used only if its dates intersect the bar dates. No rescaling,
++           no remapping. If absent, Mars falls back to atm_map open and stamps spx_source.
++  PLACEBO: V3Config(placebo_rate=p) skips every signal gate (vol pulse, cone, pct, slope)
++           and accepts a candidate at random with prob p. Same bands, same SPX dist gate,
++           same fill model, same exits. Compare to the real run at matched entry rate.
++  REPORT : trades carry `profit_gated` (CONE/FLOW/TRAIL exits can only fire on winners).
++
++Original Mars header follows unchanged.
++--------------------------------------------------------------------------
+ One MACD to rule them all: 6-24-15 everywhere.
+ 
+ EARTH thesis: only trade strikes where the market is already alive.
+@@ -73,6 +95,7 @@
+ from typing import Optional
+ from collections import deque
+ import math
++import random
+ import pandas as pd
+ import numpy as np
+ from pathlib import Path
+@@ -201,7 +224,8 @@
+         if ds not in self.daily: return 0.0, 0.0, 0.0, 'NEUTRAL'
+         t6=t_sec//6; day=self.daily[ds]
+         keys=sorted(day.keys())
+-        k=next((k for k in reversed(keys) if k<=t6), None)
++        # FIX: bucket t6 spans t_sec..t_sec+5 and is not complete yet → use k < t6
++        k=next((k for k in reversed(keys) if k<t6), None)
+         if k is None: return 0.0, 0.0, 0.0, 'NEUTRAL'
+         h,rm,slope=day[k]
+         direction='BULL' if h>rm else ('BEAR' if h<rm else 'NEUTRAL')
+@@ -367,6 +391,16 @@
+     earth_greeks_interval_secs:int=10   # snapshot every 10s per active position
+     earth_vix_default:float=18.0        # fallback if VIX not available
+ 
++    # ── FILLS (2026-11-02 harness) ────────────────────────────
++    fill_strict:bool=True              # True: buy fills only on low < lim; sell limit only on high > target
++    min_fill_volume:int=3              # relaxed mode: prints at the limit need this much volume
++    entry_order_life_secs:int=300      # cancel resting buy after this
++    exit_market_px:str='low'           # 'low' (bid-side proxy) or 'close' for market sells
++    extra_slippage_ticks:int=0         # extra ticks taken off every sell fill
++    # ── PLACEBO ───────────────────────────────────────────────
++    placebo_rate:Optional[float]=None  # None = real strategy; float = random entry at this rate
++    placebo_seed:int=7
++
+ 
+ # ══════════════════════════════════════════════════════════════
+ # STRIKE STATE
+@@ -392,10 +426,15 @@
+         self.last_exit_won = True
+         self.last_exit_price = 0.0
+ 
+-    def update(self, price, bar_open=None, volume=0):
++    def update(self, price, bar_open=None, volume=0, t_sec=None):
+         self.prices.append(price)
+         self.opens.append(bar_open if bar_open is not None else price)
+         self.volumes.append(volume)
++        # wall-clock history: (t_sec, volume) — bars are sparse, so index != seconds
++        if not hasattr(self,'vol_hist'): self.vol_hist=deque()
++        if t_sec is not None:
++            self.vol_hist.append((t_sec, volume))
++            while self.vol_hist and self.vol_hist[0][0] < t_sec-600: self.vol_hist.popleft()
+         if len(self.prices)>120:
+             self.prices=self.prices[-120:]
+             self.opens=self.opens[-120:]
+@@ -406,8 +445,11 @@
+         self.cone.tick_1s(close, high, low)
+         self.cone_fast.tick_1s(close, high, low)
+ 
+-    def vol_last_n_secs(self, n):
+-        """True volume traded in last N seconds."""
++    def vol_last_n_secs(self, n, now_t=None):
++        """Volume traded in the last N wall-clock seconds (inclusive of the current bar)."""
++        vh=getattr(self,'vol_hist',None)
++        if vh and now_t is not None:
++            return sum(v for t,v in vh if t > now_t-n)
+         return sum(self.volumes[-n:]) if len(self.volumes)>=n else sum(self.volumes)
+ 
+     def rolling_stats(self, window, grid_tick=0.05):
+@@ -476,12 +518,22 @@
+                 spx['t_sec']=((spx_et.dt.hour-9)*3600+
+                               (spx_et.dt.minute-30)*60)
+                 spx=spx[spx['t_sec']>=0]
+-                self.spx_prices={(row['date_str'],int(row['t_sec'])):float(row['open'])
+-                                 for _,row in spx.iterrows()}
+-                print(f"  SPX 5-min bars: {len(self.spx_prices):,} bars loaded (open price)")
+-                if self.spx_prices:
+-                    sample = list(self.spx_prices.items())[:2]
+-                    print(f"  SPX sample keys: {sample}")
++                # date_str must come from the timestamp, never trusted from the file
++                spx['date_str']=spx_et.dt.strftime('%Y-%m-%d')
++                bar_days=set(self.bars1s['date_str'].unique())
++                spx_days=set(spx['date_str'].unique())
++                common=bar_days & spx_days
++                if not common:
++                    print(f"  SPX: spx_5m.parquet covers {sorted(spx_days)[:1]}..{sorted(spx_days)[-1:]} "
++                          f"but bars are {sorted(bar_days)}. NOT USED — no remapping, no rescaling. "
++                          f"Pull SPX (or ES) for the actual dates.")
++                else:
++                    spx=spx[spx['date_str'].isin(common)]
++                    self.spx_prices={(row['date_str'],int(row['t_sec'])):float(row['open'])
++                                     for _,row in spx.iterrows()}
++                    missing=bar_days-spx_days
++                    print(f"  SPX 5-min bars: {len(self.spx_prices):,} bars for {len(common)} day(s)"
++                          + (f"; no SPX for {sorted(missing)}" if missing else ""))
+             except Exception as e:
+                 print(f"  SPX: error loading — {e}")
+         else:
+@@ -500,7 +552,13 @@
+             'mars_band_full','mars_floor_reentry','mars_floor_blocked',
+             'conv_high','conv_med','conv_low',
+             'spx_none',  # silent killer — no SPX price found
++            'spx_static_fallback',
++            # fill harness
++            'orders_placed','orders_filled','orders_expired','orders_cancelled',
++            'exit_limit_fills','exit_market_fills',
++            'placebo_rejected','no_room',
+         ]}
++        self._rng=random.Random(config.placebo_seed)
+ 
+     # ── SPX LOOKUP ────────────────────────────────────────────
+     def spx(self, ds, t_sec):
+@@ -628,18 +686,16 @@
+         """
+         self.stats['checked'] += 1
+         curr = bar['close']
++        placebo = self.cfg.placebo_rate is not None
+         lo, hi, pct = st.rolling_stats(self.cfg.osc_window, self.cfg.grid_tick)
+         if lo is None: return None
+-        if (hi-lo)/(lo+1e-7) < self.cfg.min_range_pct:
++        if not placebo and (hi-lo)/(lo+1e-7) < self.cfg.min_range_pct:
+             self.stats['range_blocked'] += 1; return None
+         swell = st.swell_until is not None and ts <= st.swell_until
+ 
+-        # ── EARTH GATE 1: VOLUME PULSE ────────────────────────
+-        # The 94% WR cohort: median 1.2% participation into 394-contract flow.
+-        # The dead trades: 7 contracts total across the entire fill window.
+-        # If this strike is dead, skip it. Market silence is not opportunity.
+-        vol_30s = st.vol_last_n_secs(self.cfg.earth_vol_window_secs)
+-        if vol_30s < self.cfg.earth_min_vol_30s:
++        # ── EARTH GATE 1: VOLUME PULSE (wall-clock window) ────
++        vol_30s = st.vol_last_n_secs(self.cfg.earth_vol_window_secs, now_t=t_sec)
++        if not placebo and vol_30s < self.cfg.earth_min_vol_30s:
+             self.stats['earth_vol_blocked'] += 1
+             return None
+         is_elite_flow = vol_30s >= self.cfg.earth_elite_vol_threshold
+@@ -683,6 +739,8 @@
+         band_count = sum(1 for sv in self._current_strikes.values()
+                         if sv.position is not None and
+                         sv.position.get('premium_band') == premium_band)
++        band_count += sum(1 for po in getattr(self,'_pending',{}).values()
++                          if po.get('premium_band') == premium_band)
+         if band_count >= self.cfg.mars_max_per_band:
+             self.stats['mars_band_full'] += 1
+             return None
+@@ -694,12 +752,13 @@
+         max_fill_ratio = self.cfg.max_fill_ratio
+ 
+         # ── VENUS: SPX velocity gate (floor + far OTM only) ───
+-        spx_now = self.spx(ds, t_sec)
++        spx_now = self.spx(ds, t_sec); spx_source='5m'
+         if spx_now is None:
+             # Fallback: use ATM map (static daily SPX open) if available
+             atm_val = self.atm_map.get(ds)
+             if atm_val is not None:
+-                spx_now = float(atm_val)
++                spx_now = float(atm_val); spx_source='static_open'
++                self.stats['spx_static_fallback'] += 1
+             else:
+                 self.stats['spx_none'] += 1
+                 if self.stats['spx_none'] == 1:
+@@ -737,7 +796,16 @@
+         dual_agree=False; fast_blended=0.5
+         dw_wave=st.dw.wave if st.dw.is_warmed() else 0.0
+ 
+-        if self.cfg.cone_enabled and st.cone.is_ready():
++        if placebo:
++            # PLACEBO: no signal gates. Random acceptance at the real run's entry rate.
++            # Keeps: band, band-limit, SPX dist gate, sizing, fill model, exits.
++            if self._rng.random() >= self.cfg.placebo_rate:
++                self.stats['placebo_rejected'] += 1; return None
++            if self.cfg.cone_enabled and st.cone.is_ready():
++                pred_slow=st.cone.predict(curr, pf_hist, pf_rm, pf_slope, dw_wave,
++                                          st.dw.histogram, self.cfg.cone_fwd_bars, self.cfg.grid_tick)
++                if pred_slow and pred_slow['ceiling']>exit_target: exit_target=pred_slow['ceiling']
++        elif self.cfg.cone_enabled and st.cone.is_ready():
+             pred_slow=st.cone.predict(curr, pf_hist, pf_rm, pf_slope,
+                                       dw_wave, st.dw.histogram,
+                                       self.cfg.cone_fwd_bars, self.cfg.grid_tick)
+@@ -801,11 +869,16 @@
+         # ── EARTH: OI-AWARE SIZING ────────────────────────────
+         tick=self.cfg.grid_tick
+         bar_open=bar.get('open',curr)
+-        rup=math.ceil(bar_open/tick)*tick
+-        on_grid=abs(bar_open-round(bar_open/tick)*tick)<0.001
++        g=round(bar_open/tick, 6)                 # FIX: float noise made ceil(0.30/0.05)=7 → bid 0.35 for a 0.30 print
++        rup=math.ceil(g)*tick
++        on_grid=abs(g-round(g))<1e-6
+         limit_px=rup if on_grid else rup-tick
+         if cone_ticks>0: limit_px-=cone_ticks*tick; self.stats['cone_lowered']+=1
+-        limit_px=max(limit_px, self.cfg.min_bid)
++        limit_px=round(max(limit_px, self.cfg.min_bid), 2)
++        exit_target=round(math.floor(exit_target/tick+1e-9)*tick, 2)   # sell limit must sit on the grid
++        if exit_target < limit_px + tick - 1e-9:
++            # no room: target at/below the bid means a guaranteed round-trip loss → don't place
++            self.stats['no_room'] += 1; return None
+ 
+         qty=self._size_mars(limit_px)
+         if qty<=0: return None
+@@ -837,6 +910,9 @@
+             'premium_band':premium_band,
+             'T_mins_at_entry': (390 - t_sec/60) if t_sec else 300,
+             'venus_would_block':venus_would_block,
++            'spx_source':spx_source,
++            'signal_price':curr,
++            'signal_t_sec':t_sec,
+             **bs_data,
+         }
+ 
+@@ -845,10 +921,20 @@
+                  pf_hist, pf_rm, pf_slope, t_sec, T_mins):
+         pos=st.position; ep=pos['entry_price']; qty=pos['qty']
+         gain=(curr-ep)/(ep+1e-7); secs=(ts-pos['entry_time']).total_seconds()
++        # wall-clock price history: (t_sec, price)
++        ph_t=pos.setdefault('ph_t',[])
++        ph_t.append((t_sec,curr))
++        while ph_t and ph_t[0][0] < t_sec-max(self.cfg.bail_secs,self.cfg.stop_window_secs)-5: ph_t.pop(0)
++        def ref_secs_ago(n):
++            """last print at or before (now - n). None if none in window."""
++            cands=[p for t,p in ph_t if t<=t_sec-n]
++            return cands[-1] if cands else None
+         pos['price_history'].append(curr)
+         if len(pos['price_history'])>self.cfg.stop_window_secs+5:
+             pos['price_history']=pos['price_history'][-(self.cfg.stop_window_secs+5):]
+         reason=None; exit_px=curr
++        if pos.get('pending_exit') is not None:
++            return  # sell already working; fills are handled in run_backtest
+         zone,_,_,_=st.geiger_zone(self.cfg.osc_window, self.cfg.zone2_extension)
+         pos['peak_price']=max(pos.get('peak_price',ep),curr,high)
+         peak=pos['peak_price']; peak_gain=peak-ep
+@@ -883,26 +969,24 @@
+             if cone_says_hold and pf_slope>0 and is_profitable: pass
+             else: exit_px=curr; reason='ZONE2_EXIT'
+ 
+-        elif reason is None and (curr>=pos['exit_target'] or high>=pos['exit_target']):
++        elif reason is None and (high>pos['exit_target'] if self.cfg.fill_strict
++                                  else high>=pos['exit_target']):
++            # resting sell limit at exit_target, placed at entry: a print THROUGH it = filled
+             exit_px=pos['exit_target']; reason='OSC_PROFIT'
+         elif reason is None and zone==-2 and self.cfg.zone_neg2_cut:
+             exit_px=curr; reason='ZONE2_CUT'
+         elif reason is None and gain>=1.00:
+-            if len(pos['price_history'])>=self.cfg.stop_window_secs:
+-                ref=pos['price_history'][-self.cfg.stop_window_secs]
+-                if ref>0 and curr<ref*(1-self.cfg.stop_fraction):
+-                    reason='GUST_TRAIL'; exit_px=curr
+-        elif reason is None and len(pos['price_history'])>=self.cfg.stop_window_secs:
+-            ref=pos['price_history'][-self.cfg.stop_window_secs]
++            ref=ref_secs_ago(self.cfg.stop_window_secs)
++            if ref is not None and ref>0 and curr<ref*(1-self.cfg.stop_fraction):
++                reason='GUST_TRAIL'; exit_px=curr
++        elif reason is None and (ref:=ref_secs_ago(self.cfg.stop_window_secs)) is not None:
+             drop=ref-curr
+             st_t=0.10 if ep<=0.50 else (0.15 if ep<=0.80 else 0.20)
+             if drop>=st_t: reason='STOP'
+         elif reason is None and secs>=self.cfg.bail_secs:
+             bail=False
+-            rec=(pos['price_history'][-self.cfg.bail_secs:]
+-                 if len(pos['price_history'])>=self.cfg.bail_secs
+-                 else pos['price_history'])
+-            if all(abs(p-ep)<=tick for p in rec): bail=True
++            rec=[p for t,p in ph_t if t>t_sec-self.cfg.bail_secs]
++            if rec and all(abs(p-ep)<=tick for p in rec): bail=True
+             lt=pos.get('last_bar_ts')
+             if lt and (ts-lt).total_seconds()>=self.cfg.gap_exit_secs: bail=True
+             if bail: reason='TIME_BAIL'; exit_px=curr
+@@ -928,19 +1012,12 @@
+             if flow_against:
+                 exit_px=curr; reason='FLOW_EXIT'
+ 
+-        # FORCE_EXIT at 150s
++        # FORCE_EXIT at 150s — market sell, no favourable rounding
+         if not reason and secs>=150:
+-            ph=pos['price_history']
+-            if len(ph)>=3 and ph[-1]<=ph[-2]<=ph[-3]:
+-                exit_px=(curr//tick)*tick
+-            else:
+-                exit_px=math.ceil(curr/tick)*tick
+-            exit_px=max(exit_px,tick); reason='FORCE_EXIT'
++            exit_px=curr; reason='FORCE_EXIT'
+ 
+         if reason:
+-            exit_px=math.ceil(exit_px/tick)*tick
+-            comm=qty*self.cfg.comm_per_contract*2
+-            pnl=(exit_px-ep)*qty*100-comm
++            # Snapshot exit-time state now; the fill happens later (see run_backtest).
+             x_pf='N/A'; x_bl=0.5; x_pu=0.0; x_dw=0.0
+             if self.pfmacd:
+                 x_pf='BULL' if pf_hist>pf_rm else ('BEAR' if pf_hist<pf_rm else 'NEUTRAL')
+@@ -953,13 +1030,38 @@
+                 if ep_pred:
+                     x_bl=round(ep_pred['blended'],3)
+                     x_pu=round(ep_pred['pred_up'],4)
+-            x_spx=self.spx(ds,t_sec) or 0.0
+-            trades.append(self._trade(st,pos,ds,ts,exit_px,pnl,reason,secs,
+-                                      x_pf,x_bl,x_pu,x_dw,x_spx,T_mins))
+-            st.last_exit_ts=ts
+-            st.last_exit_won = pnl > 0
+-            st.last_exit_price = exit_px
+-            st.position=None
++            snap=dict(x_pf=x_pf,x_bl=x_bl,x_pu=x_pu,x_dw=x_dw,
++                      x_spx=self.spx(ds,t_sec) or 0.0,T_mins=T_mins,
++                      signal_ts=ts,signal_px=curr,secs_at_signal=secs)
++            if reason=='OSC_PROFIT':
++                # resting limit, print went through it on THIS bar → fill at target now
++                self._book_exit(st, trades, ds, ts, pos['exit_target'], reason, snap, 'LIMIT')
++            else:
++                pos['pending_exit']={'reason':reason,'snap':snap}
++
++    # ── EXIT BOOKING (single place where a sell is priced) ────
++    def _book_exit(self, st, trades, ds, ts, raw_px, reason, snap, kind):
++        pos=st.position; ep=pos['entry_price']; qty=pos['qty']; tick=self.cfg.grid_tick
++        exit_px=math.floor(raw_px/tick+1e-9)*tick - self.cfg.extra_slippage_ticks*tick
++        exit_px=max(exit_px, 0.0)  # a worthless print is a worthless fill
++        comm=qty*self.cfg.comm_per_contract*2
++        pnl=(exit_px-ep)*qty*100-comm
++        secs=(ts-pos['entry_time']).total_seconds()
++        self.stats['exit_limit_fills' if kind=='LIMIT' else 'exit_market_fills']+=1
++        rec=self._trade(st,pos,ds,ts,exit_px,pnl,reason,secs,
++                        snap['x_pf'],snap['x_bl'],snap['x_pu'],snap['x_dw'],
++                        snap['x_spx'],snap['T_mins'])
++        rec['exit_kind']=kind
++        rec['exit_signal_time']=snap['signal_ts']
++        rec['exit_signal_px']=snap['signal_px']
++        rec['exit_fill_delay']=(ts-snap['signal_ts']).total_seconds()
++        rec['exit_slip_ticks']=round((snap['signal_px']-exit_px)/tick,1)
++        trades.append(rec)
++        st.last_exit_ts=ts
++        st.last_exit_won = pnl > 0
++        st.last_exit_price = exit_px
++        st.position=None
++        return pnl
+ 
+     # ── TRADE RECORD ──────────────────────────────────────────
+     def _trade(self, st, pos, ds, ts, xp, pnl, reason, secs,
+@@ -1011,6 +1113,13 @@
+             'T_mins_entry':round(T_entry_mins,1), 'T_mins_exit':round(T_mins,1),
+             # Observation
+             'venus_would_block':pos.get('venus_would_block',False),
++            'spx_source':pos.get('spx_source','?'),
++            # Fill harness
++            'signal_price':pos.get('signal_price',ep),
++            'signal_time':pos.get('signal_time',pos['entry_time']),
++            'entry_fill_delay':pos.get('fill_delay_secs',0),
++            'profit_gated':reason in ('CONE_EXIT','FLOW_EXIT','TRAIL_EXIT'),
++            'placebo':self.cfg.placebo_rate is not None,
+         }
+ 
+ 
+@@ -1060,6 +1169,7 @@
+             strikes=self._build_strikes(ds, spx_open)
+             if not strikes: continue
+             self._current_strikes = strikes  # MARS: for band counting in _entry
++            self._pending = {}               # set below; band count includes resting orders
+ 
+             day1s=(self.bars1s[self.bars1s['date_str']==ds]
+                    .sort_values('timestamp'))
+@@ -1070,6 +1180,9 @@
+             expiry_et=pd.Timestamp(f'{ds} 16:15:00').tz_localize('America/New_York')
+             concurrent=0
+             five_min_bar_tracker={}  # strike → last 5m bar seen
++            pending={}               # iid → resting BUY order (dict from _entry)
++            self._pending=pending
++            tick=self.cfg.grid_tick
+ 
+             for ts, sec_bars in day1s.groupby('timestamp'):
+                 ts_et=ts.tz_convert('America/New_York')
+@@ -1102,7 +1215,42 @@
+                     volume=int(row.get('volume',0))
+                     open_=float(row.get('open',close))
+ 
+-                    st.update(close, open_, volume)
++                    # ── 1. PENDING SELL: fills on this bar (first print after the signal) ──
++                    if st.position is not None and st.position.get('pending_exit') is not None:
++                        pe=st.position['pending_exit']
++                        raw=low if self.cfg.exit_market_px=='low' else close
++                        pnl=self._book_exit(st, trades, ds, ts, raw, pe['reason'], pe['snap'], 'MARKET')
++                        bankroll+=pnl; concurrent=max(0,concurrent-1)
++
++                    # ── 2. PENDING BUY: fills only if a later print went below the limit ──
++                    if iid in pending:
++                        po=pending[iid]
++                        age=(ts-po['ts']).total_seconds()
++                        if self.cfg.fill_strict: hit = low < po['lim']-1e-9
++                        else: hit = low <= po['lim']+1e-9 and volume>=self.cfg.min_fill_volume
++                        if hit and st.position is None and concurrent<self.cfg.max_concurrent:
++                            st.position={
++                                'entry_price':po['lim'],'qty':po['qty'],'entry_time':ts,
++                                'fill_delay_secs':age,'price_history':[po['lim']],
++                                'last_bar_ts':ts,'direction':st.direction,
++                                'peak_price':po['lim'],'swell_entry':po['swell'],
++                                'entry_volume':volume,'exit_target':po['exit_target'],
++                                'signal_time':po['ts'],
++                                **{k:po[k] for k in [
++                                    'real_dist','entry_spx','pf_dir','cone_blended','cone_ticks',
++                                    'spread_ticks','fill_ratio','dual_agree','slope_confirms',
++                                    'fast_blended','vol_30s','conviction','is_elite_flow',
++                                    'bs_theoretical','bs_iv','bs_edge','bs_delta','bs_gamma',
++                                    'premium_band','venus_would_block','T_mins_at_entry',
++                                    'spx_source','signal_price','signal_t_sec',
++                                ] if k in po},
++                            }
++                            concurrent+=1; self.stats['orders_filled']+=1
++                            pending.pop(iid)
++                        elif age>=self.cfg.entry_order_life_secs or not in_entry_window:
++                            self.stats['orders_expired']+=1; pending.pop(iid)
++
++                    st.update(close, open_, volume, t_sec=t_sec)
+                     st.update_layers(close, high, low)
+ 
+                     # Track 5-min bar activity for dynamic OI
+@@ -1118,17 +1266,21 @@
+                     if self.cfg.swell_enabled and len(st.prices)>10:
+                         self._swell(st, close, ts, strikes, spx_open)
+ 
+-                    # EXIT check (always, even outside entry window)
++                    # EXIT check (always, even outside entry window).
++                    # Decides a reason only; the sell fills on the NEXT bar (step 1 above).
+                     if st.position is not None:
+-                        self._monitor(st, close, high, ts, ts_et, ds, trades,
+-                                     pf_hist, pf_rm, pf_slope, t_sec, T_mins)
+-                        if st.position is None:
+-                            concurrent=max(0,concurrent-1)
+-                            bankroll+=trades[-1]['pnl_usd'] if trades else 0
+-
+-                    # ENTRY check
+-                    elif (in_entry_window and
+-                          concurrent<self.cfg.max_concurrent and
++                        # a position filled on this very bar: don't evaluate exits on its fill bar
++                        if st.position['entry_time']!=ts:
++                            st.position['last_bar_ts']=ts
++                            self._monitor(st, close, high, ts, ts_et, ds, trades,
++                                         pf_hist, pf_rm, pf_slope, t_sec, T_mins)
++                            if st.position is None:          # OSC_PROFIT limit filled this bar
++                                concurrent=max(0,concurrent-1)
++                                bankroll+=trades[-1]['pnl_usd'] if trades else 0
++
++                    # ENTRY check → places a RESTING order, never a position
++                    elif (iid not in pending and in_entry_window and
++                          concurrent+len(pending)<self.cfg.max_concurrent and
+                           close>=self.cfg.min_bid and
+                           close<=self.cfg.max_bid):
+                         bar_dict={'close':close,'open':open_,'high':high,'low':low}
+@@ -1136,34 +1288,8 @@
+                                       pf_dir, pf_hist, pf_rm, pf_slope,
+                                       bankroll, T_mins)
+                         if po is not None:
+-                            fill_ts=ts+pd.Timedelta(seconds=max(1,
+-                                    min(int(po['lim']/self.cfg.grid_tick),300)))
+-                            st.position={
+-                                'entry_price':po['lim'],
+-                                'qty':po['qty'],
+-                                'entry_time':ts,
+-                                'fill_delay_secs':1,
+-                                'price_history':[close],
+-                                'last_bar_ts':ts,
+-                                'direction':st.direction,
+-                                'peak_price':po['lim'],
+-                                'swell_entry':po['swell'],
+-                                'entry_volume':volume,
+-                                'exit_target':po['exit_target'],
+-                                **{k:po[k] for k in [
+-                                    'real_dist','entry_spx','pf_dir',
+-                                    'cone_blended','cone_ticks','spread_ticks',
+-                                    'fill_ratio','dual_agree','slope_confirms',
+-                                    'fast_blended','vol_30s','conviction',
+-                                    'is_elite_flow',
+-                                ] if k in po},
+-                                **{k:po[k] for k in [
+-                                    'bs_theoretical','bs_iv','bs_edge',
+-                                    'bs_delta','bs_gamma',
+-                                    'premium_band','venus_would_block','T_mins_at_entry',
+-                                ] if k in po},
+-                            }
+-                            concurrent+=1
++                            pending[iid]=po
++                            self.stats['orders_placed']+=1
+ 
+             # EOD close all positions
+             eod_ts=day1s['timestamp'].max()
+@@ -1171,23 +1297,25 @@
+                            (eod_ts.tz_convert('America/New_York').minute-30)*60))
+             lpx=(day1s[day1s['close']>0]
+                  .groupby('instrument_id')['close'].last().to_dict())
++            self.stats['orders_cancelled']+=len(pending); pending.clear()
++            llow=(day1s[day1s['close']>0]
++                 .groupby('instrument_id')['low'].last().to_dict()) if 'low' in day1s.columns else lpx
++            eod_et=eod_ts.tz_convert('America/New_York')
++            eod_T_mins=max((expiry_et-eod_et).total_seconds()/60.0,5.0)
++            eod_spx=self.spx(ds,eod_t_sec) or 0.0
+             for iid,st in strikes.items():
+                 if st.position is None: continue
+-                xp=lpx.get(iid, st.position['entry_price'])
+-                pos=st.position; ep=pos['entry_price']; qty=pos['qty']
+-                tick=self.cfg.grid_tick
+-                xp=math.ceil(xp/tick)*tick
+-                comm=qty*self.cfg.comm_per_contract*2
+-                pnl=(xp-ep)*qty*100-comm
+-                sec=int((eod_ts-pos['entry_time']).total_seconds())
+-                eod_et=eod_ts.tz_convert('America/New_York')
+-                eod_T_mins=max((expiry_et-eod_et).total_seconds()/60.0,5.0)
+-                eod_spx=self.spx(ds,eod_t_sec) or 0.0
+-                trades.append(self._trade(st,pos,ds,eod_ts,xp,pnl,
+-                                          'EOD_CLOSE',sec,'EOD',0.5,0.0,0.0,
+-                                          eod_spx,eod_T_mins))
++                pos=st.position
++                # last print of the day for this instrument, bid-side proxy; 0 if none (expired worthless)
++                raw=(llow if self.cfg.exit_market_px=='low' else lpx).get(iid, 0.0)
++                pe=pos.get('pending_exit')
++                reason=pe['reason'] if pe else 'EOD_CLOSE'
++                snap=pe['snap'] if pe else dict(x_pf='EOD',x_bl=0.5,x_pu=0.0,x_dw=0.0,
++                                               x_spx=eod_spx,T_mins=eod_T_mins,
++                                               signal_ts=eod_ts,signal_px=lpx.get(iid,0.0),
++                                               secs_at_signal=0)
++                pnl=self._book_exit(st, trades, ds, eod_ts, raw, reason, snap, 'MARKET')
+                 bankroll+=pnl
+-                st.position=None
+ 
+         self._print_stats()
+         result=pd.DataFrame(trades)
+@@ -1205,7 +1333,14 @@
+ HURRICANE v3 — MARS BUILD DIAGNOSTICS
+ {'='*65}
+   Entry checks           : {c:,}
+-  Entries placed          : {s['base_entries']:,}
++  Orders placed          : {s['orders_placed']:,}   (signal passed all gates)
++  Orders FILLED          : {s['orders_filled']:,}   ({s['orders_filled']/max(s['orders_placed'],1)*100:.1f}% of placed)
++  Orders expired/cancel  : {s['orders_expired']:,} / {s['orders_cancelled']:,}
++  Exit fills limit/market: {s['exit_limit_fills']:,} / {s['exit_market_fills']:,}
++  SPX static fallback    : {s['spx_static_fallback']:,}   (no 5m SPX → day open used; Venus flag meaningless there)
++  Placebo rejected       : {s['placebo_rejected']:,}
++  No room (target<=bid)  : {s['no_room']:,}
++  Mode                   : {'PLACEBO p=%.4f'%self.cfg.placebo_rate if self.cfg.placebo_rate is not None else 'REAL'}  fill_strict={self.cfg.fill_strict}  exit_px={self.cfg.exit_market_px}  slip={self.cfg.extra_slippage_ticks}tk
+ 
+   Blocked by:
+     Dead range             : {s['range_blocked']:,}
