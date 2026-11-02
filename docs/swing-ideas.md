@@ -81,47 +81,6 @@ The private dashboard includes recent ideas plus all active observations, readin
 
 No earnings-avoidance rule or fundamental valuation model is asserted by this first version. Daily/weekly technical context plus attributed flow is the entry model. These are forward-test hypotheses; no edge or profitability has been established.
 
-## Underlying-first measurement (2026-11-01)
-
-The option ledger above produces an observation only when a streamed option
-quote arrives in time; 127 tickets in October converted zero. The signal is
-therefore also measured on the underlying, independently of any option quote:
-
-- Every retained technical candidate is registered in the swing comparison
-  study with a reference price even when no 5-second quote exists — the
-  completed signal bar's close is the reference and `entry_source` records
-  which was used (`quote_mid` or `signal_bar_close`).
-- Fixed-horizon checkpoints (60m, close, 1/3/5/9 sessions) fall back to the
-  completed 1-minute `bar` close at the target (`reason =
-  bar_close_reference`) when no archived 5-second quote qualifies.
-- When the 9-session checkpoint resolves, the production stop and 2R target
-  are walked on the underlying's stored 1-minute bars (next-bar open entry,
-  stop first on a bar touching both, 10-session time stop 15 minutes before
-  the close) and written to the trial as `underlying_path` with R and the
-  +30/+60/+120-minute returns. The `/api/swing-study` report aggregates it
-  by rule and side, for all fires and for the first fire per
-  symbol/day/rule/side (`first_of_day`); re-fires of one cross are not
-  independent experiments.
-- `SWING_RULES` (subset of `daily_breakout,pullback_reclaim,daily_reversal`)
-  and `SWING_SIDES` (subset of `long,short`) switch cells off before
-  admission and registration. Defaults keep every cell on. The two-year
-  underlying replay (`claude-exchange/from-claude/2026-11-01-swings-0dte`)
-  found only `daily_reversal` long above its placebo; the recommended
-  production setting is `SWING_RULES=daily_reversal SWING_SIDES=long`, as
-  the owner's decision.
-
-The option P&L in the `swing_ideas_v1` ledger is unchanged and remains a
-separate, optional measurement of the expression, not of the signal.
-
-Note: `SWING_IDEAS_ENABLED` defaults to **false** since 2026-11-01 (Josh's
-retirement of the closed three-rule surface; flag layer only). `discover()`
-is the shared feed for both the option ledger and the study, so with the flag
-off nothing is registered and nothing above runs. To keep measuring one cell
-on the underlying without buying any option: `SWING_IDEAS_ENABLED=true`,
-`SWING_RULES=daily_reversal`, `SWING_SIDES=long` — admission still requires a
-streamed contract quote, so in practice that yields the study measurement and
-(as in October) ~zero option entries.
-
 ## Operations
 
 The separate [Swing candidate comparison](swing-flow-study.md), available at

@@ -405,9 +405,6 @@ class SwingIdeas:
                 minute = minute_context(self.db.recent(c,'bar',symbol,limit=8),now)
                 price_ready = minute.get('status')=='ready'
             signals = technical_setups(symbol,daily,minute,now) if entry_open else []
-            # Cell switches (2026-11-01): a rule or side turned off is neither
-            # admitted nor registered for the study (SWING_RULES / SWING_SIDES).
-            signals = [s for s in signals if s['rule'] in self.cfg.swing_rules and s['side'] in self.cfg.swing_sides]
             flow = self.flow_cache.get(symbol,{})
             # Every technical candidate is admitted; vendor flow is recorded
             # on the idea as an attribute and never gates admission.

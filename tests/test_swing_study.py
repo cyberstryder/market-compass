@@ -91,25 +91,7 @@ def test_freeze_and_restart_do_not_replace_flow_or_price(storage,monkeypatch):
         assert not storage.recent(c,'alert')
 
 
-@pytest.mark.parametrize('case',['stale_quote','future_quote','presignal_quote'])
-def test_unusable_quote_falls_back_to_signal_bar_close(db,monkeypatch,case):
-    # Underlying-first (2026-11-01): a missing/stale/future/pre-signal quote no
-    # longer makes the candidate unmeasurable; the completed signal bar's close
-    # is the reference and the record says so.
-    monkeypatch.setattr('compass.store.time.time',lambda:NOW)
-    with db.tx() as c:
-        seed(db,c);e=dict(event(db,c))
-        if case=='stale_quote':db.put(c,'quote:SPY',quote(NOW-6))
-        if case=='future_quote':db.put(c,'quote:SPY',quote(NOW+.1))
-        if case=='presignal_quote':db.put(c,'quote:SPY',quote(NOW-1))
-        register(db,c,e,NOW,snapshot=snapshot())
-        saved=c.execute(select(trials)).mappings().one()
-        assert saved['status']=='pending' and saved['payload']['entry_mid']==100
-        assert saved['payload']['entry_source']=='signal_bar_close' and saved['payload']['entry_quote'] is None
-        assert c.execute(select(func.count()).select_from(checkpoints).where(checkpoints.c.status=='pending')).scalar_one()==6
-
-
-@pytest.mark.parametrize('case',['late_processing','late_signal','excluded_symbol'])
+@pytest.mark.parametrize('case',['stale_quote','future_quote','presignal_quote','late_processing','late_signal','excluded_symbol'])
 def test_candidate_clock_failures_stay_unavailable(db,monkeypatch,case):
     monkeypatch.setattr('compass.store.time.time',lambda:NOW)
     with db.tx() as c:

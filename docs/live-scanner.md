@@ -116,22 +116,3 @@ The supplied Cipher material remains a visual/methodology reference. No Cipher
 API or proprietary scanner interface has been verified. Missing site-only
 capabilities, full order-book/footprint analytics, multi-leg simulation and
 weekly/monthly option trade selection remain outside the implemented six rules.
-
-
-## Underlying-first scoring of 0DTE records (2026-11-01)
-
-Every scanner-family 0DTE record — seated (`trade:0dte-scan-*`) or shadow
-(`shadow:0dte-*`), quoted or `data_gap` — is scored once the session ends
-on the underlying's stored 1-minute bars: next-bar open entry after the
-alert, directional return at +30/+60/+120 minutes and at the 2:55 PM CT
-flatten, and the invalidation / 2R stop-target path in R. The result is
-written under `underlying_path`; the option P&L fields are untouched and the
-house `data_gap` exclusion still applies to them. The shadow scorecard
-(`compass/scanner_shadow.py`) reports the per-cell underlying summary beside
-the premium PF, so the denominator is alerts, not option-quote arrivals (the
-week of 2026-10-20 had 11,311 tickets and 30 observed option outcomes).
-Records older than three days when first seen without a score are marked
-`expired`; unscorable ones (no bars, no option type, no invalidation) are
-marked once and not retried. The two-year replay of `session_sweep_reclaim`
-on the underlying (`claude-exchange/from-claude/2026-11-01-swings-0dte`) is
-the baseline this forward measurement is compared against.

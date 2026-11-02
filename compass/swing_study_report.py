@@ -82,24 +82,6 @@ def report(db,c,at,cfg):
             *(v.label(k) for k,v in measures().items())).select_from(joined)
             .where(scope(at),prospective).group_by(dimension,checkpoints.c.horizon)).mappings():
             buckets.append(dict(dimension=name,**finish(r)))
-    # Underlying-first path outcomes (2026-11-01): stop/target R on the
-    # underlying by rule x side, all fires and first-fire-of-day only.
-    pr=trials.c.payload['underlying_path']['R'].as_float()
-    pb=trials.c.payload['underlying_path']['bps'].as_float()
-    preason=trials.c.payload['underlying_path']['reason'].as_string()
-    pstatus=trials.c.payload['underlying_path']['status'].as_string()
-    pfirst=trials.c.payload['first_of_day'].as_boolean()
-    path=[]
-    for label,extra in (('all_fires',true()),('first_fire_of_day',pfirst.is_(True))):
-        for r in c.execute(select(trials.c.rule,trials.c.side,func.count().label('scored'),
-                func.avg(pr).label('mean_r'),func.avg(pb).label('mean_bps'),count(pr>0).label('wins'),
-                count(preason=='stop').label('stops'),count(preason=='target').label('targets'),
-                count(preason=='time').label('time_exits'))
-                .where(scope(at),prospective,pstatus=='complete',extra).group_by(trials.c.rule,trials.c.side)).mappings():
-            d=dict(r);d['win_rate']=d['wins']/d['scored'] if d['scored'] else None;d['sample']=label
-            path.append(d)
-    path_counts=dict(c.execute(select(func.coalesce(pstatus,'not_scored'),func.count()).where(scope(at),prospective)
-        .group_by(func.coalesce(pstatus,'not_scored'))).all())
     option_join=trials.join(swings,trials.c.payload['admission_id'].as_string()==swings.c.id)
     option_counts=[dict(r) for r in c.execute(select(trials.c.origin,swings.c.status,func.count().label('count'))
         .select_from(option_join).where(scope(at)).group_by(trials.c.origin,swings.c.status)).mappings()]
@@ -110,8 +92,6 @@ def report(db,c,at,cfg):
     covered=c.execute(select(func.count(func.distinct(trials.c.symbol))).where(needed,trials.c.symbol.in_(collected))).scalar_one()
     return dict(at=at,since=at-WINDOW_DAYS*86400,window_days=WINDOW_DAYS,version=VERSION,protocol=PROTOCOL,
         inventory=dict(inv),counts=dict(totals),outcome_counts=outcomes,comparisons=comparisons,buckets=buckets,
-        underlying_path=dict(cells=path,status_counts=path_counts,
-            basis='Underlying-only stop/target path: next-bar open entry, production invalidation, 2R target, 10-session time stop; R per trade. first_fire_of_day dedupes re-fires of the same rule/side/symbol/day.'),
         option_pipeline=option_counts,coverage='full_window',truncated=False,
         overdue_checkpoints=c.execute(select(func.count()).select_from(joined).where(scope(at),
             checkpoints.c.status=='pending',checkpoints.c.due_at<=at)).scalar_one(),

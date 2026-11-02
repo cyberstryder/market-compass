@@ -141,13 +141,10 @@ def test_daily_breakout_has_independent_swing_checkpoints(db,cfg,monkeypatch,ava
         e=Engine(db,cfg)
         e.enter(c,s,NOW);e.enter(c,s,NOW)
         p=c.execute(select(swing_trials)).mappings().one()
-        # Underlying-first (2026-11-01): without a fresh quote the signal price
-        # is the reference, so the checkpoints are still scheduled.
-        assert p['status']=='pending'
-        assert p['payload']['entry_source']==('quote_mid' if available else 'signal_bar_close')
+        assert p['status']==('pending' if available else 'unavailable')
         checks=c.execute(select(swing_checkpoints)).mappings().all()
         assert len(checks)==6
-        assert all(r['status']=='pending' for r in checks)
+        assert all(r['status']==('pending' if available else 'unavailable') for r in checks)
         assert not db.prefix(c,'trade:')
         assert len(db.recent(c,'alert'))==1
 

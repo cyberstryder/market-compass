@@ -50,9 +50,6 @@ the G1-G4 gate set in compass/odte_book.py.
 
 from . import odte_book
 from .live_combo_scorecard import combo_stats
-from . import underlying_path as up
-
-UNDERLYING_SCORE_WINDOW = 3 * 86400  # records older than this without a score are marked expired, not retried
 
 # The six families produced by compass/scanner.py.
 SCANNER_FAMILIES = frozenset({
@@ -379,104 +376,7 @@ def update(db, c, now):
         _crosscheck(db, c, now)
     except Exception:
         pass
-    try:
-        score_underlying(db, c, now, records)
-    except Exception:
-        pass
     return closed
-
-
-def _record_side(t):
-    typ = str(t.get("option_type") or "").lower()
-    if typ in ("call", "c"):
-        return "long"
-    if typ in ("put", "p"):
-        return "short"
-    return None
-
-
-def score_underlying(db, c, now, records=None, prefixes=(SHADOW_PREFIX, "trade:0dte-scan-")):
-    """Underlying-first scoring (2026-11-01) for every scanner-family record,
-    seated or shadow, quoted or data_gap: once the session is over, read
-    the underlying's stored 1-minute bars from the alert to the flatten and
-    record fixed-horizon returns (+30/+60/+120 min, flatten) and the
-    stop/target path (invalidation, 2R, flatten time stop). The denominator
-    becomes alerts, not option-quote arrivals — the 11,311-ticket /
-    30-observed week could never measure the signal. Written once under
-    t['underlying_path']; the option P&L fields are untouched."""
-    if records is None:
-        records = {}
-        for prefix in prefixes:
-            try:
-                records.update(db.prefix(c, prefix))
-            except Exception:
-                continue
-    else:
-        for prefix in prefixes[1:]:
-            try:
-                records.update(db.prefix(c, prefix))
-            except Exception:
-                continue
-    bars_cache = {}
-    scored = 0
-    for key, t in records.items():
-        if not isinstance(t, dict) or t.get("underlying_scored") or not t.get("family"):
-            continue
-        alert_ts = _num(t.get("alert_ts")) or _num(t.get("entered_at"))
-        flatten_at = _num(t.get("flatten_at"))
-        if not alert_ts or not flatten_at or now < flatten_at + 120:
-            continue
-        underlying = t.get("underlying")
-        side = _record_side(t)
-        trig = t.get("trigger") or {}
-        stop = _num(trig.get("invalidation"))
-        result = None
-        if now - alert_ts > UNDERLYING_SCORE_WINDOW:
-            result = {"status": "expired", "reason": "never scored within the scoring window"}
-        elif not underlying or side is None or stop is None:
-            result = {"status": "unavailable", "reason": "missing underlying, option type or invalidation"}
-        else:
-            ck = (underlying, int(alert_ts // 86400))
-            if ck not in bars_cache:
-                bars_cache[ck] = up.bars_between(c, underlying, alert_ts - 60, flatten_at + 60)
-            bars = bars_cache[ck]
-            i, entry = up.entry_from(bars, alert_ts, side)
-            if i is None:
-                result = {"status": "unavailable", "reason": "no underlying bars after the alert", "bars": len(bars)}
-            else:
-                risk = (entry - stop) if side == "long" else (stop - entry)
-                target = entry + 2 * risk if side == "long" else entry - 2 * risk
-                path = up.bracket(bars, i, entry, side, stop, target, flatten_at)
-                # directional bps at the flatten: close of the last bar before it
-                flat = [b for b in bars[i:] if b["ts"] + 60 <= flatten_at]
-                sign = 1 if side == "long" else -1
-                result = {
-                    "status": "complete" if path["reason"] in ("stop", "target", "time") else "incomplete",
-                    "side": side, "entry": entry, "stop": stop, "target": round(target, 4), "risk": round(risk, 4),
-                    "bps": {str(m): up.horizon_return(bars, i, entry, side, m) for m in (30, 60, 120)},
-                    "flatten_bps": round(sign * (flat[-1]["c"] / entry - 1) * 1e4, 2) if flat else None,
-                    "bracket": path, "bars": len(bars),
-                    "basis": "Underlying only: next-bar open entry, invalidation stop, 2R target, flatten time stop",
-                }
-        t["underlying_path"] = result
-        t["underlying_scored"] = now
-        db.put(c, key, t)
-        scored += 1
-    return scored
-
-
-def _underlying_summary(records):
-    done = [t["underlying_path"] for t in records
-            if isinstance(t.get("underlying_path"), dict) and t["underlying_path"].get("status") == "complete"]
-    br = [u["bracket"] for u in done if u.get("bracket")]
-    h60 = [u for u in done if (u.get("bps") or {}).get("60") is not None]
-    out = {"scored": len(done),
-           "bracket": up.summarize(br, "R"),
-           "bps_60m": up.summarize([{"v": u["bps"]["60"]} for u in h60], "v"),
-           "flatten_bps": up.summarize([{"v": u["flatten_bps"]} for u in done if u.get("flatten_bps") is not None], "v")}
-    out["bracket"]["stops"] = sum(1 for b in br if b.get("reason") == "stop")
-    out["bracket"]["targets"] = sum(1 for b in br if b.get("reason") == "target")
-    return out
 
 
 def scorecard(db, c, cfg=None):
@@ -498,9 +398,8 @@ def scorecard(db, c, cfg=None):
         cell = cells.setdefault((t.get("family") or "unknown",
                                  t.get("underlying") or "unknown"),
                                 {"scored_trades": [], "alerts": 0,
-                                 "open": 0, "data_gaps": 0, "records": []})
+                                 "open": 0, "data_gaps": 0})
         cell["alerts"] += 1
-        cell["records"].append(t)
         totals["alerts"] += 1
         if t.get("status") == "open":
             cell["open"] += 1
@@ -534,7 +433,6 @@ def scorecard(db, c, cfg=None):
             "losses": stats["losses"], "win_rate": stats["win_rate"],
             "pf": pf, "net": stats["net"],
             "dte_split": dte_split,
-            "underlying_path": _underlying_summary(cell["records"]),
             "graduation": {
                 "bar": {"min_scored": GRADUATION_MIN_SCORED,
                         "min_pf": GRADUATION_MIN_PF},
@@ -601,10 +499,6 @@ def scorecard(db, c, cfg=None):
         "totals": totals,
         "graduation_bar": {"min_scored": GRADUATION_MIN_SCORED,
                            "min_pf": GRADUATION_MIN_PF},
-        "underlying_basis": ("Every alert, quoted or not, is scored on the "
-                             "underlying's stored 1-minute bars once the "
-                             "session ends: +60 min and flatten bps, and the "
-                             "invalidation/2R bracket in R (2026-11-01)."),
         "note": ("Graduation is flagged for Josh's decision, never "
                  "auto-promoted. data_gap records are excluded from PF "
                  "(house rule)."),
