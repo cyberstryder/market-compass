@@ -224,6 +224,11 @@ class Config:
     # premium from the EOD chain archive. Independent of the retired
     # swing-ideas flag above; see compass/swings_c2.py.
     swings_c2: bool = field(default_factory=lambda: env("SWINGS_C2_ENABLED","true")=="true")
+    # Connors RSI(2) SSC forward premium scorer (2026-11-03, Josh):
+    # paper/measurement only — scores the frozen SSC translation from
+    # the EOD chain archive in its own short-dated premium cell; see
+    # compass/connors_ssc.py.
+    connors_ssc: bool = field(default_factory=lambda: env("CONNORS_SSC_ENABLED","true")=="true")
     swing_alerts: bool = field(default_factory=lambda: env("SWING_IDEAS_ALERTS","true")=="true")
     swing_min_dte: int = field(default_factory=lambda: int(env("SWING_MIN_DTE","14")))
     swing_max_dte: int = field(default_factory=lambda: int(env("SWING_MAX_DTE","60")))

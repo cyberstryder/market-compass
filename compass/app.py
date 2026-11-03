@@ -217,6 +217,9 @@ def create_app(cfg=None):
             if cfg.swings_c2:
                 from .swings_c2 import SwingsC2
                 spawn(lambda: SwingsC2(db,cfg).run(),'SwingsC2')
+            if cfg.connors_ssc:
+                from .connors_ssc import ConnorsSSC
+                spawn(lambda: ConnorsSSC(db,cfg).run(),'ConnorsSSC')
             from .discovery import Discovery
             spawn(lambda: Discovery(db,cfg).run(),'Discovery')
             spawn(lambda: run_obsidian(db,cfg),'run_obsidian')

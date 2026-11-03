@@ -162,6 +162,16 @@ swing_c2_episodes=Table('swing_c2_episodes',meta,
     Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
 Index('swing_c2_active',swing_c2_episodes.c.status,swing_c2_episodes.c.created)
 
+# Connors RSI(2) SSC premium-translation scorer episodes
+# (compass/connors_ssc.py). Declared here for the same reason as
+# swing_c2_episodes above: boot-time create_all must see the table
+# before app.py lazily imports the owning module.
+connors_ssc_episodes=Table('connors_ssc_episodes',meta,
+    Column('id',String(64),primary_key=True),Column('underlying',String(100),nullable=False),
+    Column('status',String(24),nullable=False),Column('created',Float,nullable=False),
+    Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
+Index('connors_ssc_active',connors_ssc_episodes.c.status,connors_ssc_episodes.c.created)
+
 spy_checks=Table('spy_plan_checks_v1',meta,
     Column('id',String(64),primary_key=True),Column('version',String(50),nullable=False),
     Column('source_key',String(150),nullable=False),Column('day',String(10),nullable=False),
