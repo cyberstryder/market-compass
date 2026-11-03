@@ -16,7 +16,7 @@ import time
 
 from .market import number
 
-SCAN_THROTTLE = 300  # 5 minutes; VIX moves intraday, gap fade needs a morning read
+SCAN_THROTTLE = 300  # 5 minutes; VIX moves intraday
 SNAPSHOT_URL = "https://api.massive.com/v3/snapshot"
 VIX_TICKER = "I:VIX"
 
@@ -122,7 +122,7 @@ def should_run_detector(detector_name, regime):
     # Breakout strategies: disable in high VIX
     breakout_detectors = {'bos_fvg', 'bos_gz_vwap', 'continuation', 'morning_drive', 'icc', 'rumers_box'}
     # Fade strategies: disable in low VIX  
-    fade_detectors = {'turtle_soup', 'aoi_fade', 'aoi_zones', 'gap_fade'}
+    fade_detectors = {'turtle_soup', 'aoi_fade', 'aoi_zones'}
     
     if regime == 'high':
         # High VIX: breakouts fail, fades work

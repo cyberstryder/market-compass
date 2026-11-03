@@ -1132,9 +1132,6 @@ class Engine:
             if getattr(self.cfg, 'ict_trend_rider', False):
                 from .trend_rider import scan as ict_trend_rider_scan
                 ict_summaries['trend_rider'] = _safe_scan('trend_rider', lambda: ict_trend_rider_scan(self.db,c,self.cfg,now))
-            if getattr(self.cfg, 'gap_fade_enabled', False) and _should_run('gap_fade'):
-                from .gap_fade import scan as gap_fade_scan
-                ict_summaries['gap_fade'] = _safe_scan('gap_fade', lambda: gap_fade_scan(self.db,c,self.cfg,now))
             if self.cfg.ict_tier_a_b:
                 from .tier_a_b import scan as ict_tier_a_b_scan
                 ict_summaries['tier_a_b'] = _safe_scan('tier_a_b', lambda: ict_tier_a_b_scan(self.db,c,self.cfg,now))
