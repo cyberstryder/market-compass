@@ -72,6 +72,10 @@ def main():
     symbols = ([s.strip().upper() for s in args.symbols.split(",") if s.strip()]
                if args.symbols else sorted(plan))
     grand = {"inserted": 0, "skipped_existing": 0, "refused": 0}
+    # The app middleware caps POST bodies at 16 KiB; a symbol's bars go
+    # in chunks of 120 (~12 KB). The endpoint is idempotent and each
+    # call is its own transaction, so chunking is safe.
+    CHUNK = 120
     for sym in symbols:
         bars = [{"date": d, **b} for d, b in sorted(plan.get(sym, {}).items())]
         if not bars:
@@ -82,18 +86,23 @@ def main():
             print(f"{sym}: would post {len(bars)} bars "
                   f"({bars[0]['date']}..{bars[-1]['date']}) factor={factor}")
             continue
-        r = call(args.base, "POST", "/api/admin/daily-backfill",
-                 {"symbol": sym, "factor": factor, "bars": bars})
-        if not r.get("ok"):
-            print(f"{sym}: FAILED {r}")
-            sys.exit(1)
+        tot = {"inserted": 0, "skipped_existing": 0, "refused": 0}
+        for i in range(0, len(bars), CHUNK):
+            r = call(args.base, "POST", "/api/admin/daily-backfill",
+                     {"symbol": sym, "factor": factor,
+                      "bars": bars[i:i + CHUNK]})
+            if not r.get("ok"):
+                print(f"{sym}: FAILED at chunk {i // CHUNK}: {r}")
+                sys.exit(1)
+            for k in tot:
+                tot[k] += r.get(k, 0)
+            if r.get("refused_detail"):
+                print(f"   refused_detail: {r['refused_detail']}")
         for k in grand:
-            grand[k] += r.get(k, 0)
-        print(f"{sym}: inserted={r['inserted']} skipped={r['skipped_existing']} "
-              f"refused={r['refused']} ({r.get('first_inserted')}..{r.get('last_inserted')})",
-              flush=True)
-        if r.get("refused_detail"):
-            print(f"   refused_detail: {r['refused_detail']}")
+            grand[k] += tot[k]
+        print(f"{sym}: inserted={tot['inserted']} "
+              f"skipped={tot['skipped_existing']} refused={tot['refused']} "
+              f"({bars[0]['date']}..{bars[-1]['date']})", flush=True)
     print("TOTAL:", grand)
 
 
