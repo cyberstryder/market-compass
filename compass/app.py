@@ -70,6 +70,7 @@ CRON_TOKEN_PATHS = {
     "/api/admin/db-maintenance",
     "/api/admin/db-maintenance-log",
     "/api/admin/events-export",
+    "/api/admin/ice-shadow-export",
     "/api/admin/survivor-fill-verdict",
 }
 # Kept for callers/tests that import the old name.
@@ -334,7 +335,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/events-export","/api/admin/survivor-fill-verdict","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/events-export","/api/admin/ice-shadow-export","/api/admin/survivor-fill-verdict","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -978,6 +979,47 @@ a{color:#888}</style></head><body>
         except Exception:
             logging.getLogger('uvicorn.error').exception('events-export failed')
             return {'ok': False, 'error': 'Events export failed. Check server logs.'}
+
+    @app.get('/api/admin/ice-shadow-export')
+    def get_ice_shadow_export(variant: str = None, symbol: str = None,
+                              side: str = None, since: float = None,
+                              until: float = None, after_ts: float = None,
+                              after_id: str = None, limit: int = 100):
+        """Paged row-level reads of ice_shadow_fires_v1 (cron-token
+        gated). Added 2026-11-02 for the ICE long-side forward
+        registration (goal files/ice-longside-forward-registration-
+        2026-11-02.md): /api/ice-shadow-status serves aggregates only,
+        and the registration's decisive cuts (side x unit x session)
+        need per-fire rows — variant, side, symbol, fire ts/session,
+        entry reference and the +30/+60/+120m horizon resolutions.
+        Fire ids are content hashes (not monotonic), so the cursor is
+        the (fire_ts, id) pair: page by feeding the returned
+        next_after_ts / next_after_id back until both come back null.
+        Page size capped at 200, like events-export. Read-only."""
+        import logging
+        if variant is not None and variant not in ('base', 'max6rsi'):
+            return JSONResponse({'ok': False, 'error': 'variant must be base or max6rsi'}, status_code=400)
+        if side is not None and side not in ('long', 'short'):
+            return JSONResponse({'ok': False, 'error': 'side must be long or short'}, status_code=400)
+        if after_ts is not None and after_ts < 0:
+            return JSONResponse({'ok': False, 'error': 'after_ts must be >= 0'}, status_code=400)
+        if not 1 <= limit <= 200:
+            return JSONResponse({'ok': False, 'error': 'limit must be 1-200'}, status_code=400)
+        try:
+            from . import ice_shadow
+            with db.tx() as c:
+                rows = ice_shadow.export_fires(
+                    c, variant=variant, symbol=symbol, side=side,
+                    since=since, until=until, after_ts=after_ts,
+                    after_id=after_id, limit=limit)
+            last = rows[-1] if len(rows) == limit else None
+            return {'ok': True, 'count': len(rows),
+                    'next_after_ts': last['fire_ts'] if last else None,
+                    'next_after_id': last['id'] if last else None,
+                    'rows': rows}
+        except Exception:
+            logging.getLogger('uvicorn.error').exception('ice-shadow-export failed')
+            return {'ok': False, 'error': 'ICE shadow export failed. Check server logs.'}
 
     @app.post('/api/admin/survivor-fill-verdict')
     @app.get('/api/admin/survivor-fill-verdict')

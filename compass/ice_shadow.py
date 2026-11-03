@@ -79,10 +79,10 @@ import logging
 import math
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, func
+from sqlalchemy import and_, or_, select, func
 
 from .store import identity, ice_shadow_fires
 
@@ -1127,3 +1127,77 @@ def status(db, c, cfg, now):
             'bull_votes': p.get('bull_votes'),
             'bear_votes': p.get('bear_votes')}
     return out
+
+
+# -------------------------------------------------------------- export --
+
+def _export_row(row):
+    """Flatten one ice_shadow_fires_v1 row for the admin export: the
+    table columns plus the payload fields a forward read needs (entry
+    reference, ATR, vote counts, per-horizon resolution), so a caller
+    can derive bps / dollars / R per fire without the payload nesting.
+    Horizon dicts pass through verbatim ({status, r, exit_ts, exit}
+    when scored; {status, reason} when dropped; {status} when
+    pending)."""
+    p = _payload_dict(row['payload'])
+    fire_ts = float(row['fire_ts'])
+    entry = p.get('entry') or {}
+    horizons = p.get('horizons') or {}
+    return {
+        'id': row['id'],
+        'variant': row['variant'],
+        'symbol': row['symbol'],
+        'timeframe': row['timeframe'],
+        'side': row['side'],
+        'fire_ts': fire_ts,
+        'fire_iso_utc': datetime.fromtimestamp(fire_ts,
+                                               timezone.utc).isoformat(),
+        'session_date_et': _et_date(fire_ts).isoformat(),
+        'status': row['status'],
+        'created': float(row['created']),
+        'atr': p.get('atr'),
+        'bull_votes': p.get('bull_votes'),
+        'bear_votes': p.get('bear_votes'),
+        'entry_ts': entry.get('ts'),
+        'entry_price': entry.get('price'),
+        'h30': horizons.get('30'),
+        'h60': horizons.get('60'),
+        'h120': horizons.get('120'),
+        'h_session': horizons.get('session'),
+        'r60': row['r60'],
+        'resolved_at': p.get('resolved_at'),
+    }
+
+
+def export_fires(c, variant=None, symbol=None, side=None, since=None,
+                 until=None, after_ts=None, after_id=None, limit=100):
+    """(fire_ts, id)-cursor-paged row reads for the admin
+    ice-shadow-export endpoint (2026-11-02). The status endpoint serves
+    aggregates only; the ICE long-side forward registration
+    (files/ice-longside-forward-registration-2026-11-02.md) needs the
+    per-fire rows to cut by side x unit x session. Fire ids are content
+    hashes, not monotonic, so the cursor is the (fire_ts, id) pair in
+    ascending order: page by feeding back next_after_ts /
+    next_after_id until both come back null. Read-only: the scorecard's
+    recording path is untouched."""
+    f = ice_shadow_fires
+    q = select(f)
+    if variant is not None:
+        q = q.where(f.c.variant == variant)
+    if symbol is not None:
+        q = q.where(f.c.symbol == symbol)
+    if side is not None:
+        q = q.where(f.c.side == side)
+    if since is not None:
+        q = q.where(f.c.fire_ts >= since)
+    if until is not None:
+        q = q.where(f.c.fire_ts <= until)
+    if after_ts is not None:
+        if after_id is not None:
+            q = q.where(or_(f.c.fire_ts > after_ts,
+                            and_(f.c.fire_ts == after_ts,
+                                 f.c.id > after_id)))
+        else:
+            q = q.where(f.c.fire_ts > after_ts)
+    q = q.order_by(f.c.fire_ts.asc(), f.c.id.asc()).limit(limit)
+    return [_export_row(r) for r in c.execute(q).mappings()]
