@@ -46,6 +46,22 @@ action via ODTE_BOOK_SEATED_NAMES after a name clears the unchanged
 name gate (>= 20 scored PREMIUM shadow trades at PF >= 1.2), which
 this scorecard flags as ready_for_josh. Bookings additionally pass
 the G1-G4 gate set in compass/odte_book.py.
+
+UNSEATED, 2026-11-02 (tiebreak replay; Josh's decision): the
+production-code replay of session_sweep_reclaim on the 2-year /
+163-name panel (n=107,146 counted trades) returned negative
+expectancy at both headline horizons (+120m -1.68 bps, t -2.99;
+close -1.45 bps) and a 3.5th-percentile placebo — verdict SEAT
+FALLS — and Josh ruled "get rid of that". The family moves to
+BARRED_FAMILIES (shadow-only, barred from graduating, exactly like
+the three dead families) and PROMOTED_FAMILIES is now EMPTY: the
+book has NO booking family. Detection and shadow scoring are
+unchanged — the family's setups still open shadow records and the
+sample keeps accruing as evidence — but no name can graduate to
+booking on it, even if an operator env tried to seat or promote it
+(the barred check in is_seated wins over both). A future family can
+hold the seat only by passing frozen underlying validation, with
+Josh seating it via the same config mechanism.
 """
 
 from . import odte_book
@@ -57,15 +73,25 @@ SCANNER_FAMILIES = frozenset({
     "level_breakdown", "exposure_level_break", "flow_price_breakout",
 })
 
-# Validation verdict, 2026-10-25: the only promoted family.
-PROMOTED_FAMILIES = frozenset({"session_sweep_reclaim"})
+# Promotion status. 2026-10-25 validation promoted the one family
+# below; the 2026-11-02 tiebreak replay unseated it (see module
+# docstring). NO family is currently promoted — the book has no
+# booking family. Promotion remains a config state a future family
+# can earn through frozen underlying validation (env override
+# SCANNER_PROMOTED_FAMILIES, or a change here at a window boundary).
+PROMOTED_FAMILIES = frozenset()
 
-# Dead families (underlying-first validation, 2026-10-25): shadow-only,
-# BARRED from graduating regardless of their shadow record. The
-# unvalidatable pair (exposure_level_break, flow_price_breakout) is
-# shadow-only by virtue of never holding promotion status.
+# Barred families: shadow-only, BARRED from graduating regardless of
+# their shadow record. The first three are the dead families of the
+# 2026-10-25 underlying-first validation; session_sweep_reclaim
+# joined them 2026-11-02 on the tiebreak verdict (SEAT FALLS) and
+# Josh's decision. The unvalidatable pair (exposure_level_break,
+# flow_price_breakout) is shadow-only by virtue of never holding
+# promotion status — it is NOT barred, so the promotion mechanism
+# above remains reachable for it if validation ever earns it.
 BARRED_FAMILIES = frozenset({
-    "trend_pullback", "volume_breakout", "level_breakdown",
+    "session_sweep_reclaim", "trend_pullback", "volume_breakout",
+    "level_breakdown",
 })
 
 # Whole-list book (respec 2026-11-01): NO grandfathering — the seated

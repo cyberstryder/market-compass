@@ -62,10 +62,10 @@ def _seed_alert(db, c, now, key, family, underlying, opt, bid=0.78,
                                "source": "fixture"})
 
 
-def _seated_cfg(*cells):
+def _seated_cfg(*cells, promoted=""):
     seats = ";".join("%s:%s" % (fam, name) for fam, name in cells)
     return types.SimpleNamespace(
-        scanner_paper_seats=seats, scanner_promoted_families="",
+        scanner_paper_seats=seats, scanner_promoted_families=promoted,
         odte_book_seated_names="")
 
 
@@ -192,10 +192,14 @@ def test_caps_daily_risk_budget(db):
 
 
 def test_seated_wide_spread_rejected_not_booked(db):
-    cfg = _seated_cfg(("session_sweep_reclaim", "MU"))
+    # Seated-path coverage runs on exposure_level_break, promoted
+    # explicitly via env: since the 2026-11-02 unseat no family is
+    # promoted by default (session_sweep_reclaim is barred).
+    cfg = _seated_cfg(("exposure_level_break", "MU"),
+                      promoted="exposure_level_break")
     now = time.time()
     with db.tx() as c:
-        _seed_alert(db, c, now, "g2x", "session_sweep_reclaim", "MU",
+        _seed_alert(db, c, now, "g2x", "exposure_level_break", "MU",
                     OPT, bid=0.60, ask=0.80)
         opened = zero_dte_paper._open_scanner(db, c, now, now + 7200, cfg)
         trade = db.get(c, "trade:0dte-scan-g2x")
@@ -220,10 +224,11 @@ def test_shadow_above_cap_rejected_no_record(db):
 
 
 def test_seated_booking_carries_fill_stamps(db):
-    cfg = _seated_cfg(("session_sweep_reclaim", "MU"))
+    cfg = _seated_cfg(("exposure_level_break", "MU"),
+                      promoted="exposure_level_break")
     now = time.time()
     with db.tx() as c:
-        _seed_alert(db, c, now, "ok1", "session_sweep_reclaim", "MU", OPT)
+        _seed_alert(db, c, now, "ok1", "exposure_level_break", "MU", OPT)
         opened = zero_dte_paper._open_scanner(db, c, now, now + 7200, cfg)
         trade = db.get(c, "trade:0dte-scan-ok1")
     assert opened == 1 and trade is not None

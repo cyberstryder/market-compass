@@ -1,7 +1,14 @@
 """Seat/shadow split tests (underlying-first validation, 2026-10-25).
 
 Covers:
-- a seated cell (session_sweep_reclaim x MU) books exactly as before;
+- a seated cell (an operator-promoted family x name) books exactly
+  as before — since the 2026-11-02 unseat no family is promoted by
+  default, so the mechanism tests promote exposure_level_break
+  explicitly via env;
+- the unseat (2026-11-02): session_sweep_reclaim is BARRED — even an
+  env that seats AND promotes it cannot book it; it shadow-scores,
+  its graduation flag never fires, and the book's default state has
+  NO booking family (PROMOTED_FAMILIES empty);
 - non-seated cells (sweep x TSLA; dead family volume_breakout x MU)
   create a shadow record and NO booking;
 - shadow scoring: measured exit on fresh quotes, data_gap on stale
@@ -69,10 +76,10 @@ def _seed_daily(db, c, symbol, now):
     db.append_bars(c, "daily", "fixture", items)
 
 
-def _seated_cfg(*cells):
+def _seated_cfg(*cells, promoted=""):
     seats = ";".join("%s:%s" % (fam, name) for fam, name in cells)
     return types.SimpleNamespace(
-        scanner_paper_seats=seats, scanner_promoted_families="",
+        scanner_paper_seats=seats, scanner_promoted_families=promoted,
         odte_book_seated_names="")
 
 
@@ -86,16 +93,21 @@ def _shadow_key(key):
 def test_seated_cell_books_exactly_as_before(db):
     # Respec 2026-11-01: nobody is seated by default (no grandfathering)
     # — the seat here is the operator action, passed explicitly.
-    cfg = _seated_cfg(("session_sweep_reclaim", "MU"))
+    # Unseat 2026-11-02: no family is promoted by default either, so
+    # the booking mechanism is exercised on exposure_level_break,
+    # promoted explicitly via env (it is shadow-only by default but
+    # NOT barred, so the mechanism stays reachable for it).
+    cfg = _seated_cfg(("exposure_level_break", "MU"),
+                      promoted="exposure_level_break")
     now = time.time()
     with db.tx() as c:
-        _seed_alert(db, c, now, "seat1", "session_sweep_reclaim", "MU", MU_OPT)
+        _seed_alert(db, c, now, "seat1", "exposure_level_break", "MU", MU_OPT)
         opened = zero_dte_paper._open_scanner(db, c, now, now + 7200, cfg)
         trade = db.get(c, "trade:0dte-scan-seat1")
         shadow = db.get(c, _shadow_key("seat1"))
     assert opened == 1
     assert trade is not None and trade["status"] == "open"
-    assert trade["family"] == "session_sweep_reclaim"
+    assert trade["family"] == "exposure_level_break"
     assert trade["entry"] == 0.81
     assert shadow is None
 
@@ -143,16 +155,17 @@ def test_non_scanner_alert_still_books(db):
 
 def test_env_override_changes_the_seats(db):
     cfg = types.SimpleNamespace(
-        scanner_paper_seats="session_sweep_reclaim:TSLA",
-        scanner_promoted_families="")
+        scanner_paper_seats="exposure_level_break:TSLA",
+        scanner_promoted_families="exposure_level_break",
+        odte_book_seated_names="")
     now = time.time()
     with db.tx() as c:
-        _seed_alert(db, c, now, "ov1", "session_sweep_reclaim", "TSLA",
+        _seed_alert(db, c, now, "ov1", "exposure_level_break", "TSLA",
                     TSLA_OPT)
         opened = zero_dte_paper._open_scanner(db, c, now, now + 7200, cfg)
         trade = db.get(c, "trade:0dte-scan-ov1")
         # MU lost its seat under the override: it shadows now.
-        _seed_alert(db, c, now, "ov2", "session_sweep_reclaim", "MU", MU_OPT)
+        _seed_alert(db, c, now, "ov2", "exposure_level_break", "MU", MU_OPT)
         opened2 = zero_dte_paper._open_scanner(db, c, now, now + 7200, cfg)
         shadow = db.get(c, _shadow_key("ov2"))
     assert opened == 1 and trade is not None
@@ -172,6 +185,52 @@ def test_seat_parsing_fails_closed_on_garbage():
     assert scanner_shadow.is_seated("session_sweep_reclaim", "MU") is False
     assert scanner_shadow.is_seated("session_sweep_reclaim", "AMD") is False
     assert scanner_shadow.is_seated("session_sweep_reclaim", "NFLX") is False
+
+
+# ------------------------------------------------------------------ unseat
+
+
+def test_no_booking_family_by_default(db):
+    # Unseat 2026-11-02: PROMOTED_FAMILIES is empty — the book has no
+    # booking family — and session_sweep_reclaim sits in the barred
+    # set alongside the three dead families. The scorecard surface
+    # (what /api/simple serves) shows exactly that.
+    assert scanner_shadow.PROMOTED_FAMILIES == frozenset()
+    assert scanner_shadow.promoted_families(None) == frozenset()
+    assert "session_sweep_reclaim" in scanner_shadow.BARRED_FAMILIES
+    with db.tx() as c:
+        card = scanner_shadow.scorecard(db, c, None)
+    assert card["promoted_families"] == []
+    assert card["barred_families"] == ["level_breakdown",
+                                       "session_sweep_reclaim",
+                                       "trend_pullback",
+                                       "volume_breakout"]
+    assert card["paper_seats"] == {}
+
+
+def test_unseated_sweep_cannot_book_even_when_env_seats_and_promotes(db):
+    # The barred check wins over BOTH operator envs: seat sweep x MU
+    # via ODTE_BOOK_SEATED_NAMES and promote the family via
+    # SCANNER_PROMOTED_FAMILIES — the alert still shadow-scores and
+    # NO booking is created.
+    cfg = types.SimpleNamespace(
+        scanner_paper_seats="",
+        scanner_promoted_families="session_sweep_reclaim",
+        odte_book_seated_names="session_sweep_reclaim:MU")
+    assert scanner_shadow.is_seated(
+        "session_sweep_reclaim", "MU", cfg) is False
+    now = time.time()
+    with db.tx() as c:
+        _seed_alert(db, c, now, "uns1", "session_sweep_reclaim", "MU",
+                    MU_OPT)
+        opened = zero_dte_paper._open_scanner(db, c, now, now + 7200, cfg)
+        trade = db.get(c, "trade:0dte-scan-uns1")
+        rec = db.get(c, _shadow_key("uns1"))
+    assert opened == 0
+    assert trade is None
+    assert rec is not None
+    assert rec["family"] == "session_sweep_reclaim"
+    assert rec["status"] == "open" and rec["entry"] == 0.81
 
 
 def test_alert_family_derivation():
@@ -282,10 +341,11 @@ def test_seated_entry_without_quote_records_seat_data_gap(db):
     # under the seat book's own trade key (disjoint from the shadow
     # keyspace), so the seat scorecard's denominator stops silently
     # shrinking. Exactly one record, no booking, no shadow row.
-    cfg = _seated_cfg(("session_sweep_reclaim", "MU"))
+    cfg = _seated_cfg(("exposure_level_break", "MU"),
+                      promoted="exposure_level_break")
     now = time.time()
     with db.tx() as c:
-        _seed_alert(db, c, now, "seatgap1", "session_sweep_reclaim",
+        _seed_alert(db, c, now, "seatgap1", "exposure_level_break",
                     "MU", MU_OPT, quote=False)
         opened = zero_dte_paper._open_scanner(db, c, now, now + 7200, cfg)
         rec = db.get(c, "trade:0dte-scan-seatgap1")
@@ -296,7 +356,7 @@ def test_seated_entry_without_quote_records_seat_data_gap(db):
     assert shadow is None
     assert list(seat_rows) == ["trade:0dte-scan-seatgap1"]
     assert rec["kind"] == "scanner"
-    assert rec["family"] == "session_sweep_reclaim"
+    assert rec["family"] == "exposure_level_break"
     assert rec["status"] == "closed" and rec["data_gap"] is True
     assert rec["entry"] is None and rec["pnl"] is None
     assert rec["exit_reason"] == "entry quote unavailable (data gap)"
@@ -308,10 +368,11 @@ def test_seated_entry_without_quote_records_seat_data_gap(db):
 def test_seated_stale_quote_also_records_seat_data_gap(db):
     # Same drop, stale-quote flavor: the only quote is older than the
     # fresh-quote window, so _fresh_quote returns None.
-    cfg = _seated_cfg(("session_sweep_reclaim", "NFLX"))
+    cfg = _seated_cfg(("exposure_level_break", "NFLX"),
+                      promoted="exposure_level_break")
     now = time.time()
     with db.tx() as c:
-        _seed_alert(db, c, now, "seatgap2", "session_sweep_reclaim",
+        _seed_alert(db, c, now, "seatgap2", "exposure_level_break",
                     "NFLX", NFLX_OPT, quote=False)
         db.put(c, "quote:" + NFLX_OPT,
                {"ts": now - 3600, "bid": 2.0, "ask": 2.1})
@@ -349,26 +410,51 @@ def _fill_cell(db, c, family, underlying, wins, losses):
 
 
 def test_graduation_flag_math(db):
+    promo_cfg = types.SimpleNamespace(
+        scanner_paper_seats="",
+        scanner_promoted_families="exposure_level_break",
+        odte_book_seated_names="")
     with db.tx() as c:
-        _fill_cell(db, c, "session_sweep_reclaim", "MSFT", 12, 8)   # 20, PF 3.0
-        _fill_cell(db, c, "volume_breakout", "NFLX", 12, 8)         # same numbers, dead family
-        _fill_cell(db, c, "session_sweep_reclaim", "AAPL", 12, 7)   # 19 scored
+        # 20 scored, PF 3.0 — clears the numeric bar in every cell below.
+        _fill_cell(db, c, "session_sweep_reclaim", "MSFT", 12, 8)
+        _fill_cell(db, c, "volume_breakout", "NFLX", 12, 8)
+        _fill_cell(db, c, "exposure_level_break", "MSFT", 12, 8)
+        _fill_cell(db, c, "exposure_level_break", "AAPL", 12, 7)  # 19 scored
         card = scanner_shadow.scorecard(db, c, None)
+        promo = scanner_shadow.scorecard(db, c, promo_cfg)
     cells = {(x["family"], x["underlying"]): x for x in card["shadow_cells"]}
+    # Unseat 2026-11-02: sweep clears the numbers and STILL never
+    # flags — the family is barred, not promoted.
     msft = cells[("session_sweep_reclaim", "MSFT")]
     assert msft["scored"] == 20 and msft["pf"] == 3.0
-    assert msft["graduation"]["ready_for_josh"] is True
+    assert msft["graduation"]["family_promoted"] is False
+    assert msft["graduation"]["family_barred"] is True
+    assert msft["graduation"]["pf_met"] is True
+    assert msft["graduation"]["ready_for_josh"] is False
     nflx = cells[("volume_breakout", "NFLX")]
     assert nflx["graduation"]["family_promoted"] is False
+    assert nflx["graduation"]["family_barred"] is True
     assert nflx["graduation"]["ready_for_josh"] is False
-    aapl = cells[("session_sweep_reclaim", "AAPL")]
+    # The mechanism itself is intact: a family an operator promotes
+    # via env flags ready at the bar, and only there.
+    pcells = {(x["family"], x["underlying"]): x
+              for x in promo["shadow_cells"]}
+    elb = pcells[("exposure_level_break", "MSFT")]
+    assert elb["graduation"]["family_promoted"] is True
+    assert elb["graduation"]["family_barred"] is False
+    assert elb["graduation"]["ready_for_josh"] is True
+    aapl = pcells[("exposure_level_break", "AAPL")]
     assert aapl["graduation"]["scored_needed"] == 1
     assert aapl["graduation"]["ready_for_josh"] is False
+    assert cells[("exposure_level_break", "MSFT")] \
+        ["graduation"]["ready_for_josh"] is False
     # No grandfathering (respec 2026-11-01): the scorecard's seated set
-    # is empty until an operator seats a graduated name.
+    # is empty until an operator seats a graduated name. And since the
+    # unseat, the default scorecard has NO promoted family at all.
     assert card["paper_seats"] == {}
-    assert card["promoted_families"] == ["session_sweep_reclaim"]
+    assert card["promoted_families"] == []
+    assert promo["promoted_families"] == ["exposure_level_break"]
     assert card["barred_families"] == ["level_breakdown",
+                                       "session_sweep_reclaim",
                                        "trend_pullback",
                                        "volume_breakout"]
-    assert nflx["graduation"]["family_barred"] is True
