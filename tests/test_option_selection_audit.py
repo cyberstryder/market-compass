@@ -102,12 +102,15 @@ def test_archive_evidence_does_not_claim_a_usable_stream_was_missing():
         'underlying: stale or invalid archived samples':1}
 
 
-# Offsets are quote stamp minus decision time: -6 is beyond the 5s
-# stale bound; +120 is beyond the bounded future-skew tolerance
+# Offsets are quote stamp minus decision time: -90 is beyond the
+# book's 60s decision-time stale bound (SCANNER_TRIGGER_QUOTE_MAX_AGE,
+# applied at the retry since the 2026-11-03 alignment; the retry
+# previously used fresh()'s 5s default and -6 was the stale case);
+# +120 is beyond the bounded future-skew tolerance
 # (QUOTE_FUTURE_SKEW_TOLERANCE_S), i.e. corrupt, not clock skew. The
 # old +2 case pinned the pre-2026-11-02 semantics under which vendor
 # stamps a few seconds ahead of the engine clock were rejected.
-@pytest.mark.parametrize('offset', [-6, 120])
+@pytest.mark.parametrize('offset', [-90, 120])
 def test_retry_freezes_exact_underlying_clock_and_contemporaneous_loss_lock(db,offset):
     cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
     scanner,engine=Scanner(db,cfg),Engine(db,cfg)
@@ -148,7 +151,7 @@ def test_live_retry_uses_current_underlying_and_clock_after_slow_scan(db):
         assert next(iter(db.prefix(c,'trade:').values()))['entered_at']==at
 
 
-@pytest.mark.parametrize('offset',[-6,120])
+@pytest.mark.parametrize('offset',[-90,120])
 def test_live_retry_still_rejects_truly_stale_or_future_underlying(db,offset):
     cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
     at=NOW+4

@@ -35,6 +35,23 @@ class FeedError(Exception):
         super().__init__(message)
         self.status_code=status_code
 
+# On-demand chain refresh for live selection pendings (2026-11-03; Josh:
+# "move the data, not the gate"). Selection enforces a 120s chain-age
+# gate (Engine.options), but the background rotation is designed to
+# leave non-focus chains 15 minutes to ~2 hours old, so on 2026-11-02
+# 97.6% of selection audits died on chain age (median 4,956s at block).
+# While a symbol has a live pending (a 'waiting' pending_options: or
+# pending_research_options: row inside its selection window), the
+# 'pending' chain lane promotes it to focus-equivalent cadence: it
+# becomes due at the same 45s chain age as focus names -- never faster
+# -- stalest chain first, at most PENDING_CHAIN_PER_CYCLE fetches per
+# lane cycle. The chain_inflight guard and the chain_retry: failure
+# backoff apply exactly as in the other lanes, focus symbols are
+# served by the focus lane instead (so focus cadence cannot be
+# starved), and symbols without pendings keep the existing rotation.
+PENDING_CHAIN_MIN_AGE_S=45
+PENDING_CHAIN_PER_CYCLE=2
+
 class Collectors:
     def __init__(self,db,cfg):
         self.db,self.cfg=db,cfg
@@ -142,7 +159,7 @@ class Collectors:
             self.supervise("databento_futures",bool(c.databento),self.futures),
             self.supervise("futures_history",bool(c.databento),self.future_history,3600),
             *[self.supervise("option_chain_"+lane,bool(c.massive or (c.alpaca_key and c.alpaca_secret)),
-                lambda lane=lane:self.chains(lane),2) for lane in ('indices','focus','background')],
+                lambda lane=lane:self.chains(lane),2) for lane in ('indices','focus','background','pending')],
             self.supervise("option_stream",bool(c.massive),self.options),
             self.supervise("alpaca_option_stream",bool(c.alpaca_key and c.alpaca_secret and c.alpaca_option_stream),self.alpaca_options),
             self.supervise("option_recovery",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.option_recovery),
@@ -585,9 +602,25 @@ class Collectors:
             carried=active_underlyings(c)
             background=sorted((s for s in dict.fromkeys(carried+rotation)
                 if s not in focus and retry(s) and now-age(s)>=900),key=age)
+            # Live selection pendings (2026-11-03): symbols with a
+            # 'waiting' pending inside its window, outside focus (the
+            # focus lane already serves those at the same cadence).
+            pending_due=[]
+            if lane=='pending':
+                live=set()
+                for prefix in ('pending_options:','pending_research_options:'):
+                    for row in self.db.prefix(c,prefix).values():
+                        symbol=(row.get('signal') or {}).get('symbol')
+                        if (row.get('status')=='waiting' and symbol and '@' not in symbol
+                                and symbol in universe and symbol not in focus
+                                and now<row.get('expires_at',0)):
+                            live.add(symbol)
+                pending_due=sorted((s for s in live
+                    if retry(s) and now-age(s)>=PENDING_CHAIN_MIN_AGE_S),key=age)
             # Independent bounded lanes: carried/background backlogs must never
             # occupy the index or fast research worker. Each lane is oldest-first.
-            targets=([s for s in due if s in indices][:1] if lane=='indices' else
+            targets=(pending_due[:PENDING_CHAIN_PER_CYCLE] if lane=='pending' else
+                [s for s in due if s in indices][:1] if lane=='indices' else
                 [s for s in due if s not in indices][:1] if lane=='focus' else
                 background[:1] if lane=='background' else due[:1]+background[:1])
             self.chain_inflight.update(targets)

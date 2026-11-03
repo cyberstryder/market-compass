@@ -538,6 +538,18 @@ class Scanner:
 
     def retry_options(self,c,quotes,now,engine):
         scan_started_at=now
+        # Selection freshness alignment (2026-11-03): this retry loop
+        # judged the underlying quote with fresh()'s 5-second default
+        # while the book's decision-time standard is the configured
+        # trigger bound (SCANNER_TRIGGER_QUOTE_MAX_AGE, default 60s;
+        # fresh() itself carries the -30s skew tolerance). On
+        # 2026-11-02, 99.7% of 'Fresh underlying quote required' waits
+        # were quotes aged 5-60s -- fresh by the book's own standard.
+        # Same constant as the trigger gate, so the label now means
+        # the same thing at both layers. (Monday's read attributes
+        # zero selection deaths to this alone; it is friction and
+        # mislabeling, fixed for honest diagnostics.)
+        quote_bound=getattr(self.cfg,'scanner_trigger_quote_max_age',60)
         pending_rows={**self.db.prefix(c,'pending_options:'),**self.db.prefix(c,'pending_research_options:')}
         for key,pending in pending_rows.items():
             if pending.get('status')!='waiting':
@@ -579,7 +591,7 @@ class Scanner:
             reason=None
             if now>=pending['expires_at'] or not (evaluation_session_open(symbol,now) if research_only else session_open(symbol,now)):
                 reason='Option selection window ended without an eligible same-day contract and fresh quote' if research_only else 'Option selection window ended without an eligible same-day contract, fresh quote and available risk'
-            elif fresh(quote,now):
+            elif fresh(quote,now,quote_bound):
                 crossed=quote['bid']<=signal['invalidation'] if signal['side']=='long' else quote['ask']>=signal['invalidation']
                 if crossed:
                     reason='Underlying setup invalidated before an option could be selected'
@@ -589,7 +601,7 @@ class Scanner:
                 self.append_selection_diagnostic(c,key,pending,pending.get('last_selection'),now,
                     final=True,expiry_reason=reason)
                 if not research_only: engine.alert(c,symbol,{**alert_context(signal),'status':'options_skipped','reason':reason,'parent_signal':signal['id']},'pending-option-expired:'+signal['id'])
-            elif fresh(quote,now) and abs((quote['bid']+quote['ask'])/2-signal['signal_price'])<=signal.get('context',{}).get('atr14',float('inf'))*.5:
+            elif fresh(quote,now,quote_bound) and abs((quote['bid']+quote['ask'])/2-signal['signal_price'])<=signal.get('context',{}).get('atr14',float('inf'))*.5:
                 audit={'scan_started_at':scan_started_at,'underlying_checked_at':now}
                 if engine.options(c,signal,now,quiet=True,diagnostics=audit,**({'research_only':True} if research_only else {})):
                     pending.update(status='observed' if research_only else 'entered',updated_at=now)
@@ -599,7 +611,7 @@ class Scanner:
                 else:
                     self.save_option_diagnostic(c,key,pending,audit,now,quote)
             else:
-                reason='Fresh underlying quote required' if not fresh(quote,now) else 'Underlying moved beyond entry tolerance'
+                reason='Fresh underlying quote required' if not fresh(quote,now,quote_bound) else 'Underlying moved beyond entry tolerance'
                 self.save_option_diagnostic(c,key,pending,dict(version='0dte-selection-v2',at=now,
                     scan_started_at=scan_started_at,underlying_checked_at=now,
                     status='waiting',reason=reason,rejections=[],checked_contracts=0),now,quote)
@@ -612,7 +624,10 @@ class Scanner:
             'checked_at':now,
             'quote':{k:quote.get(k) for k in ('ts','bid','ask','bid_size','ask_size','source','collection_version')} if quote else None,
             'age_seconds':now-quote['ts'] if quote and quote.get('ts') is not None else None,
-            'fresh':fresh(quote,now),
+            # Recorded under the same 60s decision-time standard the
+            # retry decision used (2026-11-03 alignment), so the
+            # funnel record agrees with the decision it describes.
+            'fresh':fresh(quote,now,getattr(self.cfg,'scanner_trigger_quote_max_age',60)),
             'basis':'Exact scanner retry quote at saved attempt time; not a later source lookup'}
         if not pending.get('research_only') and self.cfg.paper_trading:
             from .paper_risk import account
