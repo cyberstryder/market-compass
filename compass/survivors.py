@@ -599,6 +599,16 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
                     _guard = {'decision': 'send'}
                 if _guard.get('decision') != 'skip':
                     filled['live_send'] = True
+    # GEX context stamp (Build #2, 2026-11-02): evidence only — the
+    # stamp never feeds the fill counter, the tripwire, or any gate.
+    # MCL (S2) has no vendor GEX proxy, so its rows simply carry none.
+    try:
+        from . import tm_gex
+        _gex = tm_gex.gex_ctx(db, c, symbol, entry_booked, tick, now)
+        if _gex is not None:
+            filled['gex_ctx'] = _gex
+    except Exception:
+        pass
     db.put(c, pos_key_base + ':t1', filled)
     db.put(c, 'trade:' + trade_id, filled)
     db.append(c, 'paper_decision', 'survivors', symbol, now,

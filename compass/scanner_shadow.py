@@ -183,6 +183,18 @@ def _trigger_inputs(db, c, payload):
     return out
 
 
+def _tm_gex_stamps(db, c, underlying, now):
+    """TraderMatrix GEX measurement stamps for a shadow record
+    (tm_gex.shadow_stamps). Defensive wrapper: a stamp failure must
+    never cost the record — all-None is the honest fallback."""
+    try:
+        from . import tm_gex
+        return tm_gex.shadow_stamps(db, c, underlying, now)
+    except Exception:
+        return {"spy_flip_dist_pct": None, "name_pocket_kind": None,
+                "name_gex_bias": None}
+
+
 def new_record(db, c, key, payload, family, underlying, symbol, entry, now,
                alert_ts, flatten_at, alert_key=None, quote=None):
     """Build the shadow record for one non-seated scanner alert. `entry`
@@ -221,6 +233,13 @@ def new_record(db, c, key, payload, family, underlying, symbol, entry, now,
         # exists is gex/vex None, divergent False, exactly as in
         # zero_dte_paper._gex_vex_at_entry.
         **zp._gex_vex_at_entry(db, c, underlying or "SPY"),
+        # TraderMatrix GEX measurement stamps (incorporation plan §1,
+        # Build #2): SPY distance-to-flip plus the name's own gamma
+        # pocket kind / GEX bias when a fresh snapshot exists. Evidence
+        # fields only — the scorecard may split on them once cells
+        # reach the standing graduation math; nothing books or blocks
+        # on them. All three are None when their sources are absent.
+        **_tm_gex_stamps(db, c, underlying, now),
     }
     if rec["entry_quote"] and rec["entry_quote"].get("ask") is not None:
         rec["planned_max_loss"] = odte_book.planned_max_loss(

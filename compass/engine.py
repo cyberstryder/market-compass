@@ -200,6 +200,14 @@ class Engine:
             "last_quote_ts":q["ts"],"last_bar_checked":signal["signal_time"]-60,
             "risk_day":risk_day(now),"risk_policy":paper_risk.VERSION,
             "paper_portfolio":paper_risk.portfolio(s["asset"]),"flatten_at":plan["flatten_at"]}
+        if s["asset"]=="future":
+            # GEX context stamp (Build #2): evidence only, never a gate.
+            try:
+                from . import tm_gex
+                ctx=tm_gex.gex_ctx(self.db,c,symbol,price,s["tick"],now)
+                if ctx is not None: trade["gex_ctx"]=ctx
+            except Exception:
+                pass
         self.db.put(c,"position:"+symbol,trade)
         self.db.put(c,"trade:"+signal["id"],trade)
         risk["entries"]+=1
@@ -244,6 +252,14 @@ class Engine:
                 pnl=(price-p["entry"])*(1 if long else -1)*p["qty"]*p["multiplier"]-2*p["fee"]*p["qty"]
                 p.update(status="closed",exit=price,exited_at=now,exit_reason="session_flatten",
                          pnl=pnl,unrealized=pnl,mark=price)
+                if p.get("asset")=="future":
+                    # GEX context stamp at exit (Build #2): evidence only.
+                    try:
+                        from . import tm_gex
+                        ctx=tm_gex.gex_ctx(self.db,c,p["symbol"],price,p["tick"],now)
+                        if ctx is not None: p["gex_ctx_exit"]=ctx
+                    except Exception:
+                        pass
                 risk=paper_risk.account(self.db,c,now,p["asset"],persist=True)
                 risk["realized"]+=p["pnl"]
                 self.db.put(c,paper_risk.key(now,p["asset"]),risk)
@@ -364,6 +380,14 @@ class Engine:
             p["unrealized"]=(price-p["entry"])*(1 if long else -1)*p["qty"]*p["multiplier"]-2*p["fee"]*p["qty"]
             if reason:
                 p.update(status="closed",exit=price,exited_at=now,exit_reason=reason,pnl=p["unrealized"])
+                if p.get("asset")=="future":
+                    # GEX context stamp at exit (Build #2): evidence only.
+                    try:
+                        from . import tm_gex
+                        ctx=tm_gex.gex_ctx(self.db,c,p["symbol"],price,p["tick"],now)
+                        if ctx is not None: p["gex_ctx_exit"]=ctx
+                    except Exception:
+                        pass
                 risk=paper_risk.account(self.db,c,now,p["asset"],persist=True)
                 risk["realized"]+=p["pnl"]
                 self.db.put(c,paper_risk.key(now,p["asset"]),risk)
@@ -981,6 +1005,26 @@ class Engine:
             # logging import and causes UnboundLocalError later in tick().
             logging.getLogger('uvicorn.error').warning(f"Intel refresh failed: {e}")
 
+    def _refresh_tmgex_if_due(self,now):
+        """TraderMatrix GEX shadow-logging refresh (Build #2, 2026-11-02),
+        OUTSIDE any tick transaction, mirroring _refresh_intel_if_due:
+        attempt time is recorded first so a failing vendor retries on
+        the poll cadence, not every tick. Logging/context only — the
+        snapshots feed gex_ctx stamps and the digest line; nothing may
+        gate, rank, block, or alert on them."""
+        try:
+            with self.db.tx() as c:
+                last_attempt=self.db.get(c,"tmgex:last_attempt",0)
+                due=now-last_attempt>=240
+                if due: self.db.put(c,"tmgex:last_attempt",now)
+            if not due: return
+            from .tradermatrix_intel import _get_api_key
+            if not _get_api_key(): return
+            from . import tm_gex
+            tm_gex.refresh(self.db,now)
+        except Exception as e:
+            logging.getLogger('uvicorn.error').warning(f"TM GEX refresh failed: {e}")
+
     def tick(self,now=None):
         now=now or time.time()
         try:
@@ -992,6 +1036,7 @@ class Engine:
         with self.db.tx() as c:
             if not self.db.lease(c,"engine",self.owner,30): return
         self._refresh_intel_if_due(now)
+        self._refresh_tmgex_if_due(now)
         with self.db.tx() as c:
             self._hold(c)
             if self.cfg.paper_trading:

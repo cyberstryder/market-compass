@@ -136,7 +136,7 @@ _EXIT_WORD = {"stop": "stopped out", "target": "target hit", "flatten": "session
               "no-data": "no exit data"}
 
 
-def _futures(db, c, start):
+def _futures(db, c, start, now=None):
     opened, closed, open_now = [], [], []
     day_pnl = 0.0
     try:
@@ -212,7 +212,21 @@ def _futures(db, c, start):
         for t in still:
             lines.append("  %s · entry %s · stop %s · target %s" % (
                 head(t), _f(t.get("entry")), _f(t.get("stop")), _f(t.get("target"))))
+    gex = _gex_line(db, c, now)
+    if gex:
+        lines.append(gex)
     return _section("futures", "Futures (paper)", lines)
+
+
+def _gex_line(db, c, now=None):
+    """TraderMatrix GEX regime context line (Build #2): display only —
+    the flip is a regime boundary, not a level price is drawn toward.
+    None when no fresh snapshot exists."""
+    try:
+        from . import tm_gex
+        return tm_gex.digest_line(db, c, now)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------- flow pulse
@@ -338,7 +352,7 @@ def _spy_0dte(db, c, start, date):
 # ---------------------------------------------------------------- assemble
 
 
-def _survivors(db, c):
+def _survivors(db, c, now=None):
     """Claude gauntlet survivors: tripwire state, combined live P&L,
     fill counter / review flag (compass/survivors.py)."""
     lines = []
@@ -375,6 +389,9 @@ def _survivors(db, c):
                      % st.get("live_pending"))
     if st.get("review_due"):
         lines.append("REVIEW DUE: ≥50 combined live fills reached")
+    gex = _gex_line(db, c, now)
+    if gex:
+        lines.append(gex)
     return _section("survivors", "Claude survivors (live)", lines)
 
 
@@ -428,8 +445,8 @@ def assemble(db, c, now):
         "date": date,
         "sections": [
             _smoothers(db, c, start),
-            _futures(db, c, start),
-            _survivors(db, c),
+            _futures(db, c, start, now),
+            _survivors(db, c, now),
             _ice_shadow(db, c, start),
             _flow_pulse(db, c, start),
             _spy_0dte(db, c, start, date),
