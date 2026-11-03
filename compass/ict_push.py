@@ -19,6 +19,61 @@ outbox = ict_push_outbox
 MAX_ATTEMPTS = 10
 WEBHOOK_RE = r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+'
 
+# Fill-verdict exit footers (2026-11-03, Josh: "make exit alerts show
+# confirmed vs unconfirmed"). A live SURVIVOR exit reads the trade's
+# broker-verified fill verdicts (compass/fill_confirmation.py) at queue
+# time and stamps the outcome as payload['fill_state']; the formatter
+# swaps the generic LIVE footer for the matching rendering below.
+# Verdicts are recorded from broker verification after the fact, so at
+# alert time the exit leg's verdict normally does not exist yet —
+# 'pending' is the expected common state and reads as "not yet
+# verified", never as an alarm. The rejected / no-order states render
+# only when a verdict affirmatively says so. Paper payloads and
+# non-survivor payloads never carry 'fill_state' and render exactly
+# as before.
+FILL_FOOTERS = {
+    'confirmed': '🔴 **LIVE** — closed via TradersPost · fill confirmed at broker',
+    'pending': '🔴 **LIVE** — closed via TradersPost · fill not yet verified',
+    'entry_rejected': '🔴 **LIVE** — entry rejected at broker · NOT FILLED',
+    'entry_no_order': '🔴 **LIVE** — no broker order for entry · NOT FILLED',
+    'exit_rejected': '🔴 **LIVE** — exit rejected at broker · close UNCONFIRMED',
+    'exit_no_order': '🔴 **LIVE** — no broker order for exit · close UNCONFIRMED',
+}
+
+
+def _fill_state(db, c, trade):
+    """Queue-time fill-verdict state for a live survivor exit.
+
+    Returns one of the FILL_FOOTERS keys, or None when the trade is
+    not a live survivor exit (the caller then leaves the payload
+    untouched and the alert renders exactly as before). Consumes
+    verdicts only — never records or alters them; any read error
+    also returns None so an alert is never lost over a label."""
+    if not trade.get('traderspost_sent'):
+        return None
+    if trade.get('source') != 'survivors':
+        return None
+    try:
+        from . import fill_confirmation
+        verdicts = fill_confirmation.get_verdicts(db, c, trade.get('id'))
+        proj = fill_confirmation.derive_live(trade, verdicts)
+    except Exception:
+        return None
+    status = proj.get('live_status')
+    if status == 'confirmed_closed':
+        return 'confirmed'
+    if status == 'not_filled':
+        return ('entry_no_order'
+                if proj.get('fill_entry_status') == 'no_order'
+                else 'entry_rejected')
+    if status == 'exit_unconfirmed':
+        return ('exit_no_order'
+                if proj.get('fill_exit_status') == 'no_order'
+                else 'exit_rejected')
+    # 'pending' / 'pending_exit' (and any defensive remainder): sent,
+    # but no complete verdict recorded yet.
+    return 'pending'
+
 
 def maybe_queue(db, c, cfg, trade):
     """Queue a Discord alert for a newly opened ICT trade.
@@ -118,7 +173,9 @@ def maybe_queue_exit(db, c, cfg, trade):
 
     The payload's 'live' flag comes from the position's recorded
     traderspost_sent, so a live position's exit is labeled live.
-    
+    Live survivor exits additionally carry 'fill_state' — the
+    fill-verdict rendering state read at queue time (see _fill_state).
+
     Returns the outbox row id, or None if push is disabled.
     """
     if not bool(getattr(cfg, 'ict_push_enabled', False)):
@@ -165,6 +222,12 @@ def maybe_queue_exit(db, c, cfg, trade):
         # TradersPost close-send gates read. Absent/False = paper.
         'live': bool(trade.get('traderspost_sent')),
     }
+    # Fill-verdict label (2026-11-03): live survivor exits only;
+    # stamped from the verdicts recorded at queue time. Absent for
+    # paper and non-survivor exits, which render exactly as before.
+    fill_state = _fill_state(db, c, trade)
+    if fill_state:
+        payload['fill_state'] = fill_state
     if getattr(cfg, 'push_outbox_unified', False):
         c.execute(db.insert(push_outbox).values(
             id=row_id, channel='ict', status='pending', created=time.time(),
@@ -181,6 +244,12 @@ def format_exit_message(payload):
     """Discord-safe alert for an ICT exit (paper or live)."""
     footer = ('🔴 **LIVE** — closed via TradersPost'
               if payload.get('live') else '_Paper trade — watch only_')
+    # Fill-verdict label (2026-11-03): a live survivor exit queued
+    # with a fill_state renders its verdict footer instead of the
+    # generic LIVE one. Rows queued before this change carry no
+    # fill_state and keep the generic footer.
+    if payload.get('live') and payload.get('fill_state') in FILL_FOOTERS:
+        footer = FILL_FOOTERS[payload['fill_state']]
     lines = [
         '%s **ICT %s** %s %s — %s' % (
             payload.get('emoji', '📊'),
