@@ -151,6 +151,17 @@ swing_checkpoints=Table('swing_flow_checkpoints_v1',meta,
     Column('raw_return_pct',Float),Column('directional_return_pct',Float),Column('checked_at',Float))
 Index('swing_trial_checkpoints_due',swing_checkpoints.c.status,swing_checkpoints.c.due_at)
 
+# C2 weekly-momentum forward scorer episodes (compass/swings_c2.py).
+# Declared here, not in the owning module: Store init runs create_all
+# before app.py lazily imports swings_c2, so a module-local declaration
+# never registers in time and the table is missing in production
+# (bit 2026-11-03: relation "swing_c2_episodes" does not exist).
+swing_c2_episodes=Table('swing_c2_episodes',meta,
+    Column('id',String(64),primary_key=True),Column('underlying',String(100),nullable=False),
+    Column('status',String(24),nullable=False),Column('created',Float,nullable=False),
+    Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
+Index('swing_c2_active',swing_c2_episodes.c.status,swing_c2_episodes.c.created)
+
 spy_checks=Table('spy_plan_checks_v1',meta,
     Column('id',String(64),primary_key=True),Column('version',String(50),nullable=False),
     Column('source_key',String(150),nullable=False),Column('day',String(10),nullable=False),

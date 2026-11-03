@@ -63,10 +63,11 @@ import time
 import uuid
 from datetime import date as _date, timedelta
 
-from sqlalchemy import Column, Float, Index, JSON, String, Table, select, update
+from sqlalchemy import select, update
 
 from .market import day, number
-from .store import events, identity, meta
+from .store import events, identity
+from .store import swing_c2_episodes as episodes
 from .swing_signals import sessions_between
 
 VERSION = 'swings-c2-v1'
@@ -79,14 +80,8 @@ RANK_SKIP = 5
 MIN_HISTORY = 70    # sessions of closes required for eligibility
 SERIES_SESSIONS = 200
 
-episodes = Table('swing_c2_episodes', meta,
-    Column('id', String(64), primary_key=True),
-    Column('underlying', String(100), nullable=False),
-    Column('status', String(24), nullable=False),
-    Column('created', Float, nullable=False),
-    Column('updated', Float, nullable=False),
-    Column('payload', JSON, nullable=False))
-Index('swing_c2_active', episodes.c.status, episodes.c.created)
+# The episodes table is declared in .store (swing_c2_episodes) so Store
+# init's create_all creates it before this module is lazily imported.
 
 
 # ---------------------------------------------------------------------------

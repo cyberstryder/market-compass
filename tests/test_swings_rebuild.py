@@ -311,3 +311,29 @@ def test_c2_entry_data_gap_still_completes_underlying(db):
         counts = db.get(c, 'swings_c2:state', {})['counts']
         assert counts['created'] == 2 and counts['opened'] == 0
         assert counts['data_gap'] == 2 and counts['closed'] == 0
+
+
+def test_c2_episodes_table_created_without_module_import(tmp_path):
+    """Production import order (regression, 2026-11-03): Store.initialize()
+    runs meta.create_all at engine boot, BEFORE app.py lazily imports
+    compass.swings_c2 for the engine-role spawn. When the episodes table
+    was declared in swings_c2 itself it never registered in time and
+    production failed with: relation "swing_c2_episodes" does not exist.
+    A fresh interpreter that never imports swings_c2 (or compass.app)
+    must still get the table from compass.store alone."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    code = (
+        "from compass.store import Store\n"
+        "from sqlalchemy import inspect\n"
+        f"s = Store('sqlite:///{tmp_path}/fresh.db')\n"
+        "s.initialize()\n"
+        "names = inspect(s.engine).get_table_names()\n"
+        "assert 'swing_c2_episodes' in names, names\n"
+        "print('OK')\n"
+    )
+    r = subprocess.run([sys.executable, '-c', code], capture_output=True,
+                       text=True, cwd=root)
+    assert r.returncode == 0 and 'OK' in r.stdout, r.stderr[-2000:]
