@@ -552,6 +552,55 @@ def _swings(db, c, now):
 # ---------------------------------------------------------------- 0dte
 
 
+def _gex_vex_split(paper):
+    """Frozen GEX/VEX divergence split (Josh's 2026-10-07 heuristic:
+    "If GEX and VEX diverge (opposite signs, VEX >= 5k), expect a
+    rejection point"). Population: closed, non-data_gap trade rows
+    carrying the entry stamp (gex/vex/gex_vex_divergent, spread by
+    zero_dte_paper._gex_vex_at_entry at booking). Rows without the
+    stamp carry no divergence data and sit in neither arm; data-gap
+    rows flew blind and are excluded from both arms (house rule).
+    avgR is the mean of per-trade pnl / premium-at-risk, premium at
+    risk = entry x 100 x qty (the run-3 definition). Read-only: this
+    changes no other aggregation in the block — in particular the
+    headline scorecard's post-2026-10-21 evidence epoch does NOT apply
+    here, because the banked divergence sample IS the pre-evidence
+    cohort (Oct 19-20 scanner + SPY plan trades)."""
+    arms = {"divergent": [], "non_divergent": []}
+    for t in paper.values():
+        if not isinstance(t, dict) or "gex_vex_divergent" not in t:
+            continue
+        if not (t.get("status") == "closed" or _num(t.get("exited_at"))):
+            continue
+        if t.get("data_gap"):
+            continue
+        pnl = _num(t.get("pnl"))
+        entry = _num(t.get("entry"))
+        qty = _num(t.get("qty"))
+        r = None
+        if pnl is not None and entry and qty:
+            r = pnl / (entry * 100.0 * qty)
+        arm = arms["divergent" if t.get("gex_vex_divergent")
+                   else "non_divergent"]
+        arm.append((pnl, r))
+
+    def _arm(rows):
+        n = len(rows)
+        wins = sum(1 for pnl, _ in rows if pnl is not None and pnl > 0)
+        pnl = sum(p for p, _ in rows if p is not None)
+        rs = [r for _, r in rows if r is not None]
+        return {
+            "tracked": n,
+            "wins": wins,
+            "win_rate": round(100.0 * wins / n, 1) if n else None,
+            "pnl": round(pnl, 2),
+            "avg_r": round(sum(rs) / len(rs), 4) if rs else None,
+            "r_trades": len(rs),
+        }
+
+    return {k: _arm(v) for k, v in arms.items()}
+
+
 def _0dte(db, c, now):
     from .store import events
     p = events.c.payload
@@ -677,6 +726,10 @@ def _0dte(db, c, now):
     if pre_evidence_count:
         stats["pre_evidence"] = pre_evidence_count
         stats["pre_evidence_pnl"] = round(pre_evidence_pnl, 2)
+    # GEX/VEX divergence breakdown (frozen 2026-10-07 heuristic): makes
+    # the per-trade entry stamp reachable over HTTPS — the weekly check
+    # had the sample banked since 2026-10-26 but no read path to it.
+    stats["gex_vex_divergence"] = _gex_vex_split(paper)
     drill = [_drill("SPY morning plan (wall target)",
                     "Paper buys 1 contract at the ask on confirmation; exits at the wall-aware target, stop, or 2:55pm CT. The default since 2026-10-06.",
                     _stats(per_rule.get("wall", []))),

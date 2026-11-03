@@ -212,6 +212,15 @@ def new_record(db, c, key, payload, family, underlying, symbol, entry, now,
         "dte": dte, "dte_bucket": odte_book.dte_bucket(dte),
         "entry_quote": odte_book.quote_evidence(quote, now),
         "planned_max_loss": None,
+        # GEX/VEX entry stamp (frozen 2026-10-07 divergence heuristic):
+        # the same spread the seated booking path applies in
+        # zero_dte_paper, so shadow records carry the divergence data
+        # too and the sample keeps growing while nobody is seated.
+        # SPY records read exposure:SPY (SPX is never booked). Stamp
+        # only — no behavior change; the fallback when no exposure row
+        # exists is gex/vex None, divergent False, exactly as in
+        # zero_dte_paper._gex_vex_at_entry.
+        **zp._gex_vex_at_entry(db, c, underlying or "SPY"),
     }
     if rec["entry_quote"] and rec["entry_quote"].get("ask") is not None:
         rec["planned_max_loss"] = odte_book.planned_max_loss(
