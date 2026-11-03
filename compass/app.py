@@ -72,6 +72,7 @@ CRON_TOKEN_PATHS = {
     "/api/admin/events-export",
     "/api/admin/ice-shadow-export",
     "/api/admin/survivor-fill-verdict",
+    "/api/admin/daily-backfill",
 }
 # Kept for callers/tests that import the old name.
 CRON_TOKEN_ENDPOINTS = {(m, p) for p in CRON_TOKEN_PATHS for m in ("GET", "POST")}
@@ -338,7 +339,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/events-export","/api/admin/ice-shadow-export","/api/admin/survivor-fill-verdict","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/events-export","/api/admin/ice-shadow-export","/api/admin/survivor-fill-verdict","/api/admin/daily-backfill","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -1131,6 +1132,103 @@ a{color:#888}</style></head><body>
         except Exception:
             logging.getLogger('uvicorn.error').exception(
                 'survivor-fill-verdict write failed')
+            return JSONResponse(
+                {'ok': False, 'error': 'Write failed. Check server logs.'},
+                status_code=500)
+
+    @app.post('/api/admin/daily-backfill')
+    @app.get('/api/admin/daily-backfill')
+    async def daily_backfill(request: Request):
+        """Fill-only daily-bar history backfill (2026-11-03).
+
+        Cron-token gated (CRON_TOKEN_PATHS). POST one watchlist
+        symbol's derived daily bars {symbol, factor, bars: [{date, o,
+        h, l, c, v}]}: compass.daily_backfill.fill_bars inserts ONLY
+        the sessions the archive lacks entirely — a session holding
+        any collector 'daily' event is skipped untouched, completed
+        XNYS sessions only, every bar held to the recovery's own
+        valid_daily standard. One transaction per symbol; the call is
+        idempotent (a re-run inserts nothing) and appends one
+        'daily_backfill' summary event. GET ?symbol= reads the
+        symbol's recorded fill summaries plus its current stored
+        daily-session count over the census window."""
+        import time as _time
+        from datetime import date as _date, timedelta as _timedelta
+        from . import daily_backfill as dfb
+        from .market import day as _day
+        from .store import identity as _identity
+        from .swing_signals import sessions_between as _sessions_between
+        from .swings_c2 import daily_series as _daily_series
+        now = _time.time()
+        if request.method == 'GET':
+            symbol = str(request.query_params.get('symbol') or '').upper()
+            if symbol not in cfg.watch_symbols:
+                return JSONResponse(
+                    {'ok': False, 'error': 'symbol must be on the watchlist'},
+                    status_code=400)
+            try:
+                with db.tx() as c:
+                    fills = [r['payload'] for r in db.recent(
+                        c, 'daily_backfill', symbol, limit=50)]
+                    today = _date.fromisoformat(_day(now))
+                    start = (today - _timedelta(days=1100)).isoformat()
+                    window = list(_sessions_between(start, today.isoformat()))
+                    stored = len(_daily_series(db, c, symbol, window))
+                return {'ok': True, 'symbol': symbol,
+                        'stored_sessions': stored,
+                        'fills': sorted(fills, key=lambda p: p.get('at', 0))}
+            except Exception:
+                logging.getLogger('uvicorn.error').exception(
+                    'daily-backfill read failed')
+                return JSONResponse(
+                    {'ok': False, 'error': 'Read failed. Check server logs.'},
+                    status_code=500)
+        try:
+            data = await request.json()
+        except Exception:
+            return JSONResponse({'ok': False, 'error': 'Body must be JSON'},
+                                status_code=400)
+        if not isinstance(data, dict):
+            return JSONResponse(
+                {'ok': False, 'error': 'Body must be a JSON object'},
+                status_code=400)
+        symbol = str(data.get('symbol') or '').upper()
+        if symbol not in cfg.watch_symbols:
+            return JSONResponse(
+                {'ok': False, 'error': 'symbol must be on the watchlist'},
+                status_code=400)
+        bars = data.get('bars')
+        if not isinstance(bars, list) or not bars:
+            return JSONResponse(
+                {'ok': False, 'error': 'bars must be a non-empty list'},
+                status_code=400)
+        factor = data.get('factor')
+        if factor is not None and not isinstance(factor, (int, float)):
+            return JSONResponse(
+                {'ok': False, 'error': 'factor must be a number'},
+                status_code=400)
+        try:
+            with db.tx() as c:
+                result = dfb.fill_bars(db, c, symbol, bars, now,
+                                       factor=factor)
+                summary = {'event': 'fill', 'at': now,
+                           'inserted': len(result['inserted']),
+                           'skipped_existing': len(result['skipped_existing']),
+                           'refused': len(result['refused']),
+                           'factor': factor,
+                           'first_inserted': result['inserted'][0] if result['inserted'] else None,
+                           'last_inserted': result['inserted'][-1] if result['inserted'] else None}
+                db.append(c, 'daily_backfill', dfb.VERSION, symbol, now,
+                          summary,
+                          key=_identity('daily_backfill', symbol, now))
+            return {'ok': True, 'symbol': symbol, **summary,
+                    'refused_detail': result['refused'][:20]}
+        except ValueError as e:
+            return JSONResponse({'ok': False, 'error': str(e)},
+                                status_code=400)
+        except Exception:
+            logging.getLogger('uvicorn.error').exception(
+                'daily-backfill write failed')
             return JSONResponse(
                 {'ok': False, 'error': 'Write failed. Check server logs.'},
                 status_code=500)
