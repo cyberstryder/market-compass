@@ -135,6 +135,43 @@ verdict (b)).
   something if trailer-leg creation is also restored in
   `ict_paper` — the Oct 18 decision Josh would be reversing.
 
+## Gap Fade (futures) — deleted 2026-11-02
+
+Deleted on 2026-11-02 (Josh's decision: delete, not quarantine),
+following the Desk Task 010 verification on 2026-10-31.
+
+- Module: `compass/gap_fade.py` (243 lines)
+- Test: none dedicated (no test imported the module).
+- Config flags: `gap_fade_enabled` (`GAP_FADE_ENABLED`, default
+  false), `gap_fade_min_pct` (`GAP_FADE_MIN_PCT`), `gap_fade_max_pct`
+  (`GAP_FADE_MAX_PCT`), `gap_fade_target_pct` (`GAP_FADE_TARGET_PCT`).
+- Wiring removed: config fields above; the engine scan block (lazy
+  import + `ict_summaries['gap_fade']`, itself behind
+  `gap_fade_enabled` and the VIX `_should_run` gate); the `'gap_fade'`
+  name in `vix_regime.should_run_detector`'s fade set.
+- Why dead: Task 010 confirmed four defects in the module and could
+  not reproduce its docstring claim (67.8% win rate on MES/MNQ across
+  2,967 trades — never cite it). The detector was never registered in
+  `ict_paper.STRATEGY_TAGS`, so `ict_paper.submit` always declined it:
+  it never booked a trade. Dispatch was additionally gated off by the
+  false-default config flag. Production evidence at deletion: the
+  events export holds 0 `gap_fade_signal` events, all time.
+- Test adjustments: `tests/test_vix_collector.py` —
+  `test_engine_dispatch_calls_vix_gate` dropped `gap_fade` from the
+  `_should_run`-gated dispatch set, and
+  `test_regime_flow_end_to_end` now pins fade-classifier behavior with
+  `turtle_soup` instead of `gap_fade`.
+- Deliberately NOT touched: the MU *stock* scalp's `check_gap_fade`
+  / `mu_gap_fade` detector (`compass/mu_scalp.py`, `compass/mu_paper.py`,
+  dashboard labels, `tests/test_mu_scalp.py`) — a different, live
+  feature that only shares the words "gap fade".
+- No retained registry entries (contrast the 2026-10-25 retirees
+  below): gap_fade has no stored trades, no strategy tag, and no
+  classification consumers, so nothing describes history it made.
+- Restore: `git checkout 53f8b7d -- compass/gap_fade.py` and re-apply
+  the wiring from the deletion commit's diff (visible in this
+  commit's parent range on main).
+
 ## Test adjustments beyond the dedicated files
 
 Three enumeration-style tests listed the retired detectors and were
