@@ -442,15 +442,32 @@ def _closed_trade(i, pnl, sent_flag=True):
     return {'id': 'ict-survivor_s1-MNQ.c.0-%d-t1' % i,
             'detector': 'survivor_s1', 'strategy': 'survivor_s1_rvwap_fade',
             'symbol': 'MNQ.c.0', 'status': 'closed', 'pnl': pnl,
+            'side': 'long', 'qty': 1,
             'traderspost_sent': sent_flag}
+
+
+def _confirm_closed(db, c, trade, pnl):
+    """Broker-confirm both legs of a fixture trade at prices whose
+    confirmed P&L (long, MNQ multiplier 2, qty 1) equals pnl. Since the
+    2026-11-02 fill-confirmation fix, account_live counts ONLY
+    verdicted fills — these older tripwire/review tests keep their
+    original intent (the accounting math) on confirmed records."""
+    from compass import fill_confirmation as fc
+    entry = 10000.0
+    exit_ = entry + pnl / 2.0
+    fc.record_verdict(db, c, trade['id'], 'entry', 'filled', NOW,
+                      price=entry, at=NOW - 60, source='test')
+    fc.record_verdict(db, c, trade['id'], 'exit', 'filled', NOW,
+                      price=exit_, at=NOW, source='test')
 
 
 def test_tripwire_trips_at_minus_1750(db):
     with db.tx() as c:
         st = survivors.ensure_state(db, c, NOW)
         for i, pnl in enumerate([-1000.0, -800.0]):
-            db.put(c, 'trade:' + _closed_trade(i, pnl)['id'],
-                   _closed_trade(i, pnl))
+            t = _closed_trade(i, pnl)
+            db.put(c, 'trade:' + t['id'], t)
+            _confirm_closed(db, c, t, pnl)
         st = survivors.account_live(db, c, st, NOW)
         assert st['live'] is False and st['tripped_at'] == NOW
         assert st['combined_live_pnl'] == -1800.0
@@ -463,6 +480,7 @@ def test_tripwire_holds_above_threshold_and_ignores_unsent(db):
         t1 = _closed_trade(1, -1700.0)
         t2 = _closed_trade(2, -5000.0, sent_flag=False)
         db.put(c, 'trade:' + t1['id'], t1)
+        _confirm_closed(db, c, t1, -1700.0)
         db.put(c, 'trade:' + t2['id'], t2)
         st = survivors.account_live(db, c, st, NOW)
         assert st['live'] is True
@@ -475,6 +493,7 @@ def test_review_due_at_50_fills(db):
         for i in range(25):
             t = _closed_trade(i, 10.0)
             db.put(c, 'trade:' + t['id'], t)
+            _confirm_closed(db, c, t, 10.0)
         st = survivors.account_live(db, c, st, NOW)
         assert st['live_fills'] == 50
         assert st['review_due'] is True and st['review_due_at'] == NOW

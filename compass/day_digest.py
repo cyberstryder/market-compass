@@ -162,14 +162,48 @@ def _futures(db, c, start):
         setup = ICT_SETUP_NAMES.get(t.get("strategy") or "", t.get("strategy") or "")
         return "%s %s ×%g — %s" % (_future_name(t.get("symbol")), direction, qty, setup)
 
+    def live_note(t):
+        """Fill-confirmation truth for survivor rows (2026-11-02): the
+        modeled paper numbers above are the paper record; this note is
+        the ONLY live claim the digest makes about the trade, and it
+        comes from broker verdicts, never from the send flag."""
+        if not str(t.get("detector") or "").startswith("survivor_"):
+            return ""
+        try:
+            from . import fill_confirmation as _fc
+            proj = _fc.derive_live(t, _fc.get_verdicts(db, c, t.get("id")))
+        except Exception:
+            return ""
+        status = proj.get("live_status")
+        if status == "confirmed_closed":
+            return " · LIVE confirmed %s (broker %s → %s)" % (
+                _money(proj.get("live_confirmed_pnl")),
+                _f(proj.get("fill_entry_price")),
+                _f(proj.get("fill_exit_price")))
+        if status == "confirmed_open":
+            return " · LIVE confirmed open (broker fill %s)" % _f(
+                proj.get("fill_entry_price"))
+        if status == "not_filled":
+            word = {"rejected": "rejected at broker",
+                    "no_order": "no broker order"}.get(
+                        proj.get("fill_entry_status"), "not filled")
+            return " · live send NOT FILLED — %s (not a live trade)" % word
+        if status in ("pending", "pending_exit"):
+            return " · live fill UNCONFIRMED (not counted as a fill)"
+        if status == "exit_unconfirmed":
+            return " · live exit UNCONFIRMED at broker (not counted)"
+        return ""
+
     lines = []
     for t in sorted(opened, key=lambda x: x.get("entered_at") or 0):
-        lines.append("%s · entry %s · stop %s · target %s" % (
-            head(t), _f(t.get("entry")), _f(t.get("stop")), _f(t.get("target"))))
+        lines.append("%s · entry %s · stop %s · target %s%s" % (
+            head(t), _f(t.get("entry")), _f(t.get("stop")), _f(t.get("target")),
+            live_note(t)))
     for t in sorted(closed, key=lambda x: x.get("exited_at") or 0):
         reason = _EXIT_WORD.get(str(t.get("exit_reason") or ""), str(t.get("exit_reason") or "closed"))
-        lines.append("%s · %s → %s · %s (%s)" % (
-            head(t), _f(t.get("entry")), _f(t.get("exit")), _money(t.get("pnl")), reason))
+        lines.append("%s · %s → %s · %s (%s)%s" % (
+            head(t), _f(t.get("entry")), _f(t.get("exit")), _money(t.get("pnl")), reason,
+            live_note(t)))
     if closed:
         lines.append("Realized today: %s across %d closed" % (_money(day_pnl), len(closed)))
     still = [t for t in open_now if (_num(t.get("entered_at")) or 0) < start]
@@ -320,10 +354,25 @@ def _survivors(db, c):
     else:
         lines.append("PAPER-ONLY — tripwire tripped %s"
                      % (st.get("trip_reason") or ""))
-    lines.append("Combined live P&L: %s · live fills: %s · closed live "
-                 "trades: %s" % (_money(st.get("combined_live_pnl")),
-                                 st.get("live_fills"),
-                                 st.get("live_trades_closed")))
+    # Fill confirmation (2026-11-02): these counters count ONLY
+    # broker-confirmed fills (compass/fill_confirmation.py) — a
+    # TradersPost webhook acceptance alone no longer prints as a live
+    # trade here. (Regression case: the 2026-11-02 digest showed
+    # "live fills: 4 · closed: 2 · +$223" from a rejected S3 send and
+    # S4's modeled prices; the confirmed record was 1 trade, +$222.)
+    lines.append("Combined live P&L (broker-confirmed): %s · live fills: "
+                 "%s · closed live trades: %s"
+                 % (_money(st.get("combined_live_pnl")),
+                    st.get("live_fills"),
+                    st.get("live_trades_closed")))
+    if st.get("live_not_filled"):
+        lines.append("Live sends NOT filled at the broker: %s "
+                     "(excluded above — see trade rows)"
+                     % st.get("live_not_filled"))
+    if st.get("live_pending"):
+        lines.append("Live sends awaiting broker confirmation: %s "
+                     "(counted as neither fills nor P&L)"
+                     % st.get("live_pending"))
     if st.get("review_due"):
         lines.append("REVIEW DUE: ≥50 combined live fills reached")
     return _section("survivors", "Claude survivors (live)", lines)

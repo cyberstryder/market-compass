@@ -70,6 +70,7 @@ CRON_TOKEN_PATHS = {
     "/api/admin/db-maintenance",
     "/api/admin/db-maintenance-log",
     "/api/admin/events-export",
+    "/api/admin/survivor-fill-verdict",
 }
 # Kept for callers/tests that import the old name.
 CRON_TOKEN_ENDPOINTS = {(m, p) for p in CRON_TOKEN_PATHS for m in ("GET", "POST")}
@@ -333,7 +334,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/events-export","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/events-export","/api/admin/survivor-fill-verdict","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -977,6 +978,117 @@ a{color:#888}</style></head><body>
         except Exception:
             logging.getLogger('uvicorn.error').exception('events-export failed')
             return {'ok': False, 'error': 'Events export failed. Check server logs.'}
+
+    @app.post('/api/admin/survivor-fill-verdict')
+    @app.get('/api/admin/survivor-fill-verdict')
+    async def survivor_fill_verdict(request: Request):
+        """Broker fill verdicts for live survivor trades (2026-11-02).
+
+        Cron-token gated (CRON_TOKEN_PATHS). A TradersPost webhook
+        acceptance is NOT a fill — fills and rejections are only visible
+        at the executor (TradersPost UI → signal trade detail; no
+        self-serve status API exists). This endpoint is how a
+        broker-verified outcome enters the book: POST one leg's verdict
+        {trade_id, leg: entry|exit, verdict: filled|rejected|no_order,
+        price + at (required for filled), reason, source, recorded_by,
+        force?}. First verdict wins unless force=true. The exit leg's
+        verdict records the LEG's fill truth (the position closed at
+        the broker at that price — by bracket fill or exit signal), not
+        the exit signal's acceptance. GET ?trade_id= reads a trade's
+        verdicts + live projection; GET without one lists every sent
+        survivor trade's confirmation status (the pending worklist).
+        Recording a verdict immediately re-runs the survivors
+        accounting, so counters/tripwire/digest read the confirmed
+        truth without waiting for the next engine scan."""
+        import time as _time
+        from . import fill_confirmation as fc
+        from . import survivors as _survivors
+        now = _time.time()
+        if request.method == 'GET':
+            trade_id = request.query_params.get('trade_id')
+            try:
+                with db.tx() as c:
+                    if trade_id:
+                        trade = db.get(c, 'trade:' + trade_id)
+                        if not isinstance(trade, dict):
+                            return JSONResponse(
+                                {'ok': False, 'error': 'unknown trade'},
+                                status_code=404)
+                        verdicts = fc.get_verdicts(db, c, trade_id)
+                        return {'ok': True, 'trade_id': trade_id,
+                                'verdicts': verdicts,
+                                'live': fc.derive_live(trade, verdicts)}
+                    rows = []
+                    trades = db.prefix(c, 'trade:ict-survivor_')
+                    for t in (trades or {}).values():
+                        if not isinstance(t, dict) or not t.get('id'):
+                            continue
+                        verdicts = fc.get_verdicts(db, c, t['id'])
+                        if not t.get('traderspost_sent') and not verdicts:
+                            continue
+                        proj = fc.derive_live(t, verdicts)
+                        rows.append({'trade_id': t['id'],
+                                     'detector': t.get('detector'),
+                                     'symbol': t.get('symbol'),
+                                     'status': t.get('status'),
+                                     'live_status': proj['live_status'],
+                                     'live_confirmed_pnl':
+                                         proj['live_confirmed_pnl']})
+                    return {'ok': True, 'trades': rows}
+            except Exception:
+                logging.getLogger('uvicorn.error').exception(
+                    'survivor-fill-verdict read failed')
+                return JSONResponse(
+                    {'ok': False, 'error': 'Read failed. Check server logs.'},
+                    status_code=500)
+        try:
+            data = await request.json()
+        except Exception:
+            return JSONResponse({'ok': False, 'error': 'Body must be JSON'},
+                                status_code=400)
+        if not isinstance(data, dict):
+            return JSONResponse(
+                {'ok': False, 'error': 'Body must be a JSON object'},
+                status_code=400)
+        trade_id = data.get('trade_id')
+        try:
+            with db.tx() as c:
+                trade = db.get(c, 'trade:' + str(trade_id))
+                if not isinstance(trade, dict) or \
+                        not str(trade.get('detector') or '').startswith(
+                            'survivor_'):
+                    return JSONResponse(
+                        {'ok': False,
+                         'error': 'trade_id must name a survivor trade'},
+                        status_code=400)
+                row, created = fc.record_verdict(
+                    db, c, str(trade_id), data.get('leg'),
+                    data.get('verdict'), now,
+                    price=data.get('price'), at=data.get('at'),
+                    reason=data.get('reason'), source=data.get('source'),
+                    recorded_by=data.get('recorded_by'),
+                    force=bool(data.get('force')))
+                st = _survivors.ensure_state(db, c, now)
+                st = _survivors.account_live(db, c, st, now)
+                trade = db.get(c, 'trade:' + str(trade_id)) or trade
+                proj = fc.derive_live(
+                    trade, fc.get_verdicts(db, c, str(trade_id)))
+            return {'ok': True, 'created': created, 'verdict': row,
+                    'live_status': proj['live_status'],
+                    'live_confirmed_pnl': proj['live_confirmed_pnl'],
+                    'state': {k: st.get(k) for k in (
+                        'combined_live_pnl', 'live_fills',
+                        'live_trades_closed',
+                        'live_pending', 'live_not_filled', 'live')}}
+        except ValueError as e:
+            return JSONResponse({'ok': False, 'error': str(e)},
+                                status_code=400)
+        except Exception:
+            logging.getLogger('uvicorn.error').exception(
+                'survivor-fill-verdict write failed')
+            return JSONResponse(
+                {'ok': False, 'error': 'Write failed. Check server logs.'},
+                status_code=500)
 
     @app.get('/api/admin/archive-coverage')
     def get_archive_coverage():

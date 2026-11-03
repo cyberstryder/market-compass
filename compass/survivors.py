@@ -329,33 +329,62 @@ def ensure_state(db, c, now):
 
 
 def account_live(db, c, st, now):
-    """Recompute combined live P&L / fills from the closed
-    TradersPost-taken survivor trades; apply the tripwire and the
-    50-fill review flag. Pure function of the trade records, so it is
-    idempotent across restarts. Returns the (possibly updated) state."""
+    """Recompute combined live P&L / fills from BROKER-CONFIRMED live
+    survivor trades only; apply the tripwire and the 50-fill review
+    flag. Pure function of the trade records + fill verdicts, so it is
+    idempotent across restarts. Returns the (possibly updated) state.
+
+    Fill confirmation (2026-11-02, compass/fill_confirmation.py): a
+    TradersPost webhook acceptance is NOT a fill. A trade counts only
+    when its legs carry broker-verified verdicts — confirmed_closed
+    contributes its CONFIRMED P&L (broker fill prices, gross) and 2
+    fills; confirmed_open / pending_exit / exit_unconfirmed contribute
+    the 1 confirmed entry fill and no P&L. Sent-but-unconfirmed and
+    rejected/no-order trades count as NEITHER and are tallied in
+    live_pending / live_not_filled for audit visibility. Before this
+    fix the counters read the modeled book: on 2026-11-02 that printed
+    a phantom S3 rejection (+$42) as live P&L and S4 at modeled prices
+    (+$181 vs the broker's +$222)."""
+    from . import fill_confirmation as fc
     pnl = 0.0
     fills = 0
     closed_sent = 0
+    pending = 0
+    not_filled = 0
     try:
         trades = db.prefix(c, 'trade:ict-survivor_')
     except Exception:
         trades = {}
     for t in trades.values():
-        if not isinstance(t, dict) or not t.get('traderspost_sent'):
+        if not isinstance(t, dict) or not t.get('id'):
             continue
-        if t.get('status') == 'closed':
+        verdicts = fc.get_verdicts(db, c, t['id'])
+        if not t.get('traderspost_sent') and not verdicts:
+            continue
+        proj = fc.derive_live(t, verdicts)
+        status = proj['live_status']
+        if status == 'confirmed_closed':
             closed_sent += 1
-            pnl += _num(t.get('pnl')) or 0.0
-            fills += 2          # entry fill + exit fill
-        elif t.get('status') == 'open':
-            fills += 1          # entry fill only, so far
+            pnl += proj['live_confirmed_pnl'] or 0.0
+            fills += 2          # confirmed entry fill + exit fill
+        elif status in ('confirmed_open', 'pending_exit',
+                        'exit_unconfirmed'):
+            fills += 1          # confirmed entry fill only, so far
+        elif status == 'not_filled':
+            not_filled += 1
+        elif status == 'pending':
+            pending += 1
     changed = False
     if st.get('combined_live_pnl') != round(pnl, 2) \
             or st.get('live_fills') != fills \
-            or st.get('live_trades_closed') != closed_sent:
+            or st.get('live_trades_closed') != closed_sent \
+            or st.get('live_pending') != pending \
+            or st.get('live_not_filled') != not_filled:
         st['combined_live_pnl'] = round(pnl, 2)
         st['live_fills'] = fills
         st['live_trades_closed'] = closed_sent
+        st['live_pending'] = pending
+        st['live_not_filled'] = not_filled
         changed = True
     if st.get('live') and pnl <= -TRIPWIRE_LOSS:
         st['live'] = False
@@ -850,6 +879,29 @@ def scan(db, c, cfg, now):
     if isinstance(last, dict) and now - (last.get('at') or 0) < SCAN_INTERVAL:
         return {'ran': False, 'reason': 'throttled'}
     st = ensure_state(db, c, now)
+    # Fill confirmation (2026-11-02): settle the book against broker
+    # verdicts BEFORE accounting reads it — one-time correction of the
+    # 2026-11-02 record, then the standing reconciliation pass
+    # (projections + overdue-pending escalation). Isolated like every
+    # other scan unit: a confirmation failure must never silence the
+    # detectors, and accounting below fails closed on its own (it
+    # derives from verdicts directly).
+    try:
+        from . import fill_confirmation as _fc
+        _fc.apply_history_correction_2026_11_02(db, c, st, now)
+        _rec = _fc.reconcile(db, c, now)
+        if _rec.get('overdue_legs'):
+            try:
+                db.health('survivors_fill', 'degraded',
+                          '%d live send leg(s) unconfirmed past the '
+                          'confirmation window: %s'
+                          % (len(_rec['overdue_legs']),
+                             ', '.join('%s/%s' % (o['trade'], o['leg'])
+                                       for o in _rec['overdue_legs'])))
+            except Exception:
+                pass
+    except Exception:
+        log.exception('survivors fill reconciliation failed')
     st = account_live(db, c, st, now)
     summary = {'ran': True, 'at': now, 'live': bool(st.get('live')),
                'symbols': 0, 'signals': 0, 'submitted': 0, 'sent': 0,

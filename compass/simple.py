@@ -299,6 +299,25 @@ def _futures(db, c, now):
         symbol = t.get("symbol") or ""
         if not symbol_allowed(detector, symbol):
             continue
+        # Fill confirmation (2026-11-02): a survivor trade appears in
+        # this live view ONLY on broker-confirmed fills, and confirmed
+        # closes report the CONFIRMED P&L (broker fill prices), not the
+        # modeled paper P&L. Sent-but-unconfirmed, pending-exit, and
+        # rejected/no-order sends are excluded — on 2026-11-02 this
+        # view showed the rejected S3 phantom (+$42 modeled) as a live
+        # trade and S4 at +$181 modeled vs the broker's +$222.
+        pnl_override = None
+        if detector.startswith("survivor_"):
+            try:
+                from . import fill_confirmation as _fc
+                _proj = _fc.derive_live(
+                    t, _fc.get_verdicts(db, c, t.get("id")))
+            except Exception:
+                _proj = {}
+            if _proj.get("live_status") == "confirmed_closed":
+                pnl_override = _num(_proj.get("live_confirmed_pnl"))
+            elif _proj.get("live_status") != "confirmed_open":
+                continue
         if t.get("status") == "closed" or _num(t.get("exited_at")):
             method = t.get("strategy") or "unknown"
             if t.get("data_gap"):
@@ -307,7 +326,8 @@ def _futures(db, c, now):
                 # wins, losses, and P&L; counted separately for transparency.
                 per_method_gaps[method].append(t)
                 continue
-            pnl = _num(t.get("pnl"))
+            pnl = pnl_override if pnl_override is not None \
+                else _num(t.get("pnl"))
             won = pnl is not None and pnl > 0
             per_method[method].append((won, pnl))
             # by_day tracks all detectors (2026-10-14: filter removed)
