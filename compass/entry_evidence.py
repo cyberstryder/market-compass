@@ -186,23 +186,27 @@ def _calendar(db, c, underlying, now):
             out["earnings_date"] = chosen.get("date")
             out["earnings_time"] = chosen.get("time")
     if isinstance(economic_rec, dict):
+        # Same eligibility + time convention as the gate itself
+        # (tradermatrix_intel.should_pause_for_news, repaired
+        # 2026-11-02): the vendor's 12-hour AM/PM strings parse via
+        # parse_event_time, and rows the vendor rates below high
+        # impact (event_opens_pause) never stamp — so the evidence
+        # agrees with the pause by construction.
+        from .tradermatrix_intel import event_opens_pause, parse_event_time
         for ev in economic_rec.get("high_impact") or []:
             if not isinstance(ev, dict) or ev.get("date") != day_str:
                 continue
+            if not event_opens_pause(ev):
+                continue
             out["high_impact_news_today"] = True
-            t = str(ev.get("time") or "")
-            # Same time convention as tradermatrix_intel.should_pause_for_news:
-            # bare "HH:MM" 24h strings only.
-            if ":" in t and "AM" not in t and "PM" not in t:
-                try:
-                    hh, mm = map(int, t.split(":")[:2])
-                    event_ts = datetime.fromtimestamp(now, CT).replace(
-                        hour=hh, minute=mm, second=0,
-                        microsecond=0).timestamp()
-                except (TypeError, ValueError):
-                    continue
-                if abs(now - event_ts) <= NEWS_WINDOW_SEC:
-                    out["news_window_now"] = True
+            parsed = parse_event_time(ev.get("time"))
+            if parsed is None:
+                continue
+            event_ts = datetime.fromtimestamp(now, CT).replace(
+                hour=parsed[0], minute=parsed[1], second=0,
+                microsecond=0).timestamp()
+            if abs(now - event_ts) <= NEWS_WINDOW_SEC:
+                out["news_window_now"] = True
     return out
 
 

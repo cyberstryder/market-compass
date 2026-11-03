@@ -18,6 +18,7 @@ See cron job: tradermatrix-web-scrape
 import json
 import logging
 import os
+import re
 import sys
 import urllib.request
 import urllib.parse
@@ -200,39 +201,84 @@ def get_market_health_summary(health_data):
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
 
-def is_news_window_now(economic_events, buffer_minutes=15):
+_EVENT_TIME_RE = re.compile(
+    r"^\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([Aa][Mm]|[Pp][Mm])?\s*$")
+
+
+def parse_event_time(value):
+    """Parse a stored economic-event time into (hour24, minute), or
+    None when the value carries no usable clock time.
+
+    The vendor sends 12-hour AM/PM strings ("8:30 AM", "10:16 AM",
+    "12:15 PM", "4:30 AM"); older/hand-entered rows may carry bare
+    24-hour "HH:MM". Edge cases: 12:xx AM is hour 0, 12:xx PM is
+    hour 12. Anything else — None, "All Day", BMO/AMC, ISO
+    timestamps — returns None: no clock time, no pause window.
+    """
+    if not isinstance(value, str):
+        return None
+    m = _EVENT_TIME_RE.match(value)
+    if not m:
+        return None
+    hour, minute = int(m.group(1)), int(m.group(2))
+    if minute > 59:
+        return None
+    suffix = m.group(4)
+    if suffix:
+        if not 1 <= hour <= 12:
+            return None
+        if suffix.lower() == "am":
+            hour = 0 if hour == 12 else hour
+        else:
+            hour = 12 if hour == 12 else hour + 12
+    elif hour > 23:
+        return None
+    return hour, minute
+
+
+def event_opens_pause(ev):
+    """Whether a filtered economic event may open a pause window.
+
+    The stored list is keyword/impact filtered (see
+    filter_high_impact_economic), so it also carries rows the vendor
+    explicitly rates below high impact — FOMC speaker rows ride in
+    on the "FOMC" title keyword with impact="low". The stored
+    impact field governs: an explicit non-high rating never pauses;
+    a high rating, or no rating at all (keyword-stored rows), does.
+    """
+    impact = ev.get("impact") or ev.get("importance")
+    if impact is None or (isinstance(impact, str) and not impact.strip()):
+        return True
+    return str(impact).strip().lower() in ("high", "3", "critical")
+
+
+def is_news_window_now(economic_events, buffer_minutes=15, now=None):
     """
     Check if we're currently in a high-impact news window.
     Returns (is_in_window, event) tuple.
-    
-    News window = event time +/- buffer_minutes.
-    Economic events are typically at 7:30 AM CT (8:30 ET) or 9:00 AM CT (10:00 ET).
+
+    News window = event time +/- buffer_minutes. Event times are
+    the vendor's 12-hour AM/PM strings (see parse_event_time), and
+    events the vendor rates below high impact never open a window
+    (see event_opens_pause). `now` is injectable for tests.
     """
-    now = datetime.now(CT)
+    if now is None:
+        now = datetime.now(CT)
     today_str = now.strftime("%Y-%m-%d")
     today_events = get_todays_economic_events(economic_events, today_str)
     high_impact = filter_high_impact_economic(today_events)
-    
+
     for ev in high_impact:
-        event_time = ev.get("time")
-        if not event_time:
+        if not event_opens_pause(ev):
             continue
-        # Parse time (format: "HH:MM" or "HH:MM AM/PM" or ISO)
-        try:
-            # Try HH:MM format
-            if ":" in event_time and ("AM" not in event_time and "PM" not in event_time):
-                hour, minute = map(int, event_time.split(":")[:2])
-                event_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            else:
-                # Try parsing as ISO or with AM/PM
-                # Skip if can't parse
-                continue
-            # Check if now is within buffer of event time
-            delta = abs((now - event_dt).total_seconds() / 60)
-            if delta <= buffer_minutes:
-                return True, ev
-        except Exception:
+        parsed = parse_event_time(ev.get("time"))
+        if parsed is None:
             continue
+        event_dt = now.replace(hour=parsed[0], minute=parsed[1],
+                               second=0, microsecond=0)
+        delta = abs((now - event_dt).total_seconds() / 60)
+        if delta <= buffer_minutes:
+            return True, ev
     return False, None
 
 def refresh_intel(db, c=None):
@@ -315,33 +361,41 @@ def get_earnings_for_symbol(db, c, symbol):
                 return ev
     return None
 
-def should_pause_for_news(db, c):
+def should_pause_for_news(db, c, now=None):
     """
     Check if engine should pause trading due to high-impact news.
     Returns (should_pause, event) tuple.
+
+    Reads today's stored intel:economic row (written hourly by
+    refresh_intel) and checks its events against the +/-15-minute
+    window around `now` (defaults to the real clock; injectable for
+    tests). Repaired 2026-11-02: the previous parser accepted only
+    bare 24-hour "HH:MM" strings and skipped every AM/PM row, while
+    the vendor stores only AM/PM strings — the comparison never
+    executed and the pause could never fire. Times now go through
+    parse_event_time and eligibility through event_opens_pause, so
+    events the vendor rates below high impact (the FOMC speaker
+    rows sharing the stored list) never pause.
     """
-    today_str = datetime.now(CT).strftime("%Y-%m-%d")
+    if now is None:
+        now = datetime.now(CT)
+    today_str = now.strftime("%Y-%m-%d")
     data = db.get(c, f"intel:economic:{today_str}")
     if not data:
         return False, None
-    high_impact = data.get("high_impact", [])
-    # Reconstruct events list for is_news_window_now
-    # (it expects full event dicts, but we stored filtered ones)
-    # For now, check if any high-impact event is today and within window
-    now = datetime.now(CT)
-    for ev in high_impact:
-        if ev.get("date") == today_str:
-            event_time = ev.get("time")
-            if event_time:
-                try:
-                    if ":" in event_time and "AM" not in event_time and "PM" not in event_time:
-                        hour, minute = map(int, event_time.split(":")[:2])
-                        event_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                        delta = abs((now - event_dt).total_seconds() / 60)
-                        if delta <= 15:  # 15-min buffer
-                            return True, ev
-                except Exception:
-                    continue
+    for ev in data.get("high_impact", []):
+        if not isinstance(ev, dict) or ev.get("date") != today_str:
+            continue
+        if not event_opens_pause(ev):
+            continue
+        parsed = parse_event_time(ev.get("time"))
+        if parsed is None:
+            continue
+        event_dt = now.replace(hour=parsed[0], minute=parsed[1],
+                               second=0, microsecond=0)
+        delta = abs((now - event_dt).total_seconds() / 60)
+        if delta <= 15:  # 15-min buffer
+            return True, ev
     return False, None
 
 def get_market_health_regime(db, c):

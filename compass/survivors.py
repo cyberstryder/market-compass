@@ -33,13 +33,21 @@ Live-vs-gauntlet construction differences (deliberate, itemized):
   same stop/target distances, tick-rounded (the gauntlet used float
   tick distances from the detector fill).
 - Bracket distances are tick-rounded per the build spec.
-- ICT gates that define OTHER detectors (news pause, regime filter,
-  min-stop, min-RR, cooldown, brake shadow) do NOT apply — the frozen
+- ICT gates that define OTHER detectors (regime filter, min-stop,
+  min-RR, cooldown, brake shadow) do NOT apply — the frozen
   configurations have none. Applied: session/flatten gates, symbol
   mapping fail-closed, duplicate/hedging live-execution guards (shared
   with ict_paper both ways), and the pre-send freshness guard (full
   evaluation for S2/S4; a documented no-op for S1/S3, which have no
   levels to be beyond).
+- News pause (added 2026-11-02 at Josh's direction — "fix and wire" —
+  a knowing mid-review spec change, disclosed in the 50-fill review):
+  ENTRIES are declined inside a high-impact economic-release window
+  via the same should_pause_for_news gate the ICT paper book uses,
+  with the same news_pause decline shape. Exits, stops, targets,
+  brackets and the 15:45 flatten never consult it. The gate's parser
+  was repaired the same day: the vendor's AM/PM event times had
+  never parsed, so the ICT pause this mirrors could never fire.
 - Signals are evaluated on every newly completed bar, but only bars
   whose close is within FRESH_SECONDS of now are traded; older catch-up
   bars after downtime advance the features and are counted as stale
@@ -494,6 +502,24 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
     sess = futures_session(now, symbol)
     if not sess.get('is_open'):
         return {'submitted': False, 'reason': 'market_closed'}
+    # News pause (2026-11-02, Josh: "fix and wire"): decline ENTRIES
+    # inside a high-impact economic-release window, mirroring the ICT
+    # paper gate — same repaired parser, same decline shape; scan()
+    # records the decline under reason 'news_pause'. ENTRIES ONLY:
+    # exits, stops, targets, brackets and the 15:45 flatten never
+    # pass through this path. Mid-review spec change at Josh's
+    # direction (Friday 2026-11-06 NFP protection), disclosed in the
+    # 50-fill review. Intel errors proceed without the filter,
+    # exactly as the ICT path does.
+    try:
+        from .tradermatrix_intel import should_pause_for_news
+        pause, event = should_pause_for_news(db, c)
+        if pause:
+            return {'submitted': False, 'reason': 'news_pause',
+                    'event': event.get('title') if event else
+                    'high-impact news'}
+    except Exception:
+        pass
     flat = sess['flatten_at']
     if now >= flat:
         return {'submitted': False, 'reason': 'past_flatten'}

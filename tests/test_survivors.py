@@ -546,3 +546,104 @@ def test_exits_tolerates_none_stop_and_flattens(db, cfg):
         pos = db.get(c, key)
     assert pos['status'] == 'closed'
     assert pos['exit_reason'] == 'session_flatten'
+
+
+# ---------------------------------------------------------------------
+# News pause wiring (2026-11-02, Josh: "fix and wire"): the repaired
+# should_pause_for_news gate declines survivor ENTRIES only, in the
+# ICT decline shape. Exits, stops and the 15:45 flatten never
+# consult it. The gate itself is pinned in test_news_pause.py; here
+# it is stubbed to control the window.
+# ---------------------------------------------------------------------
+@pytest.fixture
+def news_gate(monkeypatch):
+    state = {'pause': False, 'event': None}
+
+    def fake_should_pause(db, c):
+        return state['pause'], state['event']
+
+    monkeypatch.setattr(
+        'compass.tradermatrix_intel.should_pause_for_news',
+        fake_should_pause)
+    return state
+
+
+def test_submit_declined_inside_news_window(db, cfg, news_gate):
+    news_gate['pause'] = True
+    news_gate['event'] = {'title': 'Non-Farm Employment Change'}
+    with db.tx() as c:
+        r = survivors.submit_survivor(db, c, cfg, NOW, 'S2', 'MCL.v.0',
+                                      _sig('S2'))
+    assert r['submitted'] is False
+    assert r['reason'] == 'news_pause'
+    assert r['event'] == 'Non-Farm Employment Change'
+    # Nothing was booked: no position, and a later signal outside the
+    # window books cleanly (no phantom existing_position block).
+    with db.tx() as c:
+        assert db.get(c, 'position:ict:survivor_s2:MCL.v.0:t1') is None
+    news_gate['pause'] = False
+    with db.tx() as c:
+        r2 = survivors.submit_survivor(db, c, cfg, NOW, 'S2', 'MCL.v.0',
+                                       _sig('S2'))
+    assert r2['submitted']
+
+
+def test_submit_allowed_when_news_gate_clear(db, cfg, news_gate):
+    with db.tx() as c:
+        r = survivors.submit_survivor(db, c, cfg, NOW, 'S2', 'MCL.v.0',
+                                      _sig('S2'))
+    assert r['submitted']
+
+
+def test_submit_proceeds_when_intel_errors(db, cfg, monkeypatch):
+    def boom(db, c):
+        raise RuntimeError('intel down')
+
+    monkeypatch.setattr(
+        'compass.tradermatrix_intel.should_pause_for_news', boom)
+    with db.tx() as c:
+        r = survivors.submit_survivor(db, c, cfg, NOW, 'S2', 'MCL.v.0',
+                                      _sig('S2'))
+    assert r['submitted']
+
+
+def test_flatten_unaffected_inside_news_window(db, cfg, news_gate):
+    engine = Engine(db, cfg)
+    key = 'position:ict:survivor_s1:MNQ.c.0:t1'
+    with db.tx() as c:
+        db.put(c, key, _horizon_position(NOW - 1))
+        db.put(c, 'quote:MNQ.c.0', {'bid': 19999.75, 'ask': 20000.25,
+                                    'last': 20000.0, 'ts': NOW})
+    news_gate['pause'] = True
+    news_gate['event'] = {'title': 'Non-Farm Employment Change'}
+    with db.tx() as c:
+        engine.exits(c, NOW + 60)
+        pos = db.get(c, key)
+    assert pos['status'] == 'closed'
+    assert pos['exit_reason'] == 'session_flatten'
+
+
+def test_stop_exit_unaffected_inside_news_window(db, cfg, news_gate):
+    engine = Engine(db, cfg)
+    key = 'position:ict:survivor_s2:MCL.v.0:t1'
+    pos = {'id': 'ict-survivor_s2-MCL.v.0-1-t1',
+           'detector': 'survivor_s2',
+           'strategy': 'survivor_s2_asia_low_fade', 'symbol': 'MCL.v.0',
+           'asset': 'future', 'side': 'long', 'qty': 1, 'entry': 100.0,
+           'stop': 99.75, 'target': 100.5, 'tick': 0.01,
+           'multiplier': 1000, 'fee': 1.5, 'status': 'open',
+           'entered_at': NOW - 120, 'flatten_at': NOW + 3600,
+           'fill_version': FILL_VERSION, 'last_quote_ts': 0,
+           'last_bar_checked': 0, 'mark': 100.0, 'unrealized': -3.0}
+    with db.tx() as c:
+        db.put(c, key, pos)
+        db.put(c, 'quote:MCL.v.0', {'bid': 99.5, 'ask': 99.52,
+                                    'last': 99.51, 'ts': NOW,
+                                    'bid_size': 10, 'ask_size': 10})
+    news_gate['pause'] = True
+    news_gate['event'] = {'title': 'Non-Farm Employment Change'}
+    with db.tx() as c:
+        engine.exits(c, NOW)
+        pos = db.get(c, key)
+    assert pos['status'] == 'closed'
+    assert pos['exit_reason'] == 'stop'
