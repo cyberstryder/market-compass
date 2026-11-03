@@ -524,6 +524,133 @@ def refresh_tuesday_summary(db,week,rows,now):
                {'week':week,'updated_at':now,**tuesday_cell_summary(rows)})
 
 
+def cohort_exit_score(c,p,mon,wed,now):
+    """Monday-mark cohort x exit-horizon rule cell for one board pick
+    (frozen registration 2026-11-02, files/
+    smoothers-cohort-exit-registration-2026-11-02.md).
+
+    Two arms on the board's executable ruler (EOD chain-archive bid
+    out, x100, $1.32 fee), both from the same stored inputs so the
+    comparison is purely the exit rule:
+      BASELINE — every cohort exits at Wednesday's chain bid (the
+      standing flat Wednesday-close standard; numerically the Tuesday
+      cell's Monday arm for the same pick).
+      RULE — the cohort is assigned ONCE from the Monday mark (Monday
+      chain bid / entry ask, mark_cohort bands): shallow and middle
+      exit at Wednesday's bid exactly as baseline; deep (<0.70) exits
+      at Monday's chain bid — scored out at the mark itself.
+    Per-pick delta (RULE - BASELINE) is therefore identically 0 for
+    shallow/middle and (Mon bid - Wed bid) x 100 for deep; the weekly
+    summary checks that identity.
+
+    Like the Tuesday cell this is status-independent (the premium path
+    is in the archive whether or not the underlying target resolved).
+    Returns the cell dict, or None when Wednesday's snapshot is not
+    stored yet and is inside the 36 h retry grace. A price is never
+    fabricated: a missing contract / ask / bid records an explicit
+    'unavailable' outcome with its reason. A missing Monday mark never
+    blocks the baseline arm — the cohort is 'unknown', the rule arm
+    cannot be assigned (rule_net None), and the pick sits outside the
+    registration's primary population with its reason recorded."""
+    from .smoothers_scorecard import FEE_PER_CONTRACT
+    base={'monday':mon['date'],'wednesday':wed['date'],'scored_at':now}
+    contract=p.get('contract') or {}
+    if not contract.get('symbol'):
+        return {**base,'status':'unavailable','reason':'no_contract_recorded'}
+    if contract.get('multiplier')!=100:
+        return {**base,'status':'unavailable','reason':'unsupported_contract_multiplier'}
+    try:entry_ask=float((p.get('quote') or {}).get('ask'))
+    except (TypeError,ValueError):entry_ask=None
+    if entry_ask is None or entry_ask<=0:
+        return {**base,'status':'unavailable','reason':'entry_ask_missing'}
+    wed_row,why=_chain_contract(c,wed['date'],p['ticker'],contract['symbol'])
+    if wed_row is None:
+        if why=='chain_missing' and now<wed['close']+36*3600:return None
+        return {**base,'status':'unavailable','reason':'wednesday_'+why}
+    wed_bid=_chain_px(wed_row,'bid')
+    if wed_bid is None or wed_bid<0:
+        return {**base,'status':'unavailable','reason':'chain_bid_missing'}
+    mon_row,mon_why=_chain_contract(c,mon['date'],p['ticker'],contract['symbol'])
+    mon_bid=_chain_px(mon_row,'bid') if mon_row is not None else None
+    mark_ratio=round(mon_bid/entry_ask,4) if mon_bid is not None and mon_bid>=0 else None
+    cohort=mark_cohort(mark_ratio)
+    baseline_net=round((wed_bid-entry_ask)*100-FEE_PER_CONTRACT,2)
+    if cohort=='deep':
+        rule_net=round((mon_bid-entry_ask)*100-FEE_PER_CONTRACT,2)
+        rule_exit='monday_close'
+    elif cohort in ('shallow','middle'):
+        rule_net=baseline_net
+        rule_exit='wednesday_close'
+    else:
+        rule_net=None
+        rule_exit=None
+    return {**base,'status':'scored','entry_ask':entry_ask,
+            'monday_bid':mon_bid,'wednesday_bid':wed_bid,
+            'fee':FEE_PER_CONTRACT,
+            'monday_mark_ratio':mark_ratio,
+            'mark_reason':None if mark_ratio is not None else 'monday_'+(mon_why or 'chain_bid_missing'),
+            'cohort':cohort,'baseline_net':baseline_net,
+            'rule_net':rule_net,'rule_exit':rule_exit,
+            'delta_net':round(rule_net-baseline_net,2) if rule_net is not None else None}
+
+
+def score_cohort_exit(db,p,mon,wed,now):
+    """Persist one pick's cohort-exit cell (own transaction,
+    row-locked). No notice is queued: shadow scoring under the frozen
+    registration — stored on the pick and aggregated into the weekly
+    summary only. Returns True when a cell was recorded."""
+    with db.tx() as c:
+        current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
+        if current.get('cohort_exit'):return False
+        cell=cohort_exit_score(c,current,mon,wed,now)
+        if cell is None:return False
+        current['cohort_exit']=cell;save(db,c,current);p.update(current)
+    return True
+
+
+def cohort_exit_summary(rows):
+    """Aggregate a week's stored cohort-exit cells under the frozen
+    registration: population accounting, per-cohort and pooled means
+    for both arms, and the construction identity check (pooled delta
+    sum == deep delta sum; shallow/middle delta sums exactly 0 — only
+    the deep cohort's exit moves). The PRIMARY population is scored
+    cells with a known cohort; scored unknown-cohort picks are
+    accounted separately (count + baseline mean), never in a verdict
+    figure. Means are $/pick; sums are $ totals."""
+    cells=[p['cohort_exit'] for p in rows if p.get('cohort_exit')]
+    scored=[x for x in cells if x.get('status')=='scored']
+    primary=[x for x in scored if x.get('cohort') in ('shallow','middle','deep')]
+    unknown=[x for x in scored if x.get('cohort')=='unknown']
+    def agg(cs):
+        n=len(cs)
+        if not n:return {'n':0,'baseline_mean':None,'rule_mean':None,'delta_mean':None,
+                         'baseline_sum':None,'rule_sum':None,'delta_sum':None}
+        b=round(sum(x['baseline_net'] for x in cs),2)
+        r=round(sum(x['rule_net'] for x in cs),2)
+        d=round(sum(x['delta_net'] for x in cs),2)
+        return {'n':n,'baseline_mean':round(b/n,2),'rule_mean':round(r/n,2),
+                'delta_mean':round(d/n,2),'baseline_sum':b,'rule_sum':r,'delta_sum':d}
+    pooled=agg(primary)
+    cohorts={name:agg([x for x in primary if x['cohort']==name])
+             for name in ('shallow','middle','deep')}
+    identity_ok=(pooled['delta_sum'] is not None
+                 and cohorts['shallow']['delta_sum'] in (None,0)
+                 and cohorts['middle']['delta_sum'] in (None,0)
+                 and abs((pooled['delta_sum'] or 0)-(cohorts['deep']['delta_sum'] or 0))<=0.005)
+    return {'picks':len(rows),'scored':len(scored),
+            'unavailable':len(rows)-len(scored),
+            'primary':pooled,'cohorts':cohorts,
+            'unknown_cohort':{'n':len(unknown),
+                'baseline_mean':round(sum(x['baseline_net'] for x in unknown)/len(unknown),2) if unknown else None},
+            'identity_ok':identity_ok}
+
+
+def refresh_cohort_exit_summary(db,week,rows,now):
+    with db.tx() as c:
+        db.put(c,VERSION+':week:'+week+':cohort_exit',
+               {'week':week,'updated_at':now,**cohort_exit_summary(rows)})
+
+
 def monitor(db,data,now):
     monday=monday_for(now).isoformat()
     with db.tx() as c:
@@ -612,6 +739,25 @@ def monitor(db,data,now):
             with db.tx() as c:
                 fresh_rows=list(c.execute(select(weekly.c.payload).where(weekly.c.week==monday)).scalars())
             refresh_tuesday_summary(db,monday,fresh_rows,now)
+    # Cohort-exit rule cell (frozen registration 2026-11-02): once
+    # Wednesday's snapshot can be read, EVERY board pick is also scored
+    # under the Monday-mark cohort x exit-horizon rule — deep cohort
+    # out at Monday's chain bid vs the flat Wednesday-close baseline —
+    # and the weekly cohort-exit summary is refreshed. Storage only:
+    # no notice is queued and nothing about the board or the other
+    # cells changes.
+    if wed and sessions and now>wed['close']+300:
+        with db.tx() as c:
+            all_rows=list(c.execute(select(weekly.c.payload).where(weekly.c.week==monday)).scalars())
+        changed=False
+        for p in all_rows:
+            if not p.get('cohort_exit'):
+                try:changed=score_cohort_exit(db,p,sessions[0],wed,now) or changed
+                except Exception:logging.getLogger('uvicorn.error').exception('native_smoothers cohort exit scoring failed for %s',p.get('id'))
+        if changed or any(p.get('cohort_exit') for p in all_rows):
+            with db.tx() as c:
+                fresh_rows=list(c.execute(select(weekly.c.payload).where(weekly.c.week==monday)).scalars())
+            refresh_cohort_exit_summary(db,monday,fresh_rows,now)
     # Recover overdue closures after a restart even when the calendar week changed.
     overdue=[]
     with db.tx() as c:
@@ -622,6 +768,7 @@ def monitor(db,data,now):
             for p in c.execute(select(weekly.c.payload).where(weekly.c.week==open_week,weekly.c.status=='OPEN')).scalars().all():
                 overdue.append((closing,p))
     overdue_weeks=set()
+    cohort_weeks=set()
     for closing,p in overdue:
         # A pick that never got its Wednesday horizon scored while its
         # week was current (engine down Wed–Fri) is scored now, before
@@ -638,6 +785,13 @@ def monitor(db,data,now):
             try:
                 if score_tuesday_cell(db,p,closing[0],tue,wed,now):overdue_weeks.add(p['week'])
             except Exception:logging.getLogger('uvicorn.error').exception('native_smoothers tuesday cell scoring failed for %s',p.get('id'))
+        # Same recovery for the cohort-exit cell: any overdue pick
+        # that never got its cell while its week was current is scored
+        # now, before closure.
+        if wed and closing and not p.get('cohort_exit'):
+            try:
+                if score_cohort_exit(db,p,closing[0],wed,now):cohort_weeks.add(p['week'])
+            except Exception:logging.getLogger('uvicorn.error').exception('native_smoothers cohort exit scoring failed for %s',p.get('id'))
         # Capture at resolution time, never substitute an old hourly premium:
         # the same quote capture the target-touch path uses, so a LOSS or
         # UNRESOLVED week is measurable (or visibly unmeasurable) instead of
@@ -660,6 +814,10 @@ def monitor(db,data,now):
         with db.tx() as c:
             week_rows=list(c.execute(select(weekly.c.payload).where(weekly.c.week==cell_week)).scalars())
         refresh_tuesday_summary(db,cell_week,week_rows,now)
+    for cell_week in cohort_weeks:
+        with db.tx() as c:
+            week_rows=list(c.execute(select(weekly.c.payload).where(weekly.c.week==cell_week)).scalars())
+        refresh_cohort_exit_summary(db,cell_week,week_rows,now)
 
 
 def premium(db,data,now):
