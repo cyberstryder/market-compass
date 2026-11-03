@@ -210,12 +210,22 @@ def technical_candidates(f,arms,now,tick, research=False, orb_enabled=True):
     return result,arms
 
 
-def exposure_candidates(f,apex,now,tick):
+def exposure_candidates(f,apex,now,tick,diag=None):
+    # diag (observability only — F4 candidate census, 2026-11-03): when a
+    # dict is passed it records the input state — 'absent' (no input row),
+    # 'ineligible' (row present but a head gate rejects it: features not
+    # usable, vendor-stale flag, or outside its context/freshness window),
+    # 'present' (every head gate passed; a candidate then depends only on
+    # the level cross). No gate or threshold changes with diag attached.
+    if diag is not None:
+        diag['state']='ineligible' if apex else 'absent'
     if not apex or f.get('status')!='ready' or not 0<=now-f.get('asof',0)<=90 or not f.get('atr14') or apex.get('vendor_stale'):
         return []
     stamp=apex.get('source_ts')
     if not (context_check(apex,now)['eligible_for_context'] if apex.get('cache_policy') else confirmation(apex,now,600,600)['eligible_for_live_confirmation']):
         return []
+    if diag is not None:
+        diag['state']='present'
     b,p=f['bar'],f['previous_bar']
     result=[]
     for level in apex.get('levels',[]):
@@ -359,7 +369,8 @@ class Scanner:
         latest=db.prefix(c,'latestbar:')
         facts={key[17:]:value for key,value in db.prefix(c,'scanner_features:').items()}
         flow_summary=db.get(c,'matrix:unusual_activity',{})
-        flow=flow_summary.get('rows',[]) if flow_freshness(flow_summary,now)['eligible_for_live_confirmation'] else []
+        flow_check=flow_freshness(flow_summary,now) if flow_summary else None
+        flow=flow_summary.get('rows',[]) if flow_check and flow_check['eligible_for_live_confirmation'] else []
         apexes={key[5:]:value for key,value in db.prefix(c,'apex:').items()}
         concentrations={key[14:]:value for key,value in db.prefix(c,'matrix_levels:').items()}
         selected={item['raw_symbol'] for item in active_selection(db,c,cfg,now)}
@@ -407,6 +418,7 @@ class Scanner:
             census['by_status']=by_status
             db.put(c,census_key,census)
         candidates=[]
+        exposure_obs={}
         for symbol in changed:
             f=facts[symbol]
             tick=engine.specification(symbol)['tick']
@@ -414,8 +426,16 @@ class Scanner:
             db.put(c,'scanner_arms:'+symbol,arms)
             candidates.extend(items)
             if f.get('status')=='ready' and evaluation_session_open(symbol,now):
-                candidates.extend(exposure_candidates(f,apexes.get(symbol),now,tick))
-                candidates.extend(exposure_candidates(f,concentrations.get(symbol),now,tick))
+                obs={'present':False,'ineligible':False,'candidates':0}
+                for source_rows in (apexes.get(symbol),concentrations.get(symbol)):
+                    diag={}
+                    generated=exposure_candidates(f,source_rows,now,tick,diag)
+                    candidates.extend(generated)
+                    obs['candidates']+=len(generated)
+                    obs['present']=obs['present'] or diag.get('state')=='present'
+                    obs['ineligible']=obs['ineligible'] or diag.get('state')=='ineligible'
+                exposure_obs[symbol]=obs
+        flow_candidates=0
         for row in flow:
             symbol=row.get('symbol')
             if symbol not in wanted or not evaluation_session_open(symbol,now) or symbol not in facts:
@@ -423,9 +443,48 @@ class Scanner:
             item=flow_candidate(facts[symbol],row,quotes.get(symbol),now,engine.specification(symbol)['tick'])
             if item:
                 candidates.append(item)
+                flow_candidates+=1
             # Interesting recent flow prioritizes refresh even before a price trigger.
             if row.get('source_ts') is not None and 0<=now-row['source_ts']<=120 and (row.get('score') or 0)>=85:
                 db.put(c,'focus:'+symbol,{'symbol':symbol,'priority':80,'at':now,'reason':'Recent unusual flow'})
+        # Candidate census (F4, 2026-11-03): a per-session record of
+        # candidates generated per family, written every scan — including
+        # scans that generate nothing — so a zero day for any family is a
+        # recorded zero, not an absence. For the two vendor-input families
+        # it also folds the input state: exposure counts symbol-scans by
+        # whether the family's input was present (head gates passed) but
+        # no candidate completed, vs absent/ineligible; flow counts scans
+        # the same way against the summary's freshness eligibility. This
+        # census is the unvalidatable-families registration's clock-start
+        # evidence; it changes no gate and no candidate.
+        census_key='scanner:census:'+day(now)
+        census=db.get(c,census_key,{'day':day(now),'scans':0,'candidates':{},
+            'exposure_level_break':{'symbol_scans':0,'candidate_symbols':0,
+                'input_present_no_candidate':0,'input_absent_or_ineligible':0},
+            'flow_price_breakout':{'scans':0,'candidate_scans':0,
+                'input_present_no_candidate':0,'input_absent_or_ineligible':0}})
+        census['scans']+=1
+        census['updated_at']=now
+        for item in candidates:
+            census['candidates'][item['rule']]=census['candidates'].get(item['rule'],0)+1
+        exposure_census=census['exposure_level_break']
+        for obs in exposure_obs.values():
+            exposure_census['symbol_scans']+=1
+            if obs['candidates']:
+                exposure_census['candidate_symbols']+=1
+            elif obs['present']:
+                exposure_census['input_present_no_candidate']+=1
+            else:
+                exposure_census['input_absent_or_ineligible']+=1
+        flow_census=census['flow_price_breakout']
+        flow_census['scans']+=1
+        if flow_candidates:
+            flow_census['candidate_scans']+=1
+        elif flow_check and flow_check['eligible_for_live_confirmation'] and flow:
+            flow_census['input_present_no_candidate']+=1
+        else:
+            flow_census['input_absent_or_ineligible']+=1
+        db.put(c,census_key,census)
         grouped={}
         for item in candidates:
             group=(item['symbol'],item['side'])
@@ -534,7 +593,26 @@ class Scanner:
             'features_ready':sum(f.get('status')=='ready' and 0<=now-f.get('asof',0)<=90 for f in facts.values()),
             'last_updated_symbols':len(changed),'rules_version':VERSION,
             'rules':(['orb_retest'] if cfg.orb_setups else [])+['session_sweep_reclaim','trend_pullback','volume_breakout','exposure_level_break','flow_price_breakout'],
-            'prop_account_rules':'Not configured: simulated risk limits do not model a prop-firm drawdown floor'})
+            'prop_account_rules':'Not configured: simulated risk limits do not model a prop-firm drawdown floor',
+            # Flow-input observability (F2, 2026-11-03; suppression-census
+            # pattern): the scan-time state of the matrix:unusual_activity
+            # summary the flow family consumes, so a zero-candidate day is
+            # attributable — stale summary, ineligible freshness, empty
+            # rows, or a live summary whose conjunction never completed.
+            # Event age and retrieval age are separate clocks by design.
+            'flow_input':{'summary_present':bool(flow_summary),
+                'summary_day':flow_summary.get('day'),
+                'summary_status':flow_summary.get('status'),
+                'collection_status':flow_summary.get('collection_status'),
+                'rows':len(flow_summary.get('rows',[])) if flow_summary else 0,
+                'vendor_total':flow_summary.get('total'),
+                'latest_event_ts':flow_summary.get('source_ts'),
+                'latest_event_age_seconds':(now-flow_summary['source_ts']) if flow_summary.get('source_ts') is not None else None,
+                'retrieved_at':flow_summary.get('received'),
+                'retrieval_age_seconds':(now-flow_summary['received']) if flow_summary.get('received') is not None else None,
+                'freshness_status':flow_check['status'] if flow_check else None,
+                'eligible_for_live_confirmation':bool(flow_check and flow_check['eligible_for_live_confirmation']),
+                'candidates_this_scan':flow_candidates}})
 
     def retry_options(self,c,quotes,now,engine):
         scan_started_at=now
@@ -699,6 +777,11 @@ def snapshot(db,c,cfg,now):
         item['age']=now-item['decided_at']
         active.append(item)
     return {'status':db.get(c,'scanner:status',{'mode':'SIMULATED','watch_symbols':len(cfg.watch_symbols),'at':None}),
+        'census':db.get(c,'scanner:census:'+day(now),{'day':day(now),'scans':0,'candidates':{},
+            'exposure_level_break':{'symbol_scans':0,'candidate_symbols':0,
+                'input_present_no_candidate':0,'input_absent_or_ineligible':0},
+            'flow_price_breakout':{'scans':0,'candidate_scans':0,
+                'input_present_no_candidate':0,'input_absent_or_ineligible':0}}),
         'watchlist':list(cfg.watch_symbols),'opportunities':active[:100],
         'feeds':catalog(db,c,cfg,now),
         'focus':focus_for_display(db,c,now),
