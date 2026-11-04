@@ -33,6 +33,10 @@ RETENTION = {
     # (archive_prune registers it at a permanence horizon) — the archive is
     # the point, so the small retention only sets how soon the R2 copy lands.
     'chain_eod': 7,
+    # Morning option-chain snapshots (compass/chain_open.py, 2026-11-03):
+    # the chain_eod twin taken just after the open for the Overnight
+    # Morning-Change cell. Same permanence treatment as chain_eod.
+    'chain_open': 7,
     'matrix_raw': 90,
     'vendor_flow': 180,
     'flow': 180,

@@ -304,6 +304,16 @@ def refresh_intel(db, c=None):
     # --- network phase (no connection held) ---
     earnings = fetch_earnings_calendar()
     opra_earnings = filter_opra_earnings(earnings)
+    # Full-calendar compact copy (2026-11-03, OMC registration §10):
+    # the OPRA filter above serves the 16-name OPRA consumers, but the
+    # Overnight Morning-Change earnings exclusion needs the whole
+    # watchlist. The vendor fetch already returned every event — store
+    # the unfiltered calendar (symbol/date/time only) beside the
+    # filtered copy. No new vendor request is added.
+    all_earnings = [{"symbol": ev.get("symbol"), "date": ev.get("date"),
+                     "time": ev.get("time")}
+                    for ev in earnings
+                    if ev.get("symbol") and ev.get("date")]
     economic = fetch_economic_calendar()
     high_impact = filter_high_impact_economic(economic)
     health = fetch_market_health()
@@ -314,6 +324,7 @@ def refresh_intel(db, c=None):
         db.put(c, f"intel:earnings:{today_str}", {
             "date": today_str,
             "opra_earnings": opra_earnings,
+            "all_earnings": all_earnings,
             "total_events": len(earnings),
             "fetched_at": now.isoformat(),
         })

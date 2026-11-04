@@ -229,6 +229,11 @@ class Config:
     # the EOD chain archive in its own short-dated premium cell; see
     # compass/connors_ssc.py.
     connors_ssc: bool = field(default_factory=lambda: env("CONNORS_SSC_ENABLED","true")=="true")
+    # Overnight Morning-Change (OMC) forward scorer (2026-11-03, Josh):
+    # paper/measurement only — scores the frozen overnight/morning
+    # registration from the chain_eod + chain_open archives in its own
+    # premium cell; see compass/overnight_omc.py.
+    overnight_omc: bool = field(default_factory=lambda: env("OVERNIGHT_OMC_ENABLED","true")=="true")
     swing_alerts: bool = field(default_factory=lambda: env("SWING_IDEAS_ALERTS","true")=="true")
     swing_min_dte: int = field(default_factory=lambda: int(env("SWING_MIN_DTE","14")))
     swing_max_dte: int = field(default_factory=lambda: int(env("SWING_MAX_DTE","60")))

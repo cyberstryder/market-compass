@@ -56,6 +56,8 @@ EVENT_POLICY = {
         basis='Full option chains every 45 s per focus symbol. Highly redundant; a month covers research cycles.'),
     'chain_eod_archive': dict(kinds=('chain_eod',), retention_days=36500, requires_archive=True,
         basis='EOD option-chain snapshots (compass/chain_eod.py): one per underlying per day, the only retained chain/IV history. PERMANENT by design — registered here so the kind is never an unregistered orphan (the pick_check/ict_* omission), with retention set beyond any planning horizon so rows never become prune candidates; the copy pump keeps the verified R2 second copy.'),
+    'chain_open_archive': dict(kinds=('chain_open',), retention_days=36500, requires_archive=True,
+        basis='Morning option-chain snapshots (compass/chain_open.py): one per underlying per day just after the open, the exit-pricing substrate of the Overnight Morning-Change cell. PERMANENT by design on the same terms as chain_eod_archive.'),
     'vendor_snapshots': dict(kinds=('matrix_raw',), retention_days=90, requires_archive=True,
         basis='Raw TraderMatrix API responses, content-deduped per day. Vendor evidence for audits.'),
     'flow_prints': dict(kinds=('vendor_flow', 'flow', 'option_trade'), retention_days=180, requires_archive=True,

@@ -77,12 +77,12 @@ CONTRACT_FIELDS = ('symbol', 'expiry', 'strike', 'type', 'oi', 'oi_date',
                    'delta', 'gamma', 'theta', 'vega', 'iv', 'volume')
 
 
-def manifest_key(date_str):
-    return KIND + ':' + date_str
+def manifest_key(date_str, kind=KIND):
+    return kind + ':' + date_str
 
 
-def event_key(date_str, symbol):
-    return f'{KIND}:{date_str}:{symbol}'
+def event_key(date_str, symbol, kind=KIND):
+    return f'{kind}:{date_str}:{symbol}'
 
 
 def shape_contract(o):
@@ -152,8 +152,8 @@ async def fetch_chain(collectors, symbol, expiry_start, expiry_end):
     return contracts, complete, 'alpaca'
 
 
-def _manifest(db, c, date_str):
-    m = db.get(c, manifest_key(date_str))
+def _manifest(db, c, date_str, kind=KIND):
+    m = db.get(c, manifest_key(date_str, kind))
     if not isinstance(m, dict) or m.get('date') != date_str:
         m = {'date': date_str, 'started_at': None, 'finished_at': None,
              'running': False, 'fatal': None, 'symbols': {}}
@@ -169,16 +169,16 @@ def _totals(manifest):
             'bytes': sum(s.get('bytes', 0) for s in ok)}
 
 
-def read_manifest(db, date_str):
+def read_manifest(db, date_str, kind=KIND):
     with db.tx() as c:
-        m = _manifest(db, c, date_str)
+        m = _manifest(db, c, date_str, kind)
     m['totals'] = _totals(m)
     m['complete'] = bool(m.get('finished_at')) and not m.get('running')
     return m
 
 
 async def _snapshot_symbol(db, fetch, symbol, date_str, expiry_start,
-                           expiry_end, now):
+                           expiry_end, now, kind=KIND):
     """Fetch + shape + store one symbol. Returns the manifest entry.
     Never raises: a failure is an entry with status 'error'."""
     try:
@@ -192,12 +192,13 @@ async def _snapshot_symbol(db, fetch, symbol, date_str, expiry_start,
         rows = filter_contracts(contracts, close, date_str)
         payload = {'date': date_str, 'symbol': symbol, 'source': source,
                    'complete': complete, 'asof': now,
+                   'snapshot_kind': kind,
                    'underlying_close': close, 'underlying_close_ts': close_ts,
                    'dte_max': DTE_MAX, 'band': BAND, 'contracts': rows}
         nbytes = len(json.dumps(payload).encode())
         with db.tx() as c:
-            inserted = db.append(c, KIND, source, symbol, now, payload,
-                                 key=event_key(date_str, symbol))
+            inserted = db.append(c, kind, source, symbol, now, payload,
+                                 key=event_key(date_str, symbol, kind))
         return {'status': 'ok', 'source': source, 'complete': complete,
                 'contracts': len(rows), 'fetched': len(contracts),
                 'bytes': nbytes, 'inserted': bool(inserted), 'at': time.time()}
@@ -209,7 +210,7 @@ async def _snapshot_symbol(db, fetch, symbol, date_str, expiry_start,
 
 
 async def run_snapshot(db, cfg, now=None, date_str=None, symbols=None,
-                       fetch=None, collectors=None):
+                       fetch=None, collectors=None, kind=KIND):
     """Run one day's snapshot. Idempotent per date: symbols already 'ok' in
     the manifest (or already present as events) are not re-stored; failed
     symbols are retried. Returns the manifest with totals."""
@@ -226,18 +227,18 @@ async def run_snapshot(db, cfg, now=None, date_str=None, symbols=None,
         # leave the day retryable — start_snapshot_background does not
         # treat a fatal day as already complete.
         with db.tx() as c:
-            m = _manifest(db, c, date_str)
+            m = _manifest(db, c, date_str, kind)
             m['running'] = False
             m['started_at'] = m.get('started_at') or now
             m['finished_at'] = time.time()
             m['fatal'] = NO_PROVIDER_CREDENTIALS
-            db.put(c, manifest_key(date_str), m)
+            db.put(c, manifest_key(date_str, kind), m)
         m['totals'] = _totals(m)
         m['complete'] = True
-        db.health(KIND, 'error',
-                  f"EOD chain snapshot {date_str}: no provider credentials "
-                  "configured on this service (MASSIVE_API_KEY / "
-                  "APCA_API_KEY_ID+APCA_API_SECRET_KEY missing); "
+        db.health(kind, 'error',
+                  f"Chain snapshot {date_str} ({kind}): no provider "
+                  "credentials configured on this service (MASSIVE_API_KEY "
+                  "/ APCA_API_KEY_ID+APCA_API_SECRET_KEY missing); "
                   "nothing captured",
                   poll_ts=time.time(), date=date_str, **m['totals'])
         return m
@@ -251,12 +252,12 @@ async def run_snapshot(db, cfg, now=None, date_str=None, symbols=None,
             return await fetch_chain(coll, symbol, es, ee)
     try:
         with db.tx() as c:
-            m = _manifest(db, c, date_str)
+            m = _manifest(db, c, date_str, kind)
             m['running'] = True
             m['fatal'] = None
             m['started_at'] = m.get('started_at') or now
             m['finished_at'] = None
-            db.put(c, manifest_key(date_str), m)
+            db.put(c, manifest_key(date_str, kind), m)
         todo = [s for s in symbols
                 if m['symbols'].get(s, {}).get('status') != 'ok']
         sem = asyncio.Semaphore(CONCURRENCY)
@@ -265,25 +266,26 @@ async def run_snapshot(db, cfg, now=None, date_str=None, symbols=None,
         async def one(symbol):
             async with sem:
                 entry = await _snapshot_symbol(db, fetch, symbol, date_str,
-                                               expiry_start, expiry_end, now)
+                                               expiry_start, expiry_end, now,
+                                               kind=kind)
             async with lock:
                 with db.tx() as c:
-                    m2 = _manifest(db, c, date_str)
+                    m2 = _manifest(db, c, date_str, kind)
                     m2['symbols'][symbol] = entry
-                    db.put(c, manifest_key(date_str), m2)
+                    db.put(c, manifest_key(date_str, kind), m2)
         await asyncio.gather(*(one(s) for s in todo))
         with db.tx() as c:
-            m = _manifest(db, c, date_str)
+            m = _manifest(db, c, date_str, kind)
             m['running'] = False
             m['finished_at'] = time.time()
-            db.put(c, manifest_key(date_str), m)
+            db.put(c, manifest_key(date_str, kind), m)
         m['totals'] = _totals(m)
         m['complete'] = True
         t = m['totals']
         health_status = ('available' if t['error'] == 0 else
                          'error' if t['ok'] == 0 else 'partial')
-        db.health(KIND, health_status,
-                  f"EOD chain snapshot {date_str}: {t['ok']} ok, "
+        db.health(kind, health_status,
+                  f"Chain snapshot {date_str} ({kind}): {t['ok']} ok, "
                   f"{t['error']} failed, {t['contracts']} contracts, "
                   f"{t['bytes']} bytes",
                   poll_ts=time.time(), date=date_str, **t)
@@ -297,7 +299,7 @@ async def run_snapshot(db, cfg, now=None, date_str=None, symbols=None,
 
 
 def start_snapshot_background(db, cfg, date_str=None, now=None, fetch=None,
-                              collectors=None):
+                              collectors=None, kind=KIND):
     """Start run_snapshot on a daemon thread unless the day is already
     complete or a run started recently is still marked running. A day is
     'already complete' only when it finished with every symbol ok — a
@@ -308,8 +310,9 @@ def start_snapshot_background(db, cfg, date_str=None, now=None, fetch=None,
     import uuid
     now = time.time() if now is None else now
     date_str = date_str or day(now)
+    lease_name = f'{kind}:run'
     with db.tx() as c:
-        m = _manifest(db, c, date_str)
+        m = _manifest(db, c, date_str, kind)
         if m.get('finished_at') and not m.get('running'):
             t = _totals(m)
             if not m.get('fatal') and t['error'] == 0 and t['ok'] > 0:
@@ -319,21 +322,22 @@ def start_snapshot_background(db, cfg, date_str=None, now=None, fetch=None,
             return {'ok': True, 'already_running': True, 'date': date_str}
         # A stale 'running' marker (process died mid-run) falls through:
         # lease below is the real mutual exclusion.
-        owner = 'chain_eod:' + uuid.uuid4().hex
-        if not db.lease(c, 'chain_eod:run', owner, seconds=7200):
+        owner = kind + ':' + uuid.uuid4().hex
+        if not db.lease(c, lease_name, owner, seconds=7200):
             return {'ok': True, 'already_running': True, 'date': date_str}
 
     def _run():
         try:
             asyncio.run(run_snapshot(db, cfg, now=now, date_str=date_str,
-                                     fetch=fetch, collectors=collectors))
+                                     fetch=fetch, collectors=collectors,
+                                     kind=kind))
         except Exception:
-            LOG.exception('chain_eod snapshot run failed for %s', date_str)
+            LOG.exception('%s snapshot run failed for %s', kind, date_str)
             try:
                 with db.tx() as c:
-                    m = _manifest(db, c, date_str)
+                    m = _manifest(db, c, date_str, kind)
                     m['running'] = False
-                    db.put(c, manifest_key(date_str), m)
+                    db.put(c, manifest_key(date_str, kind), m)
             except Exception:
                 pass
         finally:
@@ -341,10 +345,10 @@ def start_snapshot_background(db, cfg, date_str=None, now=None, fetch=None,
             # the full lease TTL (2026-10-26 repair).
             try:
                 with db.tx() as c:
-                    db.release_lease(c, 'chain_eod:run', owner)
+                    db.release_lease(c, lease_name, owner)
             except Exception:
                 pass
 
-    threading.Thread(target=_run, name='chain-eod-snapshot',
+    threading.Thread(target=_run, name=f'{kind}-snapshot',
                      daemon=True).start()
     return {'ok': True, 'started': True, 'date': date_str}
