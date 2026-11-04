@@ -17,6 +17,32 @@ outbox=Table('native_program_outbox_v1',meta,
     Column('status',String(24),nullable=False),Column('payload',JSON,nullable=False),Column('delivery',JSON,nullable=False))
 
 
+# Wednesday-horizon push silence (Josh, 2026-11-04). The Smoothers
+# Wednesday-horizon scorer exists to MEASURE whether holding to
+# Wednesday beats exiting earlier; its per-pick WEDNESDAY HORIZON
+# notices are measurement bookkeeping pushed as alerts, and Josh
+# directed they stop: "it didn't require discord alerts. Those [the
+# normal exits] can remain the normal exits until we have clarification
+# on how long to hold." The notice row is still written — queued as
+# 'suppressed' under this gate id, so the suppression is itself on the
+# record — while horizon scoring, stamping, the Tuesday-entry and
+# cohort-exit cells, and every state surface continue byte-identical.
+# Only this producer is gated: the normal Smoothers entry / target /
+# close alerts and every other producer are untouched. Same shape as
+# the scanner (17b96fe) and ICT paper (8b657a1) silence builds: gate
+# at enqueue, same predicate at send time for pre-gate backlog.
+WEDNESDAY_HORIZON_GATE='wednesday-horizon-silence-v1'
+
+
+def wednesday_horizon_row(program,event_key):
+    """True for a native-outbox row carrying a Wednesday-horizon
+    notice: the 'smoothers' row score_horizon queues under
+    '<pick id>:horizon', and its 'smoothers_shared' mirror copy,
+    which shares the event key. No other smoothers event key ends
+    in ':horizon' (entry / target / close / summary / compact)."""
+    return program in ('smoothers','smoothers_shared') and event_key.endswith(':horizon')
+
+
 def owner(db,c,program,now=None):
     o=db.get(c,'native:ownership:'+('smoothers' if program=='smoothers_shared' else program),{})
     now=time.time() if now is None else now
@@ -36,17 +62,26 @@ def delivery_guard(db,shared=False):
         yield c
 
 
-def queue(db,c,program,event_key,payload,now,parent_event=None,event_time=None,cohort_time=None,publication=None):
+def queue(db,c,program,event_key,payload,now,parent_event=None,event_time=None,cohort_time=None,publication=None,suppress_gate=None):
     delivery_lock(c,shared=True)
     key=identity('native-outbox-v1',program,event_key)
     ownership=owner(db,c,program,now)
     if ownership and ownership.get('effective_from') and (event_time is None or event_time<ownership['effective_from']):ownership=None
     # A late recovery/closure for the old sender's cohort never changes owner.
     if ownership and program=='smoothers' and (cohort_time is None or cohort_time<ownership.get('effective_from',0)):ownership=None
+    delivery={'attempts':0,'owner_epoch':ownership['epoch'] if ownership else None,'parent_event':parent_event,
+              'event_time':event_time,'cohort_time':cohort_time,'publication_input':publication}
+    if suppress_gate:
+        # Silenced at enqueue (the silence builds' pattern): the row is
+        # still written, payload untouched, but lands in the terminal
+        # 'suppressed' status with the gate id on its delivery record,
+        # so the drainer never selects it and the suppression itself
+        # is auditable. repair_stale never revives these rows (their
+        # recorded error is not 'stale_owner_epoch').
+        delivery.update(gate=suppress_gate,error='suppressed_by_gate',suppressed_at=now)
     c.execute(db.insert(outbox).values(id=key,program=program,event_key=event_key,created=now,
-        status='pending' if ownership else 'shadow',payload=payload,
-        delivery={'attempts':0,'owner_epoch':ownership['epoch'] if ownership else None,'parent_event':parent_event,
-                  'event_time':event_time,'cohort_time':cohort_time,'publication_input':publication})
+        status='suppressed' if suppress_gate else 'pending' if ownership else 'shadow',payload=payload,
+        delivery=delivery)
         .on_conflict_do_nothing(index_elements=['id']))
     return key
 
@@ -200,6 +235,15 @@ def deliver_one(db,client,webhooks,enabled=False,now=None,disabled_programs=()):
         job=None
         for row in candidates:
             d=dict(row['delivery'])
+            if wednesday_horizon_row(row['program'],row['event_key']):
+                # Send-time half of the Wednesday-horizon silence gate:
+                # a horizon notice queued before the gate existed must
+                # not drain either. Terminally resolved as suppressed
+                # with the gate id recorded, like the jam sweep's rows;
+                # scoring and stamps are unaffected.
+                c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='suppressed',
+                    delivery=dict(d,gate=WEDNESDAY_HORIZON_GATE,error='suppressed_by_gate',suppressed_at=now)))
+                continue
             if row['status']=='sending':
                 if d.get('lease_until',0)<now:
                     c.execute(outbox.update().where(outbox.c.id==row['id']).values(status='ambiguous',delivery=dict(d,error='interrupted_send_requires_reconciliation')))

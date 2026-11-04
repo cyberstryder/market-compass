@@ -32,7 +32,7 @@ from .smoothers_quality import score_signal,rank_signals
 from . import smoothers_cost
 from .smoothers_factors import atr
 from .smoothers_blackscholes import value_at_target
-from .native_outbox import queue,owner as delivery_owner
+from .native_outbox import queue,owner as delivery_owner,WEDNESDAY_HORIZON_GATE
 from .native_config import bootstrap, effective
 from . import smoothers_messages as messages
 
@@ -368,7 +368,12 @@ def horizon_score(c,p,wed,now):
 
 def score_horizon(db,p,wed,now):
     """Persist one pick's horizon outcome (own transaction, row-locked)
-    and queue its WEDNESDAY HORIZON notice. Returns True when scored."""
+    and record its WEDNESDAY HORIZON notice in the outbox. The notice
+    queues silenced under wednesday-horizon-silence-v1 (Josh,
+    2026-11-04): the horizon is a measurement, not an alert, so the
+    row is written as 'suppressed' with the gate id on its record and
+    never pushes to Discord. The horizon outcome itself is stored on
+    the pick exactly as before. Returns True when scored."""
     with db.tx() as c:
         current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
         if current['status']!='OPEN' or current.get('horizon'):return False
@@ -376,7 +381,8 @@ def score_horizon(db,p,wed,now):
         if h is None:return False
         current['horizon']=h;save(db,c,current);p.update(current)
         queue(db,c,'smoothers',p['id']+':horizon',messages.horizon(p),now,
-              event_time=wed['close'],cohort_time=p.get('model_entry_time'))
+              event_time=wed['close'],cohort_time=p.get('model_entry_time'),
+              suppress_gate=WEDNESDAY_HORIZON_GATE)
     return True
 
 
