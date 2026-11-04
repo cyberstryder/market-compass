@@ -57,13 +57,55 @@ def confirmed_url(webhook):
     return url._replace(query=urlencode(params + [('wait', 'true')]), fragment='').geturl()
 
 
-def enqueue_routes(db, c, now):
+# Scanner setup lifecycle pushes (Josh, 2026-11-03: "keep measuring, kill
+# the surface"). Simulated setups from compass/scanner.py are measured in
+# shadow: their lifecycle alerts stay recorded as events, but they push to
+# Discord only while their family is BOOKABLE under the scanner_shadow
+# seat/promotion state — promoted, not barred, and holding at least one
+# operator seat (the is_seated conditions, at family level). The gate reads
+# that state, never a hardcoded family list: today PROMOTED_FAMILIES and
+# PAPER_SEATS are both empty, so every scanner setup lifecycle push is
+# silenced; if a family is promoted and seated later, its pushes return by
+# the same rule with no code change.
+SCANNER_SETUP_LIFECYCLE = frozenset({'setup_triggered', 'setup_invalidated', 'setup_result'})
+SCANNER_PUSH_GATE = 'scanner-push-silence-v1'
+
+
+def scanner_family_bookable(family, cfg=None):
+    from . import scanner_shadow
+    if family in scanner_shadow.BARRED_FAMILIES:
+        return False
+    if family not in scanner_shadow.promoted_families(cfg):
+        return False
+    return bool(scanner_shadow.paper_seats(cfg).get(family))
+
+
+def scanner_setup_silence(row, cfg=None, now=None):
+    """Suppression decision for a simulated compass-scanner setup lifecycle
+    alert whose family is not bookable; None when the alert is outside the
+    class or its family may push. Recording is untouched — this decides
+    only whether a Discord job is queued as pending or suppressed."""
+    payload = row.get('payload') or {}
+    if payload.get('status') not in SCANNER_SETUP_LIFECYCLE:
+        return None
+    from . import scanner_shadow
+    family = scanner_shadow.alert_family(payload)
+    if family is None or scanner_family_bookable(family, cfg):
+        return None
+    return {'action': 'suppressed', 'gate': SCANNER_PUSH_GATE, 'family': family, 'at': now,
+            'reason': 'Scanner setup lifecycle pushes silenced for non-bookable family; '
+                      'shadow measurement continues and the event is still recorded'}
+
+
+def enqueue_routes(db, c, now, cfg=None):
     """Start after the old acknowledged boundary, never replay delivered history."""
     cursor = db.get(c, 'outbox:discord:ingested', db.get(c, 'outbox:discord', 0))
     rows = list(c.execute(select(events).where(events.c.kind == 'alert', events.c.id > cursor)
                           .order_by(events.c.id).limit(200)).mappings())
     for row in rows:
-        decision=alert_ownership.assess(db,c,row,now)
+        decision=scanner_setup_silence(row, cfg, now)
+        if decision is None:
+            decision=alert_ownership.assess(db,c,row,now)
         # Publication categories predate the condensed channels; map the two
         # retired families to their current routes before queuing.
         route=PUBLICATION_ROUTES.get(decision.get('category'), decision.get('category')) or route_for(row)
@@ -215,7 +257,7 @@ class DeliveryWorker:
                 c.execute(update(discord_jobs).where(
                     discord_jobs.c.route == old_route, discord_jobs.c.status == 'pending')
                     .values(route=new_route))
-            enqueue_routes(self.db, c, now)
+            enqueue_routes(self.db, c, now, self.cfg)
             self.suppress_paper(c, now)
             if not self.published:
                 self.db.put(c, 'outbox:discord:routes', manifest(self.cfg))
@@ -305,9 +347,17 @@ class DeliveryWorker:
             'Category routing active; see individual routes for delivery health' if connected else 'No verified alert destination')
 
     async def send(self, client, url, row, route, now):
+        # Same scanner-silence gate as enqueue_routes, applied at send time
+        # so jobs queued before the gate existed (or under a since-changed
+        # promotion state) cannot drain to Discord either. Recording is
+        # untouched; the job is simply marked suppressed.
+        payload = row.get('payload', {})
+        silence = scanner_setup_silence(row, self.cfg, now)
+        if silence is not None:
+            await asyncio.to_thread(self._mark, row['id'], 'suppressed', silence)
+            return
         # Skip futures scanner SETUP noise if disabled (Josh: "that's just noise").
         # This only blocks Discord delivery; the alert is still recorded in the DB.
-        payload = row.get('payload', {})
         if (route == 'futures' and payload.get('status') == 'setup_triggered'
                 and not self.cfg.futures_scanner_push_enabled):
             await asyncio.to_thread(self._mark, row['id'], 'suppressed', dict(at=now,reason='Futures scanner pushes disabled'))
