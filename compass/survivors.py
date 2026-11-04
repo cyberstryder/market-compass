@@ -48,6 +48,23 @@ Live-vs-gauntlet construction differences (deliberate, itemized):
   brackets and the 15:45 flatten never consult it. The gate's parser
   was repaired the same day: the vendor's AM/PM event times had
   never parsed, so the ICT pause this mirrors could never fire.
+- Safety-stop overlay (added 2026-11-04 at Josh's direction, after
+  that morning's live S3 gold trade ran with no resting stop and he
+  closed it manually — another knowing mid-review change, disclosed
+  in the 50-fill review): horizon strategies' LIVE entries now carry
+  a broker-resting DISASTER stop at SAFETY_STOP_ATR_MULT x ATR —
+  stop-only, no take-profit; the timed engine exit remains the
+  normal exit, and the resting stop is cancelled when the position
+  closes exactly as an unfilled S2/S4 bracket leg is. The booked
+  record keeps stop=None (the paper horizon construction is
+  unchanged); the stop rides only on the live send copy, and
+  engine.exits() honors it for live-sent positions so a broker-side
+  safety fill is detected like a bracket fill. On top of that, a
+  send-path invariant refuses — with a loud alert on the live ICT
+  Discord channel — any live entry whose payload would carry no
+  stop at all ('no_stop_attached'). S1/S3 were validated stop-less;
+  this overlay is Josh's explicit safety direction, not a claim
+  about their gauntlet construction.
 - Signals are evaluated on every newly completed bar, but only bars
   whose close is within FRESH_SECONDS of now are traded; older catch-up
   bars after downtime advance the features and are counted as stale
@@ -109,6 +126,17 @@ SCAN_SYMBOLS = ('MNQ.c.0', 'MCL.v.0', 'MGC.v.0')
 ROOT_STRATEGIES = {'MNQ': ('S1',), 'MCL': ('S2',), 'MGC': ('S3', 'S4')}
 HORIZON = {'S1': 60, 'S3': 30}
 DIRECTION = {'S1': -1, 'S2': 1, 'S3': 1, 'S4': -1}
+# Safety-stop distance for the horizon strategies, as a multiple of
+# the signal bar's ATR in ticks (the units S2/S4 express stop_ticks
+# in). Derived from the frozen gauntlet trade sets' max-adverse-
+# excursion distribution (guard-kept entries, foundation year-1;
+# hidden_files/survivor-safety-stop-2026-11-04/mae_analysis.py):
+# at 0.5 x ATR the stop would have bound on 1/65 S1 trades (1.5%)
+# and 6/334 S3 trades (1.8%) — inside the ~1-2% disaster band. The
+# next step down (0.25) binds ~9-10% (a strategy stop, not a
+# disaster stop); 0.75 binds 0% / 0.6%. One constant per strategy:
+# tighten here and every future S1/S3 live entry follows.
+SAFETY_STOP_ATR_MULT = {'S1': 0.5, 'S3': 0.5}
 
 
 def _iso(ts):
@@ -546,6 +574,27 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
         if (d > 0 and not (stop < entry < target)) \
                 or (d < 0 and not (target < entry < stop)):
             return {'submitted': False, 'reason': 'levels_inverted'}
+    # Safety stop (horizon strategies, 2026-11-04 overlay): computed
+    # from the signal entry exactly like a bracket stop, but kept OFF
+    # filled['stop'] — the booked record stays stop=None so the paper
+    # book's horizon construction (exits on flatten_at only) is
+    # untouched. It reaches the broker only inside the live send copy
+    # far below; exits() honors it there via traderspost_sent. A
+    # computation that cannot produce a valid level leaves it None,
+    # and the send-path invariant then refuses the live entry.
+    safety_stop = safety_ticks = None
+    if strat in SAFETY_STOP_ATR_MULT:
+        _ss_ticks = int(round(SAFETY_STOP_ATR_MULT[strat]
+                              * sig['atr_t']))
+        if _ss_ticks >= 1:
+            _ss = _round_to_tick(entry - d * _ss_ticks * tick, tick)
+            if (d > 0 and _ss < entry) or (d < 0 and _ss > entry):
+                safety_stop = _ss
+                safety_ticks = _ss_ticks
+    # The stop price the live payload must carry, whichever family
+    # produced it. None only for a horizon strategy whose safety stop
+    # did not compute — the invariant's refusal case.
+    send_stop = stop if bracket else safety_stop
     flatten_at = flat
     if strat in HORIZON:
         # Exit at the close of the bar HORIZON bars after the entry bar:
@@ -602,6 +651,12 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
     if bracket:
         filled['stop_ticks'] = stop_ticks_r
         filled['target_ticks'] = target_ticks_r
+    if strat in SAFETY_STOP_ATR_MULT:
+        # Recorded on the booked trade like the GEX stamp: evidence
+        # for exits() (live-sent rows only) and for the review — the
+        # paper exit logic never reads it (see engine.exits).
+        filled['safety_stop'] = safety_stop
+        filled['safety_stop_ticks'] = safety_ticks
     if booked['source'] == 'signal_fallback':
         filled['entry_unverified'] = True
     # Discord live label (ict_push): the entry alert is queued below,
@@ -611,8 +666,13 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
     # survivors LIVE state, duplicate/hedge guard, symbol mapping,
     # freshness guard. Every check is read-only; the send block below
     # re-evaluates them unchanged and stays the only place that acts.
+    # The no-stop invariant is part of the mirror: a booking whose
+    # payload would carry no stop (send_stop None) will be REFUSED by
+    # the send block, so it is never labeled a live send here — the
+    # refusal alert below is its live-channel notice instead.
     filled['live_send'] = False
-    if getattr(cfg, 'traderspost_enabled', False):
+    if getattr(cfg, 'traderspost_enabled', False) \
+            and send_stop is not None:
         _st = get_state(db, c)
         if _st and _st.get('live') \
                 and guard_check(db, c, filled) is None:
@@ -672,6 +732,7 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
     result = {'submitted': True, 'id': filled['id'], 'detector': detector,
               'strategy': strategy, 'symbol': symbol, 'side': side,
               'entry': entry_booked, 'stop': stop, 'target': target,
+              'safety_stop': safety_stop,
               'qty': 1, 'traderspost_sent': False,
               'traderspost_queued': False}
     if not getattr(cfg, 'traderspost_enabled', False):
@@ -733,6 +794,58 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
     trade = db.get(c, 'trade:' + trade_id) or dict(filled)
     trade = dict(trade)
     trade['is_first_leg'] = True
+    if not bracket:
+        # Horizon send copy: attach the safety stop as a stop-only
+        # protective bracket (build_payload's safety_stop_only
+        # branch). ONLY the copy changes — the booked record keeps
+        # stop=None / no_bracket=True, the paper horizon construction.
+        # When the safety stop did not compute, the copy stays
+        # bracket-less and the invariant below refuses the send.
+        trade['stop'] = safety_stop
+        trade['target'] = None
+        trade['no_bracket'] = False
+        trade['safety_stop_only'] = True
+    # No-naked-entry invariant (2026-11-04, Josh: "I don't want any
+    # orders that are solely market"): a live entry is queued ONLY
+    # when the payload it will send carries a stop price. Checked
+    # against the built payload itself — the ground truth of what
+    # TradersPost would receive — so it covers every strategy,
+    # present and future, whatever its record shape. A payload that
+    # fails to build at all keeps the pre-existing invalid-payload
+    # marking below (bracket family only; for a horizon trade a
+    # failed build means the safety stop is missing, which IS the
+    # refusal case). The refusal is stamped like every other skip
+    # (both copies, digest-visible) and additionally raises a loud
+    # alert on the live ICT channel — a live entry that did not go
+    # out is exactly what that channel exists for. By construction
+    # the trade was never sent: fill_confirmation projects it
+    # 'not_sent' and the live accounting ignores it.
+    _payload = traderspost.build_payload(None, trade)
+    _has_stop = bool(_payload and _payload.get('stopLoss'))
+    if not _has_stop and (_payload is not None or not bracket):
+        refusal = 'skip %s: no_stop_attached' % symbol
+        for key in keys:
+            t = db.get(c, key)
+            if t:
+                t = dict(t)
+                t['traderspost_sent'] = False
+                t['traderspost_skip_reason'] = refusal
+                db.put(c, key, t)
+        result['traderspost_skip_reason'] = refusal
+        result['send_refused'] = 'no_stop_attached'
+        log.error('Survivor live send REFUSED — no stop attached '
+                  '(%s %s %s)', strat, symbol, trade_id)
+        try:
+            db.health('survivors', 'degraded', refusal)
+        except Exception:
+            pass
+        try:
+            from . import ict_push
+            ict_push.maybe_queue_send_refusal(db, c, cfg, trade,
+                                              'no_stop_attached')
+        except Exception:
+            log.exception('Survivor send-refusal alert failed')
+        return result
     queued = traderspost.queue_signal(
         db, c, trade, trade_key='trade:' + trade_id,
         position_key=pos_key_base + ':t1')

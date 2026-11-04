@@ -61,6 +61,17 @@ Relative brackets (Task 003 Item 1, 2026-10-26):
   absolutes sent, order_sent_at, and the TradersPost response id from
   the 200 body. Fill price/time are NOT on the wire (acceptance-only
   response); they arrive via later reconciliation, never faked here.
+
+Stop-only protective brackets (2026-11-04, survivors safety overlay):
+- A trade flagged safety_stop_only sends stopLoss and NO takeProfit:
+  the horizon survivors' (S1/S3) broker-resting disaster stop. Their
+  exit remains the engine-fired close signal (time exit / flatten),
+  whose cancel semantics retire the resting stop exactly like an
+  unfilled bracket leg. The relative conversion applies to the stop
+  alone under the same quote-booked condition as full brackets; the
+  two bracket forms never mix, and a missing/invalid stop fails
+  closed (payload None) — the survivors send path additionally
+  refuses any entry payload that carries no stop at all.
 """
 import hashlib
 import json
@@ -225,6 +236,48 @@ def build_payload(cfg, trade):
     stop = trade.get('stop')
     target = trade.get('target')
     qty = trade.get('qty', 1)
+
+    # Stop-only protective bracket (2026-11-04): the horizon
+    # survivors' live entries carry a broker-resting disaster stop
+    # and NO take-profit (see the module docstring). Keyed on the
+    # explicit safety_stop_only flag, which only the survivors send
+    # path sets, on its send copy only — booked records are never
+    # shaped this way. A missing or wrong-sided stop fails closed.
+    if trade.get('safety_stop_only'):
+        if not entry or not stop or not qty or qty < 1:
+            return None
+        if side == 'long' and not stop < entry:
+            return None
+        if side == 'short' and not stop > entry:
+            return None
+        payload = {
+            'ticker': ticker,
+            'action': action,
+            'quantity': qty,
+            'price': entry,
+            'stopLoss': {
+                'type': 'stop',
+                'stopPrice': stop,
+            },
+            'strategy': trade.get('detector', 'compass'),
+            'orderType': 'market',
+            'timeInForce': 'day',
+        }
+        # Relative form, stop alone: same quote-booked condition and
+        # anchor semantics as the full-bracket conversion below.
+        booked = trade.get('entry')
+        source = str(trade.get('entry_price_source') or '')
+        if source.startswith('quote') and booked:
+            from .instruments import future_spec
+            spec = future_spec(symbol) or {}
+            tick_ = spec.get('tick') or trade.get('tick')
+            stop_amount = _round_to_tick(abs(stop - entry), tick_)
+            if stop_amount > 0:
+                payload['price'] = booked
+                payload['signalPrice'] = booked
+                payload['stopLoss'] = {'type': 'stop',
+                                       'amount': stop_amount}
+        return payload
 
     # Bracket-less entries (2026-10-28, Claude survivors S1/S3): the
     # frozen configurations have NO stop/target — exits are engine-fired

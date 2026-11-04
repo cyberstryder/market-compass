@@ -339,7 +339,24 @@ class Engine:
             # S1/S3, 2026-10-28) exit on their flatten_at only. Every
             # pre-existing record carries a numeric stop, so the guard
             # is inert for them.
-            stopped=(trigger<=p["stop"] if long else trigger>=p["stop"]) if p.get("stop") is not None else False
+            # Safety-stop overlay (2026-11-04): a horizon position's
+            # record also carries safety_stop — the broker-resting
+            # disaster stop its LIVE entry was sent with (survivors
+            # stamps it at booking). For a live-sent position
+            # (traderspost_sent set by dispatch), evaluate it exactly
+            # like a booked stop below, so a broker-side safety fill
+            # is detected — and the fail-closed close send fires —
+            # the same way a bracket stop fill is. Gated on
+            # traderspost_sent: a paper-only booking carries the
+            # field too but must never exit on it; its construction
+            # is the frozen stop-less horizon.
+            stop_level=p.get("stop")
+            safety_active=False
+            if stop_level is None and p.get("traderspost_sent") \
+                    and p.get("safety_stop") is not None:
+                stop_level=p["safety_stop"]
+                safety_active=True
+            stopped=(trigger<=stop_level if long else trigger>=stop_level) if stop_level is not None else False
             # A position with no fixed target (target None) never
             # target-exits in this loop; it exits on its stop or the
             # session flatten. (The 2/2/1 trailer legs this comment used
@@ -358,13 +375,13 @@ class Engine:
                 if b["ts"]<=p["last_bar_checked"] or b["ts"]<p["entered_at"] or b["ts"]+60>now: continue
                 p["last_bar_checked"]=b["ts"]
                 payload=b["payload"]
-                stop_crossed=(payload["l"]<=p["stop"] if long else payload["h"]>=p["stop"]) if p.get("stop") is not None else False
+                stop_crossed=(payload["l"]<=stop_level if long else payload["h"]>=stop_level) if stop_level is not None else False
                 target_touched=(payload["h"]>=tgt if long else payload["l"]<=tgt) if tgt is not None else False
                 if stop_crossed:
                     # A bar touching both levels is ambiguous intrabar; the
                     # stop wins by conservative convention.
                     reason="stop_detected_in_bar"
-                    price=min(price,p["stop"]-p["tick"]) if long else max(price,p["stop"]+p["tick"])
+                    price=min(price,stop_level-p["tick"]) if long else max(price,stop_level+p["tick"])
                     break
                 if target_touched:
                     # First touch in chronological bar order wins: a target
@@ -379,6 +396,11 @@ class Engine:
             p["mark"]=price
             p["unrealized"]=(price-p["entry"])*(1 if long else -1)*p["qty"]*p["multiplier"]-2*p["fee"]*p["qty"]
             if reason:
+                if safety_active and reason in ("stop","stop_detected_in_bar"):
+                    # The close was driven by the broker-resting
+                    # safety stop, not a booked strategy stop — the
+                    # record says so, for the 50-fill review.
+                    p["safety_stop_hit"]=True
                 p.update(status="closed",exit=price,exited_at=now,exit_reason=reason,pnl=p["unrealized"])
                 if p.get("asset")=="future":
                     # GEX context stamp at exit (Build #2): evidence only.

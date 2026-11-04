@@ -347,6 +347,12 @@ def sent(monkeypatch):
 
 
 def test_submit_s1_live_queues_bracketless_send(db, cfg, sent):
+    # 2026-11-04 safety-stop overlay: the S1 live send still carries
+    # no take-profit and no strategy bracket, but it is no longer a
+    # naked market entry — it carries the broker-resting safety stop
+    # (0.5 x atr_t = 50 ticks x 0.25 above the short entry). The
+    # booked record keeps its stop=None horizon construction; the
+    # full pinning lives in tests/test_survivor_safety_stop.py.
     cfg.traderspost_enabled = True
     with db.tx() as c:
         survivors.ensure_state(db, c, NOW)
@@ -356,10 +362,12 @@ def test_submit_s1_live_queues_bracketless_send(db, cfg, sent):
     traderspost.dispatch_pending(cfg, db)
     assert len(sent) == 1
     payload = traderspost.build_payload(None, dict(sent[0]))
-    assert 'stopLoss' not in payload and 'takeProfit' not in payload
+    assert payload['stopLoss'] == {'type': 'stop', 'stopPrice': 20012.5}
+    assert 'takeProfit' not in payload
     with db.tx() as c:
         trade = db.get(c, 'trade:' + r['id'])
     assert trade['traderspost_sent'] is True
+    assert trade['stop'] is None and trade['safety_stop'] == 20012.5
 
 
 def test_submit_s2_live_queues_bracketed_send(db, cfg, sent):

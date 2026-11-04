@@ -16,6 +16,13 @@ live/paper distinction is the records' own flags ('live_send' at
 booking, 'traderspost_sent' on the position), so a live survivor
 push — fill-verdict footers included — is byte-identical to before.
 
+Send-refusal alerts (2026-11-04): when the survivors send path
+REFUSES a live entry (the no-naked-entry invariant — the payload
+would carry no stop), maybe_queue_send_refusal queues a loud alert
+on this channel. The trade was booked on paper but no live order
+exists; that is a live-book event, not paper noise, so the payload
+carries live=True and queues as 'pending' under the silence gate.
+
 Enable with ICT_PUSH_ENABLED=true and DISCORD_ICT_WEBHOOK_URL.
 """
 import asyncio
@@ -286,6 +293,76 @@ def maybe_queue_exit(db, c, cfg, trade):
     return row_id
 
 
+def maybe_queue_send_refusal(db, c, cfg, trade, reason):
+    """Queue a LOUD alert for a REFUSED live send (2026-11-04).
+
+    The survivors send path refused this trade's live entry (the
+    no-naked-entry invariant: its payload carried no stop). The
+    paper booking stands; no live order was placed. The payload is
+    stamped live=True on purpose — it reports on the LIVE book — so
+    under the paper-silence gate it queues as 'pending' and drains
+    like any live alert. Returns the outbox row id, or None if push
+    is disabled."""
+    if not bool(getattr(cfg, 'ict_push_enabled', False)):
+        return None
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    ct = ZoneInfo('America/Chicago')
+    at = time.time()
+    entry_time = datetime.fromtimestamp(
+        trade.get('entered_at', at), ct)
+    time_str = entry_time.strftime('%a %H:%M CT')
+
+    row_id = identity('ict-push-v1', 'refusal', trade.get('id', ''),
+                      int(at))
+    payload = {
+        'type': 'send_refusal',
+        'detector': trade.get('detector', 'unknown'),
+        'strategy': trade.get('strategy', ''),
+        'symbol': trade.get('symbol', '?'),
+        'side': trade.get('side', '?').upper(),
+        'entry': trade.get('signal_price') or trade.get('entry', 0),
+        'reason': reason,
+        'time_str': time_str,
+        'at': at,
+        'live': True,
+    }
+    status = 'pending' if payload['live'] else 'suppressed'
+    if getattr(cfg, 'push_outbox_unified', False):
+        c.execute(db.insert(push_outbox).values(
+            id=row_id, channel='ict', status=status, created=time.time(),
+            payload=payload, delivery={'attempts': 0})
+            .on_conflict_do_nothing(index_elements=['id']))
+    else:
+        c.execute(db.insert(outbox).values(
+            id=row_id, status=status, created=time.time(), payload=payload,
+            delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
+    return row_id
+
+
+def format_refusal_message(payload):
+    """Discord-safe alert for a refused live send (loud by design)."""
+    lines = [
+        '🚨 **LIVE SEND REFUSED** — ICT %s %s %s' % (
+            payload.get('detector', 'unknown').replace('_', ' ').title(),
+            payload.get('side', '?'),
+            payload.get('symbol', '?')
+        ),
+        'Entry `%.2f` was NOT sent to TradersPost — %s' % (
+            payload.get('entry', 0),
+            payload.get('reason', 'unknown'),
+        ),
+        'Paper position booked; no live order placed. · %s' % (
+            payload.get('time_str', ''),
+        ),
+        '🔴 **LIVE** — refused by the send-path safety invariant',
+    ]
+    content = '\n'.join(lines)
+    return {'content': content[:1900], 'username': 'ICT Signals',
+            'allowed_mentions': {'parse': []}}
+
+
 def format_exit_message(payload):
     """Discord-safe alert for an ICT exit (paper or live)."""
     footer = ('🔴 **LIVE** — closed via TradersPost'
@@ -348,7 +425,11 @@ def deliver_one(db, client, url, now=None, max_attempts=MAX_ATTEMPTS,
     
     status = 'failed'
     try:
-        formatter = format_exit_message if job['payload'].get('type') == 'exit' else format_message
+        _ptype = job['payload'].get('type')
+        formatter = (format_exit_message if _ptype == 'exit'
+                     else format_refusal_message
+                     if _ptype == 'send_refusal'
+                     else format_message)
         resp = client.post(url, params={'wait': 'true'}, json=formatter(job['payload']))
         if 200 <= resp.status_code < 300:
             status = 'delivered'
