@@ -6,7 +6,7 @@ from urllib.parse import urlparse, parse_qsl, urlencode
 import httpx
 from sqlalchemy import select, func, update
 from .store import events, discord_jobs
-from .alert_format import message_for, alert_identity
+from .alert_format import message_for, alert_identity, FUTURE
 from .alert_routes import ROUTES, ORIGINAL_SENDERS, PUBLICATION_ROUTES, route_for, destination, manifest
 from .operating_mode import paper_message
 from . import alert_ownership
@@ -97,6 +97,56 @@ def scanner_setup_silence(row, cfg=None, now=None):
                       'shadow measurement continues and the event is still recorded'}
 
 
+# Engine futures mirror silence (Josh, 2026-11-03: "silence both paper
+# surfaces"). The engine's own futures lifecycle alerts pass through
+# alert_ownership untouched (asset='future' passthrough) and land on
+# #futures, so the ICT paper book's closes surface a second time there,
+# duplicating the ict_push exit for the same trade. Paper items are
+# silenced; a live-linked item is NOT part of the paper mirror and
+# keeps its push. Production evidence (7 days to 2026-11-03): 27
+# 'closed' rows, of which 3 were live survivor closes carrying
+# traderspost_sent — the mirror is not paper-only, so the gate reads
+# the distinction from the records themselves: a close alert's payload
+# is the position dict (carrying traderspost_sent / live_send), and a
+# management_blocked alert carries the trade_id, resolved against the
+# trade record, which carries the same flags (written at booking and
+# updated by the TradersPost dispatch). Recording is untouched — this
+# decides only whether a Discord job is queued as pending or
+# suppressed, at enqueue and again at send time (backlog belt, same
+# shape as the scanner gate above).
+FUTURES_MIRROR_LIFECYCLE = frozenset({'closed', 'management_blocked'})
+FUTURES_MIRROR_GATE = 'futures-mirror-silence-v1'
+
+
+def _futures_mirror_live(db, c, payload):
+    """True when a futures lifecycle alert belongs to a trade that was
+    actually sent live via TradersPost, per the flags the records
+    carry (payload first, then the stored trade record)."""
+    if payload.get('traderspost_sent') or payload.get('live_send'):
+        return True
+    trade_id = payload.get('trade_id') or payload.get('id')
+    if trade_id:
+        record = db.get(c, 'trade:' + str(trade_id)) or {}
+        return bool(record.get('traderspost_sent') or record.get('live_send'))
+    return False
+
+
+def futures_mirror_silence(db, c, row, now=None):
+    """Suppression decision for a paper engine futures lifecycle alert
+    (closed / management_blocked); None when the alert is outside the
+    class or its trade was sent live."""
+    payload = row.get('payload') or {}
+    if payload.get('status') not in FUTURES_MIRROR_LIFECYCLE:
+        return None
+    if payload.get('asset') != 'future' and not FUTURE.fullmatch(row.get('symbol') or ''):
+        return None
+    if _futures_mirror_live(db, c, payload):
+        return None
+    return {'action': 'suppressed', 'gate': FUTURES_MIRROR_GATE, 'at': now,
+            'reason': 'Engine futures mirror pushes silenced for paper trades; '
+                      'the trade is still recorded and live-sent trades still push'}
+
+
 def enqueue_routes(db, c, now, cfg=None):
     """Start after the old acknowledged boundary, never replay delivered history."""
     cursor = db.get(c, 'outbox:discord:ingested', db.get(c, 'outbox:discord', 0))
@@ -104,6 +154,8 @@ def enqueue_routes(db, c, now, cfg=None):
                           .order_by(events.c.id).limit(200)).mappings())
     for row in rows:
         decision=scanner_setup_silence(row, cfg, now)
+        if decision is None:
+            decision=futures_mirror_silence(db, c, row, now)
         if decision is None:
             decision=alert_ownership.assess(db,c,row,now)
         # Publication categories predate the condensed channels; map the two
@@ -263,6 +315,10 @@ class DeliveryWorker:
                 self.db.put(c, 'outbox:discord:routes', manifest(self.cfg))
         return True
 
+    def _futures_mirror_silence(self, row, now):
+        with self.db.tx() as c:
+            return futures_mirror_silence(self.db, c, row, now)
+
     def _route_pending(self, route):
         with self.db.tx() as c:
             pending=c.execute(select(func.count()).select_from(discord_jobs).where(
@@ -355,6 +411,14 @@ class DeliveryWorker:
         silence = scanner_setup_silence(row, self.cfg, now)
         if silence is not None:
             await asyncio.to_thread(self._mark, row['id'], 'suppressed', silence)
+            return
+        # Same futures-mirror gate as enqueue_routes, at send time so
+        # paper jobs queued before the gate existed cannot drain
+        # either. Live-linked items return None here and send as
+        # before; recording is untouched.
+        mirror = await asyncio.to_thread(self._futures_mirror_silence, row, now)
+        if mirror is not None:
+            await asyncio.to_thread(self._mark, row['id'], 'suppressed', mirror)
             return
         # Skip futures scanner SETUP noise if disabled (Josh: "that's just noise").
         # This only blocks Discord delivery; the alert is still recorded in the DB.
