@@ -182,6 +182,25 @@ overnight_omc_episodes=Table('overnight_omc_episodes',meta,
     Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
 Index('overnight_omc_active',overnight_omc_episodes.c.status,overnight_omc_episodes.c.created)
 
+# Structure Hunter SPY options forward scorer episodes
+# (compass/sh_spy_options.py). Declared here for the same reason as
+# connors_ssc_episodes above: boot-time create_all must see the table
+# before app.py lazily imports the owning module.
+sh_spy_options_episodes=Table('sh_spy_options_episodes',meta,
+    Column('id',String(64),primary_key=True),Column('underlying',String(100),nullable=False),
+    Column('status',String(24),nullable=False),Column('created',Float,nullable=False),
+    Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
+Index('sh_spy_options_active',sh_spy_options_episodes.c.status,sh_spy_options_episodes.c.created)
+
+# SH-SPY shadow-alert outbox (registration §6, display only): the
+# scorer's own narrow queue to the 0DTE Discord channel, following
+# the per-channel outbox precedent (ict_push_outbox_v1 above).
+sh_spy_push_outbox=Table('sh_spy_push_outbox_v1',meta,
+    Column('id',String(64),primary_key=True),Column('status',String(24),nullable=False),
+    Column('created',Float,nullable=False),Column('payload',JSON,nullable=False),
+    Column('delivery',JSON,nullable=False))
+Index('sh_spy_push_pending',sh_spy_push_outbox.c.status,sh_spy_push_outbox.c.created)
+
 spy_checks=Table('spy_plan_checks_v1',meta,
     Column('id',String(64),primary_key=True),Column('version',String(50),nullable=False),
     Column('source_key',String(150),nullable=False),Column('day',String(10),nullable=False),

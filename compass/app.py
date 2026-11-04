@@ -225,6 +225,10 @@ def create_app(cfg=None):
             if cfg.overnight_omc:
                 from .overnight_omc import OvernightOMC
                 spawn(lambda: OvernightOMC(db,cfg).run(),'OvernightOMC')
+            if cfg.sh_spy_options:
+                from .sh_spy_options import SHSpyOptions, run_push as run_sh_spy_push
+                spawn(lambda: SHSpyOptions(db,cfg).run(),'SHSpyOptions')
+                spawn(lambda: run_sh_spy_push(db,cfg),'run_sh_spy_push')
             from .discovery import Discovery
             spawn(lambda: Discovery(db,cfg).run(),'Discovery')
             spawn(lambda: run_obsidian(db,cfg),'run_obsidian')

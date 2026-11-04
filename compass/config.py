@@ -234,6 +234,15 @@ class Config:
     # registration from the chain_eod + chain_open archives in its own
     # premium cell; see compass/overnight_omc.py.
     overnight_omc: bool = field(default_factory=lambda: env("OVERNIGHT_OMC_ENABLED","true")=="true")
+    # Structure Hunter SPY options forward premium scorer (2026-11-04,
+    # Josh): paper/measurement only — scores the frozen S3R3 options
+    # expression from live SPY 1-minute bars and live OPRA quotes in
+    # its own premium cell; see compass/sh_spy_options.py.
+    sh_spy_options: bool = field(default_factory=lambda: env("SH_SPY_OPTIONS_ENABLED","true")=="true")
+    # SH-SPY display-only shadow alerts to the 0DTE Discord channel
+    # (registration §6 amendment, Josh 2026-11-04): rendering only —
+    # scoring is byte-identical with this flag on or off.
+    sh_spy_alerts: bool = field(default_factory=lambda: env("SH_SPY_ALERTS_ENABLED","true")=="true")
     swing_alerts: bool = field(default_factory=lambda: env("SWING_IDEAS_ALERTS","true")=="true")
     swing_min_dte: int = field(default_factory=lambda: int(env("SWING_MIN_DTE","14")))
     swing_max_dte: int = field(default_factory=lambda: int(env("SWING_MAX_DTE","60")))
