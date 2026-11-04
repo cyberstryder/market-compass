@@ -607,14 +607,20 @@ class Collectors:
             # focus lane already serves those at the same cadence).
             pending_due=[]
             if lane=='pending':
+                # Live set via Store.waiting_pendings (server-side
+                # status/expiry filter + symbol projection). The lane
+                # previously prefix()-hauled both pending prefixes in
+                # full; pending rows are never deleted, the accumulated
+                # population outgrew this opening transaction's
+                # statement timeout under RTH load, and the lane died
+                # before selecting anything (2026-11-04 repair; see
+                # Store.waiting_pendings).
                 live=set()
-                for prefix in ('pending_options:','pending_research_options:'):
-                    for row in self.db.prefix(c,prefix).values():
-                        symbol=(row.get('signal') or {}).get('symbol')
-                        if (row.get('status')=='waiting' and symbol and '@' not in symbol
-                                and symbol in universe and symbol not in focus
-                                and now<row.get('expires_at',0)):
-                            live.add(symbol)
+                for row in self.db.waiting_pendings(c,now):
+                    symbol=row.get('symbol')
+                    if (symbol and '@' not in symbol
+                            and symbol in universe and symbol not in focus):
+                        live.add(symbol)
                 pending_due=sorted((s for s in live
                     if retry(s) and now-age(s)>=PENDING_CHAIN_MIN_AGE_S),key=age)
             # Independent bounded lanes: carried/background backlogs must never

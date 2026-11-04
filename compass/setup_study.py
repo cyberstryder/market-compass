@@ -352,16 +352,20 @@ def snapshot(db, c, cfg, now):
 def option_requests(db,c,now):
     """Request fresh quotes for every waiting 0DTE hypothesis; no account checks."""
     wanted=[]
-    for pending in db.prefix(c,'pending_research_options:').values():
-        if pending.get('status')!='waiting' or now>=pending['expires_at']:
+    # Live pendings via Store.waiting_pendings (status/window filtered
+    # server-side, 2026-11-04 lane repair): this loop previously
+    # prefix()-hauled the entire accumulated pending population --
+    # the same unbounded read that starved the pending chain lane.
+    for pending in db.waiting_pendings(c,now):
+        symbol=pending.get('symbol');price=pending.get('signal_price')
+        if not symbol or price is None:
             continue
-        signal=pending['signal']
-        chain=db.get(c,'chain:'+signal['symbol'],{})
+        chain=db.get(c,'chain:'+symbol,{})
         if not 0<=now-chain.get('asof',0)<=120:
             continue
-        kind='call' if signal['side']=='long' else 'put'
+        kind='call' if pending.get('side')=='long' else 'put'
         contracts=[o for o in chain.get('contracts',[]) if o.get('expiry')==day(now)
                    and o.get('type')==kind and o.get('multiplier')==100]
-        contracts.sort(key=lambda o:abs(o['strike']-signal['signal_price']))
+        contracts.sort(key=lambda o:abs(o['strike']-price))
         wanted.extend(o['symbol'] for o in contracts[:8])
     return list(dict.fromkeys(wanted))
