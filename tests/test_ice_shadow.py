@@ -9,6 +9,7 @@ goal hidden files). These tests pin that equivalence in CI.
 """
 import json
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -16,8 +17,8 @@ import pytest
 from sqlalchemy import select
 
 from compass import day_digest, ice_shadow
-from compass.ice_shadow import (IceShadow, SeriesState, SymbolState,
-                                resample_5m, score_fire)
+from compass.ice_shadow import (DmiOscillator, IceShadow, SeriesState,
+                                SymbolState, resample_5m, score_fire)
 from compass.store import Store, ice_shadow_fires
 
 ET = ZoneInfo('America/New_York')
@@ -80,8 +81,13 @@ FIRES_5M = [(288, 'max6rsi', 'short'), (336, 'max6rsi', 'short'),
             (467, 'max6rsi', 'short'), (469, 'max6rsi', 'short'),
             (478, 'max6rsi', 'short'), (484, 'max6rsi', 'short'),
             (489, 'max6rsi', 'short')]
-# Study component values at the final bar of the 1M fixture.
-FINAL_COMPONENTS = {'tsi': -33.8622128156, 'dmi': -33.5857578285,
+# Study component values at the final bar of the 1M fixture. The 'dmi'
+# pin is the TOS-definition value (plain difference, corrected
+# 2026-11-03): under the pre-correction ratio definition it was
+# -33.5857578285. The fire lists and vote counts above are unchanged by
+# the correction — the DMI vote is a zero-cross (sign) test and
+# sign(diff) == sign(ratio) whenever +DI + -DI > 0.
+FINAL_COMPONENTS = {'tsi': -33.8622128156, 'dmi': -16.543528991161974,
                     'sq20': -0.3429432991, 'sq32': -1.2033068001,
                     'qs50': -0.0415163577, 'qs24': -0.039409844,
                     'macd': -0.8132766695, 'rsi': 36.6912570041,
@@ -156,6 +162,56 @@ def test_vote_counts_match_study():
             bb, bs, rb, rs = VOTE_COUNTS[i]
             assert (snap['base_bull'], snap['base_bear']) == (bb, bs)
             assert (snap['bull_rsi'], snap['bear_rsi']) == (rb, rs)
+
+
+# ---------------------------------------------------------------------
+# DMI oscillator — TOS definition (correction of 2026-11-03).
+#
+# Josh read the desktop DMI_Oscillator study source in his own TOS:
+# inputs are (length, paint bars, average type) — no cumulative toggle —
+# and the defining line is `plot Osc = diPlus - diMinus;`, the PLAIN
+# DIFFERENCE. Neither earlier port matched: the frozen study (and this
+# port until 2026-11-03) used the ratio 100*(+DI - -DI)/(+DI + -DI);
+# Claude's gauntlet port used a cumulative running sum. The pins below
+# are the TOS check packet's computed plain-difference series on real
+# AAPL 5M bars (goal files/tos-check-packets-2026-11-03.md).
+# ---------------------------------------------------------------------
+def test_dmi_matches_tos_packet_aapl_5m():
+    fx = json.loads((Path(__file__).parent / 'fixtures'
+                     / 'aapl_5m_dmi.json').read_text())
+    osc = DmiOscillator(22)
+    out = [osc.update(h, low, c) for _ts, _o, h, low, c in fx['bars']]
+    # Bounded in [-100, 100] by construction on every finite bar.
+    finite = [v for v in out if v == v]
+    assert finite and all(-100.0 <= v <= 100.0 for v in finite)
+    # The packet's final-10 values (full 2,106-bar history; the 600-bar
+    # fixture tail reproduces them to ~6e-12 — tolerance 1e-6).
+    want = [e['diff'] for e in fx['expected_diff_last10']]
+    assert fx['expected_diff_last10'][-1]['et'] == '2026-11-02 15:55'
+    for got, exp in zip(out[-10:], want):
+        assert got == pytest.approx(exp, abs=1e-6)
+    # The discriminator bar: TOS plain difference -4.81 at 15:55, where
+    # the ratio read -13.84 and the cumulative -490.7.
+    assert out[-1] == pytest.approx(-4.81213723194935, abs=1e-6)
+
+
+def test_dmi_bounds_and_sign_on_lcg_series():
+    osc = DmiOscillator(22)
+    for o, h, low, c in lcg_bars(2600):
+        v = osc.update(h, low, c)
+        if v == v:
+            assert -100.0 <= v <= 100.0
+
+
+def test_dmi_both_di_zero_corner_is_zero():
+    # A ranged first bar, then strictly inside bars: smoothed +DM and
+    # -DM are both exactly 0 while smoothed TR > 0, so TOS reads
+    # diPlus - diMinus = 0. (The ratio returned NaN here — 0/0 — which
+    # also held the detector's finiteness gate closed on such bars.)
+    osc = DmiOscillator(22)
+    assert osc.update(10.0, 0.0, 5.0) == 0.0
+    for _ in range(30):
+        assert osc.update(6.0, 4.0, 5.0) == 0.0
 
 
 # ---------------------------------------------------------------------

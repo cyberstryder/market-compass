@@ -48,12 +48,22 @@ x {1M, 5M} x both variants, zero missing / zero extra).
   when the exit index runs past the series or any bar-start step inside
   the held window exceeds 15 minutes of missing bars.
 
-KNOWN OPEN DEPENDENCY (desk Task 008, Josh owes two TOS checks): the
-real ThinkOrSwim DMI_Oscillator(22, isCumulative=yes) may drift
-one-sided instead of oscillating. The frozen study — and this build —
-use the oscillating ratio definition 100*(+DI - -DI)/(+DI + -DI). The
-DMI oscillator is isolated in DmiOscillator below so a definition swap
-is a one-class change.
+TOS FIDELITY CORRECTION (2026-11-03, desk Task 008 check resolved):
+Josh read the desktop DMI_Oscillator study source in his own TOS —
+its inputs are (length, paint bars, average type) with NO cumulative
+toggle, and its defining line is `plot Osc = diPlus - diMinus;`: the
+PLAIN DIFFERENCE of the two DIs. Neither earlier port matched (the
+frozen study used the ratio 100*(+DI - -DI)/(+DI + -DI); Claude's
+gauntlet port used a cumulative running sum). DmiOscillator below now
+computes the TOS definition; see
+files/ice-dmi-correction-2026-11-03.md in the goal workspace.
+Sessions scored before the correction — including 2026-11-03, session
+1 of the ICE long-side forward registration — were computed under the
+ratio definition and are NOT recomputed; the correction is a fidelity
+fix toward the registered TOS-defined strategy, not a mechanics
+change (inputs, vote wiring, thresholds unchanged). The DMI
+oscillator stays isolated in DmiOscillator so any future definition
+question remains a one-class change.
 
 Live-only deviations from the study, by construction:
 - The study's two mechanical symbol-day exclusions (degraded <195-bar
@@ -360,14 +370,19 @@ class Squeeze:
 
 
 class DmiOscillator:
-    """DMI Oscillator(22, Wilder's) — the frozen oscillating ratio
-    definition: +DI = 100*S(+DM)/S(TR), -DI = 100*S(-DM)/S(TR) with
-    Wilder smoothing S, oscillator = 100*(+DI - -DI)/(+DI + -DI).
+    """DMI Oscillator(22, Wilder's) — the ThinkOrSwim definition,
+    verified from the desktop study source by Josh 2026-11-03:
+    +DI = 100*S(+DM)/S(TR), -DI = 100*S(-DM)/S(TR) with Wilder
+    smoothing S, oscillator = +DI - -DI (the study's own line:
+    `plot Osc = diPlus - diMinus;`). Bounded in [-100, 100] by
+    construction (each DI is a share of smoothed TR).
 
-    ISOLATED BY DESIGN (desk Task 008 open dependency): if Josh's TOS
-    check shows the real DMI_Oscillator(isCumulative=yes) drifts
-    one-sided instead of oscillating, the definition swap is confined
-    to this class."""
+    HISTORY: until 2026-11-03 this class computed the frozen study's
+    ratio 100*(+DI - -DI)/(+DI + -DI); Claude's gauntlet port used a
+    cumulative running sum. Neither matched TOS. The swap is confined
+    to this class by design; the DIs, inputs, vote wiring and
+    thresholds are unchanged. See files/ice-dmi-correction-2026-11-03.md
+    (goal workspace) for the evidence and the session-1 disclosure."""
     __slots__ = ('n', 'spdm', 'sndm', 'str_', 'ph', 'pl', 'pc')
 
     def __init__(self, n=22):
@@ -394,7 +409,7 @@ class DmiOscillator:
         st = self.str_.update(tr)
         pdi = fdiv(100.0 * sp, st)
         ndi = fdiv(100.0 * sn, st)
-        return fdiv(100.0 * (pdi - ndi), pdi + ndi)
+        return pdi - ndi
 
     def to_dict(self):
         return {'spdm': self.spdm.to_dict(), 'sndm': self.sndm.to_dict(),
