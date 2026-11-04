@@ -72,6 +72,7 @@ review_due. Both surface in /api/day-digest.
 import logging
 import math
 import re
+import time
 from collections import deque
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -642,8 +643,26 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
     try:
         from . import ict_push
         ict_push.maybe_queue(db, c, cfg, filled)
-    except Exception:
-        pass
+    except Exception as e:
+        # Booking must never block on a push failure — but a silent
+        # swallow makes a queue failure invisible at this seam.
+        # Mirror the marker ict_paper.submit already writes for the
+        # same call ('ict_push_queue'), so the failure surfaces in
+        # health instead of vanishing. Written on THIS connection,
+        # not via db.health(): health() opens its own transaction,
+        # which deadlocks against the booking transaction's writes
+        # on sqlite and needlessly couples the marker to a second
+        # connection on Postgres. Same row shape health() writes;
+        # it commits (or rolls back) with the booking itself.
+        try:
+            prev = db.get(c, 'health:ict_push_queue') or {}
+            db.put(c, 'health:ict_push_queue',
+                   {**prev, 'name': 'ict_push_queue', 'status': 'error',
+                    'detail': '%s: %s' % (type(e).__name__,
+                                          str(e)[:200]),
+                    'checked_at': time.time()})
+        except Exception:
+            pass
     try:
         risk = paper_risk.account(db, c, now, 'future', persist=True)
         risk['entries'] = risk.get('entries', 0) + 1

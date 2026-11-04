@@ -153,6 +153,24 @@ def maybe_queue(db, c, cfg, trade):
     return row_id
 
 
+def _fmt_price(v):
+    """Render a payload price for an alert body.
+
+    Payloads carry the record's own values, and horizon trades
+    (survivors S1/S3) have stop/target None BY CONSTRUCTION — the
+    record legitimately has no levels. '%.2f' % None raised TypeError
+    in the drainer: the alert never posted, the row stranded in
+    'sending', and the ict_push health row latched at error
+    (2026-11-04). None (or any non-numeric) renders as '—'; numeric
+    values render exactly as '%.2f' always did."""
+    if v is None:
+        return '—'
+    try:
+        return '%.2f' % float(v)
+    except (TypeError, ValueError):
+        return '—'
+
+
 def format_message(payload):
     """Discord-safe alert for an ICT entry (paper or live)."""
     side_emoji = '🟢' if payload.get('side') == 'LONG' else '🔴'
@@ -160,6 +178,17 @@ def format_message(payload):
     # dispatch completes after the tick commits — hence "queued".
     footer = ('🔴 **LIVE** — order queued to TradersPost'
               if payload.get('live') else '_Paper trade — watch only_')
+    if payload.get('stop') is None and payload.get('target') is None:
+        # Horizon trade: no bracket exists on the record, so there
+        # are no levels to print — say what the trade actually is.
+        levels = 'Entry `%s` · no stop/target — timed exit' % (
+            _fmt_price(payload.get('entry')),)
+    else:
+        levels = 'Entry `%s` → Target `%s` | Stop `%s`' % (
+            _fmt_price(payload.get('entry')),
+            _fmt_price(payload.get('target')),
+            _fmt_price(payload.get('stop')),
+        )
     lines = [
         '%s **ICT %s** %s %s' % (
             side_emoji,
@@ -167,11 +196,7 @@ def format_message(payload):
             payload.get('side', '?'),
             payload.get('symbol', '?')
         ),
-        'Entry `%.2f` → Target `%.2f` | Stop `%.2f`' % (
-            payload.get('entry', 0),
-            payload.get('target', 0),
-            payload.get('stop', 0),
-        ),
+        levels,
         'R:R `%.2f` · Qty `%d` · %s' % (
             payload.get('rr', 0),
             payload.get('qty', 1),
@@ -279,9 +304,9 @@ def format_exit_message(payload):
             payload.get('symbol', '?'),
             payload.get('result', '?'),
         ),
-        'Entry `%.2f` → Exit `%.2f`' % (
-            payload.get('entry', 0),
-            payload.get('exit', 0),
+        'Entry `%s` → Exit `%s`' % (
+            _fmt_price(payload.get('entry')),
+            _fmt_price(payload.get('exit')),
         ),
         'P&L **%s** · %s' % (
             payload.get('pnl_str', '$0.00'),
@@ -340,7 +365,17 @@ def deliver_one(db, client, url, now=None, max_attempts=MAX_ATTEMPTS,
     except httpx.HTTPError:
         status = 'pending'
         job['delivery']['next_attempt'] = now + 30
-    
+    except Exception as e:
+        # Any other local failure (a payload the formatter cannot
+        # render is the known case — the horizon-entry TypeError of
+        # 2026-11-04) must not strand the row in 'sending' with the
+        # alert silently lost while the drainer latches its health
+        # row at error. Fail the row with the cause in its delivery
+        # record; the final status update below still runs and the
+        # loop moves on to the next row. `status` stays 'failed'.
+        job['delivery']['error'] = '%s: %s' % (
+            type(e).__name__, str(e)[:200])
+
     if status == 'pending' and job['delivery'].get('attempts', 0) >= max_attempts:
         status = 'failed'
     
