@@ -1,8 +1,20 @@
-"""Push alerts for ICT futures detector paper entries.
+"""Push alerts for ICT futures detector trades.
 
 Follows the magnet_push.py pattern: durable outbox, async Discord drainer.
-Alerts fire when a detector opens a paper trade (via ict_paper.submit),
-so Josh can see which detectors fire on which instruments at which times.
+Alerts fire when a detector opens a trade (via ict_paper.submit) or a
+position closes (engine exits).
+
+Paper silence (Josh, 2026-11-03 — "silence both paper surfaces"): the
+paper book talked about itself on this channel ~50x/week while the
+live book it shares the channel with produced ~4 messages. Paper
+entries/exits now queue in 'suppressed' status — the row is still
+written (the same enqueue-as-suppressed shape as the alerts
+pipeline's scanner gate), but the drainer only ever selects
+'pending', so a paper push can never post. The channel carries live
+sends only. Booking and event recording upstream are untouched; the
+live/paper distinction is the records' own flags ('live_send' at
+booking, 'traderspost_sent' on the position), so a live survivor
+push — fill-verdict footers included — is byte-identical to before.
 
 Enable with ICT_PUSH_ENABLED=true and DISCORD_ICT_WEBHOOK_URL.
 """
@@ -125,14 +137,18 @@ def maybe_queue(db, c, cfg, trade):
         # at submit). Absent/False = paper, footer unchanged.
         'live': bool(trade.get('live_send')),
     }
+    # Paper silence (2026-11-03): paper entries queue as 'suppressed'
+    # and never drain; live entries queue as 'pending' exactly as
+    # before. See the module docstring.
+    status = 'pending' if payload['live'] else 'suppressed'
     if getattr(cfg, 'push_outbox_unified', False):
         c.execute(db.insert(push_outbox).values(
-            id=row_id, channel='ict', status='pending', created=time.time(),
+            id=row_id, channel='ict', status=status, created=time.time(),
             payload=payload, delivery={'attempts': 0})
             .on_conflict_do_nothing(index_elements=['id']))
     else:
         c.execute(db.insert(outbox).values(
-            id=row_id, status='pending', created=time.time(), payload=payload,
+            id=row_id, status=status, created=time.time(), payload=payload,
             delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
     return row_id
 
@@ -228,14 +244,19 @@ def maybe_queue_exit(db, c, cfg, trade):
     fill_state = _fill_state(db, c, trade)
     if fill_state:
         payload['fill_state'] = fill_state
+    # Paper silence (2026-11-03): same gate as entries, keyed on the
+    # payload's 'live' flag (the position's recorded traderspost_sent).
+    # Paper exits queue as 'suppressed' and never drain; live exits —
+    # fill-verdict footers included — queue exactly as before.
+    status = 'pending' if payload['live'] else 'suppressed'
     if getattr(cfg, 'push_outbox_unified', False):
         c.execute(db.insert(push_outbox).values(
-            id=row_id, channel='ict', status='pending', created=time.time(),
+            id=row_id, channel='ict', status=status, created=time.time(),
             payload=payload, delivery={'attempts': 0})
             .on_conflict_do_nothing(index_elements=['id']))
     else:
         c.execute(db.insert(outbox).values(
-            id=row_id, status='pending', created=time.time(), payload=payload,
+            id=row_id, status=status, created=time.time(), payload=payload,
             delivery={'attempts': 0}).on_conflict_do_nothing(index_elements=['id']))
     return row_id
 

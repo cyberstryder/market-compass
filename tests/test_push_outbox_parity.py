@@ -61,16 +61,20 @@ def seed(variant, db, unified, monkeypatch=None):
             monkeypatch.setattr(ict_push, 'time',
                                 SimpleNamespace(time=lambda: NOW))
             if variant == 'ict':
+                # Live seeds: since the 2026-11-03 paper silence, paper
+                # ICT trades queue as 'suppressed' and never drain, so
+                # the parity drain needs trades that actually push.
                 trade = {'id': 'ict-1', 'detector': 'aoi_fade',
                          'symbol': 'MES.c.0', 'side': 'long', 'entry': 100.0,
                          'stop': 99.0, 'target': 102.0, 'qty': 1,
-                         'entered_at': NOW}
+                         'entered_at': NOW, 'live_send': True}
                 assert ict_push.maybe_queue(db, conn, c, trade)
             else:
                 trade = {'id': 'ict-1', 'detector': 'aoi_fade',
                          'symbol': 'MES.c.0', 'side': 'long', 'entry': 100.0,
                          'exit': 102.0, 'pnl': 200.0,
-                         'exit_reason': 'target_hit', 'exited_at': NOW}
+                         'exit_reason': 'target_hit', 'exited_at': NOW,
+                         'traderspost_sent': True}
                 assert ict_push.maybe_queue_exit(db, conn, c, trade)
         elif variant == 'flow_pulse':
             pulse = {'symbol': 'SPY', 'direction': 'bullish',
