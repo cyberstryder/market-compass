@@ -275,6 +275,38 @@ def test_pending_lane_selects_with_accumulated_population(db, monkeypatch):
     asyncio.run(run())
 
 
+from tests.test_smoothers_postgres_handoff import pg
+
+
+def test_waiting_pendings_on_postgres(pg):
+    """Dialect proof for Store.waiting_pendings: the JSONB path
+    predicates, the float cast and the COLLATE "C" key range must
+    select the same live set on Postgres (production's dialect) as on
+    sqlite. Runs only where the pg fixture's isolated service exists
+    (CI); skipped on a bare dev box."""
+    sig = lambda s: {'id': 'x', 'symbol': s, 'side': 'long',
+                     'signal_price': 100.0}
+    with pg.tx() as c:
+        pg.put(c, 'pending_research_options:pg-live',
+               {'signal': sig('AAA'), 'expires_at': NOW + 600,
+                'status': 'waiting'})
+        pg.put(c, 'pending_options:pg-live2',
+               {'signal': sig('BBB'), 'expires_at': NOW + 300,
+                'status': 'waiting'})
+        pg.put(c, 'pending_research_options:pg-done',
+               {'signal': sig('CCC'), 'expires_at': NOW + 600,
+                'status': 'expired'})
+        pg.put(c, 'pending_research_options:pg-closed',
+               {'signal': sig('DDD'), 'expires_at': NOW - 5,
+                'status': 'waiting'})
+        rows = pg.waiting_pendings(c, NOW)
+    by_key = {r['key']: r for r in rows}
+    assert set(by_key) == {'pending_research_options:pg-live',
+                           'pending_options:pg-live2'}
+    assert by_key['pending_research_options:pg-live']['symbol'] == 'AAA'
+    assert by_key['pending_research_options:pg-live']['signal_price'] == 100.0
+
+
 def test_pending_lane_does_not_haul_pending_prefixes(db, monkeypatch):
     # Structural pin for the 2026-11-04 repair: chains('pending') must
     # never full-haul the pending prefixes via Store.prefix (that haul
