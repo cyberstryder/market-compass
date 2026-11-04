@@ -420,6 +420,48 @@ class Store:
         return {r.key:r.value for r in c.execute(select(state).where(
             key>=prefix,key<prefix+"\uffff"))}
 
+    def waiting_pendings(self,c,now):
+        """Live selection pendings across both pending prefixes,
+        filtered and projected server-side (2026-11-04 lane repair).
+
+        Returns [{'key','symbol','side','signal_price','expires_at'}]
+        for rows whose status is 'waiting' and whose selection window
+        is still open at `now`.
+        Pending rows are never deleted -- they accumulate under
+        terminal statuses carrying their full signal + last_selection
+        payloads (the prefixes date to 2026-09, so the population is
+        ~10^5 rows) -- and a full prefix() haul returns ALL of them to
+        whichever transaction asks. The 'pending' chain lane's opening
+        transaction was the only lane transaction that read those
+        prefixes, and under RTH load its haul no longer fit the
+        connection's 30s statement timeout: every lane cycle died
+        before target selection while the small-transaction lanes ran
+        normally (2026-11-04 behavioral read: 98.4% chain-blocks,
+        zero selections; the haul of one prefix alone measured 8.9s
+        for 80k rows on an idle local store). The status/expiry
+        predicates and the symbol projection therefore run server-side
+        over the key range, so only the small live set crosses the
+        wire. Writers have always stored expires_at as a numeric
+        epoch (engine now+1800 / now+120, scanner item expiry), so
+        the float cast cannot fail on legacy rows.
+        """
+        key=self._key(c)
+        expires=cast(state.c.value["expires_at"].as_string(),Float)
+        price=cast(state.c.value["signal"]["signal_price"].as_string(),Float)
+        out=[]
+        for prefix in ('pending_options:','pending_research_options:'):
+            rows=c.execute(select(state.c.key,
+                state.c.value["signal"]["symbol"].as_string(),
+                state.c.value["signal"]["side"].as_string(),
+                price,expires).where(
+                key>=prefix,key<prefix+"\uffff",
+                state.c.value["status"].as_string()=='waiting',
+                expires>now))
+            out.extend({'key':k,'symbol':symbol,'side':side,
+                'signal_price':price_v,'expires_at':exp}
+                for k,symbol,side,price_v,exp in rows)
+        return out
+
     def recent_trades(self,c,limit=100):
         """Newest `limit` trade: rows by entered_at, bounded in SQL.
 

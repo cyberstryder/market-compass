@@ -9,6 +9,17 @@ symbols with live selection pendings to focus-equivalent cadence
 Also covers the retry-path freshness alignment: retry_options now
 judges the underlying quote with the book's 60s decision-time bound
 (SCANNER_TRIGGER_QUOTE_MAX_AGE) instead of fresh()'s 5s default.
+
+2026-11-04 lane repair: the lane read its live set by prefix()-hauling
+both pending prefixes in full. Pending rows are never deleted, so the
+haul grew with the accumulated terminal population until the lane's
+opening transaction died on the production statement timeout under
+RTH load -- zero selections on the decisive behavioral read despite
+the lane testing green here (the original tests seeded 1-3 rows).
+The live set now comes from Store.waiting_pendings (server-side
+status/expiry filter + projection); the tests below pin the filter,
+selection over an accumulated population, and the no-full-haul
+structure.
 """
 import asyncio
 from datetime import datetime
@@ -194,6 +205,134 @@ def _run_retry(db, cfg, quote_row):
         Scanner(db, cfg).retry_options(c, {'SPY': quote_row}, NOW,
                                        Engine(db, cfg))
         return db.get(c, 'pending_research_options:one')
+
+
+def test_waiting_pendings_filters_server_side(db):
+    # The lane's live set comes from Store.waiting_pendings: status and
+    # window predicates run server-side, so terminal history and
+    # closed-window rows never cross into the lane's transaction.
+    def put(prefix, key, row):
+        with db.tx() as c:
+            db.put(c, prefix + key, row)
+
+    sig = lambda s: {'id': 'x', 'symbol': s, 'side': 'long'}
+    put('pending_research_options:', 'live1',
+        {'signal': sig('AAA'), 'expires_at': NOW + 600, 'status': 'waiting'})
+    put('pending_options:', 'live2',
+        {'signal': sig('BBB'), 'expires_at': NOW + 300, 'status': 'waiting'})
+    put('pending_research_options:', 'closed_window',
+        {'signal': sig('CCC'), 'expires_at': NOW - 5, 'status': 'waiting'})
+    put('pending_research_options:', 'done',
+        {'signal': sig('DDD'), 'expires_at': NOW + 600, 'status': 'expired'})
+    put('pending_research_options:', 'observed',
+        {'signal': sig('EEE'), 'expires_at': NOW + 600, 'status': 'observed'})
+    put('pending_research_options:', 'no_expiry',
+        {'signal': sig('AAA'), 'status': 'waiting'})
+    put('pending_research_options:', 'no_signal',
+        {'expires_at': NOW + 600, 'status': 'waiting'})
+    with db.tx() as c:
+        rows = db.waiting_pendings(c, NOW)
+    by_key = {r['key']: r for r in rows}
+    assert set(by_key) == {'pending_research_options:live1',
+                           'pending_options:live2',
+                           'pending_research_options:no_signal'}
+    assert by_key['pending_research_options:live1']['symbol'] == 'AAA'
+    assert by_key['pending_research_options:live1']['expires_at'] == NOW + 600
+    assert by_key['pending_options:live2']['symbol'] == 'BBB'
+    # A waiting row without a signal projects a null symbol; the lane
+    # skips it exactly as the full-haul code skipped a missing symbol.
+    assert by_key['pending_research_options:no_signal']['symbol'] is None
+
+
+def test_pending_lane_selects_with_accumulated_population(db, monkeypatch):
+    # Production shape the original tests never modeled: pending rows
+    # are never deleted, so thousands of terminal rows (with their
+    # last_selection audits) sit under the same prefixes as the live
+    # ones. The lane must still select the live pending's symbol.
+    calls = []
+    collector = make_collector(db, monkeypatch, calls)
+    audit = {'version': '0dte-selection-v3', 'status': 'blocked',
+             'reason': 'No recent options chain', 'chain_age_seconds': 5000.0,
+             'rejections': [{'symbol': 'O:X', 'reason': 'stale'}] * 4,
+             'underlying_evidence': {'basis': 'x' * 120}}
+    with db.tx() as c:
+        for i in range(3000):
+            db.put(c, 'pending_research_options:old-%d' % i,
+                   {'signal': {'id': 'old-%d' % i, 'symbol': 'BBB',
+                               'side': 'long'},
+                    'created_at': NOW - 90000, 'expires_at': NOW - 80000,
+                    'status': 'expired' if i % 2 else 'observed',
+                    'research_only': True, 'last_selection': audit})
+    seed_chain(db, 'AAA', 5000)
+    seed_chain(db, 'BBB', 5000)
+    seed_pending(db, 'AAA', 'live-a')
+
+    async def run():
+        await collector.chains('pending')
+        assert calls == ['AAA']
+        await collector.close()
+
+    asyncio.run(run())
+
+
+from tests.test_smoothers_postgres_handoff import pg
+
+
+def test_waiting_pendings_on_postgres(pg):
+    """Dialect proof for Store.waiting_pendings: the JSONB path
+    predicates, the float cast and the COLLATE "C" key range must
+    select the same live set on Postgres (production's dialect) as on
+    sqlite. Runs only where the pg fixture's isolated service exists
+    (CI); skipped on a bare dev box."""
+    sig = lambda s: {'id': 'x', 'symbol': s, 'side': 'long',
+                     'signal_price': 100.0}
+    with pg.tx() as c:
+        pg.put(c, 'pending_research_options:pg-live',
+               {'signal': sig('AAA'), 'expires_at': NOW + 600,
+                'status': 'waiting'})
+        pg.put(c, 'pending_options:pg-live2',
+               {'signal': sig('BBB'), 'expires_at': NOW + 300,
+                'status': 'waiting'})
+        pg.put(c, 'pending_research_options:pg-done',
+               {'signal': sig('CCC'), 'expires_at': NOW + 600,
+                'status': 'expired'})
+        pg.put(c, 'pending_research_options:pg-closed',
+               {'signal': sig('DDD'), 'expires_at': NOW - 5,
+                'status': 'waiting'})
+        rows = pg.waiting_pendings(c, NOW)
+    by_key = {r['key']: r for r in rows}
+    assert set(by_key) == {'pending_research_options:pg-live',
+                           'pending_options:pg-live2'}
+    assert by_key['pending_research_options:pg-live']['symbol'] == 'AAA'
+    assert by_key['pending_research_options:pg-live']['signal_price'] == 100.0
+
+
+def test_pending_lane_does_not_haul_pending_prefixes(db, monkeypatch):
+    # Structural pin for the 2026-11-04 repair: chains('pending') must
+    # never full-haul the pending prefixes via Store.prefix (that haul
+    # is what outgrew the lane's opening transaction in production).
+    # Fails on the pre-repair code, which prefix()-read both prefixes.
+    from compass.store import Store
+    orig_prefix = Store.prefix
+
+    def guarded(self, c, prefix):
+        assert prefix not in ('pending_options:',
+                              'pending_research_options:'), \
+            'pending lane full-hauled %s' % prefix
+        return orig_prefix(self, c, prefix)
+
+    monkeypatch.setattr(Store, 'prefix', guarded)
+    calls = []
+    collector = make_collector(db, monkeypatch, calls)
+    seed_chain(db, 'AAA', 5000)
+    seed_pending(db, 'AAA', 'p-guard')
+
+    async def run():
+        await collector.chains('pending')
+        assert calls == ['AAA']
+        await collector.close()
+
+    asyncio.run(run())
 
 
 def test_retry_options_accepts_30s_old_quote(db):
