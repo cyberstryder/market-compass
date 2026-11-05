@@ -101,7 +101,10 @@ def test_second_scan_transition_pushes(db):
         rows = _rows(db, c)
     assert len(rows) == 1
     p = rows[0]['payload']
-    assert rows[0]['status'] == 'pending'
+    # Silenced at enqueue since 2026-11-05 (apex-magnet-push-silence-v1);
+    # the full gate pins live in test_apex_magnet_push_silence.py.
+    assert rows[0]['status'] == 'suppressed'
+    assert rows[0]['delivery']['gate'] == 'apex-magnet-push-silence-v1'
     assert p['symbol'] == 'SPY' and p['signal'] == 'broke_through'
     assert p['magnet'] == 102.0 and p['previous_signal'] == 'approaching'
     assert p['role'] in ('support', 'resistance')
@@ -198,68 +201,24 @@ def _queue_row(db, c, signal='broke_through'):
     return mp.maybe_queue(db, c, cfg, 'SPY', row, 'approaching', DAY, NOW)
 
 
-def test_drainer_marks_delivered(db):
+def test_drainer_never_delivers(db):
+    # Since the 2026-11-05 silence gate, rows queue 'suppressed' and
+    # the drainer has nothing it may POST: deliver_one is a no-op and
+    # the row's terminal state is unchanged. (The pre-gate transport
+    # outcomes — delivered / 429 backoff / retry budget / 4xx /
+    # ambiguous — are unreachable for this class while the gate
+    # stands; the backlog belt is pinned in
+    # test_apex_magnet_push_silence.py.)
     with db.tx() as c:
         row_id = _queue_row(db, c)
     client = FakeClient(FakeResponse(200, {'id': '987654321'}))
-    assert mp.deliver_one(db, client, URL) is True
-    assert client.posts and 'wait' in client.posts[0]['params']
+    assert mp.deliver_one(db, client, URL) is False
+    assert client.posts == []
     with db.tx() as c:
         rows = _rows(db, c)
     assert rows[0]['id'] == row_id
-    assert rows[0]['status'] == 'delivered'
-    assert rows[0]['delivery']['message_id'] == '987654321'
-
-
-def test_429_backoff_and_retry(db):
-    import httpx
-    with db.tx() as c:
-        _queue_row(db, c)
-    client = FakeClient(FakeResponse(429, {'retry_after': 60}))
-    assert mp.deliver_one(db, client, URL, now=NOW) is True
-    with db.tx() as c:
-        rows = _rows(db, c)
-    assert rows[0]['status'] == 'pending'
-    assert rows[0]['delivery']['error'] == 'rate_limited'
-    assert rows[0]['delivery']['next_attempt'] == NOW + 60
-    assert rows[0]['delivery']['attempts'] == 1
-    # Not attempted again before next_attempt.
-    assert mp.deliver_one(db, client, URL, now=NOW + 10) is False
-
-
-def test_retry_budget_exhausted(db):
-    with db.tx() as c:
-        _queue_row(db, c)
-    client = FakeClient(FakeResponse(429, {'retry_after': 1}))
-    for i in range(mp.MAX_ATTEMPTS):
-        mp.deliver_one(db, client, URL, now=NOW + i * 120)
-    with db.tx() as c:
-        rows = _rows(db, c)
-    assert rows[0]['status'] == 'failed'
-    assert rows[0]['delivery']['error'] == 'retry_budget_exhausted'
-
-
-def test_4xx_fails_without_retry(db):
-    with db.tx() as c:
-        _queue_row(db, c)
-    client = FakeClient(FakeResponse(404))
-    assert mp.deliver_one(db, client, URL) is True
-    with db.tx() as c:
-        rows = _rows(db, c)
-    assert rows[0]['status'] == 'failed'
-    assert rows[0]['delivery']['error'] == 'http_404'
-
-
-def test_network_error_leaves_ambiguous(db):
-    import httpx
-    with db.tx() as c:
-        _queue_row(db, c)
-    client = FakeClient(exc=httpx.ConnectError('boom'))
-    assert mp.deliver_one(db, client, URL) is True
-    with db.tx() as c:
-        rows = _rows(db, c)
-    assert rows[0]['status'] == 'ambiguous'
-    assert rows[0]['delivery']['error'] == 'network_outcome_unknown'
+    assert rows[0]['status'] == 'suppressed'
+    assert 'message_id' not in rows[0]['delivery']
 
 
 def test_invalid_webhook_url_skips(db):
