@@ -339,15 +339,14 @@ def horizon_score(c,p,wed,now):
     contract=p.get('contract') or {}
     if not contract.get('symbol'):
         return {**base,'status':'unavailable','reason':'no_contract_recorded'}
-    row=c.execute(select(events.c.payload).where(events.c.key==chain_event_key(wed['date'],p['ticker']))).first()
-    if row is None:
-        # The snapshot job fires after Wednesday's close; give it a day
-        # before concluding the archive will never have this symbol.
-        if now<wed['close']+36*3600:return None
-        return {**base,'status':'unavailable','reason':'wednesday_chain_missing'}
-    payload=row[0] or {}
-    match=next((r for r in payload.get('contracts',[]) if r.get('symbol')==contract['symbol']),None)
+    match,why=_chain_contract(c,wed['date'],p['ticker'],contract['symbol'])
     if match is None:
+        if why=='chain_missing':
+            # The snapshot job fires after Wednesday's close; give it a
+            # day before concluding the archive will never have this
+            # symbol.
+            if now<wed['close']+36*3600:return None
+            return {**base,'status':'unavailable','reason':'wednesday_chain_missing'}
         return {**base,'status':'unavailable','reason':'contract_not_in_wednesday_chain'}
     bid=(match.get('quote') or {}).get('bid')
     ask=(p.get('quote') or {}).get('ask')
@@ -399,13 +398,28 @@ def tuesday_session(sessions):
     return sessions[1] if len(sessions)>=2 else None
 
 
+def _occ_key(symbol):
+    """Canonical bare OCC key for a contract symbol. Picks store the
+    Alpaca bare OCC form (ARM261106C00207500); the Massive-sourced
+    chain_eod archive stores the same contract with an 'O:' prefix
+    (O:ARM261106C00207500). The OCC body encodes underlying, expiry,
+    type and strike, so equality on the canonical form is exact —
+    the same contract, never a fuzzy match."""
+    if not isinstance(symbol,str):return None
+    return symbol[2:] if symbol.startswith('O:') else symbol
+
+
 def _chain_contract(c,date_str,ticker,symbol):
-    """One contract row from a day's chain_eod archive event. Returns
-    (row, None), or (None, 'chain_missing' | 'contract_not_in_chain')."""
+    """One contract row from a day's chain_eod archive event. The row
+    matches whether the archive stores the symbol bare or 'O:'-prefixed
+    (see _occ_key). Returns (row, None), or
+    (None, 'chain_missing' | 'contract_not_in_chain')."""
     row=c.execute(select(events.c.payload).where(events.c.key==chain_event_key(date_str,ticker))).first()
     if row is None:return None,'chain_missing'
     payload=row[0] or {}
-    match=next((r for r in payload.get('contracts',[]) if r.get('symbol')==symbol),None)
+    want=_occ_key(symbol)
+    if want is None:return None,'contract_not_in_chain'
+    match=next((r for r in payload.get('contracts',[]) if _occ_key(r.get('symbol'))==want),None)
     if match is None:return None,'contract_not_in_chain'
     return match,None
 
@@ -655,6 +669,107 @@ def refresh_cohort_exit_summary(db,week,rows,now):
     with db.tx() as c:
         db.put(c,VERSION+':week:'+week+':cohort_exit',
                {'week':week,'updated_at':now,**cohort_exit_summary(rows)})
+
+
+def _chain_derived_unavailable(stamp):
+    """True when a stored cell stamp is an 'unavailable' outcome whose
+    reason came from a chain-archive lookup (contract not found in the
+    day’s chain, or the day’s chain event missing) — the class the
+    2026-11-04 symbol-seam defect produced wholesale. Unavailable
+    outcomes with any other reason (entry ask missing, no contract
+    recorded, multiplier, missing bid/ask on a FOUND row) are not the
+    seam’s doing and are never cleared by the re-score."""
+    if not stamp or stamp.get('status')!='unavailable':return False
+    reason=stamp.get('reason') or ''
+    return 'contract_not_in' in reason or reason.endswith('chain_missing')
+
+
+def _clear_stamp(db,pid,field):
+    """Null one pick’s cell stamp (own transaction, row-locked) when
+    it is a chain-derived unavailable. Returns True when cleared."""
+    with db.tx() as c:
+        current=c.execute(select(weekly.c.payload).where(weekly.c.id==pid).with_for_update()).scalar_one()
+        if not _chain_derived_unavailable(current.get(field)):return False
+        current[field]=None;save(db,c,current)
+    return True
+
+
+def _reissue_horizon(db,p,wed,now):
+    """Re-issue one pick’s Wednesday-horizon stamp after a clear,
+    WITHOUT queueing the horizon notice: a bookkeeping correction
+    must not re-fire user-facing alerts for a past week’s board.
+    Mirrors score_horizon’s persistence half; the population is the
+    picks whose defective stamp was just cleared (they were stamped
+    while OPEN at the horizon, whatever their status is now)."""
+    with db.tx() as c:
+        current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
+        if current.get('horizon'):return False
+        h=horizon_score(c,current,wed,now)
+        if h is None:return False
+        current['horizon']=h;save(db,c,current)
+    return True
+
+
+def rescore_week_cells(db,week,now):
+    """Defect-correction re-score of one week’s shadow cells
+    (2026-11-04, files/chain-contract-symbol-seam-repair-2026-11-04.md).
+
+    The three premium cells (Wednesday horizon, Tuesday-entry,
+    cohort-exit) skip any pick already carrying a stamp, so the
+    symbol seam’s wholesale 'unavailable' stamps are terminal: a
+    fixed scorer alone never heals them. This pass deliberately
+    clears the chain-derived unavailable stamps of the named week
+    and re-issues them under the frozen rules from the archived
+    chain_eod data — nothing else is touched: scored stamps and
+    non-chain unavailable outcomes stand, no notices are queued,
+    and a contract genuinely absent from the archive (the COP/MU
+    strike-band class) comes back 'unavailable' again, as the
+    frozen rules require. Returns the before/after accounting;
+    the same report is appended as a smoothers_rescore event."""
+    with db.tx() as c:
+        state=db.get(c,VERSION+':week:'+week,{})
+        rows=list(c.execute(select(weekly.c.payload).where(weekly.c.week==week)).scalars())
+    sessions=state.get('sessions',[])
+    mon=sessions[0] if sessions else None
+    tue=tuesday_session(sessions);wed=wednesday_session(sessions)
+    if not (mon and tue and wed):
+        return {'week':week,'at':now,'ok':False,'error':'week_sessions_incomplete'}
+    fields=('horizon','tuesday_cell','cohort_exit')
+    def tally(rs,field):
+        out={}
+        for p in rs:
+            stamp=p.get(field)
+            key=stamp.get('status') if stamp else 'unstamped'
+            out[key]=out.get(key,0)+1
+        return out
+    report={'week':week,'at':now,'ok':True,'cells':{}}
+    for field in fields:
+        report['cells'][field]={'before':tally(rows,field),'cleared':0}
+    for p in rows:
+        for field in fields:
+            if _clear_stamp(db,p['id'],field):
+                report['cells'][field]['cleared']+=1
+                if field=='horizon':
+                    _reissue_horizon(db,p,wed,now)
+                elif field=='tuesday_cell':
+                    score_tuesday_cell(db,p,mon,tue,wed,now)
+                else:
+                    score_cohort_exit(db,p,mon,wed,now)
+    with db.tx() as c:
+        fresh=list(c.execute(select(weekly.c.payload).where(weekly.c.week==week)).scalars())
+    for field in fields:
+        cell=report['cells'][field]
+        cell['after']=tally(fresh,field)
+        cell['still_unavailable']=[
+            {'ticker':p['ticker'],'reason':(p.get(field) or {}).get('reason')}
+            for p in fresh
+            if (p.get(field) or {}).get('status')=='unavailable']
+    refresh_tuesday_summary(db,week,fresh,now)
+    refresh_cohort_exit_summary(db,week,fresh,now)
+    report['summaries_refreshed']=['tuesday_cell','cohort_exit']
+    with db.tx() as c:
+        db.append(c,'smoothers_rescore',VERSION,week,now,report)
+    return report
 
 
 def monitor(db,data,now):

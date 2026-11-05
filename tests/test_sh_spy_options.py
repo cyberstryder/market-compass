@@ -564,11 +564,21 @@ def test_deliver_one_push_formatter_failure_fails_row(db):
 
 # ── parity: the vendored engine vs the gauntlet's scored list ────────
 
-ARCHIVE = Path(os.environ.get(
-    'SH_SPY_ARCHIVE_DIR',
-    Path(__file__).resolve().parents[3] / 'goals'
-    / 'market-compass-trading-improvements' / 'hidden_files'
-    / 'structure-hunter-spy-2026-11-04'))
+def _default_archive():
+    # The gauntlet archive lives in the goal workspace, three levels
+    # above the repo checkout. In the Docker test stage the tree is
+    # only /app deep, so parents[3] does not exist — indexing it raised
+    # IndexError at collection and failed the packaged suite (PR run
+    # 41924739863, step 8). Fall back to this file's own directory: the
+    # archive is absent there too, and the parity test below skips, as
+    # designed, wherever the archive is not present.
+    here = Path(__file__).resolve()
+    root = here.parents[3] if len(here.parents) > 3 else here.parent
+    return (root / 'goals' / 'market-compass-trading-improvements'
+            / 'hidden_files' / 'structure-hunter-spy-2026-11-04')
+
+
+ARCHIVE = Path(os.environ.get('SH_SPY_ARCHIVE_DIR', _default_archive()))
 RAW_SHA256 = '14bd5e08a9f90a757caae94b12fc2484914ca389a2cc0ee343e61bb04b78426c'
 TRADES_SHA256 = '8aab9b5f5edc24696a79b952f85e0ac13b426e26022fb71d5161fcc9aa57c051'
 

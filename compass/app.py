@@ -74,6 +74,7 @@ CRON_TOKEN_PATHS = {
     "/api/admin/ice-shadow-export",
     "/api/admin/survivor-fill-verdict",
     "/api/admin/daily-backfill",
+    "/api/admin/smoothers-rescore",
 }
 # Kept for callers/tests that import the old name.
 CRON_TOKEN_ENDPOINTS = {(m, p) for p in CRON_TOKEN_PATHS for m in ("GET", "POST")}
@@ -347,7 +348,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/chain-open-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/events-export","/api/admin/ice-shadow-export","/api/admin/survivor-fill-verdict","/api/admin/daily-backfill","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/chain-open-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/events-export","/api/admin/ice-shadow-export","/api/admin/survivor-fill-verdict","/api/admin/daily-backfill","/api/admin/smoothers-rescore","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -1267,6 +1268,45 @@ a{color:#888}</style></head><body>
             return JSONResponse(
                 {'ok': False, 'error': 'Write failed. Check server logs.'},
                 status_code=500)
+
+    @app.post('/api/admin/smoothers-rescore')
+    async def smoothers_rescore(request: Request):
+        """Defect-correction re-score of one week's Smoothers shadow
+        cells (2026-11-04 chain-contract symbol seam). Cron-token
+        gated (CRON_TOKEN_PATHS). POST {week: 'YYYY-MM-DD'}:
+        compass.native_smoothers.rescore_week_cells clears the named
+        week's chain-derived 'unavailable' stamps (Wednesday horizon,
+        Tuesday-entry cell, cohort-exit cell) and re-issues them under
+        the frozen rules from the archived chain_eod data, refreshes
+        the weekly summaries, and returns the before/after accounting
+        (also appended as a smoothers_rescore event). Scored stamps
+        and non-chain unavailable outcomes are never touched, and no
+        Discord notice is queued. Idempotent: a second call finds no
+        chain-derived unavailable stamps left to clear."""
+        from . import native_smoothers as _ns
+        try:
+            data = await request.json()
+        except Exception:
+            return JSONResponse({'ok': False, 'error': 'Body must be JSON'},
+                                status_code=400)
+        if not isinstance(data, dict):
+            return JSONResponse(
+                {'ok': False, 'error': 'Body must be a JSON object'},
+                status_code=400)
+        week = str(data.get('week') or '')
+        if not week:
+            return JSONResponse({'ok': False, 'error': 'week is required'},
+                                status_code=400)
+        try:
+            report = await asyncio.to_thread(
+                _ns.rescore_week_cells, db, week, time.time())
+        except Exception:
+            logging.getLogger('uvicorn.error').exception(
+                'smoothers rescore failed')
+            return JSONResponse(
+                {'ok': False, 'error': 'Rescore failed. Check server logs.'},
+                status_code=500)
+        return {'ok': True, **report}
 
     @app.get('/api/admin/archive-coverage')
     def get_archive_coverage():
