@@ -200,8 +200,11 @@ def build(db,c,cfg,now,session_day=None):
     originals=[p.get('original',{}) for p in source_rows if p.get('original',{}).get('monday_date')==monday]
     original_scorecard=summarize(originals)
     spy_scope=[spy_options.c.day==day]
-    option_selections=[p for p in db.prefix(c,'pending_research_options:').values()
-        if lower_cash<=p.get('created_at',0)<upper_cash]
+    # Session-window research pendings via Store.pendings_created_between
+    # (server-side created_at filter; 2026-11-04 cleanup). This was a
+    # full prefix() haul of the accumulated research population with
+    # the window applied in Python.
+    option_selections=db.pendings_created_between(c,'pending_research_options:',lower_cash,upper_cash)
     from .alert_ownership import report as publication_report
     from .reliability_report import report as reliability_report
     return dict(published_options=publication_report(db,c,day),smoothers_daily=db.get(c,'smoothers-daily-comparison-v1:report',{'state':'awaiting_activation'}),quote_reliability=reliability_report(db,c,risk_start,upper),day=day,asof=now,operating_policy=policy(cfg),counts_complete=True,paper=paper(c,risk_start,upper),skips=skips_,

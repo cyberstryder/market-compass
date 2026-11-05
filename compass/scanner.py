@@ -628,7 +628,15 @@ class Scanner:
         # zero selection deaths to this alone; it is friction and
         # mislabeling, fixed for honest diagnostics.)
         quote_bound=getattr(self.cfg,'scanner_trigger_quote_max_age',60)
-        pending_rows={**self.db.prefix(c,'pending_options:'),**self.db.prefix(c,'pending_research_options:')}
+        # Waiting set via Store.waiting_pending_rows (server-side
+        # status filter; 2026-11-04 cleanup). This loop previously
+        # prefix()-hauled both pending prefixes in full and skipped
+        # every non-'waiting' row on sight, so the accumulated
+        # terminal population (~10^5 rows, never pruned) crossed the
+        # wire on every scan for nothing. Full payloads still return
+        # -- this loop is the lifecycle writer and re-puts what it
+        # transitions -- but only for rows it can act on.
+        pending_rows=self.db.waiting_pending_rows(c)
         for key,pending in pending_rows.items():
             if pending.get('status')!='waiting':
                 continue
