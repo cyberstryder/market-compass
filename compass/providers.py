@@ -164,6 +164,7 @@ class Collectors:
             self.supervise("alpaca_option_stream",bool(c.alpaca_key and c.alpaca_secret and c.alpaca_option_stream),self.alpaca_options),
             self.supervise("option_recovery",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.option_recovery),
             self.supervise("option_subscriptions",bool(c.massive),self.refresh_option_subscriptions,2),
+            self.supervise("pending_prune",True,self.pending_prune,300),
             self.supervise("tradermatrix",bool(c.matrix),self.matrix,2),
             self.supervise("tradermatrix_flow",bool(c.matrix),self.flow,20),
             self.supervise("iceberg_detector",bool(getattr(c,'iceberg_detector',True)),self.iceberg_pass,30),
@@ -185,6 +186,23 @@ class Collectors:
         alert drain, and nothing here can reach the stream.
         """
         await asyncio.to_thread(self._iceberg_pass_sync)
+
+    async def pending_prune(self):
+        """Daily terminal-pending retention pass, off the event loop
+        (same pattern as iceberg_pass). The pass is watermark-gated:
+        a call inside 24h of a completed sweep returns at once, and a
+        pass interrupted by its batch/time caps resumes on the next
+        call. See compass/pending_prune.py for the retention rule."""
+        await asyncio.to_thread(self._pending_prune_sync)
+
+    def _pending_prune_sync(self):
+        from . import pending_prune as pending_prune_mod
+        report = pending_prune_mod.run_pass(self.db, time.time())
+        if 'skipped' not in report:
+            self.db.health('pending_prune', 'ok',
+                f"deleted {report['deleted']} terminal pendings in "
+                f"{report['batches']} batches; {report['prunable_after']} "
+                f"prunable remain; sweep complete={report['complete']}")
 
     def _iceberg_pass_sync(self):
         from . import iceberg as iceberg_mod

@@ -4,12 +4,18 @@ import time
 import threading
 import logging
 from contextlib import contextmanager
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, JSON, Index, select, text, update, delete, cast, event, DDL, func
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, JSON, Index, select, text, update, delete, cast, case, event, DDL, func
 from sqlalchemy.engine import make_url
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sq_insert
 
 meta=MetaData()
+PENDING_PREFIXES=('pending_options:','pending_research_options:')
+# Pending lifecycle end states (Scanner.retry_options performs every
+# transition): a row in one of these is never selected from again and
+# nothing transitions it onward. 'waiting' is the only live status.
+TERMINAL_PENDING_STATUSES=('expired','observed','entered',
+    'routed_to_book_path','paused')
 events=Table("events",meta,
     Column("id",Integer,primary_key=True,autoincrement=True),
     Column("key",String(240),unique=True,nullable=False),
@@ -461,6 +467,99 @@ class Store:
                 'signal_price':price_v,'expires_at':exp}
                 for k,symbol,side,price_v,exp in rows)
         return out
+
+    def waiting_pending_rows(self,c):
+        """Full payloads of every 'waiting' pending row across both
+        pending prefixes, in the exact order the old
+        {**prefix('pending_options:'), **prefix('pending_research_options:')}
+        merge produced (per-prefix key order, options first).
+
+        Scanner.retry_options is the lifecycle writer for these rows:
+        it transitions each waiting row (expire / observe / enter /
+        pause / route) and re-puts the full payload, so the lane's
+        projection (waiting_pendings) cannot serve it -- but it skips
+        every non-'waiting' row on sight, so the terminal population
+        never needs to cross the wire. The status predicate runs
+        server-side over the key range; only waiting rows return.
+        Waiting rows whose selection window has already closed are
+        included on purpose: expiring them is retry_options' job, so
+        unlike waiting_pendings there is no expiry predicate here.
+        """
+        key=self._key(c)
+        out={}
+        for prefix in PENDING_PREFIXES:
+            rows=c.execute(select(state).where(
+                key>=prefix,key<prefix+"\uffff",
+                state.c.value["status"].as_string()=='waiting').order_by(key))
+            for r in rows: out[r.key]=r.value
+        return out
+
+    def pendings_created_between(self,c,prefix,lower,upper):
+        """Full payloads under one pending prefix whose created_at
+        falls in [lower, upper), filtered server-side.
+
+        daily_results reads the session's research pendings for its
+        selection-funnel summary; it previously prefix()-hauled the
+        entire accumulated research population and filtered in
+        Python. Rows without a numeric created_at are excluded,
+        exactly as the old .get('created_at',0) default excluded them
+        from any real session window (lower is a session timestamp,
+        never 0).
+        """
+        key=self._key(c)
+        created=cast(state.c.value["created_at"].as_string(),Float)
+        rows=c.execute(select(state.c.value).where(
+            key>=prefix,key<prefix+"\uffff",
+            created>=lower,created<upper).order_by(key))
+        return list(rows.scalars())
+
+    def _prunable_terminal(self,cutoff):
+        """Prunable-terminal predicate: a lifecycle end status, last
+        written before the cutoff, and created before the cutoff (a
+        missing created_at falls back to the last-write clock).
+        'waiting' is never prunable at any age."""
+        status=state.c.value["status"].as_string()
+        created=cast(state.c.value["created_at"].as_string(),Float)
+        return ((status.in_(TERMINAL_PENDING_STATUSES))
+            & (state.c.updated<cutoff)
+            & (func.coalesce(created,state.c.updated)<cutoff))
+
+    def pending_population(self,c,cutoff):
+        """Census of both pending prefixes: per prefix and status,
+        the total row count, the count last written before the
+        retention cutoff, and the prunable count. Aggregated
+        server-side -- the result is a handful of rows however large
+        the population grows."""
+        key=self._key(c)
+        status=state.c.value["status"].as_string()
+        out={}
+        for prefix in PENDING_PREFIXES:
+            rows=c.execute(select(status,func.count(),
+                func.sum(case((state.c.updated<cutoff,1),else_=0)),
+                func.sum(case((self._prunable_terminal(cutoff),1),else_=0))
+                ).where(key>=prefix,key<prefix+"\uffff").group_by(status))
+            out[prefix]={s:{'total':t,'older_than_cutoff':int(o or 0),
+                'prunable':int(p or 0)} for s,t,o,p in rows}
+        return out
+
+    def prune_terminal_pendings_batch(self,c,cutoff,limit):
+        """Delete up to `limit` prunable terminal pending rows inside
+        the caller's transaction; returns the deleted keys. Batches
+        are small and key-ordered so a maintenance pass banks progress
+        per batch and never holds an unbounded delete inside one
+        transaction (the archive-prune wedge lesson)."""
+        key=self._key(c)
+        keys=[]
+        for prefix in PENDING_PREFIXES:
+            if len(keys)>=limit: break
+            rows=c.execute(select(state.c.key).where(
+                key>=prefix,key<prefix+"\uffff",
+                self._prunable_terminal(cutoff)
+                ).order_by(key).limit(limit-len(keys)))
+            keys.extend(r[0] for r in rows)
+        if keys:
+            c.execute(delete(state).where(state.c.key.in_(keys)))
+        return keys
 
     def recent_trades(self,c,limit=100):
         """Newest `limit` trade: rows by entered_at, bounded in SQL.
