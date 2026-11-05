@@ -291,8 +291,10 @@ def test_refusal_delivers_end_to_end(db, cfg):
 # ---------------------------------------------------------------------
 def _booked_s3(db, cfg, sent, live):
     """Book a real S3 position through submit_survivor (entry 100.0,
-    safety stop 95.0, flatten_at NOW+1860) so the record shape is the
-    production one, not a hand-built approximation."""
+    safety stop 95.0, flatten_at NOW+960 — signal ts NOW-60 plus the
+    (15 + 2)-minute horizon exit since the 2026-11-05 amendment) so
+    the record shape is the production one, not a hand-built
+    approximation."""
     if live:
         cfg.traderspost_enabled = True
     with db.tx() as c:

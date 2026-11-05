@@ -100,7 +100,7 @@ def test_s3_london_mr60_long():
                             'h': 4000.0, 'l': close, 'c': close, 'v': 100})
     assert len(fired) == 1
     s = fired[0]
-    assert s['strategy'] == 'S3' and s['dir'] == 1 and s['hold'] == 30
+    assert s['strategy'] == 'S3' and s['dir'] == 1 and s['hold'] == 15
 
 
 def test_s4_ny_mr60_fade_short():
@@ -321,6 +321,21 @@ def test_submit_s1_horizon_flatten_is_time_exit(db, cfg):
     # Exit at the close of the bar 60 after the entry bar:
     # signal ts + (60 + 2) minutes, before the 15:45 CT flatten.
     assert pos['flatten_at'] == sig['ts'] + 62 * 60
+    assert pos['no_bracket'] is True
+
+
+def test_submit_s3_horizon_flatten_is_time_exit(db, cfg):
+    # S3 horizon amended 30 -> 15 on 2026-11-05 (Josh's decision on
+    # the frozen horizon sweep); the +2-minute execution buffer is
+    # unchanged, so the booked exit is signal ts + (15 + 2) minutes.
+    sig = _sig('S3', close=4000.0)
+    with db.tx() as c:
+        r = survivors.submit_survivor(db, c, cfg, NOW, 'S3', 'MGC.v.0',
+                                      sig)
+    assert r['submitted'] and r['stop'] is None and r['target'] is None
+    with db.tx() as c:
+        pos = db.get(c, 'position:ict:survivor_s3:MGC.v.0:t1')
+    assert pos['flatten_at'] == sig['ts'] + 17 * 60
     assert pos['no_bracket'] is True
 
 

@@ -124,7 +124,12 @@ STRATEGY_SYMBOL = {'S1': 'MNQ.c.0', 'S2': 'MCL.v.0',
 SURVIVOR_DETECTORS = frozenset(STRATEGY_OF.values())
 SCAN_SYMBOLS = ('MNQ.c.0', 'MCL.v.0', 'MGC.v.0')
 ROOT_STRATEGIES = {'MNQ': ('S1',), 'MCL': ('S2',), 'MGC': ('S3', 'S4')}
-HORIZON = {'S1': 60, 'S3': 30}
+# Exit horizons (minutes) for the bracket-less strategies. S3 was
+# 30 as registered; amended to 15 on 2026-11-05 at Josh's decision
+# on the frozen horizon sweep's evidence (15m beat 30m under frozen
+# limbs on the gauntlet panel; fork amendment — S3 fill evidence
+# splits at the switch). See files/s3-horizon-switch-2026-11-05.md.
+HORIZON = {'S1': 60, 'S3': 15}
 DIRECTION = {'S1': -1, 'S2': 1, 'S3': 1, 'S4': -1}
 # Safety-stop distance for the horizon strategies, as a multiple of
 # the signal bar's ATR in ticks (the units S2/S4 express stop_ticks
@@ -267,7 +272,7 @@ class SurvivorFeed:
                     if (120 <= tod < 480 and z_mr is not None
                             and self.prev_z_mr is not None
                             and z_mr <= -0.15 and self.prev_z_mr > -0.15):
-                        sig = {'strategy': 'S3', 'dir': 1, 'hold': 30}
+                        sig = {'strategy': 'S3', 'dir': 1, 'hold': 15}
                 elif strat == 'S4':
                     if (540 <= tod < 900 and z_mr is not None
                             and self.prev_z_mr is not None
