@@ -176,7 +176,14 @@ def test_channel_isolation(tmp_path, monkeypatch):
         rows = {r['channel']: dict(r) for r in
                 conn.execute(select(push_outbox)).mappings()}
     assert rows['ict']['status'] == 'delivered'
-    assert rows['magnet']['status'] == 'pending'
+    # Since the 2026-11-05 magnet silence (apex-magnet-push-silence-v1),
+    # the magnet producer queues 'suppressed'; isolation here means the
+    # ict drain leaves that row exactly as its producer wrote it —
+    # gate record intact, no delivery attempt, no message receipt.
+    assert rows['magnet']['status'] == 'suppressed'
+    assert rows['magnet']['delivery'] == {
+        'attempts': 0, 'gate': 'apex-magnet-push-silence-v1',
+        'error': 'suppressed_by_gate', 'suppressed_at': NOW}
 
 
 def test_flag_defaults_off(monkeypatch):
