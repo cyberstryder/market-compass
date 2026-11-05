@@ -20,6 +20,11 @@ The live set now comes from Store.waiting_pendings (server-side
 status/expiry filter + projection); the tests below pin the filter,
 selection over an accumulated population, and the no-full-haul
 structure.
+
+2026-11-05 supersession: Josh widened the selection chain-age gate
+120s -> 900s and added the audit-imminence rendezvous + snapshot
+quote pinning (tests/test_chain_lane_fix.py). The 120s figures in
+this docstring describe the 2026-11-03 design as built.
 """
 import asyncio
 from datetime import datetime
@@ -118,7 +123,7 @@ def test_pending_symbol_refreshed_ahead_of_rotation(db, monkeypatch):
         await collector.close()
 
     asyncio.run(run())
-    # Selection now observes a chain inside its 120s gate.
+    # Selection now observes a freshly fetched chain (age ~0, inside any gate).
     with db.tx() as c:
         chain = db.get(c, 'chain:AAA')
         assert NOW - chain['asof'] <= 120

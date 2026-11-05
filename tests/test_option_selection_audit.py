@@ -221,17 +221,20 @@ def test_selection_rejection_is_emitted_as_event_with_contract_reason(db):
 
 
 def test_selection_chain_age_is_emitted_as_event(db):
+    # Chain age 901s: beyond the gate as widened 120s -> 900s on
+    # 2026-11-05 (was 121s when the gate was 120s; the age moved with
+    # the gate so the audit still chain-blocks).
     cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
     with db.tx() as c:
         seed(db,c)
-        chain=db.get(c,'chain:SPY');chain['asof']=NOW-121;db.put(c,'chain:SPY',chain)
+        chain=db.get(c,'chain:SPY');chain['asof']=NOW-901;db.put(c,'chain:SPY',chain)
         db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
         Scanner(db,cfg).retry_options(c,{'SPY':quote()},NOW,Engine(db,cfg))
         events=_selection_events(db,c)
         assert len(events)==1
         p=events[0]['payload']
         assert p['audit_reason']=='No recent options chain'
-        assert p['chain_age_seconds']==121 and p['rejections']==[]
+        assert p['chain_age_seconds']==901 and p['rejections']==[]
         assert db.get(c,'pending_options:test')['status']=='waiting'
 
 

@@ -20,6 +20,48 @@ from .setup_study import trials
 
 VERSION="orb15-breakout-v1"
 
+# Selection chain gate (2026-11-05): a chain snapshot stays selectable
+# while it is at most this old. Josh's 2026-11-05 decision, on the
+# chain-lane diagnosis's arithmetic (total fetch supply ~177/h against
+# the ~4,200/h a 120s gate needed for the ~140 names holding live
+# pendings), supersedes his 2026-11-03 'move the data, the 120s gate
+# stays' ruling. The gate guards the contract universe; execution
+# pricing stays guarded by the 60s per-contract freshness check
+# (cfg.option_quote_max_age, unchanged) and G1-G4.
+CHAIN_MAX_AGE_SECONDS=900
+# Audit-imminence refresh requests (rendezvous, 2026-11-05): a blocked
+# audit writes one chain_refresh_request:<symbol> row; the pending
+# chain lane serves outstanding requests first. The Collector's
+# chains() cycle is ~60s, so a request is given one cycle plus margin
+# to be served before it expires unserved.
+CHAIN_REFRESH_REQUEST_TTL_S=120
+
+def audit_quote(chain,contract,stored):
+    """Resolve the quote a selection audit judges a candidate on.
+
+    Quote pinning (2026-11-05): the stored quote:<contract> row ages
+    independently of the chain snapshot the audit is evaluating, and
+    vendor timestamps on snapshot quotes already lag 65-391s at fetch
+    time (chain-lane diagnosis Q4) -- a fresh snapshot's candidates
+    died on 'Missing or invalid fresh quote' because their quote rows
+    were older than the snapshot that contained them. A chain snapshot
+    embeds a quote per contract; that row is an observation of the
+    quote as of the snapshot's asof. When the stored row is older than
+    the snapshot observation, the audit judges the snapshot quote
+    stamped at asof; when a streamed row is at least as new, it wins,
+    exactly as before. The 60s freshness bound itself is unchanged --
+    this only changes which observation the audit reads.
+    """
+    snap=(contract or {}).get('quote') or {}
+    asof=(chain or {}).get('asof')
+    if asof is None or snap.get('bid') is None or snap.get('ask') is None:
+        return stored
+    if stored and (stored.get('ts') or 0)>=asof:
+        return stored
+    return {**snap,'ts':asof,'source':(chain or {}).get('source'),
+        'symbol':(contract or {}).get('symbol'),
+        'quote_origin':'chain_snapshot'}
+
 def spec(symbol):
     future = future_spec(symbol)
     if future: return future
@@ -532,8 +574,19 @@ class Engine:
             chain_source=chain.get('source'),chain_complete=chain.get('complete'),
             eligible_contracts=0,checked_contracts=0,rejections=[],
             max_dte=self.cfg.option_0dte_max_dte)
-        if now-chain.get("asof",0)>120:
+        if now-chain.get("asof",0)>CHAIN_MAX_AGE_SECONDS:
             audit['reason']='No recent options chain'
+            # Rendezvous (2026-11-05): a chain-blocked audit IS audit
+            # imminence -- leave a refresh request the pending chain
+            # lane serves ahead of its stalest-first order. A state
+            # row only; the Engine tick never blocks on HTTP. Written
+            # (refreshed) on every block, consumed by the lane on
+            # service, expired after CHAIN_REFRESH_REQUEST_TTL_S.
+            self.db.put(c,'chain_refresh_request:'+signal["symbol"],{
+                'symbol':signal["symbol"],'priority':100,'at':now,
+                'reason':'selection_chain_stale',
+                'chain_age_seconds':audit.get('chain_age_seconds'),
+                'expires_at':now+CHAIN_REFRESH_REQUEST_TTL_S})
             if not quiet:
                 self.alert(c,signal["symbol"],{**alert_context(signal),"status":"options_skipped","reason":"No recent options chain",
                     "parent_signal":signal["id"]},"option-skip:"+signal["id"])
@@ -561,10 +614,13 @@ class Engine:
         audit['contracts_truncated']=len(opts)>8
         rejected=audit['rejections']
         for o in opts[:8]:
-            q=self.db.get(c,"quote:"+o["symbol"])
+            q=audit_quote(chain,o,self.db.get(c,"quote:"+o["symbol"]))
             checked_at=self.clock() if self.clock else now
             audit['checked_contracts']+=1
-            evidence=dict(symbol=o['symbol'],checked_at=checked_at,quote_source=q.get('source') if q else None,
+            quote_source=q.get('source') if q else None
+            if q and q.get('quote_origin')=='chain_snapshot':
+                quote_source=(quote_source or 'chain')+':snapshot'
+            evidence=dict(symbol=o['symbol'],checked_at=checked_at,quote_source=quote_source,
                 quote_age_seconds=checked_at-q['ts'] if q and q.get('ts') is not None else None)
             if fresh(q,checked_at,self.cfg.option_quote_max_age):
                 option_signal={**signal,"id":identity(signal["id"],o["symbol"]),"symbol":o["symbol"],

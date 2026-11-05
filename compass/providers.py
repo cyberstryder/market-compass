@@ -624,6 +624,7 @@ class Collectors:
             # 'waiting' pending inside its window, outside focus (the
             # focus lane already serves those at the same cadence).
             pending_due=[]
+            requested_due=[]
             if lane=='pending':
                 # Live set via Store.waiting_pendings (server-side
                 # status/expiry filter + symbol projection). The lane
@@ -641,9 +642,30 @@ class Collectors:
                         live.add(symbol)
                 pending_due=sorted((s for s in live
                     if retry(s) and now-age(s)>=PENDING_CHAIN_MIN_AGE_S),key=age)
+                # Audit-imminence requests (rendezvous, 2026-11-05):
+                # a selection audit blocked on chain age writes one
+                # chain_refresh_request:<symbol> row (see
+                # Engine.options). Outstanding requests are served
+                # FIRST, ahead of the stalest-first pending order,
+                # within the same per-cycle cap; the chain_inflight
+                # guard and failure backoff apply exactly as for
+                # pendings. A requested symbol is served even when it
+                # sits in focus -- the focus lane only rotates its
+                # whole set; the rendezvous is for this audit's name.
+                # One row per symbol by key, so the prefix read is
+                # bounded by the universe (~162 small rows).
+                for key,row in self.db.prefix(c,'chain_refresh_request:').items():
+                    row=row or {}
+                    symbol=row.get('symbol') or key[len('chain_refresh_request:'):]
+                    if (symbol and '@' not in symbol and symbol in universe
+                            and row.get('expires_at',row.get('at',0)+120)>now
+                            and retry(symbol)
+                            and now-age(symbol)>=PENDING_CHAIN_MIN_AGE_S):
+                        requested_due.append(symbol)
+                requested_due=sorted(set(requested_due),key=age)
             # Independent bounded lanes: carried/background backlogs must never
             # occupy the index or fast research worker. Each lane is oldest-first.
-            targets=(pending_due[:PENDING_CHAIN_PER_CYCLE] if lane=='pending' else
+            targets=(list(dict.fromkeys(requested_due+pending_due))[:PENDING_CHAIN_PER_CYCLE] if lane=='pending' else
                 [s for s in due if s in indices][:1] if lane=='indices' else
                 [s for s in due if s not in indices][:1] if lane=='focus' else
                 background[:1] if lane=='background' else due[:1]+background[:1])
@@ -682,6 +704,10 @@ class Collectors:
                     self.db.put(c,"chain:"+symbol,chain)
                     self.db.put(c,'chain_inventory:'+symbol,{'contracts':len(contracts),'at':now})
                     self.db.put(c,'chain_retry:'+symbol,{'retry_at':0})
+                    # Rendezvous consumption (2026-11-05): this fresh
+                    # chain satisfies any outstanding audit-imminence
+                    # request for the symbol, whichever lane asked.
+                    self.db.delete(c,'chain_refresh_request:'+symbol)
                     self.db.put(c,"exposure:"+symbol,exposure)
                     self.db.put(c,"greeks:"+symbol,{**diagnose(contracts,reference,reference_ts,now,complete),
                         "pagination":self.chain_paging.get(symbol,{})})
