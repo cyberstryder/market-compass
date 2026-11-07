@@ -230,6 +230,20 @@ def create_app(cfg=None):
                 from .sh_spy_options import SHSpyOptions, run_push as run_sh_spy_push
                 spawn(lambda: SHSpyOptions(db,cfg).run(),'SHSpyOptions')
                 spawn(lambda: run_sh_spy_push(db,cfg),'run_sh_spy_push')
+            # New-strategy program forward shadow scorers (Josh,
+            # 2026-11-07): the three 2026-11-06 gauntlet passes,
+            # frozen at their registrations, measurement only — no
+            # alerts, no sends. Standalone lease-guarded workers (the
+            # connors_ssc pattern); none can throw into the engine.
+            if cfg.vwap_cont_mes:
+                from .vwap_cont_mes import VwapContMes
+                spawn(lambda: VwapContMes(db,cfg).run(),'VwapContMes')
+            if cfg.postnews_fade:
+                from .postnews_fade import PostnewsFade
+                spawn(lambda: PostnewsFade(db,cfg).run(),'PostnewsFade')
+            if cfg.shock_fade:
+                from .shock_fade import ShockFade
+                spawn(lambda: ShockFade(db,cfg).run(),'ShockFade')
             from .discovery import Discovery
             spawn(lambda: Discovery(db,cfg).run(),'Discovery')
             spawn(lambda: run_obsidian(db,cfg),'run_obsidian')

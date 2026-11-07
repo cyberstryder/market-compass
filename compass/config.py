@@ -243,6 +243,21 @@ class Config:
     # (registration §6 amendment, Josh 2026-11-04): rendering only —
     # scoring is byte-identical with this flag on or off.
     sh_spy_alerts: bool = field(default_factory=lambda: env("SH_SPY_ALERTS_ENABLED","true")=="true")
+    # MES VWAP-continuation forward shadow scorer (2026-11-07, Josh):
+    # paper/measurement only — forward-scores the momentum/trend
+    # sweep's one full pass (vwapc_z1.5_h60_long) from the first full
+    # session after deploy; see compass/vwap_cont_mes.py.
+    vwap_cont_mes: bool = field(default_factory=lambda: env("VWAP_CONT_MES_ENABLED","true")=="true")
+    # MNQ post-news fade (t60) forward shadow scorer (2026-11-07,
+    # Josh): paper/measurement only — forward-scores the post-news
+    # study's PROVISIONAL pass from the first ET date after deploy;
+    # see compass/postnews_fade.py.
+    postnews_fade: bool = field(default_factory=lambda: env("POSTNEWS_FADE_ENABLED","true")=="true")
+    # Post-shock next-session fade forward shadow scorer
+    # (2026-11-07, Josh): paper/measurement only — forward-scores the
+    # variance screen's pass (pooled p97.5 + MNQ p95) from the first
+    # full session after deploy; see compass/shock_fade.py.
+    shock_fade: bool = field(default_factory=lambda: env("SHOCK_FADE_ENABLED","true")=="true")
     swing_alerts: bool = field(default_factory=lambda: env("SWING_IDEAS_ALERTS","true")=="true")
     swing_min_dte: int = field(default_factory=lambda: int(env("SWING_MIN_DTE","14")))
     swing_max_dte: int = field(default_factory=lambda: int(env("SWING_MAX_DTE","60")))

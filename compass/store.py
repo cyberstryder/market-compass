@@ -198,6 +198,36 @@ sh_spy_options_episodes=Table('sh_spy_options_episodes',meta,
     Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
 Index('sh_spy_options_active',sh_spy_options_episodes.c.status,sh_spy_options_episodes.c.created)
 
+# MES VWAP-continuation forward shadow scorer episodes
+# (compass/vwap_cont_mes.py; new-strategy program item 1 pass,
+# forward-scored from 2026-11-07). Declared here for the same reason
+# as connors_ssc_episodes above.
+vwap_cont_mes_episodes=Table('vwap_cont_mes_episodes',meta,
+    Column('id',String(64),primary_key=True),Column('underlying',String(100),nullable=False),
+    Column('status',String(24),nullable=False),Column('created',Float,nullable=False),
+    Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
+Index('vwap_cont_mes_active',vwap_cont_mes_episodes.c.status,vwap_cont_mes_episodes.c.created)
+
+# MNQ post-news fade (t60) forward shadow scorer episodes
+# (compass/postnews_fade.py; program item 4 PROVISIONAL pass,
+# forward-scored from 2026-11-07). Declared here for the same reason
+# as connors_ssc_episodes above.
+postnews_fade_episodes=Table('postnews_fade_episodes',meta,
+    Column('id',String(64),primary_key=True),Column('underlying',String(100),nullable=False),
+    Column('status',String(24),nullable=False),Column('created',Float,nullable=False),
+    Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
+Index('postnews_fade_active',postnews_fade_episodes.c.status,postnews_fade_episodes.c.created)
+
+# Post-shock next-session fade forward shadow scorer episodes
+# (compass/shock_fade.py; program item 8 pass, forward-scored from
+# 2026-11-07). Declared here for the same reason as
+# connors_ssc_episodes above.
+shock_fade_episodes=Table('shock_fade_episodes',meta,
+    Column('id',String(64),primary_key=True),Column('underlying',String(100),nullable=False),
+    Column('status',String(24),nullable=False),Column('created',Float,nullable=False),
+    Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
+Index('shock_fade_active',shock_fade_episodes.c.status,shock_fade_episodes.c.created)
+
 # SH-SPY shadow-alert outbox (registration §6, display only): the
 # scorer's own narrow queue to the 0DTE Discord channel, following
 # the per-channel outbox precedent (ict_push_outbox_v1 above).
