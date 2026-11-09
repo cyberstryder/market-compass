@@ -105,6 +105,18 @@ class Config:
     traderspost_enabled: bool = field(default_factory=lambda: env("TRADERSPOST_ENABLED","false")=="true")
     traderspost_webhook_url: str = field(default_factory=lambda: env("TRADERSPOST_WEBHOOK_URL",""))
     traderspost_webhook_url_2: str = field(default_factory=lambda: env("TRADERSPOST_WEBHOOK_URL_2",""))
+    # Per-strategy live-send gate for the Claude survivors (2026-11-09,
+    # Josh's decision to pull S2 while S1/S3/S4 run to the 50-fill
+    # review): comma-separated strategy ids allowed to queue
+    # TradersPost entries while the survivors book is live. Default is
+    # all four — pre-gate behavior. A strategy outside the set still
+    # books paper exactly as when the book-level live flag is off;
+    # only its live entry send is skipped. EXITS are not gated by this
+    # set: engine.exits() keys live closes off the position's own
+    # traderspost_sent flag, so a position live-sent before its
+    # strategy was pulled still exits normally.
+    survivor_live_strategies: frozenset = field(default_factory=lambda: frozenset(
+        s.strip() for s in env("SURVIVOR_LIVE_STRATEGIES", "S1,S2,S3,S4").split(",") if s.strip()))
     tape_confirmed: bool = field(default_factory=lambda: env("TAPE_CONFIRMED_ENABLED","true")=="true")
     gap_push_enabled: bool = field(default_factory=lambda: env("GAP_PUSH_ENABLED","true")=="true")
     day_board_push_enabled: bool = field(default_factory=lambda: env("DAY_BOARD_PUSH_ENABLED","true")=="true")

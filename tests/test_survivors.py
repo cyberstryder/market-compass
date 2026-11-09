@@ -670,3 +670,128 @@ def test_stop_exit_unaffected_inside_news_window(db, cfg, news_gate):
         pos = db.get(c, key)
     assert pos['status'] == 'closed'
     assert pos['exit_reason'] == 'stop'
+
+
+# ---------------------------------------------------------------------
+# Per-strategy live-send gate (2026-11-09, Josh: pull S2, run
+# S1/S3/S4 to the 50-fill review): SURVIVOR_LIVE_STRATEGIES selects
+# which strategies may queue TradersPost entries inside a live book.
+# Default = all four (pre-gate behavior). The gate is entry-only:
+# exits key off the position's own traderspost_sent flag.
+# ---------------------------------------------------------------------
+def test_survivor_live_strategies_default_and_env_parsing(cfg,
+                                                          monkeypatch):
+    # Fixture cfg is a real Config with the env unset: all four.
+    assert cfg.survivor_live_strategies == frozenset(
+        {'S1', 'S2', 'S3', 'S4'})
+    assert survivors.live_strategies(cfg) == frozenset(
+        {'S1', 'S2', 'S3', 'S4'})
+    # Env parsing: comma-separated, whitespace-tolerant.
+    monkeypatch.setenv('SURVIVOR_LIVE_STRATEGIES', 'S1, S3 ,S4')
+    assert Config(local=True, risk=100).survivor_live_strategies == \
+        frozenset({'S1', 'S3', 'S4'})
+    # An explicitly empty env value pulls every strategy.
+    monkeypatch.setenv('SURVIVOR_LIVE_STRATEGIES', '')
+    assert Config(local=True, risk=100).survivor_live_strategies == \
+        frozenset()
+    # A cfg without the attribute at all falls back to all four (the
+    # send sites' getattr-default style).
+    assert survivors.live_strategies(object()) == frozenset(
+        {'S1', 'S2', 'S3', 'S4'})
+
+
+def test_submit_s4_live_queues_under_default_set(db, cfg, sent):
+    # S1/S2 queueing under the default set is pinned by the tests
+    # above; S4 completes the "all four can live-send" default.
+    cfg.traderspost_enabled = True
+    with db.tx() as c:
+        survivors.ensure_state(db, c, NOW)
+        r = survivors.submit_survivor(db, c, cfg, NOW, 'S4', 'MGC.v.0',
+                                      _sig('S4', close=4000.0))
+    assert r['submitted'] and r['traderspost_queued']
+    traderspost.dispatch_pending(cfg, db)
+    assert len(sent) == 1
+    payload = traderspost.build_payload(None, dict(sent[0]))
+    assert payload['stopLoss']['stopPrice'] == 4002.5
+    assert payload['takeProfit']['limitPrice'] == 3995.0
+    with db.tx() as c:
+        pos = db.get(c, 'position:ict:survivor_s4:MGC.v.0:t1')
+    assert pos['live_send'] is True
+
+
+def test_pulled_s2_books_paper_while_s3_still_sends(db, cfg, sent):
+    cfg.traderspost_enabled = True
+    cfg.survivor_live_strategies = frozenset({'S1', 'S3', 'S4'})
+    with db.tx() as c:
+        survivors.ensure_state(db, c, NOW)
+        r2 = survivors.submit_survivor(db, c, cfg, NOW, 'S2',
+                                       'MCL.v.0', _sig('S2'))
+        r3 = survivors.submit_survivor(db, c, cfg, NOW, 'S3',
+                                       'MGC.v.0',
+                                       _sig('S3', close=4000.0))
+    # S2: the paper booking stands, nothing queues, and the skip
+    # reason names the strategy and the gate.
+    assert r2['submitted'] and not r2['traderspost_queued']
+    assert 'survivor S2 live sends off' in r2['traderspost_skip_reason']
+    assert 'SURVIVOR_LIVE_STRATEGIES' in r2['traderspost_skip_reason']
+    # S3 in the same session, same live book: still live-sends.
+    assert r3['submitted'] and r3['traderspost_queued']
+    traderspost.dispatch_pending(cfg, db)
+    assert len(sent) == 1  # the S3 entry only
+    with db.tx() as c:
+        pos2 = db.get(c, 'position:ict:survivor_s2:MCL.v.0:t1')
+        trade2 = db.get(c, 'trade:' + r2['id'])
+        trade3 = db.get(c, 'trade:' + r3['id'])
+    assert pos2['status'] == 'open' and pos2['live_send'] is False
+    assert trade2['traderspost_sent'] is False
+    assert trade2['traderspost_skip_reason'] == \
+        r2['traderspost_skip_reason']
+    assert pos2['traderspost_skip_reason'] == \
+        r2['traderspost_skip_reason']
+    assert trade3['live_send'] is True
+    assert trade3['traderspost_sent'] is True
+
+
+@pytest.fixture
+def closes(monkeypatch):
+    calls = []
+
+    def fake_close(cfg, db, symbol, ref=None):
+        calls.append({'symbol': symbol, 'ref': ref})
+        return True, 'ok'
+
+    monkeypatch.setattr(traderspost, 'send_close_signal', fake_close)
+    return calls
+
+
+def test_live_sent_s2_position_still_exits_after_pull(db, cfg, sent,
+                                                      closes):
+    cfg.traderspost_enabled = True
+    engine = Engine(db, cfg)
+    with db.tx() as c:
+        survivors.ensure_state(db, c, NOW)
+        r = survivors.submit_survivor(db, c, cfg, NOW, 'S2',
+                                      'MCL.v.0', _sig('S2'))
+    assert r['traderspost_queued']
+    traderspost.dispatch_pending(cfg, db)
+    assert len(sent) == 1  # entry went out while S2 was in the set
+    key = 'position:ict:survivor_s2:MCL.v.0:t1'
+    with db.tx() as c:
+        pos = db.get(c, key)
+    assert pos['traderspost_sent'] is True
+    # Pull S2 AFTER the position is live at the broker.
+    cfg.survivor_live_strategies = frozenset({'S1', 'S3', 'S4'})
+    # Price trades through the bracket stop (99.75): the paper close
+    # must still fire the live exit. exits() consults the position's
+    # traderspost_sent flag only — never the entry gate — so the
+    # pulled strategy's open position is never stranded.
+    with db.tx() as c:
+        db.put(c, 'quote:MCL.v.0', {'bid': 99.5, 'ask': 99.52,
+                                    'last': 99.51, 'ts': NOW,
+                                    'bid_size': 10, 'ask_size': 10})
+    with db.tx() as c:
+        engine.exits(c, NOW)
+        pos = db.get(c, key)
+    assert pos['status'] == 'closed' and pos['exit_reason'] == 'stop'
+    traderspost.dispatch_pending(cfg, db)
+    assert closes == [{'symbol': 'MCL.v.0', 'ref': r['id']}]

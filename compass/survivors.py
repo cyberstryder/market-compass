@@ -85,6 +85,15 @@ the closed TradersPost-taken survivor trades: P&L <= -$1,750 flips
 the four to paper-only (live sends off, paper tracking continues);
 >= 50 combined live fills (entry + exit fills of sent trades) sets
 review_due. Both surface in /api/day-digest.
+
+Per-strategy live gate (2026-11-09, Josh's decision): within a live
+book, SURVIVOR_LIVE_STRATEGIES (default all four) selects which
+strategies may queue TradersPost entries; a pulled strategy books
+paper with a strategy-named skip reason. S2 was pulled this way
+while S1/S3/S4 run to the 50-fill review. The gate is entry-only by
+construction — engine.exits() sends live closes off each position's
+own traderspost_sent flag — so an open live-sent position of a
+pulled strategy still exits normally.
 """
 import logging
 import math
@@ -368,6 +377,24 @@ def ensure_state(db, c, now):
         except Exception:
             pass
     return st
+
+
+ALL_STRATEGIES = frozenset(STRATEGY_OF)
+
+
+def live_strategies(cfg):
+    """Strategy ids whose live entry sends are enabled by config
+    (SURVIVOR_LIVE_STRATEGIES; Josh's per-strategy pull, 2026-11-09).
+    A cfg without the attribute yields all four — the pre-gate
+    behavior, in the same getattr-default style as the
+    traderspost_enabled reads at the send sites. Consulted ONLY at
+    entry: exits never read this set (engine.exits() sends live
+    closes off the position's own traderspost_sent flag), so pulling
+    a strategy can never strand an open live position."""
+    s = getattr(cfg, 'survivor_live_strategies', None)
+    if s is None:
+        return ALL_STRATEGIES
+    return s
 
 
 def account_live(db, c, st, now):
@@ -668,8 +695,9 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
     # BEFORE the TradersPost send block runs, so decide here whether
     # this booking will be queued to TradersPost — evaluating exactly
     # the send block's own gates, in its order: master switch,
-    # survivors LIVE state, duplicate/hedge guard, symbol mapping,
-    # freshness guard. Every check is read-only; the send block below
+    # survivors LIVE state, per-strategy live set, duplicate/hedge
+    # guard, symbol mapping, freshness guard. Every check is
+    # read-only; the send block below
     # re-evaluates them unchanged and stays the only place that acts.
     # The no-stop invariant is part of the mirror: a booking whose
     # payload would carry no stop (send_stop None) will be REFUSED by
@@ -680,6 +708,7 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
             and send_stop is not None:
         _st = get_state(db, c)
         if _st and _st.get('live') \
+                and strat in live_strategies(cfg) \
                 and guard_check(db, c, filled) is None:
             from . import traderspost as _tp
             _mapped = _tp.map_symbol(symbol)
@@ -754,6 +783,15 @@ def submit_survivor(db, c, cfg, now, strat, symbol, sig):
         skip_reason = 'skip %s: survivor live sends off (%s)' % (
             symbol, 'tripwire tripped' if st and st.get('tripped_at')
             else 'state not initialized')
+    if skip_reason is None and strat not in live_strategies(cfg):
+        # Per-strategy pull (2026-11-09): the book stays live, this
+        # strategy's entries book paper only — the same skip stamping
+        # as the book-level-off case above. ENTRIES only: exits for
+        # an already-open live-sent position of this strategy are
+        # sent by engine.exits() off the position's traderspost_sent
+        # flag and never consult this gate.
+        skip_reason = 'skip %s: survivor %s live sends off ' \
+            '(not in SURVIVOR_LIVE_STRATEGIES)' % (symbol, strat)
     if skip_reason is None:
         skip_reason = guard_check(db, c, trade)
     if skip_reason is None:
