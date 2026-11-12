@@ -2,11 +2,12 @@
 set, the Stage-1 fill stamps, the single booking path, and the Stage-3
 swing-surface retirement flag.
 
-Gate expectations are the frozen respec's: G1 ask <= $0.90 (planned
-max loss 50 x ask + $2.80), G2 spread <= max(15% of ask, $0.05), G3
-trailing-20 median range >= 1.50% + ask/spot <= range20/2, G4 caps
-(1 open/name, 2 bookings/name/day, 6 open book-wide, $250/day planned
-loss)."""
+Gate expectations are the frozen respec's: G2 spread <= max(15% of
+ask, $0.05), G3 trailing-20 median range >= 1.50% + ask/spot <=
+range20/2, G4 caps (1 open/name, 2 bookings/name/day, 6 open
+book-wide, $250/day planned loss). G1 (the $0.90 premium cap) was
+removed 2026-11-12 at Josh's decision; planned max loss remains
+50 x ask + $2.80 and still feeds G4."""
 import time
 import types
 
@@ -83,13 +84,21 @@ def test_planned_max_loss_math():
     assert odte_book.planned_max_loss(None) is None
 
 
-def test_gate_g1_premium_cap(db):
+def test_gate_no_premium_cap(db):
+    # G1 removed 2026-11-12: a $1.20 ask (above the retired $0.90
+    # cap) is no longer an eligibility rejection. The premium is
+    # recorded in details for Josh's manual call on the published
+    # setup, and planned max loss still prices it.
     now = time.time()
     with db.tx() as c:
         _seed_daily(db, c, "XYZ", now)
-        ok, why, _ = odte_book.evaluate_candidate(
-            db, c, "XYZ", {"bid": 0.93, "ask": 0.95}, 100.0, now)
-    assert not ok and why == "premium_above_cap"
+        ok, why, det = odte_book.evaluate_candidate(
+            db, c, "XYZ", {"bid": 1.16, "ask": 1.20}, 100.0, now)
+    assert ok and why is None
+    assert det["ask"] == 1.20
+    assert det["spread"] == 0.04
+    assert det["ask_spot_ratio"] == 0.012
+    assert det["planned_max_loss"] == 62.80
 
 
 def test_gate_g2_spread(db):
@@ -210,7 +219,11 @@ def test_seated_wide_spread_rejected_not_booked(db):
     assert rejections[0]["quote_evidence"]["ask"] == 0.80
 
 
-def test_shadow_above_cap_rejected_no_record(db):
+def test_shadow_above_cap_books_record(db):
+    # G1 removed 2026-11-12: the same $1.20-ask alert the cap used to
+    # reject at booking now books a shadow record (opened counts only
+    # seated bookings, so it stays 0), with the premium carried on
+    # the record's entry (ask + slippage) and no booking_rejected.
     now = time.time()
     with db.tx() as c:
         _seed_alert(db, c, now, "g1x", "session_sweep_reclaim", "TSLA",
@@ -218,9 +231,13 @@ def test_shadow_above_cap_rejected_no_record(db):
         opened = zero_dte_paper._open_scanner(db, c, now, now + 7200)
         rec = db.get(c, scanner_shadow.SHADOW_PREFIX + "scan-g1x")
         rejections = _rejections(db, c)
-    assert opened == 0 and rec is None
-    assert len(rejections) == 1
-    assert rejections[0]["reason"] == "premium_above_cap"
+    assert opened == 0 and rec is not None
+    assert rejections == []
+    assert rec["entry"] == 1.21
+    # The premium is recorded on the record (consulted quote's ask)
+    # and priced into the planned max loss.
+    assert rec["entry_quote"]["ask"] == 1.20
+    assert rec["planned_max_loss"] == 62.80
 
 
 def test_seated_booking_carries_fill_stamps(db):

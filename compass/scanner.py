@@ -689,7 +689,7 @@ class Scanner:
                 if not research_only: engine.alert(c,symbol,{**alert_context(signal),'status':'options_skipped','reason':reason,'parent_signal':signal['id']},'pending-option-expired:'+signal['id'])
             elif fresh(quote,now,quote_bound) and abs((quote['bid']+quote['ask'])/2-signal['signal_price'])<=signal.get('context',{}).get('atr14',float('inf'))*.5:
                 audit={'scan_started_at':scan_started_at,'underlying_checked_at':now}
-                if engine.options(c,signal,now,quiet=True,diagnostics=audit,**({'research_only':True} if research_only else {})):
+                if engine.options(c,signal,now,quiet=True,diagnostics=audit,pending_expires_at=pending.get('expires_at'),**({'research_only':True} if research_only else {})):
                     pending.update(status='observed' if research_only else 'entered',updated_at=now)
                 if research_only:
                     pending.update(last_selection=audit,updated_at=now)
@@ -746,11 +746,20 @@ class Scanner:
             'audit_reason':audit.get('reason'),
             'chain_age_seconds':audit.get('chain_age_seconds'),
             'chain_source':audit.get('chain_source'),
+            'chain_refresh_requested':audit.get('refresh_requested'),
             'eligible_contracts':audit.get('eligible_contracts'),
             'checked_contracts':audit.get('checked_contracts'),
             'selected_contract':audit.get('selected_contract'),
+            # 2026-11-12: the values behind each rejection ride along
+            # (premium on every row; quote capture age for pinned
+            # freshness judgments; spread / range20 / ask-spot ratio
+            # for the book gates) -- all scalars, payload stays
+            # compact. Before this the trim dropped exactly the
+            # fields the G1-distance question needed.
             'rejections':[{k:r.get(k) for k in
-                ('symbol','reason','quote_age_seconds','quote_source','checked_at')}
+                ('symbol','reason','quote_age_seconds','quote_source','checked_at',
+                 'premium','spread','quote_capture_age_seconds','range20',
+                 'ask_spot_ratio')}
                 for r in audit.get('rejections',[])],
             'underlying_evidence':audit.get('underlying_evidence')}
         self.db.append(c,'option_selection_diagnostic','scanner',signal.get('symbol'),now,payload)

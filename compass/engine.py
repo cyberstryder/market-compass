@@ -27,14 +27,34 @@ VERSION="orb15-breakout-v1"
 # pendings), supersedes his 2026-11-03 'move the data, the 120s gate
 # stays' ruling. The gate guards the contract universe; execution
 # pricing stays guarded by the 60s per-contract freshness check
-# (cfg.option_quote_max_age, unchanged) and G1-G4.
+# (cfg.option_quote_max_age) and G2-G4. 2026-11-12 (Josh, on that
+# day's diagnosis): the freshness check now judges snapshot-pinned
+# quotes relative to their snapshot (audit_fresh below) -- the Nov 5
+# pairing of pinning with the unchanged 60s wall-clock bound made
+# every chain older than 60s fail freshness by construction.
 CHAIN_MAX_AGE_SECONDS=900
-# Audit-imminence refresh requests (rendezvous, 2026-11-05): a blocked
-# audit writes one chain_refresh_request:<symbol> row; the pending
-# chain lane serves outstanding requests first. The Collector's
-# chains() cycle is ~60s, so a request is given one cycle plus margin
-# to be served before it expires unserved.
-CHAIN_REFRESH_REQUEST_TTL_S=120
+# Audit-imminence refresh requests (rendezvous, 2026-11-05; imminence
+# restored 2026-11-12): a chain-blocked audit whose pending is inside
+# its final CHAIN_REFRESH_IMMINENT_S of window writes one
+# chain_refresh_request:<symbol> row; the pending chain lane serves
+# outstanding requests first. The 2026-11-05 version wrote on EVERY
+# block with a 120s TTL sized for a ~60s lane cycle; the 2026-11-12
+# diagnosis measured the lane's real cadence (one chains('pending')
+# run serves <=2 fetches and a Massive fetch takes ~10-30s under RTH
+# load, so one rotation of the ~45-name imminent set takes ~12-23
+# min) and the result was indistinguishable from chance (median next
+# fetch 1,833s after a request; 7% served within 150s). The TTL is
+# therefore sized to ~2 rotations of the imminent set, and the
+# request additionally never outlives its pending: it expires with
+# the selection window it was written for.
+CHAIN_REFRESH_REQUEST_TTL_S=1200
+# A blocked audit is audit-imminent when its selection window closes
+# within this many seconds: the final third of the 30-minute research
+# window (observe_setup). A chain fetched on service then stays
+# inside the 900s gate for the rest of the window, and the
+# outstanding request set is the final-third subset (~45 of ~140
+# waiting names) instead of the whole universe.
+CHAIN_REFRESH_IMMINENT_S=600
 
 def audit_quote(chain,contract,stored):
     """Resolve the quote a selection audit judges a candidate on.
@@ -47,10 +67,15 @@ def audit_quote(chain,contract,stored):
     were older than the snapshot that contained them. A chain snapshot
     embeds a quote per contract; that row is an observation of the
     quote as of the snapshot's asof. When the stored row is older than
-    the snapshot observation, the audit judges the snapshot quote
-    stamped at asof; when a streamed row is at least as new, it wins,
-    exactly as before. The 60s freshness bound itself is unchanged --
-    this only changes which observation the audit reads.
+    the snapshot observation, the audit judges the snapshot quote;
+    when a streamed row is at least as new, it wins, exactly as
+    before.
+
+    2026-11-12: the pinned quote now carries its own vendor timestamp
+    (the snapshot quote's ts, falling back to asof when the vendor
+    gave none) plus 'snapshot_asof', so audit_fresh can judge it
+    relative to the snapshot instead of stamping it at asof and
+    judging it against the wall clock.
     """
     snap=(contract or {}).get('quote') or {}
     asof=(chain or {}).get('asof')
@@ -58,9 +83,32 @@ def audit_quote(chain,contract,stored):
         return stored
     if stored and (stored.get('ts') or 0)>=asof:
         return stored
-    return {**snap,'ts':asof,'source':(chain or {}).get('source'),
+    snap_ts=snap.get('ts')
+    return {**snap,'ts':asof if snap_ts is None else snap_ts,
+        'snapshot_asof':asof,'source':(chain or {}).get('source'),
         'symbol':(contract or {}).get('symbol'),
         'quote_origin':'chain_snapshot'}
+
+def audit_fresh(q,checked_at,max_age):
+    """Freshness judgment for a selection-audit quote (2026-11-12).
+
+    Josh's 2026-11-12 decision on that day's chain-lane diagnosis:
+    of the audits that cleared the 900s chain gate, 78% died on the
+    60s per-contract freshness check because a pinned quote inherited
+    the chain's fetch time -- any chain older than 60s failed by
+    construction. A snapshot-pinned quote is therefore judged
+    RELATIVE to its snapshot: fresh() evaluated at the snapshot's
+    asof against the quote's own vendor timestamp measures the
+    quote's age at capture (validity and the future-skew tolerance
+    included), so a quote already stale when the chain was fetched
+    still fails; the chain's wall-clock age at audit is the chain
+    gate's job (<=CHAIN_MAX_AGE_SECONDS, enforced in options() before
+    any contract is judged). Quotes from any live/streamed source
+    keep the 60s wall-clock bound at the audit moment, unchanged.
+    """
+    if q and q.get('quote_origin')=='chain_snapshot':
+        return fresh(q,q.get('snapshot_asof',checked_at),max_age)
+    return fresh(q,checked_at,max_age)
 
 def spec(symbol):
     future = future_spec(symbol)
@@ -564,7 +612,7 @@ class Engine:
                 except Exception:
                     pass
 
-    def options(self,c,signal,now,quiet=False,diagnostics=None,research_only=False):
+    def options(self,c,signal,now,quiet=False,diagnostics=None,research_only=False,pending_expires_at=None):
         research_only = research_only or not self.cfg.paper_trading
         chain=self.db.get(c,"chain:"+signal["symbol"],{})
         now=self.clock() if self.clock else now
@@ -576,17 +624,28 @@ class Engine:
             max_dte=self.cfg.option_0dte_max_dte)
         if now-chain.get("asof",0)>CHAIN_MAX_AGE_SECONDS:
             audit['reason']='No recent options chain'
-            # Rendezvous (2026-11-05): a chain-blocked audit IS audit
-            # imminence -- leave a refresh request the pending chain
-            # lane serves ahead of its stalest-first order. A state
-            # row only; the Engine tick never blocks on HTTP. Written
-            # (refreshed) on every block, consumed by the lane on
-            # service, expired after CHAIN_REFRESH_REQUEST_TTL_S.
-            self.db.put(c,'chain_refresh_request:'+signal["symbol"],{
-                'symbol':signal["symbol"],'priority':100,'at':now,
-                'reason':'selection_chain_stale',
-                'chain_age_seconds':audit.get('chain_age_seconds'),
-                'expires_at':now+CHAIN_REFRESH_REQUEST_TTL_S})
+            # Rendezvous (2026-11-05; audit-imminence restored
+            # 2026-11-12): leave a refresh request the pending chain
+            # lane serves ahead of its stalest-first order -- but only
+            # when this pending's audit is imminent, i.e. its
+            # selection window closes within CHAIN_REFRESH_IMMINENT_S
+            # (see the constants block). The Nov 5 version wrote on
+            # every block; with ~140 names blocking near-continuously
+            # the outstanding set was the whole waiting universe and
+            # service was indistinguishable from chance (2026-11-12
+            # diagnosis). A state row only; the Engine tick never
+            # blocks on HTTP. Consumed by the lane on service; expires
+            # with the pending, capped by CHAIN_REFRESH_REQUEST_TTL_S.
+            window_expires_at=pending_expires_at if pending_expires_at is not None else signal.get('expires_at')
+            remaining=(window_expires_at-now) if window_expires_at else None
+            audit['refresh_requested']=False
+            if remaining is not None and 0<remaining<=CHAIN_REFRESH_IMMINENT_S:
+                self.db.put(c,'chain_refresh_request:'+signal["symbol"],{
+                    'symbol':signal["symbol"],'priority':100,'at':now,
+                    'reason':'selection_chain_stale',
+                    'chain_age_seconds':audit.get('chain_age_seconds'),
+                    'expires_at':min(window_expires_at,now+CHAIN_REFRESH_REQUEST_TTL_S)})
+                audit['refresh_requested']=True
             if not quiet:
                 self.alert(c,signal["symbol"],{**alert_context(signal),"status":"options_skipped","reason":"No recent options chain",
                     "parent_signal":signal["id"]},"option-skip:"+signal["id"])
@@ -617,12 +676,25 @@ class Engine:
             q=audit_quote(chain,o,self.db.get(c,"quote:"+o["symbol"]))
             checked_at=self.clock() if self.clock else now
             audit['checked_contracts']+=1
+            pinned=bool(q) and q.get('quote_origin')=='chain_snapshot'
             quote_source=q.get('source') if q else None
-            if q and q.get('quote_origin')=='chain_snapshot':
+            if pinned:
                 quote_source=(quote_source or 'chain')+':snapshot'
+            # Rejection instrumentation (2026-11-12): every rejection
+            # carries the premium and, for a pinned quote, its age at
+            # snapshot capture alongside the wall-clock age and source
+            # -- the 2026-11-12 diagnosis could not measure how far
+            # the G1 rejections sat above the cap because the events
+            # trimmed exactly these values.
+            premium=q.get('ask') if q else (o.get('quote') or {}).get('ask')
+            if not isinstance(premium,(int,float)): premium=None
+            spread=(round(q['ask']-q['bid'],4) if q and isinstance(q.get('ask'),(int,float))
+                and isinstance(q.get('bid'),(int,float)) else None)
             evidence=dict(symbol=o['symbol'],checked_at=checked_at,quote_source=quote_source,
-                quote_age_seconds=checked_at-q['ts'] if q and q.get('ts') is not None else None)
-            if fresh(q,checked_at,self.cfg.option_quote_max_age):
+                quote_age_seconds=checked_at-q['ts'] if q and q.get('ts') is not None else None,
+                quote_capture_age_seconds=(q['snapshot_asof']-q['ts']) if pinned and q.get('ts') is not None else None,
+                premium=premium,spread=spread)
+            if audit_fresh(q,checked_at,self.cfg.option_quote_max_age):
                 option_signal={**signal,"id":identity(signal["id"],o["symbol"]),"symbol":o["symbol"],
                     "underlying":signal["symbol"],"underlying_side":signal['side'],
                     "underlying_invalidation":signal.get('invalidation'),
@@ -631,7 +703,12 @@ class Engine:
                 if research_only:
                     # A paper balance, position, contract size or entry cap is never
                     # consulted when selecting an independent observation.
-                    if q['ts']<signal['signal_time'] or q['ts']>checked_at:
+                    # The signal-recency guard judges the OBSERVATION
+                    # time: for a pinned quote that is the snapshot's
+                    # asof (exactly what the pre-2026-11-12 ts stamp
+                    # carried), not the vendor print inside it.
+                    observed_ts=q.get('snapshot_asof') if pinned else q['ts']
+                    if observed_ts<signal['signal_time'] or observed_ts>checked_at:
                         rejected.append({**evidence,'reason':'Fresh quote after signal required'})
                         continue
                     try:
@@ -640,16 +717,20 @@ class Engine:
                         rejected.append({**evidence,'reason':str(error)})
                         continue
                     # Whole-list book gates (respec 2026-11-01, section
-                    # 7): scanner-family candidates must clear G1-G3
-                    # (premium cap, spread, movement eligibility) before
-                    # publication — the same gate set zero_dte_paper
-                    # re-evaluates at booking on the fresh quote. A
-                    # failure rejects this contract with the respec's
-                    # reason token; no alert is published for it, so a
-                    # gated-out candidate leaves rejection evidence in
-                    # this audit (and the diagnostic events), never a
-                    # booking or a shadow record. Non-scanner research
-                    # signals are untouched.
+                    # 7): scanner-family candidates must clear G2-G3
+                    # (spread, movement eligibility) before publication
+                    # — the same gate set zero_dte_paper re-evaluates
+                    # at booking on the fresh quote. (G1, the $0.90
+                    # premium cap, was removed 2026-11-12 at Josh's
+                    # decision: premium is his manual call on a
+                    # published setup, recorded in the rejection /
+                    # selection evidence but never an eligibility
+                    # rejection.) A failure rejects this contract with
+                    # the respec's reason token; no alert is published
+                    # for it, so a gated-out candidate leaves rejection
+                    # evidence in this audit (and the diagnostic
+                    # events), never a booking or a shadow record.
+                    # Non-scanner research signals are untouched.
                     selection_quote=None
                     try:
                         from . import scanner_shadow as _shadow
@@ -662,7 +743,10 @@ class Engine:
                             self.db,c,signal['symbol'],q,
                             signal.get('signal_price'),checked_at)
                         if not gate_ok:
-                            rejected.append({**evidence,'reason':gate_why})
+                            rejected.append({**evidence,'reason':gate_why,
+                                'spread':_gate_det.get('spread'),
+                                'range20':_gate_det.get('range20'),
+                                'ask_spot_ratio':_gate_det.get('ask_spot_ratio')})
                             continue
                         selection_quote=_book.quote_evidence(q,checked_at)
                     eligible=signal.get('notify_eligible',False)

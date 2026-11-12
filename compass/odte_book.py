@@ -7,8 +7,15 @@ alert-consumer path previously booked with NO spread re-check; that
 gap is closed by both paths calling evaluate_candidate() here.
 
 Gates (respec section 3/4):
-- G1 premium cap: entry ask <= $0.90. At the book's +50% exit the
-  planned max loss is 50 x ask + $2.80 round-trip frictional cost.
+- G1 premium cap: REMOVED 2026-11-12 (Josh's decision on that day's
+  chain-lane diagnosis: the $0.90 cap was the largest single
+  contract-level rejection among fully-fresh audits, and premium is
+  his manual call when he looks at a published setup). Premium is
+  still recorded everywhere it was (details, quote evidence,
+  publications, diagnostics) — it is no longer an eligibility
+  rejection at selection or at booking. Planned max loss at the
+  book's +50% exit remains 50 x ask + $2.80 round-trip frictional
+  cost, and the G4 daily planned-loss budget still prices it.
 - G2 spread: ask - bid <= max(15% of ask, $0.05).
 - G3 movement eligibility: the name's trailing-20-session median RTH
   range (daily bars) >= 1.50% of close, the name is present in the EOD
@@ -21,8 +28,9 @@ Gates (respec section 3/4):
   budget (sum of planned max losses).
 
 Rejection reason tokens (respec section 4) are returned verbatim:
-premium_above_cap, spread_too_wide, movement_ineligible,
-name_position_open, name_daily_cap, book_open_cap, daily_risk_budget.
+spread_too_wide, movement_ineligible, name_position_open,
+name_daily_cap, book_open_cap, daily_risk_budget.
+(premium_above_cap retired 2026-11-12 with G1.)
 """
 
 from datetime import date, datetime, timedelta
@@ -30,7 +38,6 @@ from statistics import median
 
 from .market import NY, day
 
-ASK_CAP = 0.90
 SPREAD_PCT_OF_ASK = 0.15
 SPREAD_FLOOR = 0.05
 RANGE20_MIN = 0.015
@@ -172,17 +179,20 @@ def chain_coverage_ok(db, c, symbol, now):
 
 
 def evaluate_candidate(db, c, underlying, quote, spot, now):
-    """G1-G3 for one candidate contract on its consulted quote.
+    """G2-G3 for one candidate contract on its consulted quote (G1,
+    the premium cap, removed 2026-11-12 — see module docstring).
     Returns (ok, reason_token_or_None, details). Quote must already
-    have passed the freshness standard; this set is price/geometry."""
+    have passed the freshness standard; this set is price/geometry.
+    Details carry the values behind each decision — ask (the
+    premium), spread, range20, ask/spot ratio — so rejection
+    diagnostics record them (2026-11-12 instrumentation)."""
     ask = _num((quote or {}).get("ask"))
     bid = _num((quote or {}).get("bid"))
-    details = {"ask": ask, "bid": bid, "range20": None}
+    details = {"ask": ask, "bid": bid, "range20": None,
+               "spread": None, "ask_spot_ratio": None}
     if ask is None or bid is None:
         return False, "movement_ineligible", details
-    # G1 — entry premium cap.
-    if ask > ASK_CAP:
-        return False, "premium_above_cap", details
+    details["spread"] = round(ask - bid, 4)
     # G2 — quoted spread, relative with a nickel floor.
     if ask - bid > max(SPREAD_PCT_OF_ASK * ask, SPREAD_FLOOR):
         return False, "spread_too_wide", details
@@ -195,6 +205,8 @@ def evaluate_candidate(db, c, underlying, quote, spot, now):
     if not chain_coverage_ok(db, c, underlying, now):
         return False, "movement_ineligible", details
     spot = _num(spot)
+    if spot is not None and spot > 0:
+        details["ask_spot_ratio"] = round(ask / spot, 6)
     if spot is None or spot <= 0 or ask / spot > r20 / 2.0:
         return False, "movement_ineligible", details
     details["planned_max_loss"] = planned_max_loss(ask)

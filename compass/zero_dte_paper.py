@@ -251,7 +251,7 @@ def _open_scanner(db, c, now, flatten_at, cfg=None):
             # gate set for every scanner-book outcome, evaluated here on
             # the quote consulted at THIS decision — decision-time
             # freshness (age <= 60s, the book standard Stage 1 set),
-            # then G1-G3 via odte_book.evaluate_candidate (the same call
+            # then G2-G3 via odte_book.evaluate_candidate (the same call
             # engine.options made before publishing), then G4 caps for
             # seated bookings. This closes the audit gap: this consumer
             # previously booked with NO spread re-check.

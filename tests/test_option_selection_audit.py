@@ -251,6 +251,35 @@ def test_selection_spread_rejection_is_emitted_as_event(db):
         assert p['rejections'][0]['symbol']==CONTRACT
         assert p['rejections'][0]['reason']=='Spread exceeds simulation liquidity limit'
         assert p['rejections'][0]['quote_age_seconds']==0
+        # 2026-11-12 instrumentation: the values behind the reason
+        # ride on the event (spread and premium for a spread reject).
+        assert p['rejections'][0]['spread']==1.0
+        assert p['rejections'][0]['premium']==2.0
+
+
+def test_selection_pinned_rejection_event_carries_capture_age_and_premium(db):
+    # 2026-11-12: a snapshot-pinned quote stale at capture rejects on
+    # freshness, and the emitted diagnostic event carries the premium
+    # and the quote's age at snapshot capture -- the fields the
+    # 2026-11-12 diagnosis found trimmed.
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
+    with db.tx() as c:
+        db.put(c,'chain:SPY',dict(asof=NOW-10,complete=True,source='fixture',contracts=[
+            dict(symbol=CONTRACT,expiry='2026-09-14',type='call',strike=101,multiplier=100,
+                 quote=dict(ts=NOW-300,bid=2.0,ask=2.01,bid_size=100,ask_size=100))]))
+        db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
+        Scanner(db,cfg).retry_options(c,{'SPY':quote()},NOW,Engine(db,cfg))
+        events=_selection_events(db,c)
+        assert len(events)==1
+        p=events[0]['payload']
+        r=p['rejections'][0]
+        assert r['symbol']==CONTRACT
+        assert r['reason']=='Missing or invalid fresh quote'
+        assert r['quote_age_seconds']==300
+        assert r['quote_capture_age_seconds']==290
+        assert r['premium']==2.01
+        assert r['quote_source']=='fixture:snapshot'
+        assert not db.prefix(c,'trade:')
 
 
 def test_selection_expiry_emits_final_event_carrying_last_rejections(db):
