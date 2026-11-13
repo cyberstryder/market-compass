@@ -20,6 +20,20 @@ Gate design (Josh's rule, 2026-10-19: verify R2 has the data, THEN prune):
   before a week may flip to 'done') is sliced and banked the same way:
   a count timeout stalls the week visibly (action='recount_pending')
   but can never wedge it silently behind a fieldless error.
+- The prune-time verify count is banked per slice the same way
+  (_verify_live_count): a slice that dies on the statement timeout
+  still banks a verify_error refusal and burns an attempt exactly as
+  before, but the slices already counted are not thrown away — the
+  refusal and the re-kick both carry verify_next_ts / verify_total, so
+  the next attempt resumes the count where the failed one stopped
+  instead of recounting the whole week from zero (quote/2026-W42,
+  2026-11-12: its refusal was banked by the retired six-hour count;
+  under the one-hour count a dense week is still 168 sequential slice
+  transactions, and an all-or-nothing count discards all of them on
+  any single timeout). The completed sum is over exactly the same
+  predicate and slices as a single-pass count, so the gate loses no
+  strictness; banked progress is dropped if the archive record's row
+  count changed since it was banked (a re-archive invalidates it).
 """
 import hashlib
 import logging
@@ -257,6 +271,60 @@ def _completion_recount(db, kind, pstr, st, ws, we, deadline):
     return None
 
 
+# The verify-side twin of the banked recount fields: where the
+# prune-time live count stopped (verify_next_ts) and its running sum
+# (verify_total). They ride through verify_error refusals and verify
+# re-kicks so a retry resumes instead of recounting from the week
+# start; see _verify_live_count.
+_VERIFY_COUNT_FIELDS = ('verify_next_ts', 'verify_total')
+
+
+def _bank_verify_count(db, kind, pstr, nxt, total):
+    st = _prune_states(_all_copy_state(db)).get((kind, pstr), {})
+    st['verify_next_ts'] = nxt
+    st['verify_total'] = total
+    st['updated_at'] = time.time()
+    _set_prune_state(db, kind, pstr, st)
+
+
+def _verify_live_count(db, kind, pstr, st, ws, we):
+    """Exact live count for the prune-time gate, resumable across
+    attempts: one-hour slices of the same kind + ts-range predicate
+    _count_rows uses (via _count_rows itself, one internal slice per
+    call), progress banked in prune state (verify_next_ts /
+    verify_total) after every slice.
+
+    The single-pass count this replaces ran all 168 slices inside one
+    _verify_week call and kept the sum in a local: a slice that died
+    on the statement timeout (the W42 class — its densest slice
+    outlived 30s even at one hour under load) discarded every slice
+    already counted, and each retry paid the full week again. The
+    refusal contract is unchanged — a failed slice raises out of here
+    after banking, the worker banks the same verify_error refusal and
+    burns the same attempt — only the work is no longer repeated.
+    Slices are counted exactly once, in order, so the completed sum
+    is exactly the week's live count; as with a single-pass count,
+    rows written into an already-counted slice while verification is
+    in flight are the completion recount's problem, not this gate's.
+    State banked before this fix carries no verify fields; missing
+    fields mean a fresh count from the week start."""
+    nxt = st.get('verify_next_ts')
+    total = st.get('verify_total')
+    if nxt is None or total is None or not ws <= nxt <= we:
+        nxt, total = ws, 0
+    while nxt < we:
+        slice_hi = min(we, nxt + _COUNT_SLICE_SECONDS)
+        try:
+            n = _count_rows(db, kind, nxt, slice_hi)
+        except Exception:
+            _bank_verify_count(db, kind, pstr, nxt, total)
+            raise
+        total += n
+        nxt = slice_hi
+        _bank_verify_count(db, kind, pstr, nxt, total)
+    return total
+
+
 def coverage(db, now=None):
     """Per-kind archive coverage: what fraction of archivable weeks hold a
     verified progress record, and what has already been pruned."""
@@ -370,10 +438,20 @@ MAX_VERIFY_ATTEMPTS = 5
 def _refuse(db, kind, pstr, reason, detail):
     prev = _prune_states(_all_copy_state(db)).get((kind, pstr), {})
     attempts = int(prev.get('attempts', 0)) + 1
-    _set_prune_state(db, kind, pstr,
-                     {'status': 'refused', 'reason': reason,
-                      'detail': detail, 'attempts': attempts,
-                      'at': time.time()})
+    new = {'status': 'refused', 'reason': reason,
+           'detail': detail, 'attempts': attempts,
+           'at': time.time()}
+    if reason == 'verify_error':
+        # A verify_error from the live count leaves the banked count
+        # progress in place so the retry resumes mid-week instead of
+        # recounting from zero (_verify_live_count). Evidence refusals
+        # never carry it: their counts either never ran or completed.
+        # expected_rows rides along so the re-kick can tell whether
+        # the progress still belongs to the current archive record.
+        for f in _VERIFY_COUNT_FIELDS + ('expected_rows',):
+            if prev.get(f) is not None:
+                new[f] = prev[f]
+    _set_prune_state(db, kind, pstr, new)
     return {'ok': False, 'action': 'refused', 'kind': kind, 'period': pstr,
             'reason': reason, 'detail': detail}
 
@@ -439,7 +517,8 @@ def _verify_week(db, client, bucket, kind, pstr, rec, ws, we, now):
                 {'record_sha256': rec['sha256'], 'r2_sha256': digest,
                  'record_bytes': rec.get('bytes'), 'r2_bytes': size})
         return False
-    live = _count_rows(db, kind, ws, we)
+    st = _prune_states(_all_copy_state(db)).get((kind, pstr), {})
+    live = _verify_live_count(db, kind, pstr, st, ws, we)
     if live != rec['rows']:
         _refuse(db, kind, pstr, 'count_mismatch',
                 {'db_rows': live, 'archived_rows': rec['rows']})
@@ -624,10 +703,18 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
         # No state yet, or an orphaned 'verifying' whose thread died
         # with a previous process: (re-)kick verification. The attempt
         # count carries over so retryable refusals can exhaust their cap.
-        _set_prune_state(db, kind, pstr,
-                         {'status': 'verifying', 'started_at': now,
-                          'attempts': int(st.get('attempts', 0)) if st else 0,
-                          'expected_rows': rec['rows']})
+        kick = {'status': 'verifying', 'started_at': now,
+                'attempts': int(st.get('attempts', 0)) if st else 0,
+                'expected_rows': rec['rows']}
+        if st and st.get('expected_rows') == rec['rows']:
+            # Banked verify-count progress was counted against this
+            # same archive record; carry it so the retry resumes the
+            # count mid-week. A changed record (a re-archive rewrote
+            # the progress record) drops it — the count starts over.
+            for f in _VERIFY_COUNT_FIELDS:
+                if st.get(f) is not None:
+                    kick[f] = st[f]
+        _set_prune_state(db, kind, pstr, kick)
         thread = threading.Thread(
             target=_verify_worker,
             args=(db, client, bucket, kind, pstr, rec, ws, we, now),

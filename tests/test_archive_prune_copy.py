@@ -618,3 +618,110 @@ def test_nonmatching_probe_banks_cursor(db, s3, monkeypatch):
     assert r['deleted_this_call'] == 2 and r['status'] == 'done'
     first_delete = next(i for i, (_, d) in enumerate(writes) if d)
     assert (2, 0) in writes[:first_delete]  # banked before any deletion
+
+
+def test_verify_count_timeout_banks_progress_and_resumes(
+        db, s3, monkeypatch):
+    """W42 class (2026-11-12): a slice COUNT inside the verify gate
+    dies on the statement timeout mid-week. The refusal and the burned
+    attempt are exactly as before, but the slices already counted stay
+    banked — the retry resumes at the failed slice instead of
+    recounting the whole week from zero."""
+    ts = NOW - 400 * DAY
+    ws = apc._week_start(ca._week_str(ts))
+    add_event(db, 'bar', ws + 60)               # slice 1
+    add_event(db, 'bar', ws + 2 * 3600 + 60)    # slice 3
+    add_event(db, 'bar', ws + 2 * 3600 + 120)   # slice 3
+    add_event(db, 'bar', ws + 3 * 3600 + 60)    # slice 4
+    pstr = archive_week(db, s3, 'bar', ts, rows=4)
+    real_count = apc._count_rows
+    calls = []
+    fail_at = {'lo': ws + 2 * 3600}
+
+    def flaky_count(db_, kind, lo, hi):
+        calls.append(lo)
+        if lo == fail_at['lo']:
+            raise RuntimeError(
+                'canceling statement due to statement timeout')
+        return real_count(db_, kind, lo, hi)
+
+    monkeypatch.setattr(apc, '_count_rows', flaky_count)
+    r1 = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r1['ok'] is False and r1['reason'] == 'verify_error'
+    assert count_kind(db, 'bar') == 4  # nothing deleted
+    st = apc._prune_states(apc._all_copy_state(db))[('bar', pstr)]
+    assert st['status'] == 'refused' and st['attempts'] == 1
+    # The two completed slices survived the refusal: resume point is
+    # the failed slice, and the running sum holds slice 1's row only
+    # (slice 2 was empty).
+    assert st['verify_next_ts'] == ws + 2 * 3600
+    assert st['verify_total'] == 1
+
+    calls.clear()
+    fail_at['lo'] = None  # the timeout was transient
+    r2 = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r2['deleted_this_call'] == 4 and r2['status'] == 'done'
+    # The resumed verify count started at the failed slice; the only
+    # count that starts at the week start in this call is the
+    # post-delete completion recount.
+    assert calls[0] == ws + 2 * 3600
+    assert calls.count(ws) == 1
+    assert count_kind(db, 'bar') == 0
+
+
+def test_verify_count_progress_dropped_when_archive_record_changes(
+        db, s3, monkeypatch):
+    """Banked count progress belongs to the archive record it was
+    counted against. A re-archive (the progress record's row count
+    changes) invalidates it: the retry recounts from the week start
+    rather than resuming against the new total."""
+    ts = NOW - 400 * DAY
+    ws = apc._week_start(ca._week_str(ts))
+    add_event(db, 'bar', ws + 60)
+    add_event(db, 'bar', ws + 2 * 3600 + 60)
+    pstr = archive_week(db, s3, 'bar', ts, rows=2)
+    real_count = apc._count_rows
+    calls = []
+    fail_at = {'lo': ws + 2 * 3600}
+
+    def flaky_count(db_, kind, lo, hi):
+        calls.append(lo)
+        if lo == fail_at['lo']:
+            raise RuntimeError(
+                'canceling statement due to statement timeout')
+        return real_count(db_, kind, lo, hi)
+
+    monkeypatch.setattr(apc, '_count_rows', flaky_count)
+    r1 = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r1['ok'] is False and r1['reason'] == 'verify_error'
+    st = apc._prune_states(apc._all_copy_state(db))[('bar', pstr)]
+    assert st['verify_next_ts'] == ws + 2 * 3600
+
+    # Re-archive: a third row lands and the record is rewritten.
+    add_event(db, 'bar', ws + 3 * 3600 + 60)
+    archive_week(db, s3, 'bar', ts, rows=3)
+    calls.clear()
+    fail_at['lo'] = None
+    r2 = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r2['deleted_this_call'] == 3 and r2['status'] == 'done'
+    assert calls[0] == ws  # recounted from the week start
+    assert count_kind(db, 'bar') == 0
+
+
+def test_pre_fix_refused_state_verifies_fresh(db, s3):
+    """W42's live state shape (2026-11-12): a verify_error refusal
+    banked before count progress existed — no verify_* fields, a stale
+    detail from the six-hour count era, attempts reset to 0 by the
+    deliberate re-arm. It must simply verify from the week start."""
+    ts = NOW - 400 * DAY
+    for i in range(3):
+        add_event(db, 'bar', ts + i * 60)
+    pstr = archive_week(db, s3, 'bar', ts, rows=3)
+    with db.tx() as c:
+        db.put(c, f'copy-archive:prune:bar:{pstr}',
+               {'status': 'refused', 'reason': 'verify_error',
+                'detail': 'canceling statement due to statement timeout',
+                'attempts': 0, 'at': NOW})
+    r = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r['deleted_this_call'] == 3 and r['status'] == 'done'
+    assert count_kind(db, 'bar') == 0
