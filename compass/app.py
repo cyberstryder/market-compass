@@ -218,11 +218,13 @@ def create_app(cfg=None):
             spawn(lambda: Secondary(db,cfg,clock=time.time).run(),'Secondary')
             spawn(lambda: SwingIdeas(db,cfg).run(),'SwingIdeas')
             if cfg.swings_c2:
-                from .swings_c2 import SwingsC2
+                from .swings_c2 import SwingsC2, run_push as run_swings_c2_push
                 spawn(lambda: SwingsC2(db,cfg).run(),'SwingsC2')
+                spawn(lambda: run_swings_c2_push(db,cfg),'run_swings_c2_push')
             if cfg.connors_ssc:
-                from .connors_ssc import ConnorsSSC
+                from .connors_ssc import ConnorsSSC, run_push as run_connors_push
                 spawn(lambda: ConnorsSSC(db,cfg).run(),'ConnorsSSC')
+                spawn(lambda: run_connors_push(db,cfg),'run_connors_push')
             if cfg.overnight_omc:
                 from .overnight_omc import OvernightOMC
                 spawn(lambda: OvernightOMC(db,cfg).run(),'OvernightOMC')

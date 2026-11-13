@@ -303,6 +303,133 @@ def test_sample_rule_no_backfill(db):
     assert eps['OLD']['signal']['date'] == POST_DIP
 
 
+# ---------------------------------------------------------------------------
+# Display-only shadow alerts (2026-11-13 addendum to the translation
+# registration, Josh): the SH-SPY §6 contract — rendering only, queue
+# after commit, failure-isolated, gate/data_gap silence, byte-identity.
+
+from compass import connors_ssc as CM
+from compass.store import connors_push_outbox, events as events_table
+
+
+def alert_cfg(alerts):
+    return Config(local=True, stocks=tuple(SYMBOLS), watchlist=(),
+                  sector_etfs=(), swing_ideas=False, morning_enabled=False,
+                  discovery=False, connors_alerts=alerts)
+
+
+def push_outbox_of(db):
+    with db.tx() as c:
+        return c.execute(select(connors_push_outbox.c.payload)).scalars().all()
+
+
+def _alert_lifecycle(db, cfg):
+    seed_bars(db)
+    seed_entry_snapshots(db)
+    seed_exit_snapshots(db)
+    scorer = ConnorsSSC(db, cfg)
+    scorer.process(at(SESSIONS[DIP_I + 1]))
+    scorer.process(NOW)
+    return scorer
+
+
+def test_shadow_alerts_open_close_and_silences(db):
+    _alert_lifecycle(db, ssc_cfg())
+    eps = get_episodes(db)
+    by_id = {p['id']: p['symbol'] for p in eps.values()}
+    seen = {}
+    for payload in push_outbox_of(db):
+        seen.setdefault(by_id[payload['episode_id']], []).append(payload)
+    # SIG and ZERO open and close; MISSX opens (its exit is data_gap:
+    # never alerts); GATED (gate_excluded), GAP (entry data_gap) and
+    # OLD (never priced) stay silent.
+    assert sorted(seen) == ['MISSX', 'SIG', 'ZERO']
+    assert [p['type'] for p in seen['SIG']] == ['open', 'close']
+    assert [p['type'] for p in seen['ZERO']] == ['open', 'close']
+    assert [p['type'] for p in seen['MISSX']] == ['open']
+    opened = seen['SIG'][0]
+    assert opened['entry_ask'] == 2.10 and opened['delta'] == 0.50
+    assert opened['dte'] == 9 and opened['symbol'] == 'SIG'
+    closed = seen['SIG'][1]
+    assert closed['exit_bid'] == 2.60 and closed['reason'] == 'ssc_close'
+    assert closed['pnl'] == pytest.approx((2.60 - 2.10) * 100 - 1.30)
+
+
+def test_shadow_alerts_no_duplicates_on_rerun(db):
+    scorer = _alert_lifecycle(db, ssc_cfg())
+    assert len(push_outbox_of(db)) == 5
+    scorer.process(NOW)  # transitions already happened: nothing re-fires
+    assert len(push_outbox_of(db)) == 5
+
+
+def _connors_dump(db):
+    with db.tx() as c:
+        eps = c.execute(select(episodes.c.status, episodes.c.payload)).all()
+        evs = c.execute(select(events_table.c.kind, events_table.c.payload)
+                        .where(events_table.c.kind == CM.KIND)
+                        .order_by(events_table.c.id)).all()
+    return eps, evs
+
+
+def test_shadow_alert_flag_byte_identity(db, tmp_path):
+    _alert_lifecycle(db, alert_cfg(True))
+    eps_on, evs_on = _connors_dump(db)
+    assert len(push_outbox_of(db)) == 5
+    db2 = Store('sqlite:///' + str(tmp_path / 'connors_off.db'))
+    db2.initialize()
+    try:
+        _alert_lifecycle(db2, alert_cfg(False))
+        eps_off, evs_off = _connors_dump(db2)
+        assert push_outbox_of(db2) == []
+    finally:
+        db2.engine.dispose()
+    assert eps_on == eps_off      # episode rows byte-identical
+    assert evs_on == evs_off      # lifecycle events byte-identical
+
+
+def test_shadow_alert_rendering_labels_and_no_live_language():
+    opened = {'type': 'open', 'episode_id': 'ep1', 'symbol': 'ACME',
+              'contract': {'symbol': 'ACMEC1', 'expiry': '2026-11-25',
+                           'strike': 100, 'type': 'call'},
+              'entry_ask': 2.10, 'delta': 0.50, 'dte': 9,
+              'signal_date': '2026-11-16', 'at': NOW}
+    closed = {'type': 'close', 'episode_id': 'ep1', 'symbol': 'ACME',
+              'contract': {'symbol': 'ACMEC1', 'expiry': '2026-11-25',
+                           'strike': 100, 'type': 'call'},
+              'entry_ask': 2.10, 'exit_bid': 2.60, 'pnl': 48.70,
+              'reason': 'ssc_close', 'underlying_bps': 123.4, 'at': NOW}
+    for body in (CM.format_open_message(opened),
+                 CM.format_close_message(closed)):
+        text = body['content']
+        assert text.startswith('🧪 **CONNORS SHADOW**')
+        assert 'ACME' in text and 'shadow' in text.lower()
+        for banned in ('LIVE', 'TradersPost', '🔴', 'live order', 'filled'):
+            assert banned not in text
+    assert '$2.10' in CM.format_open_message(opened)['content']
+    close_text = CM.format_close_message(closed)['content']
+    assert 'SSC CLOSE' in close_text and '+$48.70' in close_text
+
+
+def test_shadow_alert_queue_failure_never_blocks(db, monkeypatch):
+    # Break ONLY the outbox insert: episodes must book and score
+    # exactly as with a healthy queue, and the failure must land on
+    # the health:connors_push marker.
+    real_insert = db.insert
+
+    def flaky(table, *a, **k):
+        if table is connors_push_outbox:
+            raise RuntimeError('outbox insert down')
+        return real_insert(table, *a, **k)
+    monkeypatch.setattr(db, 'insert', flaky)
+    _alert_lifecycle(db, ssc_cfg())
+    eps = get_episodes(db)
+    assert eps['SIG']['status'] == 'closed'  # booked + scored regardless
+    assert push_outbox_of(db) == []
+    with db.tx() as c:
+        health = db.get(c, 'health:connors_push', {})
+    assert health.get('status') == 'error'
+
+
 def test_connors_episodes_table_created_without_module_import(tmp_path):
     """Production import order (regression, the bb1adfa lesson):
     Store.initialize() runs meta.create_all at engine boot, BEFORE

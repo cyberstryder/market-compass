@@ -1,6 +1,11 @@
 """C2 weekly cross-sectional momentum — forward premium scorer (2026-11-02).
 
-Paper / measurement scope ONLY: no orders, no alerts, no live sends. This
+Paper / measurement scope ONLY: no orders, no live sends. The one
+outward surface is the display-only shadow alerts added by the
+2026-11-13 addendum to the swings registration (Josh): ONE basket
+message per weekly rebalance plus per-episode CLOSE alerts to the
+0DTE Discord channel, following the SH-SPY §6 pattern (own outbox,
+own flag, default ON; see the push section below). This
 module shadow-fires the C2 candidate exactly as frozen in the 2026-11-01
 swings generator gauntlet (files/swings-generator-gauntlet-2026-11-01.md)
 and scores its premium translation forward, per that report's §5/§6:
@@ -63,10 +68,12 @@ import time
 import uuid
 from datetime import date as _date, timedelta
 
+import httpx
 from sqlalchemy import select, update
 
 from .market import day, number
 from .store import events, identity
+from .store import swing_c2_push_outbox
 from .store import swing_c2_episodes as episodes
 from .swing_signals import sessions_between
 
@@ -277,6 +284,212 @@ def snapshot_on_or_after(db, c, symbol, date_str):
 
 
 # ---------------------------------------------------------------------------
+# Display-only shadow alerts (2026-11-13 addendum to the swings
+# registration, Josh). Own outbox + own drainer, following the SH-SPY
+# §6 precedent in sh_spy_options.py exactly: destination = the
+# options_0dte route's configured webhook, resolved through
+# alert_routes.destination. These alerts never enter the general
+# alert pipeline. Scoring is byte-identical with the alert flag on
+# or off (pinned by test); data_gap episodes never alert (no premium
+# trade exists). Opens render as ONE basket message per rebalance —
+# never one ping per episode.
+
+PUSH_KIND = 'swing_c2_push'
+MAX_PUSH_ATTEMPTS = 10
+REASON_LABEL = {'stop': 'STOP', 'rebal_out': 'REBALANCE OUT',
+                'rebal_out_stale': 'REBALANCE OUT (STALE CLOSE)'}
+
+
+def _contract_label(symbol, contract):
+    contract = contract or {}
+    typ = 'C' if str(contract.get('type') or '').lower() == 'call' else 'P'
+    strike = number(contract.get('strike'))
+    strike_s = ('%g' % strike) if strike is not None else '?'
+    return '%s %s %s%s' % (symbol or '?', contract.get('expiry') or '?',
+                           strike_s, typ)
+
+
+def _money(v):
+    if v is None:
+        return '—'
+    return '+$%.2f' % v if v >= 0 else '-$%.2f' % abs(v)
+
+
+def format_basket_message(payload):
+    """C2 SWINGS SHADOW basket alert (addendum labeling): identity
+    line first, the rebalance week, and every episode opened in it
+    (symbol, contract, entry ask) in ONE message. No live-trading
+    language."""
+    entries = payload.get('entries') or []
+    lines = [
+        '🧪 **C2 SWINGS SHADOW** — shadow forward test · display only',
+        '🧺 **NEW BASKET · week of %s** — %d episode%s opened' % (
+            payload.get('rebalance_date', '?'), len(entries),
+            '' if len(entries) == 1 else 's'),
+    ]
+    for e in entries:
+        lines.append('• `%s` · contract `%s` · entry ask `$%.2f`' % (
+            e.get('symbol', '?'),
+            _contract_label(e.get('symbol'), e.get('contract')),
+            e.get('entry_ask') or 0))
+    lines.append('_Shadow measurement only — not bookable trades; nothing was booked or sent anywhere._')
+    return {'content': '\n'.join(lines)[:1900],
+            'username': 'C2 Swings Shadow',
+            'allowed_mentions': {'parse': []}}
+
+
+def format_close_message(payload):
+    """C2 SWINGS SHADOW close alert: identity line, symbol, contract,
+    exit bid + scored P&L + exit reason, shadow disclaimer."""
+    reason = REASON_LABEL.get(payload.get('reason'),
+                              str(payload.get('reason', '?')).upper())
+    lines = [
+        '🧪 **C2 SWINGS SHADOW** — shadow forward test · display only',
+        '📈 **CLOSE LONG** · %s — %s' % (payload.get('symbol', '?'), reason),
+        'Contract `%s` · entry ask `$%.2f` → exit bid `$%.2f`' % (
+            _contract_label(payload.get('symbol'), payload.get('contract')),
+            payload.get('entry_ask', 0), payload.get('exit_bid', 0)),
+        'Scored P&L **%s**' % _money(payload.get('pnl')),
+        '_Shadow measurement only — not a bookable trade; nothing was booked or sent anywhere._',
+    ]
+    return {'content': '\n'.join(lines)[:1900],
+            'username': 'C2 Swings Shadow',
+            'allowed_mentions': {'parse': []}}
+
+
+def queue_alert(db, cfg, payload):
+    """Queue one shadow alert in the module's own outbox. Called only
+    AFTER the episode transaction has committed, in its own
+    transaction. Returns True when queued (or when alerts are off —
+    nothing to do). On failure the error lands on the
+    health:swing_c2_push marker and False is returned; the caller has
+    already booked the episodes, which never depend on this."""
+    if not bool(getattr(cfg, 'swings_c2_alerts', True)):
+        return True
+    try:
+        subject = (payload.get('episode_id')
+                   or 'basket:' + str(payload.get('rebalance_date', '')))
+        row_id = identity('swing-c2-push-v1', subject,
+                          payload.get('type', ''), payload.get('at', 0))
+        with db.tx() as c:
+            c.execute(db.insert(swing_c2_push_outbox).values(
+                id=row_id, status='pending', created=time.time(),
+                payload=payload, delivery={'attempts': 0})
+                .on_conflict_do_nothing(index_elements=['id']))
+        return True
+    except Exception as e:
+        try:
+            db.health(PUSH_KIND, 'error',
+                      'shadow alert queue failed: %s' % type(e).__name__)
+        except Exception:
+            pass
+        logging.getLogger('uvicorn.error').exception(
+            'swings_c2: alert queue failed; episodes already booked')
+        return False
+
+
+def push_destination(cfg):
+    """The options_0dte route destination (url, mode) via the routing
+    layer's own resolver; url None when the route is unconfigured."""
+    from .alert_routes import destination
+    url, mode = destination(cfg, 'options_0dte')
+    return (url if url else None), mode
+
+
+def deliver_one_push(db, client, url, now=None, max_attempts=MAX_PUSH_ATTEMPTS):
+    """Attempt one pending shadow alert. Mirrors the fixed ict_push
+    drainer semantics (as in sh_spy_options): any local failure
+    (including a formatter error) fails the row with the cause
+    recorded in its delivery — never strands a row in 'sending',
+    never raises into the loop. Returns True if a row was attempted."""
+    import re
+    if not url or not re.fullmatch(
+            r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+', url):
+        return False
+    now = time.time() if now is None else now
+    with db.tx() as c:
+        row = c.execute(select(swing_c2_push_outbox)
+                        .where(swing_c2_push_outbox.c.status == 'pending')
+                        .order_by(swing_c2_push_outbox.c.created).limit(1)
+                        ).mappings().first()
+        if not row:
+            return False
+        d = dict(row['delivery'])
+        if d.get('next_attempt') and now < d['next_attempt']:
+            return False
+        d['attempts'] = d.get('attempts', 0) + 1
+        c.execute(update(swing_c2_push_outbox)
+                  .where(swing_c2_push_outbox.c.id == row['id'])
+                  .values(status='sending', delivery=d))
+        job = dict(row, delivery=d)
+
+    status = 'failed'
+    try:
+        formatter = (format_close_message if job['payload'].get('type') == 'close'
+                     else format_basket_message)
+        resp = client.post(url, params={'wait': 'true'},
+                           json=formatter(job['payload']))
+        if 200 <= resp.status_code < 300:
+            status = 'delivered'
+        elif resp.status_code == 429:
+            status = 'pending'
+            try:
+                delay = max(1, min(3600, float(resp.json().get('retry_after', 30))))
+            except Exception:
+                delay = 30
+            job['delivery']['next_attempt'] = now + delay
+        elif resp.status_code >= 500:
+            status = 'pending'
+            job['delivery']['next_attempt'] = now + 30
+    except httpx.HTTPError:
+        status = 'pending'
+        job['delivery']['next_attempt'] = now + 30
+    except Exception as e:
+        job['delivery']['error'] = '%s: %s' % (type(e).__name__, str(e)[:200])
+
+    if status == 'pending' and job['delivery'].get('attempts', 0) >= max_attempts:
+        status = 'failed'
+
+    with db.tx() as c:
+        c.execute(update(swing_c2_push_outbox)
+                  .where(swing_c2_push_outbox.c.id == job['id'])
+                  .values(status=status, delivery=job['delivery']))
+    if status == 'delivered':
+        db.health(PUSH_KIND, 'delivered',
+                  'C2 swings shadow alert confirmed by Discord', now)
+    elif status == 'failed':
+        db.health(PUSH_KIND, 'error',
+                  'shadow alert delivery failed: %s'
+                  % job['delivery'].get('error', 'attempts exhausted'))
+    return True
+
+
+async def run_push(db, cfg):
+    """Drainer loop for the addendum shadow alerts (own outbox, 0DTE
+    route destination). Never raises out of the loop."""
+    with httpx.Client(timeout=10, follow_redirects=False) as client:
+        while True:
+            try:
+                if bool(getattr(cfg, 'swings_c2', True)) and \
+                        bool(getattr(cfg, 'swings_c2_alerts', True)):
+                    url, mode = push_destination(cfg)
+                    if url:
+                        await asyncio.to_thread(deliver_one_push, db, client, url)
+                    else:
+                        db.health(PUSH_KIND, 'not_configured',
+                                  'options_0dte route has no webhook; '
+                                  'shadow alerts stay queued')
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                try:
+                    db.health(PUSH_KIND, 'error', type(e).__name__)
+                except Exception:
+                    pass
+            await asyncio.sleep(2)
+
+
+# ---------------------------------------------------------------------------
 # Scorer
 
 class SwingsC2:
@@ -440,7 +653,8 @@ class SwingsC2:
 
     # -- premium pricing (chain archive only) ---------------------------------
 
-    def _price_entries(self, c, now):
+    def _price_entries(self, c, now, alerts_out=None):
+        opened_now = []   # (rebalance_date, basket-entry) priced this pass
         rows = c.execute(select(episodes.c.payload).where(
             episodes.c.status == 'open').order_by(episodes.c.created)).scalars().all()
         for p in rows:
@@ -486,8 +700,24 @@ class SwingsC2:
                          'snapshot_date': snap['date'],
                          'contract': chosen['symbol'], 'ask': q.get('ask')})
             self._save(c, p, now)
+            if alerts_out is not None:
+                opened_now.append((p['signal']['rebalance_date'], {
+                    'episode_id': p['id'], 'symbol': p['symbol'],
+                    'contract': p['contract'],
+                    'entry_ask': p['entry']['ask']}))
+        if alerts_out is not None and opened_now:
+            # ONE basket payload per rebalance (2026-11-13 addendum):
+            # collected here, queued by process() only after this
+            # transaction commits.
+            by_reb = {}
+            for reb, item in opened_now:
+                by_reb.setdefault(reb, []).append(item)
+            for reb in sorted(by_reb):
+                alerts_out.append({'type': 'basket',
+                                   'rebalance_date': reb,
+                                   'entries': by_reb[reb], 'at': now})
 
-    def _price_exits(self, c, now):
+    def _price_exits(self, c, now, alerts_out=None):
         rows = c.execute(select(episodes.c.payload).where(
             episodes.c.status == 'open').order_by(episodes.c.created)).scalars().all()
         for p in rows:
@@ -529,6 +759,12 @@ class SwingsC2:
                         {'date': exit_date, 'snapshot_date': snap['date'],
                          'reason': p['exit_trigger']['reason'], 'pnl': pnl})
             self._save(c, p, now, status='closed')
+            if alerts_out is not None:
+                alerts_out.append({
+                    'type': 'close', 'episode_id': p['id'],
+                    'symbol': p['symbol'], 'contract': p['contract'],
+                    'entry_ask': entry_ask, 'exit_bid': bid, 'pnl': pnl,
+                    'reason': p['exit_trigger']['reason'], 'at': now})
 
     # -- driver ---------------------------------------------------------------
 
@@ -586,13 +822,21 @@ class SwingsC2:
                 logging.getLogger('uvicorn.error').exception(
                     'swings_c2 session %s failed; will retry next pass', d)
                 break
+        alerts_out = []
         for step in (self._price_entries, self._price_exits):
+            step_alerts = []
             try:
                 with self.db.tx() as c:
-                    step(c, now)
+                    step(c, now, step_alerts)
             except Exception:
                 logging.getLogger('uvicorn.error').exception(
                     'swings_c2 pricing step %s failed', step.__name__)
+            else:
+                # Only alerts whose episode transaction committed are
+                # queued (queueing itself happens after, in queue_alert).
+                alerts_out.extend(step_alerts)
+        for payload in alerts_out:
+            queue_alert(self.db, self.cfg, payload)
         with self.db.tx() as c:
             state = self._write_state(c, now)
         counts = state['counts']

@@ -237,6 +237,24 @@ sh_spy_push_outbox=Table('sh_spy_push_outbox_v1',meta,
     Column('delivery',JSON,nullable=False))
 Index('sh_spy_push_pending',sh_spy_push_outbox.c.status,sh_spy_push_outbox.c.created)
 
+# Connors SSC shadow-alert outbox (2026-11-13 addendum to the
+# translation registration, display only): the scorer's own narrow
+# queue to the 0DTE Discord channel, following the sh_spy_push
+# precedent above. Declared here for the same create_all reason.
+connors_push_outbox=Table('connors_push_outbox_v1',meta,
+    Column('id',String(64),primary_key=True),Column('status',String(24),nullable=False),
+    Column('created',Float,nullable=False),Column('payload',JSON,nullable=False),
+    Column('delivery',JSON,nullable=False))
+Index('connors_push_pending',connors_push_outbox.c.status,connors_push_outbox.c.created)
+
+# C2 swings shadow-alert outbox (2026-11-13 addendum to the swings
+# registration, display only): same precedent and reason as above.
+swing_c2_push_outbox=Table('swing_c2_push_outbox_v1',meta,
+    Column('id',String(64),primary_key=True),Column('status',String(24),nullable=False),
+    Column('created',Float,nullable=False),Column('payload',JSON,nullable=False),
+    Column('delivery',JSON,nullable=False))
+Index('swing_c2_push_pending',swing_c2_push_outbox.c.status,swing_c2_push_outbox.c.created)
+
 spy_checks=Table('spy_plan_checks_v1',meta,
     Column('id',String(64),primary_key=True),Column('version',String(50),nullable=False),
     Column('source_key',String(150),nullable=False),Column('day',String(10),nullable=False),

@@ -313,6 +313,151 @@ def test_c2_entry_data_gap_still_completes_underlying(db):
         assert counts['data_gap'] == 2 and counts['closed'] == 0
 
 
+# ---------------------------------------------------------------------------
+# C2 display-only shadow alerts (2026-11-13 addendum to the swings
+# registration, Josh): the SH-SPY §6 contract — one basket message per
+# rebalance, per-episode closes, queue after commit, failure-isolated,
+# data_gap silence, byte-identity with the flag off.
+
+from compass import swings_c2 as C2M
+from compass.store import events as events_table
+from compass.store import swing_c2_push_outbox
+
+
+def c2_push_outbox_of(db):
+    with db.tx() as c:
+        return c.execute(select(swing_c2_push_outbox.c.payload)).scalars().all()
+
+
+def test_c2_shadow_basket_alert_is_one_message(db):
+    seed_bars(db, '2026-09-15', skip={('MISS', SESSIONS[R1 - 5])})
+    good_snapshot(db, 'WIN1', REB1)
+    good_snapshot(db, 'WIN2', REB1)
+    scorer = SwingsC2(db, c2_cfg())
+    scorer.process(at('2026-09-16'))
+    rows = c2_push_outbox_of(db)
+    assert len(rows) == 1  # ONE basket message, never one ping per open
+    basket = rows[0]
+    assert basket['type'] == 'basket' and basket['rebalance_date'] == REB1
+    assert {e['symbol'] for e in basket['entries']} == {'WIN1', 'WIN2'}
+    assert all(e['entry_ask'] == 2.10 for e in basket['entries'])
+    assert all(e['contract']['symbol'] == e['symbol'] + 'C1'
+               for e in basket['entries'])
+    scorer.process(at('2026-09-16'))  # no transition re-fires
+    assert len(c2_push_outbox_of(db)) == 1
+
+
+def test_c2_shadow_close_alert_on_scored_exit(db):
+    seed_bars(db, '2026-09-15', skip={('MISS', SESSIONS[R1 - 5])},
+              overrides={('WIN2', '2026-09-15'): dict(o=129.0, h=130.0, l=1.0, c=128.0)})
+    good_snapshot(db, 'WIN1', REB1)
+    held2 = good_snapshot(db, 'WIN2', REB1)
+    seed_snapshot(db, 'WIN2', '2026-09-15',
+                  [contract(held2, '2026-10-09', 130, 'call', 0.4, 1.50, 1.60)],
+                  closes_for('WIN2')['2026-09-15'])
+    scorer = SwingsC2(db, c2_cfg())
+    scorer.process(at('2026-09-16'))
+    rows = c2_push_outbox_of(db)
+    closes = [p for p in rows if p['type'] == 'close']
+    assert len(rows) == 2 and len(closes) == 1  # basket + WIN2's close
+    close = closes[0]
+    assert close['symbol'] == 'WIN2' and close['reason'] == 'stop'
+    assert close['exit_bid'] == 1.50
+    assert close['pnl'] == pytest.approx((1.50 - 2.10) * 100 - 1.30)
+
+
+def test_c2_shadow_no_alert_on_entry_data_gap(db):
+    seed_bars(db, '2026-09-15', skip={('MISS', SESSIONS[R1 - 5])})
+    for sym in ('WIN1', 'WIN2'):
+        close = closes_for(sym)[REB1]
+        seed_snapshot(db, sym, REB1, [
+            contract(sym + 'P1', '2026-10-09', round(close), 'put', -0.5, 1.0, 1.1),
+            contract(sym + 'C9', '2026-10-09', round(close), 'call', None, 1.0, 1.1),
+        ], close)
+    scorer = SwingsC2(db, c2_cfg())
+    scorer.process(at('2026-09-16'))
+    assert get_episodes(db)['WIN1']['status'] == 'data_gap'
+    assert c2_push_outbox_of(db) == []  # data_gap never alerts
+
+
+def _c2_dump(db):
+    with db.tx() as c:
+        eps = c.execute(select(c2_episodes.c.status,
+                               c2_episodes.c.payload)).all()
+        evs = c.execute(select(events_table.c.kind, events_table.c.payload)
+                        .where(events_table.c.kind == C2M.KIND)
+                        .order_by(events_table.c.id)).all()
+    return eps, evs
+
+
+def _c2_basket_scenario(db, cfg):
+    seed_bars(db, '2026-09-15', skip={('MISS', SESSIONS[R1 - 5])})
+    good_snapshot(db, 'WIN1', REB1)
+    good_snapshot(db, 'WIN2', REB1)
+    SwingsC2(db, cfg).process(at('2026-09-16'))
+
+
+def test_c2_shadow_alert_flag_byte_identity(db, tmp_path):
+    _c2_basket_scenario(db, c2_cfg())
+    eps_on, evs_on = _c2_dump(db)
+    assert len(c2_push_outbox_of(db)) == 1
+    db2 = Store('sqlite:///' + str(tmp_path / 'c2_off.db'))
+    db2.initialize()
+    try:
+        _c2_basket_scenario(db2, retired_cfg(stocks=tuple(SYMBOLS),
+                                             swings_c2_alerts=False))
+        eps_off, evs_off = _c2_dump(db2)
+        assert c2_push_outbox_of(db2) == []
+    finally:
+        db2.engine.dispose()
+    assert eps_on == eps_off      # episode rows byte-identical
+    assert evs_on == evs_off      # lifecycle events byte-identical
+
+
+def test_c2_shadow_alert_rendering_labels_and_no_live_language():
+    basket = {'type': 'basket', 'rebalance_date': REB1, 'at': NOW,
+              'entries': [{'episode_id': 'e1', 'symbol': 'WIN1',
+                           'contract': {'symbol': 'WIN1C1',
+                                        'expiry': '2026-10-09',
+                                        'strike': 148, 'type': 'call'},
+                           'entry_ask': 2.10}]}
+    closed = {'type': 'close', 'episode_id': 'e1', 'symbol': 'WIN1',
+              'contract': {'symbol': 'WIN1C1', 'expiry': '2026-10-09',
+                           'strike': 148, 'type': 'call'},
+              'entry_ask': 2.10, 'exit_bid': 1.50, 'pnl': -61.30,
+              'reason': 'stop', 'at': NOW}
+    for body in (C2M.format_basket_message(basket),
+                 C2M.format_close_message(closed)):
+        text = body['content']
+        assert text.startswith('🧪 **C2 SWINGS SHADOW**')
+        assert 'WIN1' in text and 'shadow' in text.lower()
+        for banned in ('LIVE', 'TradersPost', '🔴', 'live order', 'filled'):
+            assert banned not in text
+    assert 'NEW BASKET' in C2M.format_basket_message(basket)['content']
+    close_text = C2M.format_close_message(closed)['content']
+    assert 'STOP' in close_text and '-$61.30' in close_text
+
+
+def test_c2_shadow_queue_failure_never_blocks(db, monkeypatch):
+    # Break ONLY the outbox insert: episodes must book and price
+    # exactly as with a healthy queue, and the failure must land on
+    # the health:swing_c2_push marker.
+    real_insert = db.insert
+
+    def flaky(table, *a, **k):
+        if table is swing_c2_push_outbox:
+            raise RuntimeError('outbox insert down')
+        return real_insert(table, *a, **k)
+    monkeypatch.setattr(db, 'insert', flaky)
+    _c2_basket_scenario(db, c2_cfg())
+    eps = get_episodes(db)
+    assert eps['WIN1']['entry'] is not None  # priced regardless
+    assert c2_push_outbox_of(db) == []
+    with db.tx() as c:
+        health = db.get(c, 'health:swing_c2_push', {})
+    assert health.get('status') == 'error'
+
+
 def test_c2_episodes_table_created_without_module_import(tmp_path):
     """Production import order (regression, 2026-11-03): Store.initialize()
     runs meta.create_all at engine boot, BEFORE app.py lazily imports

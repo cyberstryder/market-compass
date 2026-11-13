@@ -1,7 +1,11 @@
 """Connors RSI(2) at SSC — forward premium scorer (2026-11-03).
 
-Paper / measurement scope ONLY: no orders, no alerts, no live sends, no
-Discord output. This module shadow-fires the Connors RSI(2) candidate
+Paper / measurement scope ONLY: no orders, no live sends. The one
+outward surface is the display-only shadow alerts added by the
+2026-11-13 addendum to the translation registration (Josh): episode
+OPEN / CLOSE alerts to the 0DTE Discord channel, following the
+SH-SPY §6 pattern (own outbox, own flag, default ON; see the push
+section below). This module shadow-fires the Connors RSI(2) candidate
 exactly as frozen in the premium-translation registration
 (files/connors-rsi2-translation-registration-2026-11-03.md) and scores
 its premium translation forward from the EOD chain archive:
@@ -67,10 +71,12 @@ import time
 import uuid
 from datetime import date as _date, timedelta
 
+import httpx
 from sqlalchemy import select, update
 
 from .market import day, number
 from .store import identity
+from .store import connors_push_outbox
 from .store import connors_ssc_episodes as episodes
 from .swing_signals import sessions_between
 from .swings_c2 import daily_series, master_sessions, snapshot_on_or_after, wilder_atr
@@ -237,6 +243,215 @@ def exit_quote_iv(snapshot, contract_symbol):
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Display-only shadow alerts (2026-11-13 addendum to the translation
+# registration, Josh). Own outbox + own drainer, following the SH-SPY
+# §6 precedent in sh_spy_options.py exactly: destination = the
+# options_0dte route's configured webhook, resolved through
+# alert_routes.destination. These alerts never enter the general
+# alert pipeline. Scoring is byte-identical with the alert flag on
+# or off (pinned by test); gate_excluded and data_gap episodes never
+# alert (no premium trade exists).
+
+PUSH_KIND = 'connors_push'
+MAX_PUSH_ATTEMPTS = 10
+REASON_LABEL = {'ssc_close': 'SSC CLOSE (D+2)'}
+
+
+def _contract_label(payload):
+    contract = payload.get('contract') or {}
+    typ = 'C' if str(contract.get('type') or '').lower() == 'call' else 'P'
+    strike = number(contract.get('strike'))
+    strike_s = ('%g' % strike) if strike is not None else '?'
+    return '%s %s %s%s' % (payload.get('symbol') or '?',
+                           contract.get('expiry') or '?', strike_s, typ)
+
+
+def _money(v):
+    if v is None:
+        return '—'
+    return '+$%.2f' % v if v >= 0 else '-$%.2f' % abs(v)
+
+
+def _fmt_num(v, digits=2):
+    try:
+        return '%.*f' % (digits, float(v))
+    except (TypeError, ValueError):
+        return '—'
+
+
+def format_open_message(payload):
+    """CONNORS SHADOW open alert (addendum labeling): identity line
+    first, symbol, contract, entry ask, delta and DTE as the episode
+    recorded them, shadow disclaimer. No live-trading language."""
+    lines = [
+        '🧪 **CONNORS SHADOW** — shadow forward test · display only',
+        '📈 **OPEN LONG** · %s · signal %s' % (
+            payload.get('symbol', '?'), payload.get('signal_date', '?')),
+        'Contract `%s` · entry ask `$%.2f`' % (
+            _contract_label(payload), payload.get('entry_ask', 0)),
+        'Delta `%s` · DTE `%s` (frozen translation terms)' % (
+            _fmt_num(payload.get('delta')), payload.get('dte', '—')),
+        '_Shadow measurement only — not a bookable trade; nothing was booked or sent anywhere._',
+    ]
+    return {'content': '\n'.join(lines)[:1900],
+            'username': 'Connors Shadow',
+            'allowed_mentions': {'parse': []}}
+
+
+def format_close_message(payload):
+    """CONNORS SHADOW close alert: identity line, symbol, contract,
+    exit bid + scored P&L + exit reason, underlying ruler, shadow
+    disclaimer."""
+    reason = REASON_LABEL.get(payload.get('reason'),
+                              str(payload.get('reason', '?')).upper())
+    bps = payload.get('underlying_bps')
+    bps_s = ('%+.1f bps' % bps) if isinstance(bps, (int, float)) else '—'
+    lines = [
+        '🧪 **CONNORS SHADOW** — shadow forward test · display only',
+        '📈 **CLOSE LONG** · %s — %s' % (payload.get('symbol', '?'), reason),
+        'Contract `%s` · entry ask `$%.2f` → exit bid `$%.2f`' % (
+            _contract_label(payload), payload.get('entry_ask', 0),
+            payload.get('exit_bid', 0)),
+        'Scored P&L **%s** · underlying ruler **%s**' % (
+            _money(payload.get('pnl')), bps_s),
+        '_Shadow measurement only — not a bookable trade; nothing was booked or sent anywhere._',
+    ]
+    return {'content': '\n'.join(lines)[:1900],
+            'username': 'Connors Shadow',
+            'allowed_mentions': {'parse': []}}
+
+
+def queue_alert(db, cfg, payload):
+    """Queue one shadow alert in the module's own outbox. Called only
+    AFTER the episode transaction has committed, in its own
+    transaction. Returns True when queued (or when alerts are off —
+    nothing to do). On failure the error lands on the
+    health:connors_push marker and False is returned; the caller has
+    already booked the episode, which never depends on this."""
+    if not bool(getattr(cfg, 'connors_alerts', True)):
+        return True
+    try:
+        row_id = identity('connors-push-v1', payload.get('episode_id', ''),
+                          payload.get('type', ''), payload.get('at', 0))
+        with db.tx() as c:
+            c.execute(db.insert(connors_push_outbox).values(
+                id=row_id, status='pending', created=time.time(),
+                payload=payload, delivery={'attempts': 0})
+                .on_conflict_do_nothing(index_elements=['id']))
+        return True
+    except Exception as e:
+        try:
+            db.health(PUSH_KIND, 'error',
+                      'shadow alert queue failed: %s' % type(e).__name__)
+        except Exception:
+            pass
+        logging.getLogger('uvicorn.error').exception(
+            'connors_ssc: alert queue failed; episode already booked')
+        return False
+
+
+def push_destination(cfg):
+    """The options_0dte route destination (url, mode) via the routing
+    layer's own resolver; url None when the route is unconfigured."""
+    from .alert_routes import destination
+    url, mode = destination(cfg, 'options_0dte')
+    return (url if url else None), mode
+
+
+def deliver_one_push(db, client, url, now=None, max_attempts=MAX_PUSH_ATTEMPTS):
+    """Attempt one pending shadow alert. Mirrors the fixed ict_push
+    drainer semantics (as in sh_spy_options): any local failure
+    (including a formatter error) fails the row with the cause
+    recorded in its delivery — never strands a row in 'sending',
+    never raises into the loop. Returns True if a row was attempted."""
+    import re
+    if not url or not re.fullmatch(
+            r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+', url):
+        return False
+    now = time.time() if now is None else now
+    with db.tx() as c:
+        row = c.execute(select(connors_push_outbox)
+                        .where(connors_push_outbox.c.status == 'pending')
+                        .order_by(connors_push_outbox.c.created).limit(1)
+                        ).mappings().first()
+        if not row:
+            return False
+        d = dict(row['delivery'])
+        if d.get('next_attempt') and now < d['next_attempt']:
+            return False
+        d['attempts'] = d.get('attempts', 0) + 1
+        c.execute(update(connors_push_outbox)
+                  .where(connors_push_outbox.c.id == row['id'])
+                  .values(status='sending', delivery=d))
+        job = dict(row, delivery=d)
+
+    status = 'failed'
+    try:
+        formatter = (format_close_message if job['payload'].get('type') == 'close'
+                     else format_open_message)
+        resp = client.post(url, params={'wait': 'true'},
+                           json=formatter(job['payload']))
+        if 200 <= resp.status_code < 300:
+            status = 'delivered'
+        elif resp.status_code == 429:
+            status = 'pending'
+            try:
+                delay = max(1, min(3600, float(resp.json().get('retry_after', 30))))
+            except Exception:
+                delay = 30
+            job['delivery']['next_attempt'] = now + delay
+        elif resp.status_code >= 500:
+            status = 'pending'
+            job['delivery']['next_attempt'] = now + 30
+    except httpx.HTTPError:
+        status = 'pending'
+        job['delivery']['next_attempt'] = now + 30
+    except Exception as e:
+        job['delivery']['error'] = '%s: %s' % (type(e).__name__, str(e)[:200])
+
+    if status == 'pending' and job['delivery'].get('attempts', 0) >= max_attempts:
+        status = 'failed'
+
+    with db.tx() as c:
+        c.execute(update(connors_push_outbox)
+                  .where(connors_push_outbox.c.id == job['id'])
+                  .values(status=status, delivery=job['delivery']))
+    if status == 'delivered':
+        db.health(PUSH_KIND, 'delivered',
+                  'Connors shadow alert confirmed by Discord', now)
+    elif status == 'failed':
+        db.health(PUSH_KIND, 'error',
+                  'shadow alert delivery failed: %s'
+                  % job['delivery'].get('error', 'attempts exhausted'))
+    return True
+
+
+async def run_push(db, cfg):
+    """Drainer loop for the addendum shadow alerts (own outbox, 0DTE
+    route destination). Never raises out of the loop."""
+    with httpx.Client(timeout=10, follow_redirects=False) as client:
+        while True:
+            try:
+                if bool(getattr(cfg, 'connors_ssc', True)) and \
+                        bool(getattr(cfg, 'connors_alerts', True)):
+                    url, mode = push_destination(cfg)
+                    if url:
+                        await asyncio.to_thread(deliver_one_push, db, client, url)
+                    else:
+                        db.health(PUSH_KIND, 'not_configured',
+                                  'options_0dte route has no webhook; '
+                                  'shadow alerts stay queued')
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                try:
+                    db.health(PUSH_KIND, 'error', type(e).__name__)
+                except Exception:
+                    pass
+            await asyncio.sleep(2)
+
+
 # Scorer
 
 class ConnorsSSC:
@@ -448,7 +663,7 @@ class ConnorsSSC:
 
     # -- premium pricing (chain archive only) ---------------------------------
 
-    def _price_entries(self, c, now):
+    def _price_entries(self, c, now, alerts_out=None):
         rows = c.execute(select(episodes.c.payload).where(
             episodes.c.status == 'open').order_by(episodes.c.created)).scalars().all()
         for p in rows:
@@ -514,8 +729,20 @@ class ConnorsSSC:
                          'snapshot_date': snap['date'],
                          'contract': chosen['symbol'], 'ask': ask})
             self._save(c, p, now)
+            if alerts_out is not None:
+                # Display-only shadow alert payload (2026-11-13
+                # addendum): collected here, queued by process()
+                # only after this transaction commits.
+                alerts_out.append({
+                    'type': 'open', 'episode_id': p['id'],
+                    'symbol': p['symbol'], 'contract': p['contract'],
+                    'entry_ask': ask, 'delta': p['entry']['delta'],
+                    'dte': (_date.fromisoformat(p['entry']['expiry'])
+                            - _date.fromisoformat(
+                                p['entry']['snapshot_date'])).days,
+                    'signal_date': p['signal']['date'], 'at': now})
 
-    def _price_exits(self, c, now):
+    def _price_exits(self, c, now, alerts_out=None):
         rows = c.execute(select(episodes.c.payload).where(
             episodes.c.status == 'open').order_by(episodes.c.created)).scalars().all()
         for p in rows:
@@ -562,6 +789,15 @@ class ConnorsSSC:
                         {'date': exit_date, 'snapshot_date': snap['date'],
                          'reason': 'ssc_close', 'pnl': pnl})
             self._save(c, p, now, status='closed')
+            if alerts_out is not None:
+                alerts_out.append({
+                    'type': 'close', 'episode_id': p['id'],
+                    'symbol': p['symbol'], 'contract': p['contract'],
+                    'entry_ask': entry_ask, 'exit_bid': bid, 'pnl': pnl,
+                    'reason': 'ssc_close',
+                    'underlying_bps': (p.get('underlying_exit') or {})
+                    .get('bps'),
+                    'at': now})
 
     # -- driver ---------------------------------------------------------------
 
@@ -593,13 +829,21 @@ class ConnorsSSC:
                 logging.getLogger('uvicorn.error').exception(
                     'connors_ssc session %s failed; will retry next pass', d)
                 break
+        alerts_out = []
         for step in (self._price_entries, self._price_exits):
+            step_alerts = []
             try:
                 with self.db.tx() as c:
-                    step(c, now)
+                    step(c, now, step_alerts)
             except Exception:
                 logging.getLogger('uvicorn.error').exception(
                     'connors_ssc pricing step %s failed', step.__name__)
+            else:
+                # Only alerts whose episode transaction committed are
+                # queued (queueing itself happens after, in queue_alert).
+                alerts_out.extend(step_alerts)
+        for payload in alerts_out:
+            queue_alert(self.db, self.cfg, payload)
         with self.db.tx() as c:
             state = self._write_state(c, now)
         counts = state['counts']

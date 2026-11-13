@@ -255,6 +255,17 @@ class Config:
     # (registration §6 amendment, Josh 2026-11-04): rendering only —
     # scoring is byte-identical with this flag on or off.
     sh_spy_alerts: bool = field(default_factory=lambda: env("SH_SPY_ALERTS_ENABLED","true")=="true")
+    # Connors SSC display-only shadow alerts to the 0DTE Discord
+    # channel (2026-11-13 addendum to the translation registration,
+    # Josh): rendering only — scoring is byte-identical with this
+    # flag on or off; see compass/connors_ssc.py.
+    connors_alerts: bool = field(default_factory=lambda: env("CONNORS_ALERTS_ENABLED","true")=="true")
+    # C2 swings display-only shadow alerts to the 0DTE Discord
+    # channel (2026-11-13 addendum to the swings registration, Josh):
+    # one basket message per rebalance plus per-episode closes;
+    # rendering only — scoring is byte-identical with this flag on
+    # or off; see compass/swings_c2.py.
+    swings_c2_alerts: bool = field(default_factory=lambda: env("SWINGS_C2_ALERTS_ENABLED","true")=="true")
     # MES VWAP-continuation forward shadow scorer (2026-11-07, Josh):
     # paper/measurement only — forward-scores the momentum/trend
     # sweep's one full pass (vwapc_z1.5_h60_long) from the first full
