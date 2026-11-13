@@ -33,13 +33,21 @@ from test_projects import db  # noqa: F401  (shared Store fixture)
 from compass.native_outbox import outbox as native_outbox
 from compass.native_smoothers import (VERSION, weekly, save, monitor,
                                       cohort_exit_score, cohort_exit_summary,
-                                      tuesday_cell_score)
+                                      tuesday_cell_score,
+                                      COHORT_EXIT_STANDARD_FROM)
 from compass.smoothers_handoff import sessions
 from compass.chain_eod import event_key as chain_event_key
 
 WEEK = '2026-09-14'
 CAL = sessions(WEEK)
 MON, TUE, WED = CAL[0], CAL[1], CAL[2]
+# The first board under the adopted scoring standard (Josh, 2026-11-12)
+# and the board immediately before it.
+WEEK_STD = COHORT_EXIT_STANDARD_FROM            # '2026-11-16'
+CAL_STD = sessions(WEEK_STD)
+MON_STD, WED_STD = CAL_STD[0], CAL_STD[2]
+WEEK_PRE = '2026-11-09'
+CAL_PRE = sessions(WEEK_PRE)
 ENTRY = MON['open'] + 3600
 CONTRACT = {'symbol': 'DEMO260918C00102000', 'multiplier': 100,
             'strike': 102, 'expiration': '2026-09-18', 'type': 'CALL'}
@@ -312,3 +320,157 @@ def test_monitor_scores_every_pick_and_writes_summary(db):
     # Idempotent: a later pass does not rescore or move the summary.
     monitor(db, _Provider(), CAL[-1]['close'] + 1200)
     assert _stored(db, 'DEEPX')['cohort_exit']['scored_at'] == saved['cohort_exit']['scored_at']
+
+
+# --------------------------------------- adopted scoring standard
+# Josh 2026-11-12: from the Monday 2026-11-16 board forward, the
+# week's headline total books each pick at its STANDARD net (deep at
+# rule_net, all other scored picks at baseline_net); the flat
+# Wednesday total remains stored as the comparator. Earlier boards
+# keep the study-era summary and cell shapes exactly.
+
+def _std_rows(week):
+    return [{'week': week, 'cohort_exit': _cell('shallow', 18.68, 18.68)},
+            {'week': week, 'cohort_exit': _cell('middle', -10.0, -10.0)},
+            {'week': week, 'cohort_exit': _cell('deep', -91.32, -71.32)},
+            {'week': week, 'cohort_exit': _cell('deep', -41.32, -71.32)},
+            {'week': week, 'cohort_exit': _cell('unknown', 5.0, None)},
+            {'week': week, 'cohort_exit': {'status': 'unavailable',
+                                           'reason': 'wednesday_chain_missing'}},
+            {'week': week}]
+
+
+def test_standard_headline_is_sum_of_standard_nets():
+    s = cohort_exit_summary(_std_rows(WEEK_STD), WEEK_STD)
+    assert s['headline'] == 'standard'
+    # deep at rule_net (-71.32 x2); shallow/middle/unknown at baseline.
+    assert s['standard']['n'] == 5
+    assert s['standard']['net_sum'] == -128.96
+    assert s['standard']['net_mean'] == round(-128.96 / 5, 2)
+
+
+def test_standard_comparator_is_the_flat_wednesday_total():
+    s = cohort_exit_summary(_std_rows(WEEK_STD), WEEK_STD)
+    # The comparator is the old flat standard over the same scored
+    # population: every pick out at Wednesday's bid.
+    assert s['standard']['baseline_sum'] == -118.96
+    assert s['standard']['baseline_mean'] == round(-118.96 / 5, 2)
+    # The frozen study figures are still produced, unchanged.
+    assert s['primary']['baseline_sum'] == -123.96
+    assert s['primary']['rule_sum'] == -133.96
+    assert s['identity_ok'] is True
+
+
+def test_standard_identity_only_the_deep_cohort_moves():
+    s = cohort_exit_summary(_std_rows(WEEK_STD), WEEK_STD)
+    st = s['standard']
+    assert st['deep_delta_sum'] == -10.0          # +20 and -30
+    assert abs((st['net_sum'] - st['baseline_sum']) - st['deep_delta_sum']) <= 0.005
+    assert st['identity_ok'] is True
+
+
+def test_pre_standard_week_summary_shape_unchanged():
+    s = cohort_exit_summary(_std_rows(WEEK_PRE), WEEK_PRE)
+    assert 'standard' not in s and 'headline' not in s
+    assert set(s) == {'picks', 'scored', 'unavailable', 'primary',
+                      'cohorts', 'unknown_cohort', 'identity_ok'}
+    # And the study figures themselves are the same as ever.
+    assert s['primary']['delta_sum'] == -10.0
+
+
+def _chain_on(db, cal, date, ticker, contracts):
+    close = next(s['close'] for s in cal if s['date'] == date)
+    with db.tx() as c:
+        db.append(c, 'chain_eod', 'massive', ticker, close + 600,
+                  {'date': date, 'symbol': ticker, 'contracts': contracts},
+                  key=chain_event_key(date, ticker))
+
+
+def _score_std(db, p, now):
+    with db.tx() as c:
+        return cohort_exit_score(c, p, MON_STD, WED_STD, now)
+
+
+def test_standard_cell_stamp_from_cutoff_week(db):
+    deep = _pick('DEEP1', week=WEEK_STD)
+    _chain_on(db, CAL_STD, MON_STD['date'], 'DEEP1',
+              [_row(CONTRACT['symbol'], 1.30, 1.80)])
+    _chain_on(db, CAL_STD, WED_STD['date'], 'DEEP1',
+              [_row(CONTRACT['symbol'], 1.10, 1.20)])
+    cell = _score_std(db, deep, WED_STD['close'] + 600)
+    assert cell['cohort'] == 'deep'
+    assert cell['standard_net'] == cell['rule_net'] == -71.32
+    assert cell['standard_exit'] == 'monday_close'
+    shallow = _pick('SHAL1', week=WEEK_STD)
+    _chain_on(db, CAL_STD, MON_STD['date'], 'SHAL1',
+              [_row(CONTRACT['symbol'], 1.70, 1.80)])
+    _chain_on(db, CAL_STD, WED_STD['date'], 'SHAL1',
+              [_row(CONTRACT['symbol'], 2.20, 2.30)])
+    cell = _score_std(db, shallow, WED_STD['close'] + 600)
+    assert cell['standard_net'] == cell['baseline_net'] == 18.68
+    assert cell['standard_exit'] == 'wednesday_close'
+    unknown = _pick('UNKN1', week=WEEK_STD)
+    _chain_on(db, CAL_STD, WED_STD['date'], 'UNKN1',
+              [_row(CONTRACT['symbol'], 2.20, 2.30)])
+    cell = _score_std(db, unknown, WED_STD['close'] + 600)
+    assert cell['cohort'] == 'unknown' and cell['rule_net'] is None
+    assert cell['standard_net'] == cell['baseline_net'] == 18.68
+    assert cell['standard_exit'] == 'wednesday_close'
+
+
+def test_no_standard_stamp_before_cutoff(db):
+    p = _pick('PRE1', week=WEEK_PRE)
+    cal = CAL_PRE
+    mon, wed = cal[0], cal[2]
+    _chain_on(db, cal, mon['date'], 'PRE1', [_row(CONTRACT['symbol'], 1.30, 1.80)])
+    _chain_on(db, cal, wed['date'], 'PRE1', [_row(CONTRACT['symbol'], 1.10, 1.20)])
+    with db.tx() as c:
+        cell = cohort_exit_score(c, p, mon, wed, wed['close'] + 600)
+    assert cell['status'] == 'scored' and cell['cohort'] == 'deep'
+    assert 'standard_net' not in cell and 'standard_exit' not in cell
+
+
+def _seed_week_on(db, week, cal, picks):
+    with db.tx() as c:
+        db.put(c, VERSION + ':week:' + week,
+               {'week': week, 'sessions': cal, 'state': 'complete'})
+        for p in picks:
+            save(db, c, p)
+
+
+def test_monitor_writes_standard_headline_for_cutoff_week(db):
+    picks = [_pick('DEEPX', week=WEEK_STD),
+             _pick('OPEN1', pid='OPEN1', week=WEEK_STD, status='OPEN',
+                   resolution_time=None, exit_underlying=None)]
+    _seed_week_on(db, WEEK_STD, CAL_STD, picks)
+    for t in ('DEEPX', 'OPEN1'):
+        for s in CAL_STD[:3]:
+            bid = 1.30 if s is CAL_STD[0] else 1.25 if s is CAL_STD[1] else 1.10
+            _chain_on(db, CAL_STD, s['date'], t,
+                      [_row(CONTRACT['symbol'], bid, bid + 0.10)])
+    monitor(db, _Provider(), CAL_STD[-1]['close'] + 600)
+    with db.tx() as c:
+        summary = db.get(c, VERSION + ':week:' + WEEK_STD + ':cohort_exit')
+    # Both picks deep (Mon mark 1.30/2.00): standard books the Monday
+    # exit (-71.32 each); the comparator keeps Wednesday (-91.32 each).
+    assert summary['headline'] == 'standard'
+    assert summary['standard']['net_sum'] == -142.64
+    assert summary['standard']['baseline_sum'] == -182.64
+    assert summary['standard']['deep_delta_sum'] == 40.0
+    assert summary['standard']['identity_ok'] is True
+    assert _stored(db, 'DEEPX')['cohort_exit']['standard_net'] == -71.32
+
+
+def test_monitor_pre_cutoff_week_has_no_standard_block(db):
+    picks = [_pick('DEEPX', week=WEEK_PRE)]
+    _seed_week_on(db, WEEK_PRE, CAL_PRE, picks)
+    for s in CAL_PRE[:3]:
+        bid = 1.30 if s is CAL_PRE[0] else 1.25 if s is CAL_PRE[1] else 1.10
+        _chain_on(db, CAL_PRE, s['date'], 'DEEPX',
+                  [_row(CONTRACT['symbol'], bid, bid + 0.10)])
+    monitor(db, _Provider(), CAL_PRE[-1]['close'] + 600)
+    with db.tx() as c:
+        summary = db.get(c, VERSION + ':week:' + WEEK_PRE + ':cohort_exit')
+    assert summary['primary']['delta_sum'] == 20.0
+    assert 'standard' not in summary and 'headline' not in summary
+    assert 'standard_net' not in _stored(db, 'DEEPX')['cohort_exit']

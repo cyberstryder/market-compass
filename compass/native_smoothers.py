@@ -544,6 +544,28 @@ def refresh_tuesday_summary(db,week,rows,now):
                {'week':week,'updated_at':now,**tuesday_cell_summary(rows)})
 
 
+# Scoring-standard adoption (Josh, 2026-11-12): the cohort-exit rule
+# is the board's SCORING STANDARD for boards from Monday 2026-11-16
+# forward — a week's headline total books deep-cohort picks at their
+# Monday-close (rule) net and every other scored pick at its
+# Wednesday-close (baseline) net. The flat Wednesday total stays
+# stored as the comparator. Boards before the cutoff keep exactly the
+# study-era summary shape (no standard block, no cell stamp): their
+# recorded figures are inputs to other frozen reads and are never
+# restated. Presentation is unchanged — no notice reads these fields.
+COHORT_EXIT_STANDARD_FROM='2026-11-16'
+
+
+def cohort_exit_standard_net(cell):
+    """One scored cell's net under the adopted standard: the deep
+    cohort books its rule (Monday-close) net; shallow, middle and
+    unknown cohorts book the baseline (Wednesday-close) net — an
+    unknown cohort was never assigned a Monday exit, so Wednesday is
+    its only standard outcome."""
+    if cell.get('cohort')=='deep':return cell.get('rule_net')
+    return cell.get('baseline_net')
+
+
 def cohort_exit_score(c,p,mon,wed,now):
     """Monday-mark cohort x exit-horizon rule cell for one board pick
     (frozen registration 2026-11-02, files/
@@ -604,7 +626,7 @@ def cohort_exit_score(c,p,mon,wed,now):
     else:
         rule_net=None
         rule_exit=None
-    return {**base,'status':'scored','entry_ask':entry_ask,
+    cell={**base,'status':'scored','entry_ask':entry_ask,
             'monday_bid':mon_bid,'wednesday_bid':wed_bid,
             'fee':FEE_PER_CONTRACT,
             'monday_mark_ratio':mark_ratio,
@@ -612,6 +634,14 @@ def cohort_exit_score(c,p,mon,wed,now):
             'cohort':cohort,'baseline_net':baseline_net,
             'rule_net':rule_net,'rule_exit':rule_exit,
             'delta_net':round(rule_net-baseline_net,2) if rule_net is not None else None}
+    # Adopted standard (boards from 2026-11-16): stamp the pick's
+    # standard net on the cell itself, so the week's headline total is
+    # reconstructible from the per-pick read surface exactly as the
+    # study figures were. Earlier boards' cells stay byte-identical.
+    if (p.get('week') or '')>=COHORT_EXIT_STANDARD_FROM:
+        cell['standard_net']=cohort_exit_standard_net(cell)
+        cell['standard_exit']='monday_close' if cohort=='deep' else 'wednesday_close'
+    return cell
 
 
 def score_cohort_exit(db,p,mon,wed,now):
@@ -628,7 +658,7 @@ def score_cohort_exit(db,p,mon,wed,now):
     return True
 
 
-def cohort_exit_summary(rows):
+def cohort_exit_summary(rows,week=None):
     """Aggregate a week's stored cohort-exit cells under the frozen
     registration: population accounting, per-cohort and pooled means
     for both arms, and the construction identity check (pooled delta
@@ -636,7 +666,18 @@ def cohort_exit_summary(rows):
     the deep cohort's exit moves). The PRIMARY population is scored
     cells with a known cohort; scored unknown-cohort picks are
     accounted separately (count + baseline mean), never in a verdict
-    figure. Means are $/pick; sums are $ totals."""
+    figure. Means are $/pick; sums are $ totals.
+
+    For boards from COHORT_EXIT_STANDARD_FROM (Josh's 2026-11-12
+    adoption) the summary additionally carries the week's HEADLINE
+    under the adopted standard: 'standard.net_sum' books every scored
+    pick at its standard net (deep at rule_net, all others at
+    baseline_net — the full scored population, since an unknown
+    cohort's standard outcome is its Wednesday exit), with the flat
+    Wednesday total over the same population kept alongside as
+    'standard.baseline_sum', the comparator. The study figures above
+    are computed identically for every week; only the headline block
+    is prospective."""
     cells=[p['cohort_exit'] for p in rows if p.get('cohort_exit')]
     scored=[x for x in cells if x.get('status')=='scored']
     primary=[x for x in scored if x.get('cohort') in ('shallow','middle','deep')]
@@ -657,18 +698,38 @@ def cohort_exit_summary(rows):
                  and cohorts['shallow']['delta_sum'] in (None,0)
                  and cohorts['middle']['delta_sum'] in (None,0)
                  and abs((pooled['delta_sum'] or 0)-(cohorts['deep']['delta_sum'] or 0))<=0.005)
-    return {'picks':len(rows),'scored':len(scored),
+    out={'picks':len(rows),'scored':len(scored),
             'unavailable':len(rows)-len(scored),
             'primary':pooled,'cohorts':cohorts,
             'unknown_cohort':{'n':len(unknown),
                 'baseline_mean':round(sum(x['baseline_net'] for x in unknown)/len(unknown),2) if unknown else None},
             'identity_ok':identity_ok}
+    if week is None and rows:week=rows[0].get('week')
+    if week and week>=COHORT_EXIT_STANDARD_FROM:
+        deep_delta=round(sum(x['delta_net'] for x in scored
+                             if x.get('cohort')=='deep' and x.get('delta_net') is not None),2)
+        if scored:
+            net_sum=round(sum(cohort_exit_standard_net(x) for x in scored),2)
+            base_sum=round(sum(x['baseline_net'] for x in scored),2)
+            standard={'n':len(scored),'net_sum':net_sum,
+                      'net_mean':round(net_sum/len(scored),2),
+                      'baseline_sum':base_sum,
+                      'baseline_mean':round(base_sum/len(scored),2),
+                      'deep_delta_sum':deep_delta,
+                      'identity_ok':abs((net_sum-base_sum)-deep_delta)<=0.005}
+        else:
+            standard={'n':0,'net_sum':None,'net_mean':None,
+                      'baseline_sum':None,'baseline_mean':None,
+                      'deep_delta_sum':deep_delta,'identity_ok':True}
+        out['headline']='standard'
+        out['standard']=standard
+    return out
 
 
 def refresh_cohort_exit_summary(db,week,rows,now):
     with db.tx() as c:
         db.put(c,VERSION+':week:'+week+':cohort_exit',
-               {'week':week,'updated_at':now,**cohort_exit_summary(rows)})
+               {'week':week,'updated_at':now,**cohort_exit_summary(rows,week)})
 
 
 def _chain_derived_unavailable(stamp):
