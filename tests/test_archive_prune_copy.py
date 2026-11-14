@@ -8,7 +8,7 @@ import hashlib
 import io
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from compass import archive_prune_copy as apc
 from compass import copy_archive as ca
@@ -492,6 +492,45 @@ def test_completion_recount_failure_banks_progress_and_resumes(
     st = apc._prune_states(apc._all_copy_state(db))[('bar', pstr)]
     assert st['status'] == 'done'
     assert apc.prune_status(db)['rows_deleted'] == 5
+
+
+def test_recount_gets_fresh_budget_when_walk_chases_live_tail(
+        db, s3, monkeypatch):
+    """W42 live (2026-11-14): the delete walk and the completion
+    recount shared one 40s call deadline. With the week's id band
+    lost, the walk spent the whole budget probing the live id tail
+    past the week's rows (production cursor 1.09B -> 1.12B, n_all=0,
+    probe_exhausted=False on every call), so the recount inherited an
+    expired deadline on 49 consecutive calls and never banked its
+    first slice — the week sat at deleted == expected, wedged. The
+    recount must get a fresh budget of its own, and the walk must
+    stop once the expected count is deleted."""
+    ts = NOW - 400 * DAY
+    pstr = archive_week(db, s3, 'bar', ts, rows=3)
+    # The week's rows existed and were deleted in an earlier life;
+    # a live tail of other-kind rows follows their id space.
+    for i in range(3):
+        add_event(db, 'bar', ts + i * 60)
+    with db.tx() as c:
+        for i in range(50000):
+            assert db.append(c, 'other', 'test', f'tail{i}',
+                             NOW - 50000 + i, {'v': 1})
+        c.execute(delete(events).where(events.c.kind == 'bar'))
+        first_tail = c.execute(
+            select(func.min(events.c.id)).where(
+                events.c.kind == 'other')).scalar()
+    # The production W42 state per PRUNE-DIAG: band lost (no band_hi),
+    # cursor banked just before the tail, deleted == expected.
+    seed_deleting(db, 'bar', pstr, deleted=3, expected=3,
+                  band_done=False, delete_cursor=first_tail - 1)
+    monkeypatch.setattr(apc, '_DELETE_PROBE', 1)
+    monkeypatch.setattr(apc, '_DELETE_CALL_SECONDS', 10.0)
+    r = apc.prune_next(db, s3, BUCKET, now=NOW)
+    assert r['action'] == 'pruned_batch' and r['status'] == 'done'
+    assert r['deleted_this_call'] == 0
+    st = apc._prune_states(apc._all_copy_state(db))[('bar', pstr)]
+    assert st['status'] == 'done'
+    assert apc.prune_status(db)['rows_deleted'] == 3
 
 
 def test_completion_recount_with_remaining_rows_refuses(db, s3):

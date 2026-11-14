@@ -774,7 +774,12 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
     probe_exhausted = False
     _DIAG.info('PRUNE-DIAG walk start kind=%s period=%s cursor=%s '
                'deleted=%s', kind, pstr, cursor, deleted_before)
-    while n_all < row_budget and time.time() < deadline:
+    # The walk stops the moment the expected count is deleted: past
+    # that point only the completion recount may speak (it refuses on
+    # any straggler it finds), and further probing just burns the
+    # budget the recount needs (2026-11-14, quote/2026-W42 below).
+    while (n_all < row_budget and st['deleted'] < st['expected_rows']
+           and time.time() < deadline):
         probe_q = (select(events.c.id, events.c.kind, events.c.ts)
                    .where(events.c.id > cursor)
                    .order_by(events.c.id).limit(_DELETE_PROBE))
@@ -838,8 +843,17 @@ def _prune_next_locked(db, client, bucket, now=None, row_budget=50000):
     st['status'] = 'deleting'
     _set_prune_state(db, kind, pstr, st)
     if st['deleted'] >= st['expected_rows']:
+        # The recount gets a FRESH budget, never the walk's leftover:
+        # on quote/2026-W42 (2026-11-14) the walk, its id band lost,
+        # spent the whole shared 40s call budget chasing the live id
+        # tail (cursor 1.09B -> 1.12B, n_all=0, probe_exhausted=False
+        # on every call), so the recount inherited an expired deadline
+        # on 49 consecutive calls and never banked its first slice —
+        # the week sat at deleted == expected, wedged, exactly like
+        # the pre-fix W39/W40 recount wedge one layer up.
         remaining = _completion_recount(db, kind, pstr, st, ws, we,
-                                        deadline)
+                                        time.time()
+                                        + _DELETE_CALL_SECONDS)
         if remaining is None:
             # Recount incomplete (deadline reached or a slice failed):
             # progress is banked in prune state and the week stays
