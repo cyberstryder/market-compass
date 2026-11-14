@@ -75,6 +75,34 @@ def test_successful_selection_still_enters_one_position_and_records_contract(db)
         assert len(db.prefix(c,'trade:'))==1 and len(db.recent(c,'alert'))==1
 
 
+def test_entry_tolerance_band_is_three_quarter_atr(db):
+    # Josh's decision 2026-11-14 (counterfactual on Fri 2026-11-13's
+    # 832 tolerance finals): the selection-stage band is 0.75 ATR.
+    # signal_price 101.1, atr14 1 -> mid 101.75 is 0.65 ATR out:
+    # outside the old 0.5 band, inside the new one — must proceed.
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
+    with db.tx() as c:
+        seed(db,c)
+        db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
+        Scanner(db,cfg).retry_options(c,{'SPY':quote(NOW,101.74,101.76)},NOW,Engine(db,cfg))
+        pending=db.get(c,'pending_options:test')
+        assert pending['status']=='entered' and pending['last_selection']['selected_contract']==CONTRACT
+
+
+def test_entry_tolerance_still_blocks_beyond_three_quarter_atr(db):
+    # Mid 101.95 is 0.85 ATR from the 101.1 signal price: beyond the
+    # widened band — the pending waits with the tolerance reason.
+    cfg=Config(paper_trading=True,local=True,stocks=('SPY',),futures=(),setup_study=False)
+    with db.tx() as c:
+        seed(db,c)
+        db.put(c,'pending_options:test',dict(signal=signal(),status='waiting',expires_at=NOW+120))
+        Scanner(db,cfg).retry_options(c,{'SPY':quote(NOW,101.94,101.96)},NOW,Engine(db,cfg))
+        pending=db.get(c,'pending_options:test')
+        assert pending['status']=='waiting'
+        assert pending['last_selection']['reason']=='Underlying moved beyond entry tolerance'
+        assert not db.prefix(c,'trade:')
+
+
 def test_audit_keeps_unknown_history_and_separate_cash_and_overnight_risk(db,monkeypatch):
     at=datetime(2026,9,14,23,tzinfo=timezone.utc).timestamp()
     monkeypatch.setattr('compass.store.time.time',lambda:at)
