@@ -17,17 +17,22 @@ from .flow_recovery import freshness as flow_freshness
 from .futures_variants import observe_bar
 
 VERSION='compass-scanner-v2'
-# Entry tolerance for the pending-option selection retry: a pending
-# proceeds to contract selection while the underlying mid is within
-# this many ATR14 of the signal price. Widened 0.5 -> 0.75 by Josh's
-# decision 2026-11-14, after the counterfactual replay of Fri
-# 2026-11-13's 832 tolerance-final pendings (65% would have proceeded
-# at 0.75, median entry drift 0.61 ATR ~ 0.049% of price, zero
-# invalidation crossings; files/odte-entry-tolerance-counterfactual-
-# 2026-11-14.md). This is the SELECTION-stage band only — the
-# trigger-time 'Price moved too far from the observed trigger' block
-# in scan() keeps its own 0.5 ATR geometry; it was not part of the
-# priced analysis.
+# Entry tolerance band, in ATR14 units, shared by both entry gates:
+# (a) the pending-option selection retry — a pending proceeds to
+# contract selection while the underlying mid is within this band of
+# the signal price; (b) the trigger-time geometry block in scan()
+# ('Price moved too far from the observed trigger', which also keeps
+# its 4-tick floor). Both widened 0.5 -> 0.75 by Josh's decisions on
+# 2026-11-14, each after its own counterfactual replay:
+# (a) Fri 2026-11-13's 832 tolerance-final pendings: 65% would have
+# proceeded at 0.75, median entry drift 0.61 ATR ~ 0.049% of price,
+# zero invalidation crossings (files/odte-entry-tolerance-
+# counterfactual-2026-11-14.md).
+# (b) Week of Nov 9-13: 6,228 trigger-blocked items; at 0.75, 26.3%
+# of the blocked would actually have triggered after cooldown and
+# invalidation tests (+14.5% on the week's triggers), with a known
+# 2.1% of new triggers firing already past invalidation — accepted
+# knowingly (files/odte-trigger-tolerance-counterfactual-2026-11-14.md).
 ENTRY_TOLERANCE_ATR=0.75
 
 
@@ -555,7 +560,7 @@ class Scanner:
             if blocked:
                 item.update(status='blocked',blocked_reason='Fresh quote at decision required',
                     **(freshness_block_evidence(quote,item['signal_time'],now) or {}))
-            elif abs((quote['bid']+quote['ask'])/2-item['signal_price'])>max(f['atr14']*.5,engine.specification(symbol)['tick']*4):
+            elif abs((quote['bid']+quote['ask'])/2-item['signal_price'])>max(f['atr14']*ENTRY_TOLERANCE_ATR,engine.specification(symbol)['tick']*4):
                 item.update(status='blocked',blocked_reason='Price moved too far from the observed trigger')
             elif now-cool<600:
                 item.update(status='watch',blocked_reason='Same-direction alert cooldown; evidence recorded')
