@@ -560,3 +560,38 @@ def test_scan_records_missing_quote_on_blocked_opportunity(db):
         assert p['quote_ts'] is None and p['quote_age_s'] is None and p['trigger_quote'] is None
         assert p['quote_evidence']['ts'] is None and p['quote_evidence']['age_s'] is None
         assert not [r for r in db.recent(c,'alert') if r['payload'].get('status')=='setup_triggered']
+
+
+def _geometry_scan(db,bid,ask):
+    # Bars-path staging (mirrors the missing-quote test): the breakout
+    # bar fixes signal_price at 101.0 and atr14 at ~0.643, so the
+    # trigger-time geometry band is 0.75*0.643 = 0.482 under the
+    # widened tolerance (0.321 under the old 0.5 band).
+    cfg=Config(local=True,stocks=('SPY',),futures=(),scanner_paper=False)
+    flat={'o':100.0,'h':100.4,'l':99.8,'c':100.1,'v':100}
+    breakout={'o':100.1,'h':101.2,'l':100.0,'c':101.0,'v':300}
+    items=[('SPY',NOW-(40-i)*60,breakout if i==39 else flat) for i in range(40)]
+    with db.tx() as c:
+        db.append_bars(c,'bar','fixture',items)
+        db.put(c,'latestbar:SPY',{'ts':NOW-60})
+        db.put(c,'quote:SPY',quote(NOW-1,bid,ask))
+        Scanner(db,cfg).scan(c,NOW,Engine(db,cfg))
+        rows=[r for r in db.recent(c,'opportunity') if r['symbol']=='SPY']
+        assert len(rows)==1
+        return rows[0]['payload']
+
+
+def test_trigger_geometry_band_is_three_quarter_atr(db):
+    # Josh's decision 2026-11-14 (trigger-time counterfactual on the
+    # week of Nov 9-13): the geometry band is 0.75 ATR. A mid 0.40
+    # from the 101.0 signal price (~0.62 ATR) is outside the old 0.5
+    # band and inside the new one — the item must trigger.
+    p=_geometry_scan(db,101.39,101.41)
+    assert p['status']=='triggered'
+
+
+def test_trigger_geometry_still_blocks_beyond_three_quarter_atr(db):
+    # A mid 0.60 from the signal price (~0.93 ATR) is beyond the
+    # widened band — the geometry block still fires.
+    p=_geometry_scan(db,101.59,101.61)
+    assert p['status']=='blocked' and p['blocked_reason']=='Price moved too far from the observed trigger'
