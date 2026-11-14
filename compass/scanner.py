@@ -17,6 +17,18 @@ from .flow_recovery import freshness as flow_freshness
 from .futures_variants import observe_bar
 
 VERSION='compass-scanner-v2'
+# Entry tolerance for the pending-option selection retry: a pending
+# proceeds to contract selection while the underlying mid is within
+# this many ATR14 of the signal price. Widened 0.5 -> 0.75 by Josh's
+# decision 2026-11-14, after the counterfactual replay of Fri
+# 2026-11-13's 832 tolerance-final pendings (65% would have proceeded
+# at 0.75, median entry drift 0.61 ATR ~ 0.049% of price, zero
+# invalidation crossings; files/odte-entry-tolerance-counterfactual-
+# 2026-11-14.md). This is the SELECTION-stage band only — the
+# trigger-time 'Price moved too far from the observed trigger' block
+# in scan() keeps its own 0.5 ATR geometry; it was not part of the
+# priced analysis.
+ENTRY_TOLERANCE_ATR=0.75
 
 
 def ema(values, period):
@@ -687,7 +699,7 @@ class Scanner:
                 self.append_selection_diagnostic(c,key,pending,pending.get('last_selection'),now,
                     final=True,expiry_reason=reason)
                 if not research_only: engine.alert(c,symbol,{**alert_context(signal),'status':'options_skipped','reason':reason,'parent_signal':signal['id']},'pending-option-expired:'+signal['id'])
-            elif fresh(quote,now,quote_bound) and abs((quote['bid']+quote['ask'])/2-signal['signal_price'])<=signal.get('context',{}).get('atr14',float('inf'))*.5:
+            elif fresh(quote,now,quote_bound) and abs((quote['bid']+quote['ask'])/2-signal['signal_price'])<=signal.get('context',{}).get('atr14',float('inf'))*ENTRY_TOLERANCE_ATR:
                 audit={'scan_started_at':scan_started_at,'underlying_checked_at':now}
                 if engine.options(c,signal,now,quiet=True,diagnostics=audit,pending_expires_at=pending.get('expires_at'),**({'research_only':True} if research_only else {})):
                     pending.update(status='observed' if research_only else 'entered',updated_at=now)
