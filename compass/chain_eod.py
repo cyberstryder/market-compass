@@ -130,14 +130,17 @@ def underlying_close(db, c, symbol, now):
 
 
 async def fetch_chain(collectors, symbol, expiry_start, expiry_end):
-    """Massive primary, Alpaca fallback — mirrors the chains() policy.
-    Returns (contracts, complete, source). Raises only if both fail."""
+    """Primary per OPTION_CHAIN_SOURCE (default Massive), the other
+    vendor as fallback — mirrors the chains() policy via
+    providers.chain_primary_source. Returns (contracts, complete,
+    source). Raises only if both fail."""
+    from .providers import chain_primary_source
     if not providers_configured(collectors.cfg):
         raise ChainConfigError(
             'no provider credentials configured on this service '
             '(MASSIVE_API_KEY and APCA_API_KEY_ID/APCA_API_SECRET_KEY '
             'are all unset)')
-    if collectors.cfg.massive:
+    if chain_primary_source(collectors.cfg) == 'massive':
         try:
             contracts, complete = await collectors.massive_chain(
                 symbol, expiry_start=expiry_start, expiry_end=expiry_end,
@@ -147,9 +150,17 @@ async def fetch_chain(collectors, symbol, expiry_start, expiry_end):
             contracts, complete = await collectors.alpaca_chain(
                 symbol, expiry_start=expiry_start, expiry_end=expiry_end)
             return contracts, complete, 'alpaca'
-    contracts, complete = await collectors.alpaca_chain(
-        symbol, expiry_start=expiry_start, expiry_end=expiry_end)
-    return contracts, complete, 'alpaca'
+    try:
+        contracts, complete = await collectors.alpaca_chain(
+            symbol, expiry_start=expiry_start, expiry_end=expiry_end)
+        return contracts, complete, 'alpaca'
+    except Exception:
+        if not getattr(collectors.cfg, 'massive', ''):
+            raise
+        contracts, complete = await collectors.massive_chain(
+            symbol, expiry_start=expiry_start, expiry_end=expiry_end,
+            full_greeks=True)
+        return contracts, complete, 'massive'
 
 
 def _manifest(db, c, date_str, kind=KIND):

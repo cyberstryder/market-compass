@@ -39,6 +39,22 @@ class Config:
     feed: str = field(default_factory=lambda: env("ALPACA_FEED","sip"))
     databento: str = field(default_factory=lambda: env("DATABENTO_API_KEY"))
     massive: str = field(default_factory=lambda: env("MASSIVE_API_KEY"))
+    # Massive->Alpaca migration (2026-11-14, Josh: "move to Alpaca this
+    # week, if it works we can drop Massive"): which vendor serves option
+    # chain snapshots FIRST, everywhere chains are read (Collectors.chains
+    # lanes and chain_eod.fetch_chain). 'massive' (the default) preserves
+    # the historical Massive-primary / Alpaca-fallback policy exactly;
+    # 'alpaca' makes Alpaca primary with Massive as the fallback. The
+    # drop itself is a separate later step (removing MASSIVE_API_KEY);
+    # this flag only reorders the two live paths so the Alpaca path can
+    # be proven under production load before any cancellation.
+    chain_source: str = field(default_factory=lambda: env("OPTION_CHAIN_SOURCE","massive").strip().lower())
+    # VIX has no Alpaca equivalent (Alpaca offers no index data). With
+    # this flag on, vix_regime.scan falls back to Yahoo Finance ^VIX —
+    # the same public reference source index_reference already uses for
+    # ^GSPC — when Massive is absent or its VIX fetch fails. Default
+    # off: VIX remains Massive-only, exactly as before.
+    vix_yahoo_fallback: bool = field(default_factory=lambda: env("VIX_YAHOO_FALLBACK","false")=="true")
     matrix: str = field(default_factory=lambda: env("TRADERMATRIX_API_KEY"))
     fmp_key: str = field(default_factory=lambda: env("FMP_API_KEY",""))
     discord: str = field(default_factory=lambda: env("DISCORD_WEBHOOK_URL"))

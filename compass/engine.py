@@ -1268,7 +1268,7 @@ class Engine:
         # must not be able to abort the transaction that runs the detectors
         # and ict_paper submits. Throttled inside scan() to every 5 min.
         vix_regime_summary = None
-        if getattr(self.cfg, "massive", ""):
+        if getattr(self.cfg, "massive", "") or getattr(self.cfg, "vix_yahoo_fallback", False):
             try:
                 from .vix_regime import scan as vix_regime_scan
                 with self.db.tx() as c:

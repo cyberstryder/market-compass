@@ -19,6 +19,7 @@ from .market import number
 SCAN_THROTTLE = 300  # 5 minutes; VIX moves intraday
 SNAPSHOT_URL = "https://api.massive.com/v3/snapshot"
 VIX_TICKER = "I:VIX"
+YAHOO_VIX_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX"
 
 
 def fetch_vix(api_key, timeout=20):
@@ -54,29 +55,75 @@ def fetch_vix(api_key, timeout=20):
     return None
 
 
+def fetch_vix_yahoo(timeout=20):
+    """Fallback VIX from Yahoo Finance (^VIX) — the migration path if
+    Massive is dropped: Alpaca offers no index data, and Yahoo is the
+    public reference source index_reference already uses for ^GSPC.
+    Returns the same row shape as fetch_vix (source='yahoo') or None."""
+    import httpx
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.get(YAHOO_VIX_URL,
+                          params={"interval": "1d", "range": "1d"},
+                          headers={"User-Agent": "Market-Compass/1.0"})
+    resp.raise_for_status()
+    rows = ((resp.json() or {}).get("chart") or {}).get("result") or []
+    if len(rows) != 1:
+        return None
+    meta = rows[0].get("meta") or {}
+    value = number(meta.get("regularMarketPrice"))
+    if not value:
+        closes = (rows[0].get("indicators", {}).get("quote", [{}])[0]
+                  .get("close") or [])
+        value = next((number(x) for x in reversed(closes) if number(x)), None)
+    if not value or value <= 0:
+        return None
+    return {
+        "value": float(value),
+        "market_status": None,
+        "last_updated": meta.get("regularMarketTime"),
+        "timeframe": "1d",
+        "source": "yahoo",
+        "at": time.time(),
+    }
+
+
 def scan(db, c, cfg, now):
-    """Throttled pass: fetch VIX from Massive, store under the keys
+    """Throttled pass: fetch VIX (Massive primary), store under the keys
     get_vix() probes ('vix:latest' first). Runs whenever the Massive key
-    is present so data is already flowing before VIX_REGIME_ENABLED flips."""
-    if not getattr(cfg, "massive", ""):
+    is present so data is already flowing before VIX_REGIME_ENABLED flips.
+    With VIX_YAHOO_FALLBACK on, a missing Massive key or a failed Massive
+    fetch falls back to Yahoo ^VIX (Massive->Alpaca migration, 2026-11-14:
+    Alpaca has no VIX, so Yahoo is the post-Massive source)."""
+    massive = getattr(cfg, "massive", "")
+    yahoo_fallback = bool(getattr(cfg, "vix_yahoo_fallback", False))
+    if not massive and not yahoo_fallback:
         return {"ran": False, "reason": "no_api_key"}
     if now - db.get(c, "vix:scanned_at", 0) < SCAN_THROTTLE:
         return {"ran": False, "reason": "throttled"}
     db.put(c, "vix:scanned_at", now)
-    try:
-        row = fetch_vix(cfg.massive)
-    except Exception as e:
-        # Exception class only: httpx error text carries the request URL,
-        # which includes the Massive apiKey (same rule as darkpool.scan).
-        db.health("vix_regime", "error", "fetch failed: %s" % type(e).__name__,
-                  poll_ts=now)
-        return {"ran": True, "fetched": False, "error": type(e).__name__}
+    row, error = None, None
+    if massive:
+        try:
+            row = fetch_vix(massive)
+        except Exception as e:
+            # Exception class only: httpx error text carries the request
+            # URL, which includes the Massive apiKey (same rule as
+            # darkpool.scan).
+            error = type(e).__name__
+    if not row and yahoo_fallback:
+        try:
+            row = fetch_vix_yahoo()
+        except Exception as e:
+            error = error or type(e).__name__
     if not row or not row.get("value"):
-        db.health("vix_regime", "error", "no value in snapshot", poll_ts=now)
-        return {"ran": True, "fetched": False, "error": "no_value"}
+        db.health("vix_regime", "error",
+                  "fetch failed: %s" % error if error else "no value in snapshot",
+                  poll_ts=now)
+        return {"ran": True, "fetched": False, "error": error or "no_value"}
     db.put(c, "vix:latest", row)
     db.health("vix_regime", "available",
-              "VIX %.2f (%s)" % (row["value"], row.get("market_status") or "?"),
+              "VIX %.2f (%s, %s)" % (row["value"], row.get("market_status") or "?",
+                                     row.get("source") or "?"),
               poll_ts=now)
     return {"ran": True, "fetched": True, "vix": row["value"]}
 

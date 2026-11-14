@@ -26,9 +26,11 @@ class FakeDB:
 
 
 class FakeCfg:
-    def __init__(self, massive="k", vix_regime_enabled=False):
+    def __init__(self, massive="k", vix_regime_enabled=False,
+                 vix_yahoo_fallback=False):
         self.massive = massive
         self.vix_regime_enabled = vix_regime_enabled
+        self.vix_yahoo_fallback = vix_yahoo_fallback
 
 
 def _fake_httpx(payload, raise_for=None):
@@ -145,6 +147,99 @@ def test_regime_info_disabled_returns_normal():
     db, cfg = FakeDB(), FakeCfg(vix_regime_enabled=False)
     info = get_regime_info(db, None, cfg)
     assert info == {"enabled": False, "regime": "normal", "vix": None}
+
+
+# --- Yahoo fallback (Massive->Alpaca migration, 2026-11-14) ---------------
+# Alpaca has no VIX; with VIX_YAHOO_FALLBACK on, scan() serves Yahoo ^VIX
+# when Massive is absent or failing. Default off = Massive-only (pinned
+# by test_scan_without_api_key / test_scan_fetch_error above).
+
+_YAHOO_VIX_PAYLOAD = {
+    "chart": {
+        "result": [{
+            "meta": {"symbol": "^VIX", "regularMarketPrice": 17.25,
+                     "regularMarketTime": 1790697600},
+            "timestamp": [1790658000],
+            "indicators": {"quote": [{"close": [17.25]}]},
+        }],
+        "error": None,
+    }
+}
+
+
+def _fake_httpx_dispatch(massive_payload=None, massive_raise=None,
+                         yahoo_payload=None):
+    """Fake httpx whose Client dispatches on the request URL."""
+    class FakeResp:
+        def __init__(self, payload, raise_for=None):
+            self._payload, self._raise = payload, raise_for
+
+        def raise_for_status(self):
+            if self._raise:
+                raise self._raise
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url, params=None, headers=None):
+            if "massive.com" in url:
+                return FakeResp(massive_payload, massive_raise)
+            assert "finance.yahoo.com" in url and "%5EVIX" in url
+            return FakeResp(yahoo_payload)
+
+    mod = types.ModuleType("httpx")
+    mod.Client = FakeClient
+    return mod
+
+
+def test_fetch_vix_yahoo_parses_chart(monkeypatch):
+    from compass.vix_regime import fetch_vix_yahoo
+    monkeypatch.setitem(sys.modules, "httpx", _fake_httpx_dispatch(
+        yahoo_payload=_YAHOO_VIX_PAYLOAD))
+    row = fetch_vix_yahoo()
+    assert row["value"] == 17.25 and row["source"] == "yahoo"
+
+
+def test_scan_yahoo_only_when_flag_on_and_no_massive_key(monkeypatch):
+    monkeypatch.setitem(sys.modules, "httpx", _fake_httpx_dispatch(
+        yahoo_payload=_YAHOO_VIX_PAYLOAD))
+    db = FakeDB()
+    cfg = FakeCfg(massive="", vix_yahoo_fallback=True)
+    out = scan(db, None, cfg, 1000.0)
+    assert out == {"ran": True, "fetched": True, "vix": 17.25}
+    assert db.kv["vix:latest"]["source"] == "yahoo"
+    assert get_vix(db, None) == 17.25
+
+
+def test_scan_falls_back_to_yahoo_when_massive_fails(monkeypatch):
+    monkeypatch.setitem(sys.modules, "httpx", _fake_httpx_dispatch(
+        massive_raise=RuntimeError("boom"),
+        yahoo_payload=_YAHOO_VIX_PAYLOAD))
+    db = FakeDB()
+    cfg = FakeCfg(massive="k", vix_yahoo_fallback=True)
+    out = scan(db, None, cfg, 1000.0)
+    assert out == {"ran": True, "fetched": True, "vix": 17.25}
+    assert db.kv["vix:latest"]["source"] == "yahoo"
+
+
+def test_scan_no_fallback_when_flag_off(monkeypatch):
+    monkeypatch.setitem(sys.modules, "httpx", _fake_httpx_dispatch(
+        massive_raise=RuntimeError("boom"),
+        yahoo_payload=_YAHOO_VIX_PAYLOAD))
+    db, cfg = FakeDB(), FakeCfg(massive="k", vix_yahoo_fallback=False)
+    out = scan(db, None, cfg, 1000.0)
+    assert out["ran"] is True and out["fetched"] is False
+    assert "vix:latest" not in db.kv
 
 
 def test_engine_dispatch_calls_vix_gate():

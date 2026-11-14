@@ -35,6 +35,21 @@ class FeedError(Exception):
         super().__init__(message)
         self.status_code=status_code
 
+
+def chain_primary_source(cfg):
+    """Primary vendor for option chain snapshots (Massive->Alpaca
+    migration, 2026-11-14). OPTION_CHAIN_SOURCE (cfg.chain_source) wins
+    when that vendor is configured; otherwise whichever vendor is
+    configured serves. The default 'massive' preserves the historical
+    Massive-primary policy. Used by Collectors.chains and
+    chain_eod.fetch_chain so every chain read follows one policy."""
+    want=(getattr(cfg,'chain_source','massive') or 'massive').strip().lower()
+    massive_ok=bool(getattr(cfg,'massive',''))
+    alpaca_ok=bool(getattr(cfg,'alpaca_key','') and getattr(cfg,'alpaca_secret',''))
+    if want=='alpaca' and alpaca_ok: return 'alpaca'
+    if want=='massive' and massive_ok: return 'massive'
+    return 'massive' if massive_ok else 'alpaca'
+
 # On-demand chain refresh for live selection pendings (2026-11-03; Josh:
 # "move the data, not the gate"). Selection enforces a 120s chain-age
 # gate (Engine.options), but the background rotation is designed to
@@ -163,7 +178,7 @@ class Collectors:
             self.supervise("option_stream",bool(c.massive),self.options),
             self.supervise("alpaca_option_stream",bool(c.alpaca_key and c.alpaca_secret and c.alpaca_option_stream),self.alpaca_options),
             self.supervise("option_recovery",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.option_recovery),
-            self.supervise("option_subscriptions",bool(c.massive),self.refresh_option_subscriptions,2),
+            self.supervise("option_subscriptions",bool(c.massive or (c.alpaca_key and c.alpaca_secret)),self.refresh_option_subscriptions,2),
             self.supervise("pending_prune",True,self.pending_prune,300),
             self.supervise("tradermatrix",bool(c.matrix),self.matrix,2),
             self.supervise("tradermatrix_flow",bool(c.matrix),self.flow,20),
@@ -600,7 +615,7 @@ class Collectors:
 
     async def chains(self,lane='all'):
         from .swing_ideas import active_underlyings
-        source="massive" if self.cfg.massive else "alpaca"
+        source=chain_primary_source(self.cfg)
         now=time.time()
         with self.db.tx() as c:
             focus=focus_symbols(self.db,c,self.cfg,now,self.cfg.option_focus)
@@ -674,6 +689,10 @@ class Collectors:
             try:
                 # 2026-10-14: Massive->Alpaca fallback. If Massive fails,
                 # try Alpaca instead of leaving chains empty (breaks OPRA).
+                # 2026-11-14: generalized for the migration — the primary
+                # comes from OPTION_CHAIN_SOURCE (default massive, so the
+                # default path is byte-identical); with Alpaca primary, a
+                # failure falls back to Massive when it is configured.
                 if source=="massive":
                     try:
                         contracts,complete=await self.massive_chain(symbol)
@@ -681,7 +700,12 @@ class Collectors:
                         source="alpaca"
                         contracts,complete=await self.alpaca_chain(symbol)
                 else:
-                    contracts,complete=await self.alpaca_chain(symbol)
+                    try:
+                        contracts,complete=await self.alpaca_chain(symbol)
+                    except Exception:
+                        if not self.cfg.massive: raise
+                        source="massive"
+                        contracts,complete=await self.massive_chain(symbol)
                 now=time.time()
                 with self.db.tx() as c:
                     q=self.db.get(c,"quote:"+symbol)
