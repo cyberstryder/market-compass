@@ -141,27 +141,71 @@ def test_pending_symbol_refreshed_ahead_of_rotation(db, monkeypatch):
 
 
 def test_pending_lane_bound_cooldown_and_backoff(db, monkeypatch):
+    # Updated 2026-11-14 (funnel fix Defect 1): the per-cycle cap is
+    # 6 (was 2) and the order is window imminence, then staleness
+    # (was pure stalest-first). CCC carries the earliest expiry, so
+    # it is served first despite holding the freshest stale chain.
     calls = []
     collector = make_collector(db, monkeypatch, calls)
-    for symbol, age_s in (('AAA', 5000), ('BBB', 4000), ('CCC', 3000),
-                          ('DDD', 30), ('EEE', 5000)):
+    for symbol, age_s, exp in (('AAA', 5000, NOW + 1700),
+                               ('BBB', 4000, NOW + 1790),
+                               ('CCC', 3000, NOW + 600),
+                               ('DDD', 30, NOW + 1790),
+                               ('EEE', 5000, NOW + 1790)):
         seed_chain(db, symbol, age_s)
-        seed_pending(db, symbol, 'p-' + symbol)
+        seed_pending(db, symbol, 'p-' + symbol, expires_at=exp)
     with db.tx() as c:
         db.put(c, 'chain_retry:EEE', {'at': NOW, 'retry_at': NOW + 300})
 
     async def run():
-        # Cycle 1: cap of 2, stalest first. DDD's chain is 30s old
+        # Cycle 1: all three due names in ONE cycle (cap 6),
+        # imminence order CCC -> AAA -> BBB. DDD's chain is 30s old
         # (below the 45s due bound); EEE is in failure backoff.
         await collector.chains('pending')
-        assert calls == ['AAA', 'BBB']
-        # Cycle 2: only CCC remains due.
-        await collector.chains('pending')
-        assert calls == ['AAA', 'BBB', 'CCC']
-        # Cycle 3: pendings are still live, but every chain is now
+        assert calls == ['CCC', 'AAA', 'BBB']
+        # Cycle 2: pendings are still live, but every chain is now
         # younger than the 45s bound -- no refetch storm.
         await collector.chains('pending')
-        assert calls == ['AAA', 'BBB', 'CCC']
+        assert calls == ['CCC', 'AAA', 'BBB']
+        await collector.close()
+
+    asyncio.run(run())
+
+
+def test_pending_lane_cap_six_and_fetches_overlap(db, monkeypatch):
+    # Defect 1A/1B pins: with 8 due pendings, one cycle fetches
+    # exactly PENDING_CHAIN_PER_CYCLE (6), in imminence order, and
+    # the fetches actually overlap (gather) instead of serializing.
+    monkeypatch.setattr('compass.providers.time.time', lambda: NOW)
+    names = ['N%d' % i for i in range(1, 9)]
+    stocks = ('SPY', 'QQQ', 'IWM') + tuple(names)
+    collector = Collectors(db, Config(local=True, stocks=stocks,
+                                      option_focus=3, massive='fixture'))
+    calls = []
+    inflight = {'now': 0, 'max': 0}
+
+    async def chain(symbol):
+        calls.append(symbol)
+        inflight['now'] += 1
+        inflight['max'] = max(inflight['max'], inflight['now'])
+        await asyncio.sleep(0.01)
+        inflight['now'] -= 1
+        return [contract(symbol)], True
+
+    collector.massive_chain = chain
+    for i, symbol in enumerate(names):
+        seed_chain(db, symbol, 5000)
+        # Later names expire later: imminence order is N1..N8 even
+        # though every chain is equally stale.
+        seed_pending(db, symbol, 'p-' + symbol,
+                     expires_at=NOW + 100 * (i + 1))
+
+    async def run():
+        await collector.chains('pending')
+        assert calls == names[:6]
+        assert inflight['max'] == 6
+        await collector.chains('pending')
+        assert calls == names
         await collector.close()
 
     asyncio.run(run())

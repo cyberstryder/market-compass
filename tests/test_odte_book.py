@@ -31,11 +31,25 @@ def db(tmp_path):
     store.engine.dispose()
 
 
+def _session_stamps(now, count):
+    """16:00 NY stamps on the last `count` XNYS sessions strictly
+    before today -- the daily archive's shape (one bar per session),
+    which range20's revision-aware reader (daily_history) keys on."""
+    from datetime import datetime, timedelta
+    from compass.market import NY
+    from compass.swing_signals import sessions_between
+    today = datetime.fromtimestamp(now, NY).date()
+    days = sessions_between((today - timedelta(days=60)).isoformat(),
+                            (today - timedelta(days=1)).isoformat())
+    return [datetime.fromisoformat(d).replace(tzinfo=NY).timestamp()
+            + 16 * 3600 for d in days[-count:]]
+
+
 def _seed_daily(db, c, symbol, now, range_pct=0.03):
     half = range_pct * 100.0 / 2.0
     bar = {"o": 100.0, "h": 100.0 + half, "l": 100.0 - half,
            "c": 100.0, "v": 1000}
-    items = [(symbol, now - i * 90000, bar) for i in range(1, 22)]
+    items = [(symbol, ts, bar) for ts in _session_stamps(now, 21)]
     db.append_bars(c, "daily", "fixture", items)
 
 
@@ -145,6 +159,53 @@ def test_gate_pass_stamps_details(db):
     assert ok and why is None
     assert det["range20"] == 0.03
     assert det["planned_max_loss"] == 42.80
+
+
+# --------------------------------------- range20 revision-density regression
+
+
+def _seed_daily_revisions(db, c, symbol, now, sessions, revisions=30):
+    """Production archive shape (2026-11-14 funnel diagnosis): every
+    session carries many append-only revision rows; only the LAST
+    revision of each session carries the true 3% range -- the earlier
+    ones are near-flat. Returns the session stamps used."""
+    stamps = _session_stamps(now, sessions)
+    for ts in stamps:
+        for i in range(revisions - 1):
+            db.append(c, "daily", "fixture", symbol, ts,
+                      {"o": 100.0, "h": 100.05, "l": 99.95, "c": 100.0,
+                       "v": 900 + i})
+        db.append(c, "daily", "fixture", symbol, ts,
+                  {"o": 100.0, "h": 101.5, "l": 98.5, "c": 100.0,
+                   "v": 1000})
+    return stamps
+
+
+def test_range20_reads_through_revision_density(db):
+    # Regression for Defect 3 (odte-funnel-fix-design-2026-11-14):
+    # with 30 revision rows per session, the pre-fix newest-80-rows
+    # read spanned 2-3 distinct sessions and range20 returned None
+    # for every symbol. The revision-aware reader resolves the latest
+    # revision per completed session and returns the numeric range.
+    now = time.time()
+    with db.tx() as c:
+        _seed_daily_revisions(db, c, "DENSE", now, sessions=25)
+        # The failure mode, pinned: the raw newest-80 read cannot see
+        # 20 distinct sessions in this archive shape.
+        raw_days = {day(r["ts"]) for r in db.recent(c, "daily", "DENSE",
+                                                    limit=80)}
+        assert len(raw_days) < odte_book.RANGE20_SESSIONS
+        assert odte_book.range20(db, c, "DENSE", now) == 0.03
+
+
+def test_range20_revision_density_under_20_sessions_still_none(db):
+    # The >= 20-session rule is unchanged by the reader fix: a name
+    # with only 19 completed sessions stays movement-ineligible no
+    # matter how many revision rows those sessions carry.
+    now = time.time()
+    with db.tx() as c:
+        _seed_daily_revisions(db, c, "SHORT", now, sessions=19)
+        assert odte_book.range20(db, c, "SHORT", now) is None
 
 
 # ------------------------------------------------------------------ G4 caps

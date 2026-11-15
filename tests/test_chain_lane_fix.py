@@ -279,8 +279,11 @@ def test_pending_lane_serves_request_first_and_consumes_it(db, monkeypatch):
         await collector.close()
 
     asyncio.run(run())
-    # Cap is 2: the requested name first, then the stalest pending.
-    assert calls == ['CCC', 'BBB']
+    # The requested name first, then the pendings (equal expiries:
+    # stalest first). The per-cycle cap was 2 when this test was
+    # written; since the 2026-11-14 funnel fix it is 6, so AAA is
+    # served in the same cycle instead of waiting for the next one.
+    assert calls == ['CCC', 'BBB', 'AAA']
     with db.tx() as c:
         # Consumed on service; CCC's chain is now fresh.
         assert db.get(c, 'chain_refresh_request:CCC') is None
@@ -444,3 +447,41 @@ def test_audit_prefers_fresher_stream_quote(db):
                 [audit.get('selected_quote_evidence')])[0]
     assert evidence['quote_source'] == 'fixture-stream'
     assert evidence['quote_age_seconds'] == 5
+
+
+# --- 4. The audit walk bound (2026-11-14 funnel fix, Defect 4) ------
+
+
+def _walk_contracts(n):
+    # n eligible same-day calls at strikes 100..100+n-1, every
+    # snapshot quote stale at capture (290s), so the walk runs to its
+    # bound instead of stopping at a pass.
+    return [{'symbol': 'O:AAA%02d' % i, 'underlying': 'AAA',
+             'strike': 100 + i, 'type': 'call', 'multiplier': 100,
+             'expiry': '2026-09-14', 'oi': 100, 'gamma': .1, 'iv': .2,
+             'quote': {'ts': NOW - 300, 'bid': 2.0, 'ask': 2.01,
+                       'bid_size': 100, 'ask_size': 100}}
+            for i in range(n)]
+
+
+def test_audit_walk_checks_beyond_eight_contracts(db):
+    # Fails pre-fix: the walk stopped at 8 and contracts 9-12 were
+    # never examined (contracts_truncated stayed True at 12 eligible).
+    seed_chain(db, 'AAA', 10, contracts=_walk_contracts(12))
+    audit = run_audit(db, signal_time=NOW - 400)
+    assert audit['eligible_contracts'] == 12
+    assert audit['checked_contracts'] == 12
+    assert audit['contracts_truncated'] is False
+    assert len(audit['rejections']) == 12
+
+
+def test_audit_walk_bound_is_24(db):
+    # The bound still binds: 30 eligible contracts walk exactly 24,
+    # nearest strikes first, and the truncation flag records it.
+    seed_chain(db, 'AAA', 10, contracts=_walk_contracts(30))
+    audit = run_audit(db, signal_time=NOW - 400)
+    assert audit['eligible_contracts'] == 30
+    assert audit['checked_contracts'] == 24
+    assert audit['contracts_truncated'] is True
+    assert audit['rejections'][0]['symbol'] == 'O:AAA00'
+    assert audit['rejections'][-1]['symbol'] == 'O:AAA23'

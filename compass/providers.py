@@ -65,7 +65,17 @@ def chain_primary_source(cfg):
 # served by the focus lane instead (so focus cadence cannot be
 # starved), and symbols without pendings keep the existing rotation.
 PENDING_CHAIN_MIN_AGE_S=45
-PENDING_CHAIN_PER_CYCLE=2
+# 2026-11-14 funnel fix (Defect 1): the cap rises 2 -> 6 and the
+# lane's per-cycle fetches run concurrently (asyncio.gather in
+# chains(); the fetch is I/O-bound HTTP and chain_inflight already
+# guards overlap). At 2 sequential fetches per cycle the lane
+# supplied ~116-327 fetches/hour against the ~560/hour needed to
+# hold ~140 pending names inside the 900s gate -- a ~53-minute
+# rotation, matching Friday 2026-11-13's median blocked chain age of
+# 3,189s. Pending targets are also ordered by window imminence
+# (earliest pending expiry first, then stalest) instead of pure
+# stalest-first, so fetches land where audits can still use them.
+PENDING_CHAIN_PER_CYCLE=6
 
 class Collectors:
     def __init__(self,db,cfg):
@@ -650,13 +660,22 @@ class Collectors:
                 # before selecting anything (2026-11-04 repair; see
                 # Store.waiting_pendings).
                 live=set()
+                expiry={}
                 for row in self.db.waiting_pendings(c,now):
                     symbol=row.get('symbol')
                     if (symbol and '@' not in symbol
                             and symbol in universe and symbol not in focus):
                         live.add(symbol)
+                        exp=row.get('expires_at')
+                        if exp is not None:
+                            expiry[symbol]=min(exp,expiry.get(symbol,exp))
+                # Imminence order (2026-11-14, Defect 1B): earliest
+                # pending-window expiry first, stalest chain as the
+                # tiebreak -- fetches land where audits can still use
+                # them instead of on the globally oldest chain.
                 pending_due=sorted((s for s in live
-                    if retry(s) and now-age(s)>=PENDING_CHAIN_MIN_AGE_S),key=age)
+                    if retry(s) and now-age(s)>=PENDING_CHAIN_MIN_AGE_S),
+                    key=lambda s:(expiry.get(s,float('inf')),age(s)))
                 # Audit-imminence requests (rendezvous, 2026-11-05):
                 # a selection audit blocked on chain age writes one
                 # chain_refresh_request:<symbol> row (see
@@ -685,72 +704,17 @@ class Collectors:
                 [s for s in due if s not in indices][:1] if lane=='focus' else
                 background[:1] if lane=='background' else due[:1]+background[:1])
             self.chain_inflight.update(targets)
-        for symbol in targets:
-            try:
-                # 2026-10-14: Massive->Alpaca fallback. If Massive fails,
-                # try Alpaca instead of leaving chains empty (breaks OPRA).
-                # 2026-11-14: generalized for the migration — the primary
-                # comes from OPTION_CHAIN_SOURCE (default massive, so the
-                # default path is byte-identical); with Alpaca primary, a
-                # failure falls back to Massive when it is configured.
-                if source=="massive":
-                    try:
-                        contracts,complete=await self.massive_chain(symbol)
-                    except Exception:
-                        source="alpaca"
-                        contracts,complete=await self.alpaca_chain(symbol)
-                else:
-                    try:
-                        contracts,complete=await self.alpaca_chain(symbol)
-                    except Exception:
-                        if not self.cfg.massive: raise
-                        source="massive"
-                        contracts,complete=await self.massive_chain(symbol)
-                now=time.time()
-                with self.db.tx() as c:
-                    q=self.db.get(c,"quote:"+symbol)
-                    spot=(q["bid"]+q["ask"])/2 if q and -1<=now-q["ts"]<120 and 0<q["bid"]<=q["ask"] else None
-                    reference,reference_ts=spot,q["ts"] if spot else None
-                    if reference is None:
-                        last_bar=self.db.recent(c,"bar",symbol,limit=1)
-                        if last_bar:
-                            reference=number(last_bar[0]["payload"].get("c"))
-                            reference_ts=last_bar[0]["ts"]
-                    exposure=calculate(contracts,spot,now,source,complete)
-                    exposure["spot_asof"]=q["ts"] if spot else None
-                    chain={"contracts":contracts,"complete":complete,"asof":now,"source":source,
-                        "selection_reference":reference,"selection_reference_ts":reference_ts,
-                        "selection_note":"Historical references seed subscriptions only; execution needs fresh quotes"}
-                    # Full chains remain in latest state only. The historical
-                    # chain_archive event copy was write-only (no reader in
-                    # the codebase; audited 2026-10-21) and is no longer
-                    # stored — it was the bulkiest unused payload in events.
-                    self.db.put(c,"chain:"+symbol,chain)
-                    self.db.put(c,'chain_inventory:'+symbol,{'contracts':len(contracts),'at':now})
-                    self.db.put(c,'chain_retry:'+symbol,{'retry_at':0})
-                    # Rendezvous consumption (2026-11-05): this fresh
-                    # chain satisfies any outstanding audit-imminence
-                    # request for the symbol, whichever lane asked.
-                    self.db.delete(c,'chain_refresh_request:'+symbol)
-                    self.db.put(c,"exposure:"+symbol,exposure)
-                    self.db.put(c,"greeks:"+symbol,{**diagnose(contracts,reference,reference_ts,now,complete),
-                        "pagination":self.chain_paging.get(symbol,{})})
-                    self.db.append(c,"exposure",source,symbol,now,exposure)
-                chosen=select_contracts(contracts,reference,max(4,self.cfg.stream_limit//max(1,len(focus))))
-                self.chain_selected[symbol]=[o["symbol"] for o in chosen]
-                for o in chosen:
-                    if o.get("quote"): self.quote(source,o["symbol"],o["quote"])
-                self.db.health('chain_'+symbol,'available','Options chain fetched',poll_ts=now,contracts=len(contracts))
-            except asyncio.CancelledError: raise
-            except Exception as error:
-                from .diagnostics import database_error
-                detail=str(error) if isinstance(error,FeedError) else database_error(error)
-                self.db.health('chain_'+symbol,'error',detail)
-                # An unavailable/delisted name must not stop other chains.
-                with self.db.tx() as c:
-                    self.db.put(c,'chain_retry:'+symbol,{'at':now,'retry_at':now+300})
-            finally:
-                self.chain_inflight.discard(symbol)
+        if lane=='pending':
+            # Concurrent fetch (2026-11-14, Defect 1A): the pending
+            # lane's per-cycle targets are independent I/O-bound HTTP
+            # fetches; gather runs them in parallel instead of
+            # serializing ~10-30s per symbol. Each task handles its
+            # own vendor fallback, persistence and inflight release.
+            await asyncio.gather(*(self._chain_one(symbol,source,focus)
+                                   for symbol in targets))
+        else:
+            for symbol in targets:
+                source=await self._chain_one(symbol,source,focus)
         with self.db.tx() as c:
             held=[p["symbol"] for p in self.db.prefix(c,"position:").values() if p.get("status")=="open" and p.get("asset")=="option"]
             contract_count=sum(v['contracts'] for k,v in self.db.prefix(c,'chain_inventory:').items() if k[16:] in self.cfg.watch_symbols)
@@ -772,6 +736,82 @@ class Collectors:
             self.db.health('option_chain_'+lane,'running','Independent '+lane+' chain refresh worker',
                 poll_ts=time.time(),selected=targets)
 
+    async def _chain_one(self,symbol,source,focus):
+        """Fetch + persist one symbol's chain for a chains() cycle.
+
+        Returns the effective source after any Massive<->Alpaca
+        fallback, so the sequential lanes thread it exactly as the
+        in-line loop did. The pending lane gathers these concurrently
+        and ignores the returns (each task falls back independently).
+        Extracted 2026-11-14 for the pending-lane parallelization
+        (funnel fix Defect 1A); the body is otherwise the loop's."""
+        now=time.time()
+        try:
+            # 2026-10-14: Massive->Alpaca fallback. If Massive fails,
+            # try Alpaca instead of leaving chains empty (breaks OPRA).
+            # 2026-11-14: generalized for the migration — the primary
+            # comes from OPTION_CHAIN_SOURCE (default massive, so the
+            # default path is byte-identical); with Alpaca primary, a
+            # failure falls back to Massive when it is configured.
+            if source=="massive":
+                try:
+                    contracts,complete=await self.massive_chain(symbol)
+                except Exception:
+                    source="alpaca"
+                    contracts,complete=await self.alpaca_chain(symbol)
+            else:
+                try:
+                    contracts,complete=await self.alpaca_chain(symbol)
+                except Exception:
+                    if not self.cfg.massive: raise
+                    source="massive"
+                    contracts,complete=await self.massive_chain(symbol)
+            now=time.time()
+            with self.db.tx() as c:
+                q=self.db.get(c,"quote:"+symbol)
+                spot=(q["bid"]+q["ask"])/2 if q and -1<=now-q["ts"]<120 and 0<q["bid"]<=q["ask"] else None
+                reference,reference_ts=spot,q["ts"] if spot else None
+                if reference is None:
+                    last_bar=self.db.recent(c,"bar",symbol,limit=1)
+                    if last_bar:
+                        reference=number(last_bar[0]["payload"].get("c"))
+                        reference_ts=last_bar[0]["ts"]
+                exposure=calculate(contracts,spot,now,source,complete)
+                exposure["spot_asof"]=q["ts"] if spot else None
+                chain={"contracts":contracts,"complete":complete,"asof":now,"source":source,
+                    "selection_reference":reference,"selection_reference_ts":reference_ts,
+                    "selection_note":"Historical references seed subscriptions only; execution needs fresh quotes"}
+                # Full chains remain in latest state only. The historical
+                # chain_archive event copy was write-only (no reader in
+                # the codebase; audited 2026-10-21) and is no longer
+                # stored — it was the bulkiest unused payload in events.
+                self.db.put(c,"chain:"+symbol,chain)
+                self.db.put(c,'chain_inventory:'+symbol,{'contracts':len(contracts),'at':now})
+                self.db.put(c,'chain_retry:'+symbol,{'retry_at':0})
+                # Rendezvous consumption (2026-11-05): this fresh
+                # chain satisfies any outstanding audit-imminence
+                # request for the symbol, whichever lane asked.
+                self.db.delete(c,'chain_refresh_request:'+symbol)
+                self.db.put(c,"exposure:"+symbol,exposure)
+                self.db.put(c,"greeks:"+symbol,{**diagnose(contracts,reference,reference_ts,now,complete),
+                    "pagination":self.chain_paging.get(symbol,{})})
+                self.db.append(c,"exposure",source,symbol,now,exposure)
+            chosen=select_contracts(contracts,reference,max(4,self.cfg.stream_limit//max(1,len(focus))))
+            self.chain_selected[symbol]=[o["symbol"] for o in chosen]
+            for o in chosen:
+                if o.get("quote"): self.quote(source,o["symbol"],o["quote"])
+            self.db.health('chain_'+symbol,'available','Options chain fetched',poll_ts=now,contracts=len(contracts))
+        except asyncio.CancelledError: raise
+        except Exception as error:
+            from .diagnostics import database_error
+            detail=str(error) if isinstance(error,FeedError) else database_error(error)
+            self.db.health('chain_'+symbol,'error',detail)
+            # An unavailable/delisted name must not stop other chains.
+            with self.db.tx() as c:
+                self.db.put(c,'chain_retry:'+symbol,{'at':now,'retry_at':now+300})
+        finally:
+            self.chain_inflight.discard(symbol)
+        return source
 
     async def refresh_option_subscriptions(self):
         """Reconcile tracked ideas every two seconds, independently of chain HTTP work."""
@@ -787,19 +827,27 @@ class Collectors:
             with self.db.tx() as c:
                 from .active_observations import inventory, select_contracts
                 active=inventory(self.db,c,now)
-                requested=(option_requests(self.db,c,now)+stream_requests(c,now)
+                # 0DTE pending candidates form the reserved tranche
+                # (2026-11-14 funnel fix, Defect 2B): passed to
+                # select_contracts separately so they fill the cap
+                # right after pinned actives, ahead of general
+                # requests and focus background.
+                pending_requests=option_requests(self.db,c,now,self.cfg.option_0dte_max_dte)
+                requested=(stream_requests(c,now)
                     +swing_requests(c,now)+spy_requests(c,now,'pending')+spy_requests(c,now,'open')
                     +timeframe_requests(c,now,'pending')+timeframe_requests(c,now,'open')
                     +watchlist_contracts(c,now)
                     +zdte_active(self.db,c,now))
                 previous=self.db.get(c,'options:subscriptions',{}).get('symbols',[])
                 selected,missing=select_contracts(active['options'],previous,requested,
-                    self.background_option_symbols,self.cfg.stream_limit)
+                    self.background_option_symbols,self.cfg.stream_limit,
+                    pending=pending_requests)
                 self.option_symbols=set(selected)
                 self.option_symbols_ordered=list(selected)
+                all_requested=pending_requests+requested
                 report=dict(at=now,symbols=selected,active_contracts=len(active['options']),active_symbols=active['options'],
                     active_missing=missing,capacity=self.cfg.stream_limit,
-                    requested_ideas=len(set(requested)),waiting_ideas=len(set(requested)-set(selected)))
+                    requested_ideas=len(set(all_requested)),waiting_ideas=len(set(all_requested)-set(selected)))
                 self.db.put(c,'options:subscriptions',report)
             self.db.health('option_subscriptions','partial' if missing else 'running',
                 'Active observations pinned before pending candidates; acknowledgements and fresh quotes checked separately',**report)

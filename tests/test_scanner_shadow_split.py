@@ -69,10 +69,13 @@ def _seed_alert(db, c, now, key, family, underlying, opt, quote=True,
 
 
 def _seed_daily(db, c, symbol, now):
-    # 21 prior sessions of 3% RTH range (25h steps: always distinct
-    # calendar days, DST-proof).
+    # 21 prior XNYS sessions of 3% RTH range, one bar per session --
+    # the shape range20's revision-aware reader (daily_history) keys
+    # on (2026-11-14 funnel fix; the old 25h-step seeding put bars on
+    # weekend days the session reader cannot see).
+    from test_odte_book import _session_stamps
     bar = {"o": 100.0, "h": 101.5, "l": 98.5, "c": 100.0, "v": 1000}
-    items = [(symbol, now - i * 90000, bar) for i in range(1, 22)]
+    items = [(symbol, ts, bar) for ts in _session_stamps(now, 21)]
     db.append_bars(c, "daily", "fixture", items)
 
 

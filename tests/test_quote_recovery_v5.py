@@ -283,3 +283,15 @@ def test_v8_entry_keeps_grace_then_pauses_instead_of_terminating(db,cfg):
         worker.observe(c,p,NOW+200)
         assert p['status']=='open' and p['pnl'] is None
         assert p['data_gap'] is True and 'measurement_paused_from' in p
+
+
+def test_pending_tranche_fills_ahead_of_requested_and_background():
+    # 2026-11-14 (funnel fix Defect 2B): the pending tranche is
+    # reserved right after pinned actives; general requests and
+    # background fill what remains of the cap, in that order.
+    selected,missing=select_contracts(['held'],[],['req1','req2'],['bg1'],
+        3,pending=['pend1','pend2'])
+    assert selected==['held','pend1','pend2'] and missing==[]
+    # Without a tranche the historical fill order is unchanged.
+    selected,missing=select_contracts(['held'],[],['req1'],['bg1'],2)
+    assert selected==['held','req1'] and missing==[]
