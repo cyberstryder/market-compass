@@ -911,24 +911,35 @@ class Engine:
                     break
 
 
-    def _pre_ict_scans(self,c,now):
-        """Pre-ICT tick scans (swings, earnings, scanner, magnet, tape,
-        pulse, 0DTE, darkpool, IV rank, squeeze, gaps, breakouts, day
-        board) as one failure-contained unit.
+    def _pre_ict_unit(self,name,now,fn):
+        """Run one pre-ICT scan in its OWN transaction with its own
+        failure boundary; returns fn's result, or None when the unit
+        failed. The unit's writes roll back alone; the failure is
+        logged and recorded in health:pre_ict_<name>_error plus the
+        aggregate health:pre_ict_error row (both full Store.health
+        shape). A lost lease is NOT contained — it aborts the tick,
+        exactly as the other per-segment boundaries treat it."""
+        try:
+            with self.db.tx() as c:
+                self._hold(c)
+                return fn(c)
+        except Engine.LeaseLost:
+            raise
+        except Exception as e:
+            logging.getLogger('uvicorn.error').error(
+                f'Pre-ICT scan {name} failed: {e}')
+            try:
+                self.db.health(f'pre_ict_{name}_error','error',str(e)[:300],
+                               error=str(e)[:300],at=now,checked_at=now,
+                               unit=name)
+                self.db.health('pre_ict_error','error',str(e)[:300],
+                               error=str(e)[:300],at=now,checked_at=now,
+                               unit=name)
+            except Exception:
+                pass
+            return None
 
-        2026-10-22 second-stage freeze: after the levels pass was
-        isolated, these scans still shared one transaction with the
-        ICT block, and on the strained production database their
-        cumulative work crossed the transaction timeout on essentially
-        every tick (deaths observed in scanner.retry_options' quote
-        prefix scan and tape_confirmed's recents read). The ICT
-        detectors — individually light KV readers — never got a turn
-        for 35+ hours even though none of them ever crashed. tick()
-        now runs this unit in its own transaction under try/except
-        and proceeds to the ICT block in a fresh transaction whether
-        or not this unit survived. Returns the summary dict the
-        post-ICT health writes consume."""
-        self.swings(c,now)
+    def _earnings_scan(self,c,now):
         # Earnings plays: post-earnings gap momentum (runs 9:45-10:30 AM CT)
         # Checks OPRA tickers for earnings gaps >3%, generates 0DTE signals
         try:
@@ -972,50 +983,84 @@ class Engine:
         except Exception as e:
             # NOTE: Do NOT import logging here - it shadows module-level import
             logging.getLogger('uvicorn.error').warning(f"Earnings play scan failed: {e}")
+
+    def _pre_ict_scans(self,now):
+        """Pre-ICT tick scans (swings, earnings, scanner, magnet, tape,
+        pulse, 0DTE, darkpool, IV rank, squeeze, gaps, breakouts, day
+        board) — each scan in its OWN transaction with its own failure
+        boundary (see _pre_ict_unit), in the original order and gating.
+
+        2026-10-22 second-stage freeze: after the levels pass was
+        isolated, these scans still shared one transaction with the
+        ICT block, and on the strained production database their
+        cumulative work crossed the transaction timeout on essentially
+        every tick (deaths observed in scanner.retry_options' quote
+        prefix scan and tape_confirmed's recents read). The ICT
+        detectors — individually light KV readers — never got a turn
+        for 35+ hours even though none of them ever crashed. tick()
+        then ran this unit in its own transaction under try/except
+        and proceeded to the ICT block in a fresh transaction whether
+        or not this unit survived.
+
+        2026-11-13 data hole: that single pre-ICT transaction was
+        still all-or-nothing — on the strained database it crossed
+        the transaction timeout on effectively every tick for ~5
+        hours and every timeout rolled back ALL of the unit's writes
+        (zero scanner opportunities / selection diagnostics committed
+        07:57–12:47 CT) while separately-transacted segments kept
+        recording. The timeout TERMINATES the connection, so no
+        try/except inside the shared transaction can save the other
+        scans: isolation has to be at transaction boundaries. Now a
+        scan that times out loses only its own writes for this tick;
+        the remaining scans still run and commit, and the failure is
+        recorded per unit. Returns the summary dict the post-ICT
+        health writes consume (a failed unit's summary is None)."""
+        self._pre_ict_unit('swings',now,lambda c: self.swings(c,now))
+        self._pre_ict_unit('earnings',now,lambda c: self._earnings_scan(c,now))
         if self.cfg.scanner:
-            self.scanner.scan(c,now,self)
+            self._pre_ict_unit('scanner',now,lambda c: self.scanner.scan(c,now,self))
         else:
-            self.scanner.retry_options(c,{k[6:]:q for k,q in self.db.prefix(c,'quote:').items()},now,self)
+            self._pre_ict_unit('scanner',now,lambda c: self.scanner.retry_options(c,{k[6:]:q for k,q in self.db.prefix(c,'quote:').items()},now,self))
         magnet_summary = None
         if self.cfg.apex_magnet:
             from .apex_magnet import scan as apex_magnet_scan
-            magnet_summary = apex_magnet_scan(self.db,c,self.cfg,now)
+            magnet_summary = self._pre_ict_unit('magnet',now,lambda c: apex_magnet_scan(self.db,c,self.cfg,now))
         tape_summary = None
         if self.cfg.tape_confirmed:
             from .tape_confirmed import scan as tape_confirmed_scan
-            tape_summary = tape_confirmed_scan(self.db,c,self.cfg,now)
+            tape_summary = self._pre_ict_unit('tape',now,lambda c: tape_confirmed_scan(self.db,c,self.cfg,now))
         pulse_summary = None
         if self.cfg.flow_pulse:
             from .flow_pulse import scan as flow_pulse_scan
-            pulse_summary = flow_pulse_scan(self.db,c,self.cfg,now)
+            pulse_summary = self._pre_ict_unit('pulse',now,lambda c: flow_pulse_scan(self.db,c,self.cfg,now))
         zero_dte_summary = None
         if getattr(self.cfg, 'zero_dte_paper', True):
             from .zero_dte_paper import scan as zero_dte_paper_scan
-            zero_dte_summary = zero_dte_paper_scan(self.db,c,self.cfg,now)
+            zero_dte_summary = self._pre_ict_unit('zero_dte',now,lambda c: zero_dte_paper_scan(self.db,c,self.cfg,now))
         darkpool_summary = None
         if self.cfg.darkpool:
             from .darkpool import scan as darkpool_scan
-            darkpool_summary = darkpool_scan(self.db,c,self.cfg,now)
+            darkpool_summary = self._pre_ict_unit('darkpool',now,lambda c: darkpool_scan(self.db,c,self.cfg,now))
         iv_rank_summary = None
         if self.cfg.iv_rank:
             from .iv_rank import scan as iv_rank_scan
-            iv_rank_summary = iv_rank_scan(self.db,c,self.cfg,now)
+            iv_rank_summary = self._pre_ict_unit('iv_rank',now,lambda c: iv_rank_scan(self.db,c,self.cfg,now))
         squeeze_summary = None
         if self.cfg.squeeze:
             from .squeeze import scan as squeeze_scan
-            squeeze_summary = squeeze_scan(self.db,c,self.cfg,now)
+            squeeze_summary = self._pre_ict_unit('squeeze',now,lambda c: squeeze_scan(self.db,c,self.cfg,now))
         gap_summary = None
         if self.cfg.gap_continuation:
             from .gap_continuation import scan as gap_continuation_scan
-            gap_summary = gap_continuation_scan(self.db,c,self.cfg,now)
+            gap_summary = self._pre_ict_unit('gaps',now,lambda c: gap_continuation_scan(self.db,c,self.cfg,now))
         breakout_summary = None
         if self.cfg.breakouts:
             from .breakouts import scan as breakouts_scan
-            breakout_summary = breakouts_scan(self.db,c,self.cfg,now)
+            breakout_summary = self._pre_ict_unit('breakouts',now,lambda c: breakouts_scan(self.db,c,self.cfg,now))
         board_summary = None
         if self.cfg.day_trading_board:
             from .day_trading_board import scan as day_board_scan
-            board_summary = day_board_scan(self.db,c,self.cfg,now)
+            board_summary = self._pre_ict_unit('day_board',now,lambda c: day_board_scan(self.db,c,self.cfg,now))
         return {'magnet_summary': magnet_summary,
                 'tape_summary': tape_summary,
                 'pulse_summary': pulse_summary,
@@ -1245,23 +1290,11 @@ class Engine:
             except Exception:
                 pass
         self._levels_pass(now)
-        _summaries = {}
-        try:
-            with self.db.tx() as c:
-                self._hold(c)
-                _summaries = self._pre_ict_scans(c, now)
-        except Engine.LeaseLost:
-            raise
-        except Exception as e:
-            logging.getLogger('uvicorn.error').error(f'Pre-ICT scans failed: {e}')
-            try:
-                with self.db.tx() as c:
-                    self.db.put(c, 'health:pre_ict_error',
-                                {'name': 'pre_ict_error', 'status': 'error',
-                                 'detail': str(e)[:300], 'checked_at': now,
-                                 'error': str(e)[:300], 'at': now})
-            except Exception:
-                pass
+        # Pre-ICT scans: each scan runs in its own transaction with its
+        # own failure boundary inside _pre_ict_scans (2026-11-15
+        # per-unit isolation — see _pre_ict_unit); a LeaseLost raised by
+        # a unit propagates to tick()'s handler and aborts the tick.
+        _summaries = self._pre_ict_scans(now)
         magnet_summary = _summaries.get('magnet_summary')
         tape_summary = _summaries.get('tape_summary')
         pulse_summary = _summaries.get('pulse_summary')
