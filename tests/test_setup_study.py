@@ -270,3 +270,72 @@ def test_slow_archive_read_preserves_real_gap_at_evidence_cutoff(db,cfg,monkeypa
         assert p['status']=='unresolved' and p['pnl'] is None
         assert p['gap_detail']['checked_at']==p['observation_evidence_at']==NOW+16
         assert p['finished']==NOW+16
+
+
+# ------------------------------------------- option_requests (funnel fix)
+
+
+def _pending(db, c, key, symbol, expires_at, side='long', price=100):
+    db.put(c, 'pending_research_options:' + key,
+           {'signal': {'id': key, 'symbol': symbol, 'side': side,
+                       'signal_price': price},
+            'created_at': NOW, 'expires_at': expires_at,
+            'status': 'waiting', 'research_only': True})
+
+
+def _chain(db, c, symbol, asof, contracts):
+    db.put(c, 'chain:' + symbol,
+           {'asof': asof, 'contracts': contracts, 'source': 'fixture',
+            'complete': True})
+
+
+def _oc(symbol, strike, expiry='2026-09-14', kind='call'):
+    return {'symbol': symbol, 'type': kind, 'multiplier': 100,
+            'expiry': expiry, 'strike': strike}
+
+
+def test_option_requests_ignores_chain_age(db):
+    # Defect 2A (2026-11-14): the <=120s chain-age gate is gone. A
+    # one-hour-old chain still names the pending's contracts --
+    # contract identity does not go stale the way quotes do. Fails
+    # on the pre-fix code, which returned [] here.
+    from compass.setup_study import option_requests
+    with db.tx() as c:
+        _pending(db, c, 'p1', 'AAA', NOW + 900)
+        _chain(db, c, 'AAA', NOW - 3600,
+               [_oc('O:A99', 99), _oc('O:A100', 100), _oc('O:A101', 101),
+                _oc('O:AP100', 100, kind='put')])
+        assert option_requests(db, c, NOW) == ['O:A100', 'O:A99', 'O:A101']
+
+
+def test_option_requests_nearest_expiry_within_max_dte(db):
+    # Defect 2A: expiry coverage is the nearest expiry inside the
+    # book's window, not today only -- weekly-only names previously
+    # never got their selectable contracts requested.
+    from compass.setup_study import option_requests
+    with db.tx() as c:
+        _pending(db, c, 'p1', 'WK', NOW + 900)
+        _chain(db, c, 'WK', NOW - 3600,
+               [_oc('O:W3', 100, expiry='2026-09-17'),
+                _oc('O:W10', 100, expiry='2026-09-24')])
+        assert option_requests(db, c, NOW) == ['O:W3']
+        _pending(db, c, 'p2', 'FAR', NOW + 900)
+        _chain(db, c, 'FAR', NOW - 3600,
+               [_oc('O:F10', 100, expiry='2026-09-24')])
+        # The +10d expiry is outside the 7-DTE window: nothing named.
+        assert option_requests(db, c, NOW) == ['O:W3']
+        # A wider window names the nearest expiry only, still.
+        assert option_requests(db, c, NOW, max_dte=30) == ['O:W3', 'O:F10']
+
+
+def test_option_requests_imminence_order(db):
+    # Defect 2B: pendings are visited earliest-expiry first, so the
+    # tranche the subscription cap consumes front-first belongs to
+    # the windows closing soonest.
+    from compass.setup_study import option_requests
+    with db.tx() as c:
+        _pending(db, c, 'late', 'AAA', NOW + 1500)
+        _pending(db, c, 'soon', 'BBB', NOW + 300)
+        _chain(db, c, 'AAA', NOW - 3600, [_oc('O:AAA1', 100)])
+        _chain(db, c, 'BBB', NOW - 3600, [_oc('O:BBB1', 100)])
+        assert option_requests(db, c, NOW) == ['O:BBB1', 'O:AAA1']

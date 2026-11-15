@@ -99,7 +99,15 @@ def dte_bucket(dte):
 def range20(db, c, symbol, now):
     """Trailing-20-session median RTH range ((high-low)/close) from
     daily bars, sessions strictly before today. None when fewer than
-    20 sessions exist. Cached per symbol per day in state."""
+    20 sessions exist. Cached per symbol per day in state.
+
+    The read goes through daily_history.completed_rows (latest
+    revision per completed session): the daily archive is append-only
+    and carries 20-55 revision rows per session, so the previous
+    newest-80-rows read spanned only 2-3 distinct sessions and
+    returned None for every symbol (2026-11-14 funnel diagnosis,
+    files/odte-funnel-fix-design-2026-11-14.md Defect 3). The
+    >= 20-session rule itself is unchanged."""
     key = "odte_book:range20:%s:%s" % (day(now), symbol)
     try:
         cached = db.get(c, key)
@@ -110,14 +118,14 @@ def range20(db, c, symbol, now):
     value = None
     sessions = 0
     try:
-        rows = db.recent(c, "daily", symbol, limit=80)
+        from .daily_history import completed_rows
+        rows = completed_rows(db, c, symbol, now)
     except Exception:
         rows = []
-    today = day(now)
     by_day = {}
     for r in rows:
-        d = day(r.get("ts") or 0)
-        if d >= today:
+        d = r.get("session_day")
+        if not d:
             continue
         p = r.get("payload") or {}
         h, l, cl = _num(p.get("h")), _num(p.get("l")), _num(p.get("c"))

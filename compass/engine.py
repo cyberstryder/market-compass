@@ -55,6 +55,16 @@ CHAIN_REFRESH_REQUEST_TTL_S=1200
 # outstanding request set is the final-third subset (~45 of ~140
 # waiting names) instead of the whole universe.
 CHAIN_REFRESH_IMMINENT_S=600
+# Per-audit contract walk bound (2026-11-14 funnel fix, Defect 4):
+# Engine.options checks eligible contracts nearest-first and stops at
+# the first pass; the bound is a work bound on the tick, not a
+# selection preference. At 8, every Friday 2026-11-13 audit was
+# truncated (eligible median 140) and the audit became pass/fail on
+# exactly the 8 nearest contracts, whose prints may be quiet while a
+# further strike is printing. 24 keeps the preference order and the
+# stop-at-first-pass structure; contracts_truncated stays recorded so
+# the bound remains measurable.
+AUDIT_CONTRACT_WALK=24
 
 def audit_quote(chain,contract,stored):
     """Resolve the quote a selection audit judges a candidate on.
@@ -670,9 +680,9 @@ class Engine:
         # Nearest expiry first (most gamma for 0DTE-style moves), then closest strike.
         opts.sort(key=lambda o:(str(o.get("expiry")),abs(o["strike"]-signal["signal_price"])))
         audit['eligible_contracts']=len(opts)
-        audit['contracts_truncated']=len(opts)>8
+        audit['contracts_truncated']=len(opts)>AUDIT_CONTRACT_WALK
         rejected=audit['rejections']
-        for o in opts[:8]:
+        for o in opts[:AUDIT_CONTRACT_WALK]:
             q=audit_quote(chain,o,self.db.get(c,"quote:"+o["symbol"]))
             checked_at=self.clock() if self.clock else now
             audit['checked_contracts']+=1

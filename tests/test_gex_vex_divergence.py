@@ -160,8 +160,15 @@ def test_shadow_booking_path_carries_stamp(db):
         db.append(c, "alert", "setup_study", TSLA_OPT, now - 5, payload,
                   key="gvx1")
         bar = {"o": 100.0, "h": 101.5, "l": 98.5, "c": 100.0, "v": 1000}
+        # Seed on real XNYS sessions: since the 2026-11-14 range20
+        # reader fix, daily history is read per completed session
+        # (daily_history.completed_rows), so bars stamped at 25h
+        # intervals -- several landing on weekends, as the old
+        # seeding did -- no longer count toward the 20-session
+        # range window the movement gate reads.
+        from tests.test_odte_book import _session_stamps
         db.append_bars(c, "daily", "fixture",
-                       [("TSLA", now - i * 90000, bar) for i in range(1, 22)])
+                       [("TSLA", ts, bar) for ts in _session_stamps(now, 21)])
         db.put(c, "quote:" + TSLA_OPT, {"ts": now, "bid": 0.78, "ask": 0.80})
         db.put(c, "exposure:TSLA", {"gex": -120.0, "vex": 8000.0})
         opened = zero_dte_paper._open_scanner(db, c, now, now + 7200)

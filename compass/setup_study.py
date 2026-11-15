@@ -349,23 +349,57 @@ def snapshot(db, c, cfg, now):
         'worker':db.get(c, 'setup_study:worker'), 'max_entries':cfg.max_entries}
 
 
-def option_requests(db,c,now):
-    """Request fresh quotes for every waiting 0DTE hypothesis; no account checks."""
+def _expiry_dte(expiry,today):
+    try:
+        return (datetime.fromisoformat(str(expiry)).date()
+                -datetime.fromisoformat(today).date()).days
+    except (ValueError,TypeError):
+        return None
+
+
+def option_requests(db,c,now,max_dte=7):
+    """Request fresh quotes for every waiting 0DTE hypothesis; no account checks.
+
+    The returned list is the subscription cap's pending tranche
+    (active_observations.select_contracts): pendings are visited in
+    window-imminence order (earliest expiry first), so under cap
+    pressure the names whose selection windows close soonest name
+    their contracts first.
+
+    2026-11-14 funnel fix (Defect 2): the chain-age <= 120s gate is
+    removed -- it gated this rendezvous on the very chain freshness
+    it exists to compensate for (pending names' chains run a median
+    ~53 min old, so the request almost never fired). Contract
+    identity does not go stale the way quotes do, so the freshest
+    chain on hand, whatever its age, names the contracts. Expiry
+    coverage extends from today only to the nearest expiry inside
+    the book's window (max_dte = cfg.option_0dte_max_dte), matching
+    what Engine.options can actually select -- names without daily
+    expiries previously never got their selectable contracts
+    requested."""
     wanted=[]
     # Live pendings via Store.waiting_pendings (status/window filtered
     # server-side, 2026-11-04 lane repair): this loop previously
     # prefix()-hauled the entire accumulated pending population --
     # the same unbounded read that starved the pending chain lane.
-    for pending in db.waiting_pendings(c,now):
+    pendings=db.waiting_pendings(c,now)
+    pendings.sort(key=lambda p:p.get('expires_at') or float('inf'))
+    today=day(now)
+    for pending in pendings:
         symbol=pending.get('symbol');price=pending.get('signal_price')
         if not symbol or price is None:
             continue
         chain=db.get(c,'chain:'+symbol,{})
-        if not 0<=now-chain.get('asof',0)<=120:
-            continue
         kind='call' if pending.get('side')=='long' else 'put'
-        contracts=[o for o in chain.get('contracts',[]) if o.get('expiry')==day(now)
-                   and o.get('type')==kind and o.get('multiplier')==100]
+        contracts=[o for o in chain.get('contracts',[])
+                   if o.get('type')==kind and o.get('multiplier')==100]
+        expiries=sorted({str(o.get('expiry')) for o in contracts
+                         if (dte:=_expiry_dte(o.get('expiry'),today)) is not None
+                         and 0<=dte<=max_dte})
+        if not expiries:
+            continue
+        nearest=expiries[0]
+        contracts=[o for o in contracts if str(o.get('expiry'))==nearest]
         contracts.sort(key=lambda o:abs(o['strike']-price))
         wanted.extend(o['symbol'] for o in contracts[:8])
     return list(dict.fromkeys(wanted))

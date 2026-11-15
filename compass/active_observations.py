@@ -50,9 +50,15 @@ def inventory(db,c,now,include_followups=True):
                 stocks=list(dict.fromkeys(s for s in stocks if s not in INDEX_UNDERLYINGS)))
 
 
-def select_contracts(active,previous,requested,background,limit):
+def select_contracts(active,previous,requested,background,limit,pending=()):
     pinned=set(active)
-    ordered=list(dict.fromkeys([*(s for s in previous if s in pinned),*active,*requested,*background]))
+    # Fill order under the cap: pinned open observations first (never
+    # dropped -- structural), then the pending tranche (0DTE selection
+    # candidates from setup_study.option_requests, imminence-ordered
+    # by the producer; reserved ahead of general requests since
+    # 2026-11-14, funnel fix Defect 2B), then other requested, then
+    # focus background.
+    ordered=list(dict.fromkeys([*(s for s in previous if s in pinned),*active,*pending,*requested,*background]))
     # Active positions are never dropped, even if over the limit.
     # The limit applies to requested/background only.
     selected=list(dict.fromkeys([*pinned,*ordered]))[:max(len(pinned),limit)]
