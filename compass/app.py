@@ -225,6 +225,12 @@ def create_app(cfg=None):
                 from .connors_ssc import ConnorsSSC, run_push as run_connors_push
                 spawn(lambda: ConnorsSSC(db,cfg).run(),'ConnorsSSC')
                 spawn(lambda: run_connors_push(db,cfg),'run_connors_push')
+            if cfg.stock_sweeps:
+                # Stock Sweeps forward shadow (2026-11-16): the scorer
+                # itself is an engine pre-ICT unit (compass/engine.py);
+                # only its display-only alert drainer runs here.
+                from .stock_sweeps import run_push as run_stock_sweeps_push
+                spawn(lambda: run_stock_sweeps_push(db,cfg),'run_stock_sweeps_push')
             if cfg.overnight_omc:
                 from .overnight_omc import OvernightOMC
                 spawn(lambda: OvernightOMC(db,cfg).run(),'OvernightOMC')
