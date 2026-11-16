@@ -8,9 +8,13 @@ Tracks every external API call by provider to answer:
 Providers tracked:
 - alpaca ($99/mo): stocks, options chains, OPRA stream
 - databento ($199/mo): CME futures
-- massive ($199/mo): options chains, VIX, index reference
 - tradermatrix (~$80/mo): flow, GEX, IV rank
 - obsidian (Cipher X): Flash Agentic setups
+
+Massive was CANCELLED 2026-11-16 (chains moved to Alpaca 2026-11-14,
+VIX to the Yahoo fallback, the key removed from production). It is no
+longer listed as a current provider or cost; historical usage rows
+under provider_usage:massive:* remain readable via get_daily_usage.
 """
 import time
 from contextlib import contextmanager
@@ -21,7 +25,7 @@ from datetime import datetime, timezone
 COSTS = {
     'alpaca': 99,
     'databento': 199,
-    'massive': 199,
+    'massive': 0,  # cancelled 2026-11-16 — no longer a current cost
     'tradermatrix': 80,
     'obsidian': 0,  # Cipher X tier, cost tracked separately
 }
@@ -127,7 +131,7 @@ def get_daily_usage(db, provider, day=None):
 
 def get_all_providers_usage(db, day=None):
     """Get usage for all providers."""
-    providers = ['alpaca', 'databento', 'massive', 'tradermatrix', 'obsidian']
+    providers = ['alpaca', 'databento', 'tradermatrix', 'obsidian']
     return [get_daily_usage(db, p, day) for p in providers]
 
 
@@ -137,7 +141,7 @@ def get_weekly_summary(db):
     today = datetime.now(timezone.utc)
 
     summary = {}
-    for provider in ['alpaca', 'databento', 'massive', 'tradermatrix', 'obsidian']:
+    for provider in ['alpaca', 'databento', 'tradermatrix', 'obsidian']:
         total_calls = 0
         total_success = 0
         total_fail = 0

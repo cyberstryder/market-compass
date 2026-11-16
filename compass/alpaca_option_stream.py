@@ -517,7 +517,7 @@ def compare_sources(db, hours=1, now=None):
         # COUNT-only, no JSON payload math — just need to know if each
         # source is producing data.
         rows = c.execute(text("""
-            SELECT COALESCE(payload->>'src', 'massive') AS src,
+            SELECT COALESCE(payload->>'src', 'unknown') AS src,
                    COUNT(*) AS n
             FROM events
             WHERE kind = 'option_trade' AND ts >= :since

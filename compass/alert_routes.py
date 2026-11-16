@@ -10,7 +10,7 @@ ROUTES = {
     'futures': ('futures', 'Futures signals, observations and simulated management'),
     'options_0dte': ('0dte', 'Compass same-day option simulations'),
     'options_ideas': ('ideas', 'Intraday and multi-session option ideas'),
-    'smoothers': ('smoothers', 'Smoothers-owned option lifecycle'),
+    'smoothers': ('smoothers', 'Weeklies-owned option lifecycle'),
     'intraday': ('intraday', 'Intraday stock / ETF setups, unusual flow and exposure breaks'),
     'research': ('compass', 'Secondary reviews, setup results, research and service notices'),
     'magnets': ('intraday', 'Apex magnet break pushes'),

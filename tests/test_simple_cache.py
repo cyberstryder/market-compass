@@ -37,7 +37,7 @@ def test_simple_route_payload_shape_unchanged(tmp_path, monkeypatch):
     body = r.json()
     assert set(body.keys()) == {'asof', 'types', 'tracking'}
     assert set(body['tracking'].keys()) == {
-        'futures_book', 'scanner', 'iceberg'}
+        'futures_sweep', 'stock_sweeps', 'scanner', 'iceberg'}
 
 
 def test_simple_route_caches_within_ttl(tmp_path, monkeypatch):

@@ -27,7 +27,7 @@
   const plan=h.plan||{};
   $('#smoothers-handoff-asof').textContent='Checked '+when(Date.now()/1000);
   $('#smoothers-ownership').innerHTML=table(['Sender','State'],[
-   ['Official Smoothers sender',owner==='compass'?'<strong>Compass (native)</strong>':'Original app'],
+   ['Official Weeklies sender',owner==='compass'?'<strong>Compass (native)</strong>':'Original app'],
    ['Sender environment',h.sender_environment_enabled?'Enabled':'Disabled — set NATIVE_PROGRAM_SEND_ENABLED=true in Railway'],
    ['Discord webhook',h.webhook_configured?'Configured':'Missing — set NATIVE_SMOOTHERS_DISCORD_WEBHOOK in Railway'],
    ['Handoff plan',plan.id?esc(plan.state)+' · review '+esc(plan.review_week||'')+' → effective '+esc(plan.effective_week||''):'None prepared'],

@@ -77,7 +77,7 @@ def test_batch_only_position_target_exit_delivers(db):
     assert row['delivery']['attempts'] == 1
     assert row['delivery']['publication']['event'] == 'EXIT'
     assert row['delivery']['publication']['exit_admitted_without_entry'] is True
-    assert len(sent) == 1 and 'SMOOTHERS | EXIT | CRM 247.5 CALL' in sent[0] and 'Target hit' in sent[0]
+    assert len(sent) == 1 and 'WEEKLIES | EXIT | CRM 247.5 CALL' in sent[0] and 'Target hit' in sent[0]
 
 
 def test_missing_intent_position_friday_close_delivers(db):
@@ -97,7 +97,7 @@ def test_missing_intent_position_friday_close_delivers(db):
     assert row['status'] == 'delivered'
     assert row['delivery']['publication']['category'] == 'smoothers'
     assert row['delivery']['publication']['exit_admitted_without_entry'] is True
-    assert len(sent) == 1 and 'SMOOTHERS | EXIT | PANW 392.5 CALL' in sent[0] and 'Week closed' in sent[0]
+    assert len(sent) == 1 and 'WEEKLIES | EXIT | PANW 392.5 CALL' in sent[0] and 'Week closed' in sent[0]
 
 
 def test_best10_entry_then_exit_still_delivers_without_flag(db):
@@ -121,8 +121,8 @@ def test_best10_entry_then_exit_still_delivers_without_flag(db):
     assert rows['sig-meta:entry']['status'] == 'delivered'
     assert rows['sig-meta:target']['status'] == 'delivered'
     assert 'exit_admitted_without_entry' not in rows['sig-meta:target']['delivery']['publication']
-    assert 'SMOOTHERS | ENTRY | META 635 PUT' in sent[0]
-    assert 'SMOOTHERS | EXIT | META 635 PUT' in sent[1]
+    assert 'WEEKLIES | ENTRY | META 635 PUT' in sent[0]
+    assert 'WEEKLIES | EXIT | META 635 PUT' in sent[1]
 
 
 def test_assess_admits_smoothers_exit_without_entry_link(db):

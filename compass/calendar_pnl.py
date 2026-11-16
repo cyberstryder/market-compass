@@ -14,7 +14,7 @@ BUCKETS = [
     ('futures', 'Futures'),
     ('0dte', '0DTE'),
     ('trap-spread', 'Trap Spreads'),
-    ('smoothers', 'Smoothers'),
+    ('smoothers', 'Weeklies'),
     ('swings', 'Swings'),
     ('other', 'Other'),
 ]

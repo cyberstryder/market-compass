@@ -204,7 +204,7 @@ class IcebergDetector:
         if parts is None:
             self.unparsed += 1
             return None
-        src = str(item.get('src') or 'massive')
+        src = str(item.get('src') or 'unknown')
         with self._lock:
             st = self.contracts.get(symbol)
             if st is None:

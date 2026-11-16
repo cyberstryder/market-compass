@@ -36,10 +36,10 @@
     </div>
 
     <div class="trackers">
-      <article class="card pick" data-drill="smoothers" tabindex="0" role="button" aria-pressed="false" aria-label="Drill into Smoothers, ticker by ticker">
+      <article class="card pick" data-drill="smoothers" tabindex="0" role="button" aria-pressed="false" aria-label="Drill into Weeklies, ticker by ticker">
         <div class="card-top">
           <span class="dot d-smooth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17c4-8 8 2 12-4 2-3 4-4 6-4"/><circle cx="19" cy="9" r="1.6" fill="currentColor"/></svg></span>
-          <div><h3>Smoothers</h3><span class="aka">The patient one</span></div>
+          <div><h3>Weeklies</h3><span class="aka">The patient one</span></div>
         </div>
         <p><b>Buys options with a few days to breathe and rides a steady move.</b> Not a same-day gamble — it looks for stocks already moving smoothly in one direction.</p>
         <dl class="rows">
@@ -59,8 +59,8 @@
         <p><b>Trades tiny futures contracts (MNQ, MES, gold, silver) using intraday price patterns.</b> Everything is forced flat by 3:45pm CT — nothing held overnight.</p>
         <dl class="rows">
           <div><dt>Watches</dt><dd>Micros only — never full-size contracts</dd></div>
-          <div><dt>Fires when</dt><dd>One of 11 pattern detectors triggers</dd></div>
-          <div><dt>Then</dt><dd>Paper trades first; proof before real money</dd></div>
+          <div><dt>Fires when</dt><dd>The opening range is swept and reclaimed (the Futures Sweep shadow, 8 micro roots)</dd></div>
+          <div><dt>Then</dt><dd>Shadow-scored with alerts — no orders sent; proof before real money</dd></div>
         </dl>
         <span class="cta">Drill down — method by method ↓</span>
         <div class="result"><span id="res-futures">Loading…</span><span class="pill test">Paper / proving</span></div>
@@ -71,14 +71,14 @@
           <span class="dot d-0dte"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
           <div><h3>0DTE Options</h3><span class="aka">The same-day sprint</span></div>
         </div>
-        <p><b>Options that expire today.</b> Cheap, fast, and unforgiving — SPY plus 14 liquid names (NVDA, AAPL, TSLA, MU…). In and out the same session or it's worthless.</p>
+        <p><b>Options that expire today.</b> Cheap, fast, and unforgiving — drawn from the whole 162-name list, not a fixed watchlist. In and out the same session or it's worthless.</p>
         <dl class="rows">
-          <div><dt>Watches</dt><dd>SPY + 14 large-cap names, all day</dd></div>
-          <div><dt>Fires when</dt><dd>Intraday breakout / momentum setup appears</dd></div>
-          <div><dt>Then</dt><dd>Scanner alert; you decide, nothing auto-fires</dd></div>
+          <div><dt>Watches</dt><dd>The whole 162-name list, all day</dd></div>
+          <div><dt>Fires when</dt><dd>A scanner setup passes the funnel's gates</dd></div>
+          <div><dt>Then</dt><dd>The funnel publishes a paper trade — entries and exits both posted</dd></div>
         </dl>
         <span class="cta">Drill down — name by name ↓</span>
-        <div class="result"><span id="res-0dte">Loading…</span><span class="pill test" id="pill-0dte">Scanner only</span></div>
+        <div class="result"><span id="res-0dte">Loading…</span><span class="pill test" id="pill-0dte">Paper / proving</span></div>
       </article>
 
       <article class="card pick" data-drill="swings" tabindex="0" role="button" aria-pressed="false" aria-label="Drill into Swings, idea by idea">
@@ -86,11 +86,11 @@
           <span class="dot d-swings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 20h18M6 16l4-8 4 5 4-9"/></svg></span>
           <div><h3>Swings</h3><span class="aka">The multi-day hold</span></div>
         </div>
-        <p><b>Options with 1–21 days to expiration.</b> Bullish and bearish daily setups with fresh, vendor-classified options flow. Tracked across stock sessions.</p>
+        <p><b>Multi-day option holds, holds over one week.</b> Two forward scorers: C2 weekly momentum baskets and Connors RSI(2) short-dated calls, each measured on real option premium.</p>
         <dl class="rows">
-          <div><dt>Watches</dt><dd>Liquid stocks &amp; ETFs, daily setups</dd></div>
-          <div><dt>Fires when</dt><dd>Fresh flow + technical setup align</dd></div>
-          <div><dt>Then</dt><dd>Paper-tracked; target vs stop/invalidation</dd></div>
+          <div><dt>Watches</dt><dd>The 162-name list (C2 weekly) and uptrend dips (Connors)</dd></div>
+          <div><dt>Fires when</dt><dd>C2 rebalances each week; Connors fires on an RSI(2) dip in an uptrend</dd></div>
+          <div><dt>Then</dt><dd>Paper-scored on premium; a Connors-wide shadow is scored weekly alongside</dd></div>
         </dl>
         <span class="cta">Drill down — idea by idea ↓</span>
         <div class="result"><span id="res-swings">Loading…</span><span class="pill test">Paper / proving</span></div>
@@ -118,7 +118,7 @@
         </div>
         <p><b>One message at ~4pm CT on weekdays.</b> Every tracker above, summarized: what opened, what closed, what it made or lost, and what's still running.</p>
         <dl class="rows">
-          <div><dt>Covers</dt><dd>All 5 trackers, grouped by type</dd></div>
+          <div><dt>Covers</dt><dd>Every tracker, grouped by type</dd></div>
           <div><dt>Includes</dt><dd>Day P&amp;L + running hit rate per pattern</dd></div>
           <div><dt>Still realtime</dt><dd>Discord alerts stay on — the digest is the tidy summary on top</dd></div>
         </dl>
@@ -163,7 +163,7 @@
     <div class="sec-head">
       <div>
         <h2 id="tracking-h">What we're tracking</h2>
-        <p>The books behind the scoreboard: which futures combos are live, which scanner cells kept their paper seats after the October validation, what got moved to shadow — and the iceberg watch for hidden institutional options flow.</p>
+        <p>The books behind the scoreboard: the Futures Sweep and Stock Sweeps forward shadows now accruing, which scanner cells kept their paper seats after the October validation, what got moved to shadow — and the iceberg watch for hidden institutional options flow.</p>
       </div>
     </div>
     <div id="trackingBody"><p class="track-note">Loading…</p></div>

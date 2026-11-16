@@ -46,9 +46,9 @@ async function loadSmoothers(){
   $('#summary-smoothers').innerHTML=(rows.length?table(['Ticker','Dir','Entry','Target','Status'],rows.map(x=>{const n=x.native;
    return [esc(n.ticker),esc(n.direction),num(n.entry_price),num(n.target_price),esc(n.status||'—')];}))
    :'<p class="fine">No featured picks this week yet.</p>')
-   +'<p><button type="button" id="summary-smoothers-open">Open the full Smoothers page</button></p>';
+   +'<p><button type="button" id="summary-smoothers-open">Open the full Weeklies page</button></p>';
   $('#summary-smoothers-open').onclick=()=>selectTab('smoothers');
- }catch(e){$('#summary-smoothers').innerHTML=empty('Smoothers glance unavailable','Could not load the weekly report.');}
+ }catch(e){$('#summary-smoothers').innerHTML=empty('Weeklies glance unavailable','Could not load the weekly report.');}
 }
 
 async function render(){
