@@ -267,6 +267,17 @@ class Config:
     # channel (2026-11-16 registration): rendering only — scoring is
     # byte-identical with this flag on or off.
     stock_sweeps_alerts: bool = field(default_factory=lambda: env("STOCK_SWEEPS_ALERTS_ENABLED","true")=="true")
+    # Futures Sweep (ORB HUD) forward shadow (2026-11-16, Josh):
+    # paper/measurement only — shadow-fires the frozen 8-root HUD
+    # book (as-written one-trade/day plus the amendment's unlimited
+    # configuration) on live 5-minute bars as an engine pre-ICT
+    # unit; see compass/futures_sweep.py.
+    futures_sweep: bool = field(default_factory=lambda: env("FUTURES_SWEEP_ENABLED","true")=="true")
+    # Futures Sweep display-only shadow alerts to the futures Discord
+    # channel (2026-11-16 registration + amendment): rendering only —
+    # scoring is byte-identical with this flag on or off, and only
+    # the as-written book alerts.
+    futures_sweep_alerts: bool = field(default_factory=lambda: env("FUTURES_SWEEP_ALERTS_ENABLED","true")=="true")
     # Overnight Morning-Change (OMC) forward scorer (2026-11-03, Josh):
     # paper/measurement only — scores the frozen overnight/morning
     # registration from the chain_eod + chain_open archives in its own
