@@ -55,6 +55,19 @@ CHAIN_REFRESH_REQUEST_TTL_S=1200
 # outstanding request set is the final-third subset (~45 of ~140
 # waiting names) instead of the whole universe.
 CHAIN_REFRESH_IMMINENT_S=600
+# Creation-time requests (funnel fix 1C, 2026-11-16; Josh's approval
+# 2026-11-15 on the funnel-fix design): observe_setup writes the same
+# rendezvous row when a research pending is CREATED, so one chain
+# fetch early in the 30-minute window makes snapshot_asof >
+# signal_time for every later audit of that pending -- the structural
+# cure for the fresh-after-signal kills (Monday 2026-11-16 funnel
+# read: 2,276 of 7,248 contract rejections, 97%+ of them pinned
+# snapshots fetched before the signal). Same row shape, same TTL cap,
+# same consumer as the audit-imminent write; the request set grows to
+# ~all pending names, which already dominate the lane's live set. The
+# audit-imminent write remains for pendings whose chain is still
+# stale in the final third (its write lands after the creation
+# request's TTL cap expires).
 # Per-audit contract walk bound (2026-11-14 funnel fix, Defect 4):
 # Engine.options checks eligible contracts nearest-first and stops at
 # the first pass; the bound is a work bound on the tick, not a
@@ -244,8 +257,21 @@ class Engine:
                 # signals, with fresh-quote timing the top killer. The
                 # research selection may retry for 30 minutes; the alert
                 # itself (option_setup_new) keeps its 120s freshness.
-                self.db.put(c,key,dict(signal={**signal,'notify_eligible':alerted and primary},created_at=now,expires_at=now+1800,
+                pending_expires_at=now+1800
+                self.db.put(c,key,dict(signal={**signal,'notify_eligible':alerted and primary},created_at=now,expires_at=pending_expires_at,
                     status='waiting',research_only=True))
+                # Funnel fix 1C (2026-11-16): request the chain refresh
+                # at CREATION, not only on a blocked audit in the final
+                # 600s -- a snapshot pinned from before the signal can
+                # never satisfy the post-signal rule, so the refresh
+                # must already be in flight while the pending matures.
+                # Inside the creation guard, so exactly one request is
+                # written per pending. Same row/mechanism as the
+                # audit-imminent write in Engine.options.
+                chain=self.db.get(c,'chain:'+signal['symbol'],{})
+                self.request_chain_refresh(c,signal['symbol'],now,pending_expires_at,
+                    'pending_created',
+                    now-chain['asof'] if chain.get('asof') is not None else None)
             from .weekday_candidates import capture
             capture(self.db,c,signal,now,trial)
         return trial
@@ -622,6 +648,21 @@ class Engine:
                 except Exception:
                     pass
 
+    def request_chain_refresh(self,c,symbol,now,expires_at,reason,chain_age_seconds=None):
+        """Write the chain-refresh rendezvous row for a symbol.
+
+        One row per symbol by key; the pending chain lane serves
+        outstanding requests first (providers.Collectors.chains) and
+        _chain_one deletes the row when its fetch lands. The row never
+        outlives the pending it serves and is capped by
+        CHAIN_REFRESH_REQUEST_TTL_S. Writers: Engine.options
+        (audit-imminent block) and Engine.observe_setup (pending
+        creation, funnel fix 1C)."""
+        self.db.put(c,'chain_refresh_request:'+symbol,{
+            'symbol':symbol,'priority':100,'at':now,'reason':reason,
+            'chain_age_seconds':chain_age_seconds,
+            'expires_at':min(expires_at,now+CHAIN_REFRESH_REQUEST_TTL_S)})
+
     def options(self,c,signal,now,quiet=False,diagnostics=None,research_only=False,pending_expires_at=None):
         research_only = research_only or not self.cfg.paper_trading
         chain=self.db.get(c,"chain:"+signal["symbol"],{})
@@ -650,11 +691,8 @@ class Engine:
             remaining=(window_expires_at-now) if window_expires_at else None
             audit['refresh_requested']=False
             if remaining is not None and 0<remaining<=CHAIN_REFRESH_IMMINENT_S:
-                self.db.put(c,'chain_refresh_request:'+signal["symbol"],{
-                    'symbol':signal["symbol"],'priority':100,'at':now,
-                    'reason':'selection_chain_stale',
-                    'chain_age_seconds':audit.get('chain_age_seconds'),
-                    'expires_at':min(window_expires_at,now+CHAIN_REFRESH_REQUEST_TTL_S)})
+                self.request_chain_refresh(c,signal["symbol"],now,window_expires_at,
+                    'selection_chain_stale',audit.get('chain_age_seconds'))
                 audit['refresh_requested']=True
             if not quiet:
                 self.alert(c,signal["symbol"],{**alert_context(signal),"status":"options_skipped","reason":"No recent options chain",
