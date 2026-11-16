@@ -257,6 +257,16 @@ class Config:
     # the EOD chain archive in its own short-dated premium cell; see
     # compass/connors_ssc.py.
     connors_ssc: bool = field(default_factory=lambda: env("CONNORS_SSC_ENABLED","true")=="true")
+    # Stock Sweeps forward shadow (2026-11-16, Josh): paper/measurement
+    # only — shadow-fires the frozen 23-symbol Stock_Sweeps book on
+    # live 15-minute bars as an engine pre-ICT unit, underlying-scored
+    # with a nearest-expiry premium measurement; see
+    # compass/stock_sweeps.py.
+    stock_sweeps: bool = field(default_factory=lambda: env("STOCK_SWEEPS_ENABLED","true")=="true")
+    # Stock Sweeps display-only shadow alerts to the 0DTE Discord
+    # channel (2026-11-16 registration): rendering only — scoring is
+    # byte-identical with this flag on or off.
+    stock_sweeps_alerts: bool = field(default_factory=lambda: env("STOCK_SWEEPS_ALERTS_ENABLED","true")=="true")
     # Overnight Morning-Change (OMC) forward scorer (2026-11-03, Josh):
     # paper/measurement only — scores the frozen overnight/morning
     # registration from the chain_eod + chain_open archives in its own

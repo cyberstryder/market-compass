@@ -1061,6 +1061,10 @@ class Engine:
         if self.cfg.day_trading_board:
             from .day_trading_board import scan as day_board_scan
             board_summary = self._pre_ict_unit('day_board',now,lambda c: day_board_scan(self.db,c,self.cfg,now))
+        sweeps_summary = None
+        if getattr(self.cfg, 'stock_sweeps', True):
+            from .stock_sweeps import scan as stock_sweeps_scan
+            sweeps_summary = self._pre_ict_unit('stock_sweeps',now,lambda c: stock_sweeps_scan(self.db,c,self.cfg,now))
         return {'magnet_summary': magnet_summary,
                 'tape_summary': tape_summary,
                 'pulse_summary': pulse_summary,
@@ -1070,7 +1074,8 @@ class Engine:
                 'squeeze_summary': squeeze_summary,
                 'gap_summary': gap_summary,
                 'breakout_summary': breakout_summary,
-                'board_summary': board_summary}
+                'board_summary': board_summary,
+                'sweeps_summary': sweeps_summary}
 
     def _levels_pass(self,now):
         """Per-symbol levels/entry pass, isolated per symbol.
@@ -1305,6 +1310,7 @@ class Engine:
         gap_summary = _summaries.get('gap_summary')
         breakout_summary = _summaries.get('breakout_summary')
         board_summary = _summaries.get('board_summary')
+        sweeps_summary = _summaries.get('sweeps_summary')
         # VIX data feed: keep the regime keys fresh before the gating block
         # below reads them. 2026-10-23: moved out of the ICT transaction
         # into its own short one — fetch_vix is a 20s vendor HTTP call and
@@ -1443,6 +1449,10 @@ class Engine:
         if board_summary and board_summary.get('ran'):
             self.db.health('day_trading_board','running','board %s, %d symbols' % (
                 board_summary.get('action') or 'steady', board_summary['symbols']))
+        if sweeps_summary and sweeps_summary.get('ran'):
+            self.db.health('stock_sweeps','running','%d symbols, %d bars fed, %d open episodes' % (
+                sweeps_summary['symbols'], sweeps_summary['fed'], sweeps_summary['open_episodes']),
+                first_session=sweeps_summary.get('first_session'))
         for _ict_name in ('session_liquidity','htf_levels','turtle_soup','smt_divergence',
                           'aoi_zones','aoi_fade','tier_a_b',
                           'golden_zone','bos_fvg','bos_gz_vwap',

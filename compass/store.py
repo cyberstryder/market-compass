@@ -255,6 +255,28 @@ swing_c2_push_outbox=Table('swing_c2_push_outbox_v1',meta,
     Column('delivery',JSON,nullable=False))
 Index('swing_c2_push_pending',swing_c2_push_outbox.c.status,swing_c2_push_outbox.c.created)
 
+# Stock Sweeps forward shadow episodes (compass/stock_sweeps.py;
+# 2026-11-16, Josh): the frozen 23-symbol book shadow-fired on live
+# 15-minute bars, underlying-scored with a nearest-expiry premium
+# measurement. Declared here for the same reason as
+# connors_ssc_episodes above: boot-time create_all must see the table
+# before the engine lazily imports the owning module.
+stock_sweeps_episodes=Table('stock_sweeps_episodes',meta,
+    Column('id',String(64),primary_key=True),Column('underlying',String(100),nullable=False),
+    Column('status',String(24),nullable=False),Column('created',Float,nullable=False),
+    Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
+Index('stock_sweeps_active',stock_sweeps_episodes.c.status,stock_sweeps_episodes.c.created)
+
+# Stock Sweeps shadow-alert outbox (2026-11-16 registration, display
+# only): the shadow's own narrow queue to the 0DTE Discord channel,
+# following the connors_push precedent above. Declared here for the
+# same create_all reason.
+stock_sweeps_push_outbox=Table('stock_sweeps_push_outbox_v1',meta,
+    Column('id',String(64),primary_key=True),Column('status',String(24),nullable=False),
+    Column('created',Float,nullable=False),Column('payload',JSON,nullable=False),
+    Column('delivery',JSON,nullable=False))
+Index('stock_sweeps_push_pending',stock_sweeps_push_outbox.c.status,stock_sweeps_push_outbox.c.created)
+
 spy_checks=Table('spy_plan_checks_v1',meta,
     Column('id',String(64),primary_key=True),Column('version',String(50),nullable=False),
     Column('source_key',String(150),nullable=False),Column('day',String(10),nullable=False),
