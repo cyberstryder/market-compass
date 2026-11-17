@@ -80,17 +80,88 @@ def scanner_family_bookable(family, cfg=None):
     return bool(scanner_shadow.paper_seats(cfg).get(family))
 
 
-def scanner_setup_silence(row, cfg=None, now=None):
+def _published_entry_link(db, c, row):
+    """Existing publication link for this row, or None.
+
+    The publication layer (alert_ownership.assess) records the link
+    between a published entry and its lifecycle events as
+    'publication:source:'+source_key(row) -> {trade_id, supporting}.
+    A setup_result shares source ('setup_study') and payload id
+    (the trial id) with its option_setup_new entry, so the direct
+    key matches. Scanner-source lifecycle events (setup_triggered /
+    setup_invalidated) name the trial differently — by
+    setup_trial_id, or by the originating signal id (setup_id /
+    source_id, resolved through the setup_trials table's source_id
+    column, which is how SetupStudy.start links a signal to its
+    trial) — so those keys are resolved to the same publication
+    key. Supporting links do NOT count: a supporting study cannot
+    manage the primary trade (assess suppresses it separately).
+    No new tracking is created here; this only reads what assess
+    already wrote."""
+    def _live_link(key):
+        try:
+            link = db.get(c, 'publication:source:' + key)
+        except Exception:
+            return None
+        return link if link and not link.get('supporting') else None
+
+    try:
+        direct = _live_link(alert_ownership.source_key(row))
+    except Exception:
+        direct = None
+    if direct:
+        return direct
+    payload = row.get('payload') or {}
+    trial_ids = []
+    if payload.get('setup_trial_id'):
+        trial_ids.append(str(payload['setup_trial_id']))
+    if not trial_ids:
+        signal_ids = []
+        for field in ('setup_id', 'source_id'):
+            if payload.get(field):
+                signal_ids.append(str(payload[field]))
+        if row.get('source') == 'scanner' and payload.get('id'):
+            signal_ids.append(str(payload['id']))
+        if signal_ids:
+            try:
+                from .setup_study import trials as _trials
+                for sid in dict.fromkeys(signal_ids):
+                    tid = c.execute(select(_trials.c.id).where(
+                        _trials.c.source_id == sid)).scalar_one_or_none()
+                    if tid:
+                        trial_ids.append(str(tid))
+            except Exception:
+                pass
+    if trial_ids:
+        from .store import identity as _identity
+        for tid in dict.fromkeys(trial_ids):
+            link = _live_link(_identity('setup_study', tid))
+            if link:
+                return link
+    return None
+
+
+def scanner_setup_silence(row, cfg=None, now=None, db=None, c=None):
     """Suppression decision for a simulated compass-scanner setup lifecycle
     alert whose family is not bookable; None when the alert is outside the
     class or its family may push. Recording is untouched — this decides
-    only whether a Discord job is queued as pending or suppressed."""
+    only whether a Discord job is queued as pending or suppressed.
+
+    Published-entry exemption (Josh, 2026-11-17): a lifecycle event
+    linked to a PUBLISHED entry (see _published_entry_link) is NOT
+    silenced — it passes through to alert_ownership.assess(), which
+    is the final arbiter of whether it publishes (it still suppresses
+    supporting, already-ended, or undelivered-entry lifecycles).
+    Without a db/c handle no link can be proven, so the caller keeps
+    the pre-exemption behavior (existing direct callers/tests)."""
     payload = row.get('payload') or {}
     if payload.get('status') not in SCANNER_SETUP_LIFECYCLE:
         return None
     from . import scanner_shadow
     family = scanner_shadow.alert_family(payload)
     if family is None or scanner_family_bookable(family, cfg):
+        return None
+    if db is not None and c is not None and _published_entry_link(db, c, row):
         return None
     return {'action': 'suppressed', 'gate': SCANNER_PUSH_GATE, 'family': family, 'at': now,
             'reason': 'Scanner setup lifecycle pushes silenced for non-bookable family; '
@@ -153,7 +224,7 @@ def enqueue_routes(db, c, now, cfg=None):
     rows = list(c.execute(select(events).where(events.c.kind == 'alert', events.c.id > cursor)
                           .order_by(events.c.id).limit(200)).mappings())
     for row in rows:
-        decision=scanner_setup_silence(row, cfg, now)
+        decision=scanner_setup_silence(row, cfg, now, db, c)
         if decision is None:
             decision=futures_mirror_silence(db, c, row, now)
         if decision is None:
@@ -319,6 +390,10 @@ class DeliveryWorker:
         with self.db.tx() as c:
             return futures_mirror_silence(self.db, c, row, now)
 
+    def _scanner_setup_silence(self, row, now):
+        with self.db.tx() as c:
+            return scanner_setup_silence(row, self.cfg, now, self.db, c)
+
     def _route_pending(self, route):
         with self.db.tx() as c:
             pending=c.execute(select(func.count()).select_from(discord_jobs).where(
@@ -408,7 +483,7 @@ class DeliveryWorker:
         # promotion state) cannot drain to Discord either. Recording is
         # untouched; the job is simply marked suppressed.
         payload = row.get('payload', {})
-        silence = scanner_setup_silence(row, self.cfg, now)
+        silence = await asyncio.to_thread(self._scanner_setup_silence, row, now)
         if silence is not None:
             await asyncio.to_thread(self._mark, row['id'], 'suppressed', silence)
             return
