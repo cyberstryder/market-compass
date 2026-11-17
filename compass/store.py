@@ -277,6 +277,31 @@ stock_sweeps_push_outbox=Table('stock_sweeps_push_outbox_v1',meta,
     Column('delivery',JSON,nullable=False))
 Index('stock_sweeps_push_pending',stock_sweeps_push_outbox.c.status,stock_sweeps_push_outbox.c.created)
 
+# Futures Sweep (ORB HUD) forward shadow episodes
+# (compass/futures_sweep.py; 2026-11-16, Josh): the frozen 8-root
+# micro book shadow-fired on live 5-minute bars under the HUD's
+# semantics, in two configurations (payload 'config': the as-written
+# one-trade-per-day book and the amendment's unlimited-re-entry
+# configuration, one ledger). Declared here for the same reason as
+# stock_sweeps_episodes above: boot-time create_all must see the
+# table before the engine lazily imports the owning module.
+futures_sweep_episodes=Table('futures_sweep_episodes',meta,
+    Column('id',String(64),primary_key=True),Column('underlying',String(100),nullable=False),
+    Column('status',String(24),nullable=False),Column('created',Float,nullable=False),
+    Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
+Index('futures_sweep_active',futures_sweep_episodes.c.status,futures_sweep_episodes.c.created)
+
+# Futures Sweep shadow-alert outbox (2026-11-16 registration,
+# display only): the shadow's own narrow queue to the futures
+# Discord channel (the as-written book's alerts only), following the
+# stock_sweeps_push precedent above. Declared here for the same
+# create_all reason.
+futures_sweep_push_outbox=Table('futures_sweep_push_outbox_v1',meta,
+    Column('id',String(64),primary_key=True),Column('status',String(24),nullable=False),
+    Column('created',Float,nullable=False),Column('payload',JSON,nullable=False),
+    Column('delivery',JSON,nullable=False))
+Index('futures_sweep_push_pending',futures_sweep_push_outbox.c.status,futures_sweep_push_outbox.c.created)
+
 spy_checks=Table('spy_plan_checks_v1',meta,
     Column('id',String(64),primary_key=True),Column('version',String(50),nullable=False),
     Column('source_key',String(150),nullable=False),Column('day',String(10),nullable=False),

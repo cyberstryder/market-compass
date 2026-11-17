@@ -1103,6 +1103,10 @@ class Engine:
         if getattr(self.cfg, 'stock_sweeps', True):
             from .stock_sweeps import scan as stock_sweeps_scan
             sweeps_summary = self._pre_ict_unit('stock_sweeps',now,lambda c: stock_sweeps_scan(self.db,c,self.cfg,now))
+        fsweep_summary = None
+        if getattr(self.cfg, 'futures_sweep', True):
+            from .futures_sweep import scan as futures_sweep_scan
+            fsweep_summary = self._pre_ict_unit('futures_sweep',now,lambda c: futures_sweep_scan(self.db,c,self.cfg,now))
         return {'magnet_summary': magnet_summary,
                 'tape_summary': tape_summary,
                 'pulse_summary': pulse_summary,
@@ -1113,7 +1117,8 @@ class Engine:
                 'gap_summary': gap_summary,
                 'breakout_summary': breakout_summary,
                 'board_summary': board_summary,
-                'sweeps_summary': sweeps_summary}
+                'sweeps_summary': sweeps_summary,
+                'fsweep_summary': fsweep_summary}
 
     def _levels_pass(self,now):
         """Per-symbol levels/entry pass, isolated per symbol.
@@ -1349,6 +1354,7 @@ class Engine:
         breakout_summary = _summaries.get('breakout_summary')
         board_summary = _summaries.get('board_summary')
         sweeps_summary = _summaries.get('sweeps_summary')
+        fsweep_summary = _summaries.get('fsweep_summary')
         # VIX data feed: keep the regime keys fresh before the gating block
         # below reads them. 2026-10-23: moved out of the ICT transaction
         # into its own short one — fetch_vix is a 20s vendor HTTP call and
@@ -1491,6 +1497,10 @@ class Engine:
             self.db.health('stock_sweeps','running','%d symbols, %d bars fed, %d open episodes' % (
                 sweeps_summary['symbols'], sweeps_summary['fed'], sweeps_summary['open_episodes']),
                 first_session=sweeps_summary.get('first_session'))
+        if fsweep_summary and fsweep_summary.get('ran'):
+            self.db.health('futures_sweep','running','%d roots, %d bars fed, %d open episodes' % (
+                fsweep_summary['roots'], fsweep_summary['fed'], fsweep_summary['open_episodes']),
+                first_session=fsweep_summary.get('first_session'))
         for _ict_name in ('session_liquidity','htf_levels','turtle_soup','smt_divergence',
                           'aoi_zones','aoi_fade','tier_a_b',
                           'golden_zone','bos_fvg','bos_gz_vwap',
