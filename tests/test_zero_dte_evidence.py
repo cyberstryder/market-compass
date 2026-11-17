@@ -255,8 +255,10 @@ def test_simple_stats_count_only_evidence_scanner_trades(db):
     assert scanner["stats"]["pnl"] == 30.0
     tsla = [d for d in block["drill"] if d["name"] == "0DTE " + UNDERLYING][0]
     assert tsla["stats"]["tracked"] == 1
-    spy = [d for d in block["drill"]
-           if d["name"] == "SPY morning plan (wall target)"][0]
-    assert spy["stats"]["tracked"] == 1
+    # The SPY morning plan drills were dropped from the lead
+    # 2026-11-16 (plan retired 2026-10-25); its trades still count
+    # in the headline stats above and in the detail history below.
+    assert not any("SPY morning plan" in d["name"]
+                   for d in block["drill"])
     # History is preserved in the trade-by-trade detail view.
     assert len(detail["items"]) == 2

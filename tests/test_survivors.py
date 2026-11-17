@@ -522,7 +522,12 @@ def test_review_due_at_50_fills(db):
         assert st['review_due'] is True and st['review_due_at'] == NOW
 
 
-def test_digest_surfaces_survivor_state(db):
+def test_digest_no_longer_surfaces_survivors(db):
+    # The digest's 'Claude survivors (live)' section was retired
+    # 2026-11-16 with the survivors book (Josh: futures replaced by
+    # the Futures Sweep shadow). Survivor state may still exist in
+    # the store, but the digest must not present it as a live book;
+    # the futures area is the Futures Sweep shadow section.
     from compass.day_digest import assemble
     with db.tx() as c:
         st = survivors.ensure_state(db, c, NOW)
@@ -530,9 +535,8 @@ def test_digest_surfaces_survivor_state(db):
         db.put(c, survivors.STATE_KEY, st)
         out = assemble(db, c, NOW)
     sections = {s['key']: s for s in out['sections']}
-    assert 'survivors' in sections
-    text = '\n'.join(sections['survivors']['lines'])
-    assert 'LIVE' in text and 'REVIEW DUE' in text
+    assert 'survivors' not in sections
+    assert 'futures_sweep' in sections
 
 
 # ---------------------------------------------------------------------

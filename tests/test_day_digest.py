@@ -171,3 +171,30 @@ def test_0dte_plan_outcome_stopped(db):
         out = day_digest.assemble(db, c, now + 3600)
     sec = next(s for s in out['sections'] if s['key'] == '0dte')
     assert any('stopped' in l for l in sec['lines'])
+
+
+def test_futures_sweep_section_from_state(db):
+    # The digest futures area is the Futures Sweep forward shadow
+    # (replaced the survivors section 2026-11-16). With no state row
+    # the section renders no lines; with state it reports accrual.
+    now = _now_today()
+    with db.tx() as c:
+        out = day_digest.assemble(db, c, now)
+    sections = {s['key']: s for s in out['sections']}
+    assert sections['futures_sweep']['lines'] == []
+    state = {'version': 1, 'at': now - 60,
+             'counts': {'created': 3, 'open': 1, 'closed': 2},
+             'configs': ['as_written', 'unlimited'],
+             'per_root': {'MGC': {
+                 'as_written': {'n': 2, 'net': 84.0, 'pf': 1.7},
+                 'unlimited': {'n': 3, 'net': -12.0, 'pf': 0.8}}},
+             'first_session': '2026-11-17',
+             'weeks_since_first_session': 0.4}
+    with db.tx() as c:
+        db.put(c, 'futures_sweep:state', state)
+        out = day_digest.assemble(db, c, now)
+    sections = {s['key']: s for s in out['sections']}
+    assert sections['futures_sweep']['title'] == 'Futures Sweep shadow'
+    text = '\n'.join(sections['futures_sweep']['lines'])
+    assert 'as-written: 2 trades' in text and 'unlimited: 3 trades' in text
+    assert '>= 12 weeks AND >= 50 forward trades' in text

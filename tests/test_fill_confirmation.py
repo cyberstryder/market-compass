@@ -263,11 +263,12 @@ def test_digest_after_correction_tells_the_confirmed_truth(db):
         survivors.account_live(db, c, st, NOW)
         out = assemble(db, c, NOW)
     sections = {s['key']: s for s in out['sections']}
-    surv = '\n'.join(sections['survivors']['lines'])
-    assert 'closed live trades: 1' in surv
-    assert 'live fills: 2' in surv
-    assert '$222' in surv
-    assert 'NOT filled at the broker: 2' in surv
+    # The digest's standalone 'survivors' section was retired
+    # 2026-11-16 (replaced by the Futures Sweep shadow section);
+    # the confirmed-truth surface in the digest is now the futures
+    # section's per-position rows below — the modeled aggregates
+    # this test originally guarded must not reappear anywhere.
+    assert 'survivors' not in sections
     fut = '\n'.join(sections['futures']['lines'])
     assert 'NOT FILLED — rejected at broker' in fut       # S3 row
     assert 'LIVE confirmed $222' in fut                   # S4 row
