@@ -343,3 +343,57 @@ def test_live_lifecycle(db):
     assert all(p['episode_id'] in aw_ids for p in outbox)
     types = sorted(p['type'] for p in outbox)
     assert types.count('entry') == len(FIXTURE['as_written'])
+
+
+# ---------------------------------------------------------------------------
+# _write_state pooled aggregation: episode-less roots must stay empty
+
+def _closed_episode(db, c, eid, root, config, net, stress):
+    p = {'id': eid, 'symbol': root, 'config': config,
+         'status': 'closed',
+         'result': {'net': net, 'stress_net': stress}}
+    c.execute(db.insert(episodes).values(
+        id=eid, underlying=root, status='closed', created=1,
+        updated=1, payload=p))
+
+
+def test_write_state_empty_roots_do_not_alias_pooled(db):
+    """Regression (2026-11-17): _write_state used the pooled
+    accumulator as the .get() default for roots with no episodes, so
+    an empty root displayed the pooled stats and the accumulator
+    self-extended (doubling per empty root). Episodes only on MES /
+    MNQ (early in ROOTS order); every later root — MYM..M6A — has
+    zero episodes and must report zeros, and pooled n must equal the
+    true episode count per configuration."""
+    from compass.futures_sweep import _write_state
+    with db.tx() as c:
+        _closed_episode(db, c, 'e1', 'MES', 'as_written', 100.0, 98.0)
+        _closed_episode(db, c, 'e2', 'MES', 'unlimited', 100.0, 98.0)
+        _closed_episode(db, c, 'e3', 'MNQ', 'as_written', -40.0, -41.0)
+        state = _write_state(db, c, 1_700_000_000)
+    assert state['counts'] == {'created': 3, 'open': 0, 'closed': 3}
+    # Roots that did trade keep their own stats.
+    assert state['per_root']['MES']['as_written']['n'] == 1
+    assert state['per_root']['MES']['as_written']['net'] == 100.0
+    assert state['per_root']['MNQ']['as_written']['n'] == 1
+    assert state['per_root']['MNQ']['as_written']['net'] == -40.0
+    # Every episode-less root reports zeros in BOTH configurations.
+    for root in ROOTS:
+        if root in ('MES', 'MNQ'):
+            continue
+        for name, _ in CONFIGS:
+            sub = state['per_root'][root][name]
+            assert sub['n'] == 0, (root, name, sub)
+            assert sub['net'] == 0.0, (root, name, sub)
+            assert sub['pf'] is None, (root, name, sub)
+            assert sub['stress_net'] == 0.0, (root, name, sub)
+    # Pooled equals the true episode counts — no doubling.
+    assert state['pooled']['as_written']['n'] == 2
+    assert state['pooled']['as_written']['net'] == 60.0
+    assert state['pooled']['as_written']['stress_net'] == 57.0
+    assert state['pooled']['unlimited']['n'] == 1
+    assert state['pooled']['unlimited']['net'] == 100.0
+    # Sum of per-root n == pooled n == closed count, per config.
+    for name, _ in CONFIGS:
+        assert sum(state['per_root'][r][name]['n'] for r in ROOTS) == \
+            state['pooled'][name]['n']
