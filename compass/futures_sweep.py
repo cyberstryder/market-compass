@@ -780,7 +780,12 @@ def _write_state(db, c, now, extra=None):
     pooled_buckets = {name: {'nets': [], 'stress': []}
                       for name in cfg_names}
     for root in ROOTS:
-        r = per_root.get(root, pooled_buckets)
+        # A root with no episodes gets a FRESH empty bucket — never
+        # the pooled accumulator itself (that aliased the pooled
+        # stats onto the empty root and then self-extended the
+        # accumulator, doubling it per empty root).
+        r = per_root.get(root) or {name: {'nets': [], 'stress': []}
+                                   for name in cfg_names}
         roots_out[root] = {name: _sub(r[name]) for name in cfg_names}
         for name in cfg_names:
             pooled_buckets[name]['nets'].extend(r[name]['nets'])
