@@ -39,16 +39,15 @@ class Config:
     feed: str = field(default_factory=lambda: env("ALPACA_FEED","sip"))
     databento: str = field(default_factory=lambda: env("DATABENTO_API_KEY"))
     massive: str = field(default_factory=lambda: env("MASSIVE_API_KEY"))
-    # Massive->Alpaca migration (2026-11-14, Josh: "move to Alpaca this
-    # week, if it works we can drop Massive"): which vendor serves option
+    # Massive->Alpaca migration (2026-11-14): which vendor serves option
     # chain snapshots FIRST, everywhere chains are read (Collectors.chains
-    # lanes and chain_eod.fetch_chain). 'massive' (the default) preserves
-    # the historical Massive-primary / Alpaca-fallback policy exactly;
-    # 'alpaca' makes Alpaca primary with Massive as the fallback. The
-    # drop itself is a separate later step (removing MASSIVE_API_KEY);
-    # this flag only reorders the two live paths so the Alpaca path can
-    # be proven under production load before any cancellation.
-    chain_source: str = field(default_factory=lambda: env("OPTION_CHAIN_SOURCE","massive").strip().lower())
+    # lanes and chain_eod.fetch_chain). 'alpaca' (the default since
+    # 2026-11-16) makes Alpaca primary; 'massive' selected Massive
+    # primary with Alpaca fallback while both were live. Massive was
+    # CANCELLED 2026-11-16 and its key removed, so the Massive fallback
+    # leg is inert in production; the default is 'alpaca' so a dropped
+    # env var can never resurrect Massive-primary.
+    chain_source: str = field(default_factory=lambda: env("OPTION_CHAIN_SOURCE","alpaca").strip().lower())
     # VIX has no Alpaca equivalent (Alpaca offers no index data). With
     # this flag on, vix_regime.scan falls back to Yahoo Finance ^VIX —
     # the same public reference source index_reference already uses for

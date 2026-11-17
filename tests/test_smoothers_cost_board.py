@@ -111,7 +111,7 @@ def _board_rows():
 
 def test_roster_is_a_shadow_board_ordered_by_cost():
     text = '\n'.join(p['content'] for p in messages.roster(_board_rows(), WEEK, ENTRY))
-    assert 'SMOOTHERS — SHADOW BOARD' in text
+    assert 'WEEKLIES — SHADOW BOARD' in text
     assert 'scored only · not a buy list' in text
     assert 'Horizon: Wednesday close · ranked by executable cost' in text
     # Cost order, not tier order; no tier sections anywhere.

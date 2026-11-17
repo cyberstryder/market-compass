@@ -1,7 +1,9 @@
 """Tests for the Simple page "What we're tracking" payload
-(compass/simple.py tracking()): the live futures book, the 0DTE scanner
-seat/shadow split, and the shadow iceberg watch. Style mirrors
-tests/test_simple.py (Store fixture, db.put seeding)."""
+(compass/simple.py tracking()): the Futures Sweep and Stock Sweeps
+forward shadows (which replaced the survivors-era live futures book
+2026-11-16), the 0DTE scanner seat/shadow split, and the shadow
+iceberg watch. Style mirrors tests/test_simple.py (Store fixture,
+db.put seeding)."""
 import sys
 import time
 import types
@@ -25,36 +27,33 @@ def db(tmp_path):
     db.engine.dispose()
 
 
-def _ict_trade(tid, detector, symbol, pnl, exited_ago=3600, **kw):
-    t = {'id': tid, 'detector': detector, 'symbol': symbol,
-         'source': 'ict_paper', 'status': 'closed', 'pnl': pnl,
-         'entered_at': NOW - exited_ago - 1800,
-         'exited_at': NOW - exited_ago}
-    t.update(kw)
-    return t
-
-
 def test_tracking_empty_db(db):
     with db.tx() as c:
         out = simple.summary(db, c, NOW)
     tr = out['tracking']
     assert tr is not None
-    # Futures book: the six post-prune combos, live vs paper-only split.
-    # Since the 2026-10-26 evening pause (AOI Fade carved out), NO
-    # combo is live — every detector is a paper-only carve-out.
-    fb = tr['futures_book']
-    assert fb['window_days'] == 28
-    assert len(fb['combos']) == 6
-    live = {(x['detector'], x['symbol']) for x in fb['combos'] if x['live']}
-    assert live == set()
-    paper = {(x['detector'], x['symbol'])
-             for x in fb['combos'] if not x['live']}
-    assert paper == {('golden_zone', 'MCL'), ('golden_zone', 'MNQ'),
-                     ('rumers_box', 'MYM'), ('turtle_soup', 'MCL'),
-                     ('aoi_fade', 'MCL'), ('aoi_fade', 'MES')}
-    assert all(x['trades'] == 0 and x['pf'] is None and not x['kill_watch']
-               for x in fb['combos'])
-    assert fb['kill_watch'] == []
+    # Futures Sweep shadow: clean empty state — the module deploys
+    # separately, so with no state row every root renders zeroed for
+    # both configurations and the first eligible session is the
+    # registered Tue 2026-11-17.
+    fs = tr['futures_sweep']
+    assert fs['available'] is False
+    assert fs['first_session'] is None
+    assert fs['expected_first_session'] == '2026-11-17'
+    assert [x['root'] for x in fs['roots']] == [
+        'MES', 'MNQ', 'MYM', 'MGC', 'MCL', 'M2K', 'M6E', 'M6A']
+    assert all(x[cfg]['n'] == 0 and x[cfg]['net'] == 0.0
+               and x[cfg]['pf'] is None
+               for x in fs['roots'] for cfg in ('as_written', 'unlimited'))
+    assert fs['verdict'] == {'min_weeks': 12, 'min_trades_per_root': 50}
+    # Stock Sweeps shadow: clean empty state over the frozen 23-name
+    # book from the full-list screen.
+    ss = tr['stock_sweeps']
+    assert ss['available'] is False
+    assert ss['book_n'] == 23 and 'AMD' in ss['book']
+    assert ss['underlying'] == {'n': 0, 'net': 0.0, 'pf': None,
+                                'win_rate': None}
+    assert ss['per_symbol'] == []
     # Scanner: the book renders honestly with no data — no seats by
     # default under the whole-list book; the shadow side is either
     # not-yet-landed (None) or a zeroed scorecard.
@@ -74,36 +73,89 @@ def test_tracking_empty_db(db):
     assert ib['diag_present'] is False
 
 
-def test_tracking_futures_book_stats_and_kill_watch(db):
+def test_tracking_shadow_states(db):
+    """Seeded shadow state rows (the shapes compass/futures_sweep.py
+    and compass/stock_sweeps.py write) flow through to the page
+    payload; unseeded roots zero out."""
     with db.tx() as c:
-        db.put(c, 'trade:ict-a1', _ict_trade('a1', 'aoi_fade', 'MCL.c.0', 100.0))
-        db.put(c, 'trade:ict-a2', _ict_trade('a2', 'aoi_fade', 'MCL.c.0', 50.0))
-        db.put(c, 'trade:ict-a3', _ict_trade('a3', 'aoi_fade', 'MCL.c.0', -30.0))
-        db.put(c, 'trade:ict-t1', _ict_trade('t1', 'turtle_soup', 'MCL.c.0', 20.0))
-        db.put(c, 'trade:ict-t2', _ict_trade('t2', 'turtle_soup', 'MCL.c.0', -80.0))
-        # data_gap trades never count (house rule).
-        db.put(c, 'trade:ict-g1', _ict_trade('g1', 'golden_zone', 'MCL.c.0',
-                                             999.0, data_gap=True))
-        # Outside the 28-day window: excluded.
-        db.put(c, 'trade:ict-o1', _ict_trade('o1', 'aoi_fade', 'MES.c.0',
-                                             500.0, exited_ago=40 * 86400))
+        db.put(c, 'futures_sweep:state', {
+            'counts': {'created': 5, 'open': 1, 'closed': 4},
+            'first_session': '2026-11-17',
+            'weeks_since_first_session': 0.1,
+            'per_root': {'MNQ': {
+                'as_written': {'n': 3, 'net': 120.5, 'pf': 1.8,
+                               'stress_net': 90.0},
+                'unlimited': {'n': 4, 'net': -20.0, 'pf': 0.9,
+                              'stress_net': -45.0}}},
+            'pooled': {
+                'as_written': {'n': 3, 'net': 120.5, 'pf': 1.8,
+                               'stress_net': 90.0},
+                'unlimited': {'n': 4, 'net': -20.0, 'pf': 0.9,
+                              'stress_net': -45.0}}})
+        db.put(c, 'stock_sweeps:state', {
+            'counts': {'created': 3, 'open': 1, 'closed': 2,
+                       'data_gap': 0},
+            'first_session': '2026-11-17',
+            'underlying': {'n': 2, 'net': 55.0, 'pf': 2.1,
+                           'win_rate': 50.0},
+            'premium': {'n': 2, 'net': 30.0, 'pf': 1.5,
+                        'win_rate': 50.0},
+            'per_symbol': {'AMD': {'n': 2, 'net': 55.0}},
+            'book': {'AMD': 0.35, 'QQQ': 0.5}, 'windows': []})
         out = simple.summary(db, c, NOW)
-    fb = out['tracking']['futures_book']
-    by = {(x['detector'], x['symbol']): x for x in fb['combos']}
-    aoi = by[('aoi_fade', 'MCL')]
-    assert aoi['trades'] == 3 and aoi['wins'] == 2 and aoi['losses'] == 1
-    assert aoi['net'] == 120.0 and aoi['pf'] == 5.0
-    assert aoi['win_rate'] == round(100.0 * 2 / 3, 1)
-    assert aoi['kill_watch'] is False
-    assert aoi['live'] is False  # paper-only since the 2026-10-26 pause
-    ts = by[('turtle_soup', 'MCL')]
-    assert ts['trades'] == 2 and ts['pf'] == 0.25 and ts['kill_watch'] is True
-    assert ts['live'] is False  # paper-only since 2026-10-26; still tracked
-    assert fb['kill_watch'] == ['turtle_soup|MCL']
-    gz = by[('golden_zone', 'MCL')]
-    assert gz['trades'] == 0 and gz['live'] is False
-    mes = by[('aoi_fade', 'MES')]
-    assert mes['trades'] == 0  # only the stale trade existed
+    fs = out['tracking']['futures_sweep']
+    assert fs['available'] is True and fs['counts']['closed'] == 4
+    mnq = [x for x in fs['roots'] if x['root'] == 'MNQ'][0]
+    assert mnq['as_written'] == {'n': 3, 'net': 120.5, 'pf': 1.8,
+                                 'stress_net': 90.0}
+    assert mnq['unlimited']['net'] == -20.0
+    mes = [x for x in fs['roots'] if x['root'] == 'MES'][0]
+    assert mes['as_written']['n'] == 0  # unseeded roots zero out
+    ss = out['tracking']['stock_sweeps']
+    assert ss['available'] is True and ss['book_n'] == 2
+    assert ss['underlying']['net'] == 55.0
+    assert ss['per_symbol'] == [{'symbol': 'AMD', 'n': 2, 'net': 55.0}]
+
+
+def test_funnel_publications(db):
+    """The 0DTE block surfaces the setup funnel's published trades:
+    entries (option_setup_new) matched to exits (setup_result) by
+    contract symbol."""
+    with db.tx() as c:
+        db.append(c, 'alert', 'setup_study', 'QQQ261116C00667000',
+                  NOW - 7200,
+                  {'status': 'option_setup_new',
+                   'symbol': 'QQQ261116C00667000',
+                   'publication': {'category': 'options_0dte',
+                                   'contract': {
+                                       'symbol': 'QQQ261116C00667000',
+                                       'underlying': 'QQQ',
+                                       'strike': 667, 'type': 'call',
+                                       'expiry': '2026-11-16'}},
+                   'entry': 2.93},
+                  'option-setup-entry:t1')
+        db.append(c, 'alert', 'setup_study', 'QQQ261116C00667000',
+                  NOW - 3600,
+                  {'status': 'setup_result',
+                   'symbol': 'QQQ261116C00667000',
+                   'exit': 2.01, 'exit_reason': 'stop', 'pnl': -93.3,
+                   'outcome': 'loss'},
+                  'setup-result:t1')
+        pubs = simple._funnel_publications(db, c, NOW)
+        block, _ = simple._0dte(db, c, NOW)
+    assert pubs['published'] == 1 and pubs['closed'] == 1
+    assert pubs['open'] == 0 and pubs['wins'] == 0
+    assert pubs['net'] == -93.3
+    r = pubs['recent'][0]
+    assert r['underlying'] == 'QQQ' and r['status'] == 'closed'
+    assert r['exit_reason'] == 'stop' and r['entry'] == 2.93
+    # The block carries the publications and leads its drills with them.
+    assert block['stats']['publications']['published'] == 1
+    assert block['drill'][0]['name'] == 'Published trades (setup funnel)'
+    assert not any('SPY morning plan' in d['name']
+                   for d in block['drill'])
+    assert 'ask cap' not in block['fires']
+
 
 
 def _scan_trade(tid, underlying, pnl, family='session_sweep_reclaim', **kw):

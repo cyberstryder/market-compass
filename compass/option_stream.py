@@ -1,20 +1,18 @@
 """Read option events independently of bounded, batched persistence.
 
-AUTHORITATIVE OPTION STREAM (2026-10-15, Audit P1):
-This is the PRIMARY option stream. It uses Massive (Polygon) for OPRA data.
-- Subscribed: ~100 contracts across 16 tickers (OPRA_TICKERS)
-- Health key: health:option_stream (via "Option stream timing" logs)
-- Status endpoint: /api/alpaca-stream-status prefers this stream if subscribed > 0
+OPTION STREAMS (updated 2026-11-16 — Massive cancelled):
+This module is the Massive (Polygon) OPRA stream. Massive was the
+primary stream through 2026-11-14; the subscription was CANCELLED
+2026-11-16 and MASSIVE_API_KEY removed from production, so this
+stream's supervisor never starts it now (its health row reads
+"not_configured") and the code is retained only for the historical
+record / a possible future re-subscription.
 
-The OTHER stream is compass/alpaca_option_stream.py (Alpaca OPRA).
-- It is a FALLBACK, disabled by default (ALPACA_OPTION_STREAM_ENABLED=false).
-- It only starts if ALPACA_OPTION_STREAM_ENABLED=true AND Alpaca keys are set.
-- Health key: health:alpaca_option_stream
-- As of 2026-10-15, the Alpaca stream shows 0 subscribed (dark). Massive is the
-  working stream. Do NOT treat Alpaca 0-subscribed as a failure - it's the
-  fallback, not the primary.
-- The two streams are NOT redundant - Massive is primary, Alpaca is fallback
-  if Massive fails. Do not remove Alpaca stream without a replacement fallback.
+The working stream is compass/alpaca_option_stream.py (Alpaca OPRA):
+- Subscribed: ~900 contracts; health key: health:alpaca_option_stream
+- Status endpoint: /api/alpaca-stream-status
+- Chains also run on Alpaca (OPTION_CHAIN_SOURCE=alpaca since
+  2026-11-14); VIX uses the Yahoo fallback.
 """
 import asyncio
 from collections import deque
@@ -94,7 +92,7 @@ class OptionBuffer:
             self._notify_observer('Q', symbol, stamp, item)
             value=(symbol,dict(ts=stamp,bid=item['bp'],ask=item['ap'],
                 bid_size=item.get('bs',0),ask_size=item.get('as',0),socket_read_at=now,collection_version=COLLECTION_VERSION,
-                src=item.get('src','massive')),True)
+                src=item.get('src','unknown')),True)
             if monotonic-self.last_sample.get(symbol, float('-inf')) < 1:
                 self.pending[symbol]=value
                 return

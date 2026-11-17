@@ -1,7 +1,7 @@
 """End-of-day digest: one summary per signal type for the trading day.
 
 Assembles, for the America/Chicago calendar date:
-- Smoothers entries/exits (native outbox)
+- Weeklies entries/exits (native outbox; program key 'smoothers')
 - Futures ICT paper trades opened/closed today, realized day P&L, open positions
 - Flow Pulse pulses fired today + running paper track record
 - 0DTE: SPY morning plan (queried by source+day, not a blunt recent() that
@@ -75,7 +75,9 @@ def _section(key, title, lines):
     return {"key": key, "title": title, "lines": lines}
 
 
-# ---------------------------------------------------------------- smoothers
+# ---------------------------------------------------------------- weeklies
+# (program key stays 'smoothers' — an identifier; only the display
+# title changed in the 2026-11-16 rename.)
 
 
 def _smoothers(db, c, start):
@@ -89,7 +91,7 @@ def _smoothers(db, c, start):
             .order_by(native_outbox.c.created)
         ).mappings()
     except Exception:
-        return _section("smoothers", "Smoothers", [])
+        return _section("smoothers", "Weeklies", [])
     for r in rows:
         delivery = r.get("delivery") or {}
         # publication_input is the full signal data; publication is the slim
@@ -126,7 +128,7 @@ def _smoothers(db, c, start):
         lines.extend("  " + e for e in exits)
     if compact:
         lines.append("+ %d more in the compact batch" % compact)
-    return _section("smoothers", "Smoothers", lines)
+    return _section("smoothers", "Weeklies", lines)
 
 
 # ---------------------------------------------------------------- futures
@@ -352,47 +354,56 @@ def _spy_0dte(db, c, start, date):
 # ---------------------------------------------------------------- assemble
 
 
-def _survivors(db, c, now=None):
-    """Claude gauntlet survivors: tripwire state, combined live P&L,
-    fill counter / review flag (compass/survivors.py)."""
+_SWEEP_ROOTS = ('MES', 'MNQ', 'MYM', 'MGC', 'MCL', 'M2K', 'M6E', 'M6A')
+_SWEEP_CONFIGS = (('as_written', 'as-written'),
+                  ('unlimited', 'unlimited'))
+
+
+def _futures_sweep(db, c, now=None):
+    """Futures Sweep forward shadow (registration frozen 2026-11-16):
+    the opening-range sweep & reclaim HUD on the 8 micro roots in two
+    configurations (as-written alerts; unlimited scored silently).
+    Replaces the retired survivors section — the survivors book was
+    retired as the futures candidate 2026-11-16 and live sends are
+    paused; this shadow places no orders. Reads the module's own
+    state row; before the module deploys, the clean empty state."""
     lines = []
     try:
-        st = db.get(c, "survivors:state")
+        st = db.get(c, "futures_sweep:state")
     except Exception:
         st = None
-    if not isinstance(st, dict):
-        return _section("survivors", "Claude survivors (live)", lines)
-    if st.get("live"):
-        lines.append("LIVE since %s — 4 detectors, 1 contract each"
-                     % (st.get("activated_iso") or "?"))
-    else:
-        lines.append("PAPER-ONLY — tripwire tripped %s"
-                     % (st.get("trip_reason") or ""))
-    # Fill confirmation (2026-11-02): these counters count ONLY
-    # broker-confirmed fills (compass/fill_confirmation.py) — a
-    # TradersPost webhook acceptance alone no longer prints as a live
-    # trade here. (Regression case: the 2026-11-02 digest showed
-    # "live fills: 4 · closed: 2 · +$223" from a rejected S3 send and
-    # S4's modeled prices; the confirmed record was 1 trade, +$222.)
-    lines.append("Combined live P&L (broker-confirmed): %s · live fills: "
-                 "%s · closed live trades: %s"
-                 % (_money(st.get("combined_live_pnl")),
-                    st.get("live_fills"),
-                    st.get("live_trades_closed")))
-    if st.get("live_not_filled"):
-        lines.append("Live sends NOT filled at the broker: %s "
-                     "(excluded above — see trade rows)"
-                     % st.get("live_not_filled"))
-    if st.get("live_pending"):
-        lines.append("Live sends awaiting broker confirmation: %s "
-                     "(counted as neither fills nor P&L)"
-                     % st.get("live_pending"))
-    if st.get("review_due"):
-        lines.append("REVIEW DUE: ≥50 combined live fills reached")
+    if not isinstance(st, dict) or not st:
+        # No state row yet (module not deployed): the section renders
+        # empty, like every other digest section on a no-data day. The
+        # armed/empty-state copy lives on the webpage's tracking view.
+        return _section("futures_sweep", "Futures Sweep shadow", lines)
+    counts = st.get('counts') or {}
+    lines.append("Forward shadow — first session %s · week %s · "
+                 "%d created · %d open · %d closed"
+                 % (st.get('first_session') or '?',
+                    st.get('weeks_since_first_session'),
+                    counts.get('created', 0), counts.get('open', 0),
+                    counts.get('closed', 0)))
+    per_root = st.get('per_root') or {}
+    for root in _SWEEP_ROOTS:
+        r = per_root.get(root) or {}
+        bits = []
+        for key, label in _SWEEP_CONFIGS:
+            s = r.get(key) or {}
+            if s.get('n'):
+                bits.append("%s: %d trades · %s · PF %s · stress %s"
+                            % (label, s['n'], _money(s.get('net')),
+                               _f(s.get('pf')),
+                               _money(s.get('stress_net'))))
+        if bits:
+            lines.append("%s — %s" % (root, ' · '.join(bits)))
+    lines.append("Verdict per root per configuration at >= 12 weeks "
+                 "AND >= 50 forward trades (net > 0, PF > 1.0, "
+                 "stress > 0). Measurement only — no orders.")
     gex = _gex_line(db, c, now)
     if gex:
         lines.append(gex)
-    return _section("survivors", "Claude survivors (live)", lines)
+    return _section("futures_sweep", "Futures Sweep shadow", lines)
 
 
 def _ice_shadow(db, c, start):
@@ -446,7 +457,7 @@ def assemble(db, c, now):
         "sections": [
             _smoothers(db, c, start),
             _futures(db, c, start, now),
-            _survivors(db, c, now),
+            _futures_sweep(db, c, now),
             _ice_shadow(db, c, start),
             _flow_pulse(db, c, start),
             _spy_0dte(db, c, start, date),

@@ -74,5 +74,9 @@ def test_record_call_increments_counters_on_store(tmp_path):
     usage = get_daily_usage(db, 'massive')
     assert usage['total_calls'] == 3 and usage['success'] == 2 and usage['fail'] == 1
     assert usage['avg_latency_ms'] == 150.0
-    assert get_weekly_summary(db)['massive']['weekly_calls'] == 3
+    # Massive was cancelled 2026-11-16: historical daily rows stay
+    # readable (above) at $0 current cost, but it is no longer listed
+    # among the current providers in the weekly summary / all-usage.
+    assert usage['monthly_cost'] == 0
+    assert 'massive' not in get_weekly_summary(db)
     assert get_daily_usage(db, 'alpaca')['total_calls'] == 0

@@ -10,7 +10,7 @@ TIERS=('A+','A','B','WATCH')
 # the executable-cost key (compass/smoothers_cost.py), quality tiers are
 # stored on payloads for audit but never presented as a ranking, and
 # premium scoring closes at the Wednesday horizon.
-BOARD_HEADER='SMOOTHERS — SHADOW BOARD'
+BOARD_HEADER='WEEKLIES — SHADOW BOARD'
 BOARD_TERMS='scored only · not a buy list · Horizon: Wednesday close · ranked by executable cost'
 CT=ZoneInfo('America/Chicago')
 
@@ -124,11 +124,11 @@ def envelope(p,event,description,fields,color):
     # Shadow board (2026-10-31): no tier is presented as a recommendation,
     # so the old 'A+ Featured' entry title is gone; every event uses the
     # plain scored-notice title.
-    title = f"SMOOTHERS | {event} | {p['ticker']} · {p.get('direction','Unavailable')}"
-    return {'username':'Smoothers','allowed_mentions':{'parse':[]},'embeds':[{
+    title = f"WEEKLIES | {event} | {p['ticker']} · {p.get('direction','Unavailable')}"
+    return {'username':'Weeklies','allowed_mentions':{'parse':[]},'embeds':[{
         'title':title,
         'description':description,'color':color,'fields':fields,
-        'footer':{'text':f"Smoothers · Shadow board · Week {p['week']} · Signal {p['id']}"}}]}
+        'footer':{'text':f"Weeklies · Shadow board · Week {p['week']} · Signal {p['id']}"}}]}
 
 
 def contract_fields(p):
@@ -218,7 +218,7 @@ def horizon(p):
         body=(f"Still open at Wed close · Wednesday chain bid unavailable — premium outcome "
               f"unmeasurable ({h.get('reason') or 'no_chain_data'})\n"
               'Thu/Fri touches still tracked for stats, but no longer count as premium outcomes')
-    return {'username':'Smoothers','content':head+'\n'+body,'allowed_mentions':{'parse':[]}}
+    return {'username':'Weeklies','content':head+'\n'+body,'allowed_mentions':{'parse':[]}}
 
 
 def roster(signals,week,now,errors=0):
@@ -258,4 +258,4 @@ def roster(signals,week,now,errors=0):
         if len(current)+len(block)+2>1900:chunks.append(current);current=header+' | CONTINUED'
         current+='\n\n'+block
     chunks.append(current)
-    return [{'username':'Smoothers','content':x,'allowed_mentions':{'parse':[]}} for x in chunks]
+    return [{'username':'Weeklies','content':x,'allowed_mentions':{'parse':[]}} for x in chunks]

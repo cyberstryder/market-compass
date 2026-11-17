@@ -38,13 +38,13 @@ function renderBody(d){
   ['Board',b.built?'Built':'Not built',b.frozen?'Frozen at open':''],
   ['Board names',num(b.rows,0),'Universe '+(b.universe??'—')],
   ['Pick checks',num(d.pick_checks.count,0),(d.pick_checks.tickers.join(', ')||'None today')],
-  ['Smoothers featured',num(d.smoothers.featured.length,0),'Week of '+d.smoothers.week]]);
+  ['Weeklies featured',num(d.smoothers.featured.length,0),'Week of '+d.smoothers.week]]);
  if(b.top.length)h+=table(['Top board names','Score','Day %'],b.top.slice(0,5).map(r=>[esc(r.symbol),num(r.score,1),r.day_pct==null?'—':num(r.day_pct)+'%']));
  h+=go('morning-brief','Morning Brief');
  const sm=d.smoothers;
- h+='<h3>Smoothers · week of '+esc(sm.week)+'</h3>';
+ h+='<h3>Weeklies · week of '+esc(sm.week)+'</h3>';
  h+=sm.available?(sm.featured.length?table(['Ticker','Dir','Status'],sm.featured.map(x=>[esc(x.ticker),esc(x.direction),esc(x.status||'—')])):'<p class="fine">No featured picks this week yet.</p>'):'<p class="fine">Weekly report unavailable.</p>';
- h+=go('smoothers','Smoothers')+go('ideas','Ideas');
+ h+=go('smoothers','Weeklies')+go('ideas','Ideas');
  const sc=d.scanners;
  h+='<h3>Compass scanners</h3>'+statRow([
   ['Apex signals',num(sc.apex_signals,0),Object.entries(sc.apex_by_state).map(([k,v])=>k.replaceAll('_',' ')+' '+v).join(' · ')||'None'],

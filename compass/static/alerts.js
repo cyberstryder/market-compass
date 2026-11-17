@@ -14,7 +14,7 @@ async function getJSON(url){
 }
 
 function badge(src){
-  const colors={'0DTE':'b-0dte','FLASH':'b-flash','APEX':'b-apex','TAPE':'b-tape','GAP':'b-gap','SMOOTHERS':'b-smooth'};
+  const colors={'0DTE':'b-0dte','FLASH':'b-flash','APEX':'b-apex','TAPE':'b-tape','GAP':'b-gap','WEEKLIES':'b-smooth'};
   return '<span class="src '+(colors[src]||'')+'">'+esc(src)+'</span>';
 }
 
@@ -116,7 +116,7 @@ function renderSmoothers(report){
       (n.target!=null?(' · Target '+n.target):'');
     // Use week start as timestamp (Monday)
     let t=0;try{t=new Date(week+'T12:00:00').getTime()/1000;}catch(e){}
-    items.push({t:t,html:card('Week of '+esc(week),'SMOOTHERS',head,det,null)});
+    items.push({t:t,html:card('Week of '+esc(week),'WEEKLIES',head,det,null)});
   });
   return items;
 }

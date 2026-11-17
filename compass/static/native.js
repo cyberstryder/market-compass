@@ -17,7 +17,7 @@
   const button=$('#native-report-load'),target=$('#native-report-result');button.disabled=true;target.textContent='Calculating native observations…';download();
   try{
    const r=await api('/api/native/report?'+params()),m=r.morning,s=r.smoothers;
-   const cut=Object.entries(m.truncated).filter(([,v])=>v).map(([k])=>'Morning '+k).concat(Object.entries(s.truncated).filter(([,v])=>v).map(([k])=>'Smoothers '+k));
+   const cut=Object.entries(m.truncated).filter(([,v])=>v).map(([k])=>'Morning '+k).concat(Object.entries(s.truncated).filter(([,v])=>v).map(([k])=>'Weeklies '+k));
    target.innerHTML='<p>Calculated '+when(r.at)+'. '+esc(m.basis)+'</p>'+(cut.length?'<p><strong>Truncated: '+esc(cut.join(', '))+'. Narrow filters before comparing cohorts.</strong></p>':'')+
     '<h3>Morning native stock and options</h3>'+table(['Signal','Intake','Coverage','Source fields','Contract / source comparison','Option samples'],m.signals.map(x=>[
       esc(x.ticker)+' · '+when(x.at),esc(x.origins.map(o=>o.origin+' ('+o.packets+' packets; '+o.entry_packets+' entry)').join(', ')||'provenance not retained'),tag(x.coverage.status)+' '+x.coverage.recorded+'/60',differences(x.source_signal)+'<details><summary>Candle comparison: '+esc(x.source_candles.status)+'</summary><pre>'+esc(JSON.stringify(x.source_candles,null,2))+'</pre></details>',esc(x.option.contract?.symbol||'Unavailable')+' · '+tag(x.source_option.status),esc(JSON.stringify(x.option_calculations.sample_counts))]))+
@@ -27,7 +27,7 @@
     '<h3>Expected alerts and previews</h3><p>A preview is not a delivered message. Source delivery times remain separate.</p>'+table(['Event','Native intent','Original delivery'],m.delivery.map(x=>[esc(x.event_id),tag(x.native_status),tag(x.source_status)+(x.source_delivered_at_ms?' · '+when(x.source_delivered_at_ms/1000):'')]))+
     m.delivery.map(x=>'<details><summary>Preview '+esc(x.event_id)+'</summary><pre>'+esc(JSON.stringify(x.preview,null,2))+'</pre></details>').join('')+
     '<h3>Source signals without native counterparts</h3>'+table(['Signal','State'],m.source_only.map(x=>[esc(x.id),tag(x.status)]))+
-    '<h3>Smoothers native week '+esc(s.week)+'</h3><p>Job '+esc(s.job.state||'not started')+'. '+esc(s.basis)+'</p>'+table(['Ticker','Direction / target','Outcome','Premium model','Source comparison'],s.rows.map(x=>[esc(x.native.ticker),esc(x.native.direction)+' / '+num(x.native.target_price),tag(x.native.status),esc(JSON.stringify(x.native.premium_model||{})),differences(x.comparison)+scoreEvidence(x)]))+
+    '<h3>Weeklies native week '+esc(s.week)+'</h3><p>Job '+esc(s.job.state||'not started')+'. '+esc(s.basis)+'</p>'+table(['Ticker','Direction / target','Outcome','Premium model','Source comparison'],s.rows.map(x=>[esc(x.native.ticker),esc(x.native.direction)+' / '+num(x.native.target_price),tag(x.native.status),esc(JSON.stringify(x.native.premium_model||{})),differences(x.comparison)+scoreEvidence(x)]))+
     '<p>Original-only weekly records: '+s.source_only.length+'. '+esc(s.delivery_basis)+'</p>'+
     table(['Weekly event','Native intent','Current format','Original delivery'],s.delivery.map(x=>[esc(x.event_id),tag(x.native_status),tag(x.current_format_matches?'matched':'needs review'),tag(x.source_status)]))+
     s.delivery.map(x=>'<details><summary>Weekly preview '+esc(x.event_id)+'</summary><pre>'+esc(JSON.stringify(x.preview,null,2))+'</pre></details>').join('')+

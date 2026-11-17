@@ -236,7 +236,7 @@ def _smoothers(db, c, now):
         if und:
             st["undelivered"] = len(und)
             st["undelivered_pnl"] = round(sum(und), 2)
-        drill.append(_drill(ticker, "Weekly Smoothers pick on %s." % ticker, st))
+        drill.append(_drill(ticker, "Weeklies pick on %s." % ticker, st))
     # Note: "current-week" is the default view (auto-opened by frontend),
     # not a drill list item. The stock list is for research.
     tot = {"wins": 0, "losses": 0, "pnls": [], "excluded": 0, "unresolved": 0}
@@ -255,7 +255,7 @@ def _smoothers(db, c, now):
         stats["undelivered"] = len(undelivered)
         stats["undelivered_pnl"] = round(sum(undelivered), 2)
     return (_block(
-        "smoothers", "Smoothers",
+        "smoothers", "Weeklies",
         "Weekly option picks on big liquid stocks.",
         "Every Monday morning: one call or put per stock, held for the week.",
         "Win = the stock reached its target by Friday; the win rate counts "
@@ -360,7 +360,7 @@ def _futures(db, c, now):
             continue
         seen.add(tag)
         st = with_gaps(tag, per_method.get(tag, []))
-        drill.append(_drill(name, "Micro futures trades sent to TradersPost (live on Tradeify). Paper-only signals are not shown here.",
+        drill.append(_drill(name, "Micro futures trades TradersPost took while live sends were on (paused since 2026-11-10). Paper-only signals are not shown here.",
                             st))
     # 2026-10-14: Stats include ALL detectors (filter removed).
     # All trades across all detectors count toward totals.
@@ -378,7 +378,7 @@ def _futures(db, c, now):
             for t in v), 2)
     return (_block(
         "futures", "Futures Micros",
-        "Micro futures trades routed live to TradersPost (Tradeify). Only trades TradersPost took are shown; paper-only signals stay in the background. Single position: 2 contracts at the detector target.",
+        "The futures record from when live sends ran: only trades TradersPost took on Tradeify are shown; paper-only signals stay in the background. Live sends are paused (since 2026-11-10) — the futures candidate is now the Futures Sweep shadow, tracked under What we're tracking below.",
         "Intraday, whenever a method's setup triggers. Everything closes by 3:45 PM CT.",
         "Win = the paper trade closed with a profit, in micro dollars after fees.",
         stats, drill), by_day)
@@ -537,30 +537,76 @@ def _swings(db, c, now):
             pass
         per_rule[rule].append((outcome == "win", ret))
     drill = []
+    # The live swings program (2026-11 refresh): the C2 weekly
+    # cross-sectional momentum premium scorer and the Connors RSI(2)
+    # short-dated premium cell, both forward-scoring since 2026-11-03.
+    # Their state rows carry counts (C2) and premium ask-line
+    # aggregates (Connors); a Connors-wide underlying-only shadow is
+    # scored weekly in arrears alongside (no production state row —
+    # it reports through the digest's Shadow Books section).
+    c2 = _shadow_state(db, c, 'swings_c2:state')
+    c2n = c2.get('counts') or {}
+    if c2n:
+        drill.append(_drill(
+            "C2 weekly momentum (premium scorer)",
+            "Weekly 12-1 cross-sectional momentum basket, scored on "
+            "option premium. %d episodes created · %d opened · %d "
+            "closed · %d open · %d data gaps. Last rebalance %s. "
+            "Verdict needs 50 scored premium trades over two "
+            "consecutive 4-week windows." % (
+                c2n.get('created', 0), c2n.get('opened', 0),
+                c2n.get('closed', 0), c2n.get('open', 0),
+                c2n.get('data_gap', 0),
+                c2.get('last_rebalance_date') or '—'),
+            {"tracked": c2n.get('closed', 0), "wins": 0,
+             "win_rate": None, "pnl": None}))
+    cn = _shadow_state(db, c, 'connors_ssc:state')
+    cnn = cn.get('counts') or {}
+    if cnn:
+        ask_lines = cn.get('ask_lines') or {}
+        prem_n = sum((v or {}).get('n', 0) for v in ask_lines.values())
+        prem_net = round(sum((v or {}).get('net', 0.0)
+                             for v in ask_lines.values()), 2)
+        drill.append(_drill(
+            "Connors RSI(2) short-dated calls (premium cell)",
+            "Outright long calls (DTE 5-14, delta 0.30-0.70) on "
+            "RSI(2) dips in uptrends, scored on premium. %d episodes "
+            "created · %d opened · %d closed · %d open · %d data "
+            "gaps. A Connors-wide shadow (full eligible universe, "
+            "underlying-only, no premium) is scored weekly in "
+            "arrears alongside. A FAIL closes the family." % (
+                cnn.get('created', 0), cnn.get('opened', 0),
+                cnn.get('closed', 0), cnn.get('open', 0),
+                cnn.get('data_gap', 0)),
+            {"tracked": prem_n, "wins": 0, "win_rate": None,
+             "pnl": prem_net if prem_n else None}))
     for rule in sorted(per_rule):
         trades = per_rule[rule]
         s = _stats(trades)
         drill.append(_drill(
             rule,
-            "Swing option ideas (1-21 DTE).",
+            "Legacy swing option ideas (1-21 DTE) — generator retired "
+            "2026-11-01; preserved history only.",
             s))
     all_trades = [t for trades in per_rule.values() for t in trades]
     stats = _stats(all_trades)
-    try:
-        from .config import Config
-        swings_enabled = Config().swing_ideas
-    except Exception:
-        swings_enabled = True
-    if swings_enabled:
-        desc = "Bullish and bearish daily setups with fresh options flow."
-        how = "Fresh vendor-classified flow + technical setup align."
-    else:
-        # Retired 2026-11-01: generation off at the flag layer; the
-        # surface renders its preserved history as closed.
-        desc = ("RETIRED 2026-11-01 — idea generation is off (the "
-                "generator was the closed three-rule family). History "
-                "preserved; nothing below is a live signal.")
-        how = "No new ideas are generated. Past ideas remain as recorded."
+    stats["programs"] = {
+        "c2": {"counts": c2n,
+               "last_rebalance": c2.get('last_rebalance_date')},
+        "connors": {"counts": cnn},
+        "connors_wide": {"reporting": "weekly in arrears (digest)"},
+    }
+    # The idea generator (the closed three-rule family) was retired
+    # 2026-11-01; the live program is the two premium scorers above.
+    desc = ("Weekly momentum baskets (C2) and short-dated Connors "
+            "RSI(2) calls, forward-scored on option premium since "
+            "2026-11-03. The old daily idea generator was retired "
+            "2026-11-01; its history is preserved in the last drill.")
+    how = ("C2 rebalances weekly (12-1 cross-sectional momentum); "
+           "Connors buys short-dated calls on RSI(2) dips in "
+           "uptrends. Both are paper/measurement scorers — verdicts "
+           "need 50 scored premium trades over two consecutive "
+           "4-week windows.")
     return (_block(
         "swings", "Swings",
         desc,
@@ -619,6 +665,83 @@ def _gex_vex_split(paper):
         }
 
     return {k: _arm(v) for k, v in arms.items()}
+
+
+def _funnel_publications(db, c, now, days=30, limit=10):
+    """The current book's published trades: setup-study funnel
+    publications (alert events, source 'setup_study') — entries carry
+    payload.status 'option_setup_new', exits 'setup_result'. This is
+    the book that actually publishes (first publications 2026-11-16:
+    QQQ 667C, AMD 510P, HIMS 18P); the legacy scorecard below never
+    surfaced them. Exits are matched to entries by contract symbol
+    (latest entry at or before the exit). Read-only shaping only."""
+    from .store import events
+    try:
+        rows = [dict(r) for r in c.execute(select(events).where(
+            events.c.kind == "alert",
+            events.c.source == "setup_study",
+            events.c.ts >= now - days * 86400,
+        ).order_by(events.c.ts)).mappings()]
+    except Exception:
+        rows = []
+    entries, exits = [], []
+    for r in rows:
+        p = r.get("payload") or {}
+        if not isinstance(p, dict):
+            continue
+        if p.get("status") == "option_setup_new":
+            entries.append((r.get("ts"), p))
+        elif p.get("status") == "setup_result":
+            exits.append((r.get("ts"), p))
+    by_symbol = {}
+    for ts, p in entries:
+        contract = (p.get("publication") or {}).get("contract") or {}
+        sym = contract.get("symbol") or p.get("symbol")
+        if not sym:
+            continue
+        by_symbol.setdefault(sym, []).append({
+            "contract": sym,
+            "underlying": contract.get("underlying") or p.get("underlying"),
+            "strike": contract.get("strike"),
+            "type": contract.get("type"),
+            "expiry": contract.get("expiry") or p.get("expiry"),
+            "entered_at": ts,
+            "entry": _num(p.get("entry")),
+            "status": "open",
+            "exit": None, "exit_reason": None, "exited_at": None,
+            "pnl": None, "outcome": None, "data_gap": False,
+        })
+    closed = 0
+    net = 0.0
+    wins = 0
+    for ts, p in exits:
+        sym = p.get("symbol")
+        cands = [e for e in by_symbol.get(sym, [])
+                 if e["status"] == "open"
+                 and (e["entered_at"] or 0) <= (ts or 0)]
+        if not cands:
+            continue
+        e = cands[-1]
+        e.update(status="closed", exit=_num(p.get("exit")),
+                 exit_reason=p.get("exit_reason"), exited_at=ts,
+                 pnl=_num(p.get("pnl")), outcome=p.get("outcome"),
+                 data_gap=bool(p.get("data_gap")))
+        closed += 1
+        if e["pnl"] is not None:
+            net += e["pnl"]
+            if e["pnl"] > 0:
+                wins += 1
+    all_entries = [e for v in by_symbol.values() for e in v]
+    all_entries.sort(key=lambda e: e["entered_at"] or 0, reverse=True)
+    return {
+        "window_days": days,
+        "published": len(all_entries),
+        "closed": closed,
+        "open": len(all_entries) - closed,
+        "wins": wins,
+        "net": round(net, 2),
+        "recent": all_entries[:limit],
+    }
 
 
 def _0dte(db, c, now):
@@ -750,12 +873,18 @@ def _0dte(db, c, now):
     # the per-trade entry stamp reachable over HTTPS — the weekly check
     # had the sample banked since 2026-10-26 but no read path to it.
     stats["gex_vex_divergence"] = _gex_vex_split(paper)
-    drill = [_drill("SPY morning plan (wall target)",
-                    "Paper buys 1 contract at the ask on confirmation; exits at the wall-aware target, stop, or 2:55pm CT. The default since 2026-10-06.",
-                    _stats(per_rule.get("wall", []))),
-             _drill("SPY morning plan (2R target)",
-                    "Same entry, blind 2R target instead. Paper-traded side by side for comparison.",
-                    _stats(per_rule.get("2r", []))),
+    # The current book's published trades (setup-study funnel). The
+    # SPY morning plan drills that used to lead this list were retired
+    # with the plan itself (2026-10-25) and are gone from the lead.
+    pubs = _funnel_publications(db, c, now)
+    stats["publications"] = pubs
+    drill = [_drill("Published trades (setup funnel)",
+                    "Trades the whole-list funnel actually published (paper, 1 contract): entries post to #0dte (same-day expiry) or #ideas (multi-day); exits are scored on the premium stop/target or the session flatten.",
+                    {"tracked": pubs["closed"], "wins": pubs["wins"],
+                     "win_rate": (round(100.0 * pubs["wins"] / pubs["closed"], 1)
+                                  if pubs["closed"] else None),
+                     "pnl": pubs["net"], "open": pubs["open"],
+                     "published": pubs["published"]}),
              _drill("0DTE scanner",
                     "Same-day-expiry setups on the liquid watchlist. Paper buys 1 contract at the ask; exits at +50%/-50% or 2:55pm CT. "
                     "Scorecard reset 2026-10-21: only trades carrying a Compass evidence snapshot count; earlier trades remain in the trade-by-trade history.",
@@ -784,9 +913,11 @@ def _0dte(db, c, now):
     return (_block(
         "0dte", "0DTE",
         "Short-dated scanner book (DTE 0-7), flattened the same session.",
-        "Whole-list scanner under one gate set (ask cap, spread, movement, "
-        "caps): every name is shadow-scored; a name books only after it "
-        "graduates and is seated. The SPY morning plan was retired 2026-10-25.",
+        "Whole-list scanner under one gate set (spread, movement, caps — "
+        "the premium cap was removed 2026-11-12): every name is "
+        "shadow-scored; a name books only after it graduates and is "
+        "seated. Published trades come from the setup funnel (first "
+        "drill below). The SPY morning plan was retired 2026-10-25.",
         "Win = the 1-contract paper trade exited above its entry, after fees. "
         "Same-session only — flat by 2:55pm CT.",
         stats, drill), by_day)
@@ -816,12 +947,12 @@ def _ts(ts):
 
 
 def _detail_smoothers_this_week(db, c, now):
-    """Show all Smoothers picks for the current week with their live status."""
+    """Show all Weeklies picks for the current week with their live status."""
     # Find the most recent week (max week value)
     week_row = c.execute(select(func.max(smoothers_weekly.c.week))).scalar()
     if not week_row:
         return {"type": "smoothers", "name": "current-week",
-                "title": "This Week's Smoothers Picks",
+                "title": "This Week's Weeklies Picks",
                 "sub": "No picks found.", "items": []}
     rows = list(c.execute(select(
         smoothers_weekly.c.id, smoothers_weekly.c.week,
@@ -1416,16 +1547,15 @@ def detail(db, c, now, dtype, name):
 # ------------------------------------------------------------- tracking
 #
 # "What we're tracking" (Josh, 2026-10-25): the proving grounds behind
-# the headline scoreboards — the live futures book per combo, the 0DTE
-# scanner seat/shadow split, and the shadow iceberg watch. Read-only;
-# every number comes from the same server-side scorecards the APIs
-# serve (live_combo_scorecard, scanner_shadow, iceberg), never from a
-# second, divergent aggregation.
-
-_DETECTOR_LABELS = {
-    "aoi_fade": "AOI Fade", "turtle_soup": "Turtle Soup",
-    "golden_zone": "Golden Zone", "rumers_box": "Rumers Box",
-}
+# the headline scoreboards — the Futures Sweep forward shadow (which
+# replaced the survivors-era live-combo book 2026-11-16), the Stock
+# Sweeps forward shadow, the 0DTE scanner seat/shadow split, and the
+# shadow iceberg watch. Read-only; every number comes from the same
+# server-side state the shadow modules write (futures_sweep:state,
+# stock_sweeps:state, scanner_shadow, iceberg), never from a second,
+# divergent aggregation. The sweep shadows deploy as their own
+# modules; until a module's state row exists its section renders the
+# clean empty state below, never an error.
 
 _FAMILY_LABELS = {
     "session_sweep_reclaim": "Session sweep reclaim",
@@ -1448,28 +1578,110 @@ def _pct1(frac):
     return round(100.0 * frac, 1) if frac is not None else None
 
 
-def _tracking_futures_book(db, c, now):
-    from . import live_combo_scorecard
-    from .ict_paper import PAPER_ONLY_DETECTORS
-    card = live_combo_scorecard.summarize(db, c, now)
-    combos = []
-    for x in card["combos"]:
-        combos.append({
-            "detector": x["detector"],
-            "label": _DETECTOR_LABELS.get(x["detector"], x["detector"]),
-            "symbol": x["symbol"],
-            # Post-prune book (2026-10-24/25; Turtle Soup carved out
-            # 2026-10-26; AOI Fade carved out 2026-10-26 evening —
-            # live TradersPost sends paused): all four are paper-only
-            # carve-outs; no detector is currently mirrored.
-            # ict_paper owns that set.
-            "live": x["detector"] not in PAPER_ONLY_DETECTORS,
-            "trades": x["trades"], "wins": x["wins"],
-            "losses": x["losses"], "win_rate": _pct1(x["win_rate"]),
-            "pf": x["pf"], "net": x["net"], "kill_watch": x["kill_watch"],
-        })
-    return {"window_days": card["window_days"], "combos": combos,
-            "kill_watch": card["kill_watch"]}
+_FUTURES_SWEEP_ROOTS = ['MES', 'MNQ', 'MYM', 'MGC', 'MCL', 'M2K',
+                        'M6E', 'M6A']
+_FUTURES_SWEEP_CONFIGS = ('as_written', 'unlimited')
+# First eligible session for both 2026-11-16 forward shadows, per
+# their frozen registrations (first full session after the builds are
+# production-verified; no backfill).
+_SHADOW_FIRST_SESSION = '2026-11-17'
+
+_STOCK_SWEEPS_BOOK = ['AAPL', 'ALAB', 'AMD', 'BAC', 'BABA', 'BKNG',
+                      'BMY', 'HIMS', 'HON', 'KO', 'MARA', 'NFLX',
+                      'QQQ', 'ROST', 'SBUX', 'SHW', 'SLV', 'SMH',
+                      'SHOP', 'VRT', 'XLK', 'ZSL', 'ZS']
+
+
+def _shadow_state(db, c, key):
+    try:
+        st = db.get(c, key) or {}
+    except Exception:
+        return {}
+    return st if isinstance(st, dict) else {}
+
+
+def _sweep_cfg_stats(raw):
+    s = raw or {}
+    return {"n": s.get("n", 0), "net": s.get("net", 0.0),
+            "pf": s.get("pf"), "stress_net": s.get("stress_net", 0.0)}
+
+
+def _tracking_futures_sweep(db, c, now):
+    """Futures Sweep forward shadow (registration frozen 2026-11-16):
+    Josh's opening-range sweep & reclaim HUD on the 8 micro roots,
+    tracked in two configurations — as-written (one trade/day, the
+    alerting book) and unlimited (re-entries, scored silently). Reads
+    the module's own state row; before the module deploys, the clean
+    empty state (every root zeroed, accrual not yet started)."""
+    st = _shadow_state(db, c, 'futures_sweep:state')
+    per_root = st.get('per_root') or {}
+    roots = []
+    for root in _FUTURES_SWEEP_ROOTS:
+        entry = {"root": root}
+        for cfg_name in _FUTURES_SWEEP_CONFIGS:
+            entry[cfg_name] = _sweep_cfg_stats(
+                (per_root.get(root) or {}).get(cfg_name))
+        roots.append(entry)
+    pooled = {cfg_name: _sweep_cfg_stats((st.get('pooled') or {}).get(cfg_name))
+              for cfg_name in _FUTURES_SWEEP_CONFIGS}
+    counts = st.get('counts') or {}
+    return {
+        "available": bool(st),
+        "first_session": st.get('first_session'),
+        "expected_first_session": _SHADOW_FIRST_SESSION,
+        "weeks": st.get('weeks_since_first_session'),
+        "counts": {"created": counts.get('created', 0),
+                   "open": counts.get('open', 0),
+                   "closed": counts.get('closed', 0)},
+        "roots": roots,
+        "pooled": pooled,
+        # Verdict clock (frozen): per root, per configuration — at
+        # >= 12 weeks AND >= 50 forward trades: net > 0, PF > 1.0,
+        # stress net > 0. A PASS earns a proposal only.
+        "verdict": {"min_weeks": 12, "min_trades_per_root": 50},
+    }
+
+
+def _tracking_stock_sweeps(db, c, now):
+    """Stock Sweeps forward shadow (registration frozen 2026-11-16):
+    the opening-range sweep & reclaim on the 23 names that passed the
+    full-list screen, alerts to #0dte, underlying scoring primary with
+    the nearest-expiry premium leg measured alongside. Reads the
+    module's own state row; clean empty state before it deploys."""
+    st = _shadow_state(db, c, 'stock_sweeps:state')
+    book = sorted((st.get('book') or {}).keys()) or list(_STOCK_SWEEPS_BOOK)
+
+    def _agg(raw):
+        s = raw or {}
+        return {"n": s.get("n", 0), "net": s.get("net", 0.0),
+                "pf": s.get("pf"), "win_rate": s.get("win_rate")}
+
+    per_symbol = []
+    for sym, v in (st.get('per_symbol') or {}).items():
+        v = v or {}
+        per_symbol.append({"symbol": sym, "n": v.get("n", 0),
+                           "net": v.get("net", 0.0)})
+    per_symbol.sort(key=lambda x: (-x["net"], x["symbol"]))
+    counts = st.get('counts') or {}
+    return {
+        "available": bool(st),
+        "first_session": st.get('first_session'),
+        "expected_first_session": _SHADOW_FIRST_SESSION,
+        "book": book,
+        "book_n": len(book),
+        "counts": {"created": counts.get('created', 0),
+                   "open": counts.get('open', 0),
+                   "closed": counts.get('closed', 0),
+                   "data_gap": counts.get('data_gap', 0)},
+        "underlying": _agg(st.get('underlying')),
+        "premium": _agg(st.get('premium')),
+        "per_symbol": per_symbol,
+        "windows": st.get('windows') or [],
+        # Verdict (frozen): after two consecutive 4-week windows —
+        # pooled underlying net > 0 AND PF > 1.0 AND pooled premium
+        # net > 0 in both. First read after 4 weeks.
+        "verdict": {"windows": 2, "window_weeks": 4},
+    }
 
 
 def _seated_stats(db, c, seats):
@@ -1638,7 +1850,8 @@ def tracking(db, c, now):
     Each section fails independently to None so one bad store never
     blanks the page."""
     out = {}
-    for key, fn in (("futures_book", _tracking_futures_book),
+    for key, fn in (("futures_sweep", _tracking_futures_sweep),
+                    ("stock_sweeps", _tracking_stock_sweeps),
                     ("scanner", _tracking_scanner),
                     ("iceberg", _tracking_iceberg)):
         try:

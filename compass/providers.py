@@ -38,12 +38,14 @@ class FeedError(Exception):
 
 def chain_primary_source(cfg):
     """Primary vendor for option chain snapshots (Massive->Alpaca
-    migration, 2026-11-14). OPTION_CHAIN_SOURCE (cfg.chain_source) wins
-    when that vendor is configured; otherwise whichever vendor is
-    configured serves. The default 'massive' preserves the historical
-    Massive-primary policy. Used by Collectors.chains and
-    chain_eod.fetch_chain so every chain read follows one policy."""
-    want=(getattr(cfg,'chain_source','massive') or 'massive').strip().lower()
+    migration, 2026-11-14; Massive cancelled 2026-11-16).
+    OPTION_CHAIN_SOURCE (cfg.chain_source) wins when that vendor is
+    configured; otherwise whichever vendor is configured serves. The
+    default is 'alpaca' (Massive's key is gone from production, so its
+    leg only serves if a key is ever re-provisioned). Used by
+    Collectors.chains and chain_eod.fetch_chain so every chain read
+    follows one policy."""
+    want=(getattr(cfg,'chain_source','alpaca') or 'alpaca').strip().lower()
     massive_ok=bool(getattr(cfg,'massive',''))
     alpaca_ok=bool(getattr(cfg,'alpaca_key','') and getattr(cfg,'alpaca_secret',''))
     if want=='alpaca' and alpaca_ok: return 'alpaca'
@@ -1010,7 +1012,7 @@ class Collectors:
     def option_trade_batch(self,items):
         with self.db.tx() as c:
             for symbol,t,x in items:
-                src=x.get('src','massive') if isinstance(x,dict) else 'massive'
+                src=x.get('src','unknown') if isinstance(x,dict) else 'unknown'
                 key=identity("option_trade",symbol,t,x.get("i"),x.get("q"),x)
                 # Large prints used to be mirrored into 'flow' events here;
                 # that log had no production reader (audited 2026-10-21) —

@@ -2,7 +2,7 @@
 but only the information the compact text renderers currently show.
 
 Pins format_payload(): ENTRY / :target / :close publications render as
-Discord embeds (username 'Smoothers', legacy layout colors) whose field set
+Discord embeds (username 'Weeklies', legacy layout colors) whose field set
 is exactly the current _format_smoothers_entry/_exit field set — no
 legacy-only fields (touch-bar OHLC, entry return-vs-entry, signal numbers,
 footer/disclaimer text). Non-Smoothers and non-entry/exit publications keep
@@ -62,9 +62,9 @@ def fields_of(body):
 
 def test_entry_embed_exact_current_fields():
     body = format_payload(entry_row())
-    assert body['username'] == 'Smoothers' and 'content' not in body
+    assert body['username'] == 'Weeklies' and 'content' not in body
     embed, fields = fields_of(body)
-    assert embed['title'] == 'SMOOTHERS | ENTRY | META 745 CALL · 2026-10-07'
+    assert embed['title'] == 'WEEKLIES | ENTRY | META 745 CALL · 2026-10-07'
     assert embed['color'] == 3066993
     assert fields == [
         ('Underlying Entry', '$744.17 (ref 09:30 CT)'),
@@ -85,7 +85,7 @@ def test_entry_embed_put_color_and_live_underlying():
     body = format_payload(entry_row(contract=put))
     embed, _ = fields_of(body)
     assert embed['color'] == 15158332
-    assert embed['title'] == 'SMOOTHERS | ENTRY | META 745 PUT · 2026-10-07'
+    assert embed['title'] == 'WEEKLIES | ENTRY | META 745 PUT · 2026-10-07'
     body = format_payload(entry_row(live_underlying=dict(status='available', price=750.25, ts=T0 + 2700)))
     embed, fields = fields_of(body)
     assert ('Live Underlying', '$750.25 @ 09:45 CT') in fields
@@ -105,9 +105,9 @@ def test_entry_embed_no_quote_and_missing_optionals():
 
 def test_exit_target_embed_exact_current_fields():
     body = format_payload(exit_row())
-    assert body['username'] == 'Smoothers' and 'content' not in body
+    assert body['username'] == 'Weeklies' and 'content' not in body
     embed, fields = fields_of(body)
-    assert embed['title'] == 'SMOOTHERS | EXIT | COP 127 CALL · 2026-10-09'
+    assert embed['title'] == 'WEEKLIES | EXIT | COP 127 CALL · 2026-10-09'
     assert embed['color'] == 2067276
     assert fields == [
         ('Result', 'Target hit · underlying reached $128.80'),
@@ -169,7 +169,7 @@ def test_delivered_exit_is_embed_end_to_end(db):
     with db.tx() as c:
         assert c.execute(select(outbox.c.status)).scalar_one() == 'delivered'
     body = json.loads(sent[0])
-    assert body['username'] == 'Smoothers' and 'content' not in body
+    assert body['username'] == 'Weeklies' and 'content' not in body
     embed = body['embeds'][0]
-    assert embed['title'] == 'SMOOTHERS | EXIT | CRM 247.5 CALL · 2026-10-30'
+    assert embed['title'] == 'WEEKLIES | EXIT | CRM 247.5 CALL · 2026-10-30'
     assert ('Result', 'Target hit · underlying reached $251.10') in [(f['name'], f['value']) for f in embed['fields']]

@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 CT = ZoneInfo('America/Chicago')
 CATEGORIES = {
     'spy_morning': ('SPY MORNING PLAN', '0DTE morning'),
-    'smoothers': ('SMOOTHERS', 'Weekly swing'),
+    'smoothers': ('WEEKLIES', 'Weekly swing'),
     'futures': ('FUTURES', 'Intraday futures'),
     'morning': ('MORNING ALGO', 'Morning intraday'),
     'end_of_day_algo': ('END OF DAY ALGO', 'End-of-day setup'),

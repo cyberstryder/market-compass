@@ -156,7 +156,7 @@ def test_native_smoothers_uses_same_ledger_and_receipts(db):
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         assert native_deliver_one(db,client,{'smoothers':'https://discord.com/api/webhooks/123/test'},True,NOW)
         assert not native_deliver_one(db,client,{'smoothers':'https://discord.com/api/webhooks/123/test'},True,NOW+1)
-    assert len(sent)==1 and 'SMOOTHERS | ENTRY' in sent[0] and 'Trade ID:' not in sent[0] \
+    assert len(sent)==1 and 'WEEKLIES | ENTRY' in sent[0] and 'Trade ID:' not in sent[0] \
         and 'Event #' not in sent[0]
     with db.tx() as c:
         assert c.execute(select(native_outbox.c.status)).scalar_one()=='delivered'
@@ -181,7 +181,7 @@ def test_smoothers_entry_compact_format():
     # 4-line human format: no internal IDs, quote folded into one line.
     text=format_message(_smoothers_entry_payload())
     lines=text.split('\n')
-    assert lines[0]=='SMOOTHERS | ENTRY | META 745 CALL · 2026-10-07'
+    assert lines[0]=='WEEKLIES | ENTRY | META 745 CALL · 2026-10-07'
     assert lines[1]=='Stock $744.17 (ref 09:30 CT) → target $751.61 · Est return +53%'
     assert lines[2]=='Option $7.80/$7.95 · Strike $745 · 3 DTE · enter by 09:30 CT'
     assert lines[3]=='Exit: Underlying target, otherwise Friday close; no premium stop configured'
@@ -199,7 +199,7 @@ def test_smoothers_entry_compact_format_missing_optionals():
     # Bare native row (no stock fields, no week, no deadline) still renders cleanly.
     text=format_message(_smoothers_entry_payload(entry_price=None,target_price=None,
         est_return_pct=None,week=None,expires_at=None,exit_rule=None))
-    assert 'SMOOTHERS | ENTRY' in text and 'Trade ID:' not in text
+    assert 'WEEKLIES | ENTRY' in text and 'Trade ID:' not in text
     assert 'enter by' not in text and 'DTE' not in text
 
 
@@ -237,7 +237,7 @@ def _smoothers_exit_payload(**over):
 def test_smoothers_exit_target_hit_compact():
     text=format_message(_smoothers_exit_payload())
     lines=text.split('\n')
-    assert lines[0]=='SMOOTHERS | EXIT | COP 127 CALL · 2026-10-09'
+    assert lines[0]=='WEEKLIES | EXIT | COP 127 CALL · 2026-10-09'
     assert lines[1]=='Target hit · underlying reached $128.80'
     assert lines[2].startswith('Option $2.72/$3.30 @ ')
     assert 'modeled entry $2.01 (+50% ref)' in lines[2]
@@ -256,7 +256,7 @@ def test_smoothers_exit_week_close_target_not_hit():
     text=format_message(_smoothers_exit_payload(exit_reason='close',signal_status='LOSS',
         exit_underlying=124.10,quote={}))
     lines=text.split('\n')
-    assert lines[0]=='SMOOTHERS | EXIT | COP 127 CALL · 2026-10-09'
+    assert lines[0]=='WEEKLIES | EXIT | COP 127 CALL · 2026-10-09'
     assert lines[1]=='Week closed · target $128.80 not hit'
     assert lines[2]=='Underlying $124.10 at close'
     assert len(lines)==3 and 'Research signal' not in text

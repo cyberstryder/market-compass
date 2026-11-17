@@ -9,7 +9,7 @@ from .alert_format import OPTION, FUTURE, CT
 VERSION = 'option-alert-ownership-v1'
 LABELS = {'spy_morning':'SPY 0DTE', 'options_0dte':'OPTIONS 0DTE',
           'options_ideas':'OPTIONS INTRADAY', 'swing':'OPTIONS SWING',
-          'smoothers':'SMOOTHERS'}
+          'smoothers':'WEEKLIES'}
 ENTRY = {'option_idea_new','swing_idea_new','option_setup_new','native_option_entry','entered','open'}
 EXIT = {'option_idea_closed','swing_idea_closed','setup_result','native_option_exit','closed'}
 
@@ -399,16 +399,16 @@ def _embed_smoothers_exit(p,pub,o):
 def format_payload(row):
     """Discord webhook body for an admitted publication.
 
-    Smoothers ENTRY/EXIT publications render as rich embeds (username
-    'Smoothers', the pre-consolidation layout) with exactly today's field
-    set; every other publication keeps the compact text body. Used by the
-    native outbox sender only — the legacy delivery path keeps
-    format_message text for all categories.
+    Weeklies (category 'smoothers') ENTRY/EXIT publications render as
+    rich embeds (username 'Weeklies', the pre-consolidation layout) with
+    exactly today's field set; every other publication keeps the compact
+    text body. Used by the native outbox sender only — the legacy
+    delivery path keeps format_message text for all categories.
     """
     p=row['payload']; pub=p['publication']
     if pub.get('category')=='smoothers' and pub.get('event') in ('ENTRY','EXIT'):
         embed=_embed_smoothers_entry(p,pub,pub['contract']) if pub['event']=='ENTRY' else _embed_smoothers_exit(p,pub,pub['contract'])
-        return {'username':'Smoothers','allowed_mentions':{'parse':[]},'embeds':[embed]}
+        return {'username':'Weeklies','allowed_mentions':{'parse':[]},'embeds':[embed]}
     return {'content':format_message(row),'username':'Market Compass','allowed_mentions':{'parse':[]}}
 
 

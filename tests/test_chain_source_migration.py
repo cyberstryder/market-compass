@@ -74,8 +74,11 @@ def test_primary_falls_back_to_whichever_vendor_is_configured():
 
 
 def test_primary_tolerates_missing_flag_attr():
+    # Missing flag attr defaults to 'alpaca' since 2026-11-16
+    # (Massive cancelled; a dropped env var must never resurrect
+    # Massive-primary).
     cfg = SimpleNamespace(massive='k', alpaca_key='k', alpaca_secret='s')
-    assert chain_primary_source(cfg) == 'massive'
+    assert chain_primary_source(cfg) == 'alpaca'
 
 
 # --- Collectors.chains ----------------------------------------------------
@@ -112,12 +115,14 @@ def _stored_source(db, symbol):
         return db.get(c, 'chain:' + symbol, {}).get('source')
 
 
-def test_chains_default_serves_massive_first(db, monkeypatch):
+def test_chains_default_serves_alpaca_first(db, monkeypatch):
+    # Default flipped 2026-11-16 with the Massive cancellation:
+    # Config's chain_source default is now 'alpaca'.
     calls = []
     collector = _make_collector(db, monkeypatch, calls)
     asyncio.run(collector.chains('indices'))
-    assert calls and all(vendor == 'massive' for vendor, _ in calls)
-    assert _stored_source(db, calls[0][1]) == 'massive'
+    assert calls and all(vendor == 'alpaca' for vendor, _ in calls)
+    assert _stored_source(db, calls[0][1]) == 'alpaca'
 
 
 def test_chains_flag_alpaca_serves_alpaca_first(db, monkeypatch):
