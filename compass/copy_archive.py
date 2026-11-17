@@ -11,7 +11,11 @@ Timeout note (Postgres 17+): store.py's pool listener sets
 SET SESSION transaction_timeout = '60s' on every connection. Long COPYs must
 lift it with SET SESSION (not SET LOCAL) directly on the raw DBAPI cursor
 before COPY, then reset to 60s after. SET LOCAL via SQLAlchemy does NOT
-propagate to the raw connection's COPY context.
+propagate to the raw connection's COPY context. Since 2026-11-16 the events
+export disables both timeout caps on its own session ('0'): the previous
+'30min' caps killed quote/2026-W45 mid-COPY at exactly 1,800.0s, and the
+unguarded finally-block reset masked the real error — see
+w45-quote-copy-diagnosis-2026-11-15.
 """
 import gzip
 import hashlib
@@ -255,6 +259,37 @@ def export_month(db, client, bucket, kind, period_start, period_end):
             db.delete(c, lock_key)
 
 
+def _sample_copy_waits(db, pid, rows_so_far):
+    """One pg_stat_activity sample for the COPY backend (diagnostic only).
+
+    Returns a sample dict, or None when sampling is unavailable. Never
+    raises: this observes the export, it must never break it. The
+    wait_event_type / wait_event pair names what the backend is blocked
+    on (IO waits point at scan/IO drag, Lock waits name contention, an
+    active state with no wait means the backend is running on CPU) —
+    the evidence that settles why big-week COPYs stall mid-stream
+    (w45-quote-copy-diagnosis-2026-11-15, sub-cause section).
+    """
+    if pid is None:
+        return None
+    try:
+        with db.engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT state, wait_event_type, wait_event "
+                "FROM pg_stat_activity WHERE pid = :pid"),
+                {'pid': pid}).first()
+        sample = {'at': time.time(), 'rows_so_far': rows_so_far}
+        if row is None:
+            sample.update({'state': 'gone', 'wait_event_type': None,
+                           'wait_event': None})
+        else:
+            sample.update({'state': row[0], 'wait_event_type': row[1],
+                           'wait_event': row[2]})
+        return sample
+    except Exception:
+        return None
+
+
 def _export_month_locked(db, client, bucket, kind, period_start, period_end,
                          period_str, progress_key):
     """Chunk export body; the in-progress lock is held by the caller."""
@@ -279,10 +314,29 @@ def _export_month_locked(db, client, bucket, kind, period_start, period_end,
             with db.engine.connect() as conn:
                 raw = conn.connection.driver_connection
                 with raw.cursor() as cur:
-                    cur.execute("SET SESSION transaction_timeout = '30min'")
-                    cur.execute("SET SESSION statement_timeout = '30min'")
+                    # No timeout cap on the export session (2026-11-16 fix):
+                    # the COPY is one statement in one transaction, so the
+                    # old '30min' caps killed big weeks mid-stream —
+                    # quote/2026-W45 died at exactly 1,800.0s of transaction
+                    # life in every attempt (TransactionTimeout; see
+                    # w45-quote-copy-diagnosis-2026-11-15). '0' disables
+                    # both caps for THIS session only; the finally block
+                    # below restores the pool defaults before the connection
+                    # returns to the pool. No other session's timeouts change.
+                    cur.execute("SET SESSION transaction_timeout = '0'")
+                    cur.execute("SET SESSION statement_timeout = '0'")
                     # Must commit for SET SESSION to take effect (see store.py listener)
                     raw.commit()
+                    # Backend pid for pg_stat_activity wait sampling during
+                    # the COPY (diagnostic only; guarded — failure here just
+                    # disables sampling for this run).
+                    copy_pid = None
+                    try:
+                        cur.execute("SELECT pg_backend_pid()")
+                        pid_row = cur.fetchone()
+                        copy_pid = pid_row[0] if pid_row else None
+                    except Exception:
+                        copy_pid = None
                     try:
                         # psycopg3: cur.copy() yields bytes chunks
                         # Note: No ORDER BY — COPY is faster without sort, and archive
@@ -299,6 +353,7 @@ def _export_month_locked(db, client, bucket, kind, period_start, period_end,
                         except:
                             pass
                         last_heartbeat = time.time()
+                        wait_samples = []
                         with cur.copy(
                             f"COPY (SELECT row_to_json(t) FROM "
                             f"(SELECT id, key, kind, source, symbol, ts, received, payload "
@@ -316,14 +371,27 @@ def _export_month_locked(db, client, bucket, kind, period_start, period_end,
                                 row_count += bytes(chunk).count(b'\n')
                                 # Heartbeat every 30s during long COPY
                                 if time.time() - last_heartbeat > 30:
+                                    # Wait-event sample of the COPY backend
+                                    # (2026-11-16): settles why big-week
+                                    # COPYs stall mid-stream. Diagnostic
+                                    # only — _sample_copy_waits never raises.
+                                    sample = _sample_copy_waits(db, copy_pid,
+                                                                row_count)
+                                    if sample is not None:
+                                        wait_samples.append(sample)
                                     try:
                                         with db.tx() as c:
                                             db.put(c, 'copy-archive:heartbeat', {
                                                 'at': time.time(),
                                                 'chunk': f"{kind}/{period_str}",
                                                 'phase': 'copy_running',
-                                                'rows_so_far': row_count
+                                                'rows_so_far': row_count,
+                                                'wait_samples': wait_samples[-48:]
                                             })
+                                            if wait_samples:
+                                                db.put(c, f'copy-archive:wait-samples:{kind}:{period_str}',
+                                                       {'samples': wait_samples[-480:],
+                                                        'at': time.time()})
                                     except:
                                         pass
                                     last_heartbeat = time.time()
@@ -332,13 +400,24 @@ def _export_month_locked(db, client, bucket, kind, period_start, period_end,
                         # Rollback first to clear any aborted transaction state
                         # (2026-10-13: COPY failures left transaction aborted,
                         # causing "current transaction is aborted" on the reset)
+                        # EVERY cleanup step is guarded (2026-11-16): after a
+                        # server-side kill the connection is dead, the reset
+                        # raises "the connection is lost", and an exception
+                        # raised in finally REPLACES the primary error — that
+                        # masking is why W45's real TransactionTimeout was
+                        # recorded as "connection is lost" in every run
+                        # record. Cleanup failure must never hide the COPY's
+                        # own error, so the reset is best-effort only.
                         try:
                             raw.rollback()
                         except:
                             pass
-                        cur.execute("SET SESSION transaction_timeout = '60s'")
-                        cur.execute("SET SESSION statement_timeout = '30s'")
-                        raw.commit()
+                        try:
+                            cur.execute("SET SESSION transaction_timeout = '60s'")
+                            cur.execute("SET SESSION statement_timeout = '30s'")
+                            raw.commit()
+                        except:
+                            pass
 
     # Size must be read after the temp file is closed/flushed; reading it
     # inside the with-block sees 0 bytes (buffered writes not yet on disk).
