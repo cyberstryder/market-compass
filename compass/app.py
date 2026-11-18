@@ -70,6 +70,8 @@ CRON_TOKEN_PATHS = {
     "/api/admin/chain-open-snapshot",
     "/api/admin/db-maintenance",
     "/api/admin/db-maintenance-log",
+    "/api/admin/db-vacuum-full",
+    "/api/admin/db-vacuum-full-log",
     "/api/admin/events-export",
     "/api/admin/ice-shadow-export",
     "/api/admin/survivor-fill-verdict",
@@ -377,7 +379,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/chain-open-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/events-export","/api/admin/ice-shadow-export","/api/admin/survivor-fill-verdict","/api/admin/daily-backfill","/api/admin/smoothers-rescore","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/chain-open-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/db-vacuum-full","/api/admin/db-vacuum-full-log","/api/admin/events-export","/api/admin/ice-shadow-export","/api/admin/survivor-fill-verdict","/api/admin/daily-backfill","/api/admin/smoothers-rescore","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -1838,6 +1840,151 @@ a{color:#888}</style></head><body>
                 heartbeat = db.get(c, 'db:maintenance:heartbeat', None)
                 last_result = db.get(c, 'db:maintenance:last_result', None)
                 last_error = db.get(c, 'db:maintenance:last_error', None)
+            return {'ok': True,
+                    'running': _maintenance_run_fresh(running, started_at,
+                                                      heartbeat, time.time()),
+                    'running_flag': running, 'started_at': started_at,
+                    'heartbeat': heartbeat,
+                    'log': log, 'last_result': last_result, 'last_error': last_error}
+        except Exception as e:
+            return {'ok': False, 'error': str(e)[:500]}
+
+    @app.post('/api/admin/db-vacuum-full')
+    def db_vacuum_full():
+        """Cron-token-gated disk release: VACUUM (FULL, ANALYZE) events.
+
+        The one heavyweight maintenance operation, kept separate from
+        db-maintenance on purpose: VACUUM FULL rewrites the events
+        table and holds an ACCESS EXCLUSIVE lock for its whole run, so
+        it is triggered only as a deliberate, approved step (Josh's
+        2026-11-18 disk release: return the prune-hollowed events
+        table's dead space to the Postgres volume). Its state keys are
+        its own (db:vacuum-full:*) so it can never collide with the
+        db-maintenance job's flag, log, or heartbeat.
+
+        Runs in background thread. Check /api/admin/db-vacuum-full-log
+        for progress. Token-gated like the other admin cron endpoints
+        (CRON_TOKEN_PATHS), so it can be triggered and monitored
+        without a console session.
+        """
+        import threading
+        import time
+
+        with db.tx() as c:
+            running = db.get(c, 'db:vacuum-full:running', False)
+            started_at = db.get(c, 'db:vacuum-full:started_at', None)
+            heartbeat = db.get(c, 'db:vacuum-full:heartbeat', None)
+            now = time.time()
+            if _maintenance_run_fresh(running, started_at, heartbeat, now):
+                return {'ok': False, 'error': 'VACUUM FULL already running',
+                        'started_at': started_at}
+            # A flag left by a thread a redeploy killed is dead, not
+            # running: fall through and start fresh (its stale log is
+            # replaced below).
+            db.put(c, 'db:vacuum-full:running', True)
+            db.put(c, 'db:vacuum-full:started_at', now)
+            db.put(c, 'db:vacuum-full:heartbeat', now)
+            db.put(c, 'db:vacuum-full:last_error', None)
+            db.put(c, 'db:vacuum-full:log', [f"{time.strftime('%Y-%m-%d %H:%M:%S')}: Started via API"])
+
+        def _run():
+            log = []
+            def log_msg(msg):
+                timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+                log.append(f"{timestamp}: {msg}")
+                try:
+                    with db.tx() as c2:
+                        db.put(c2, 'db:vacuum-full:log', log[-20:])
+                        db.put(c2, 'db:vacuum-full:heartbeat', time.time())
+                except:
+                    pass
+
+            # VACUUM FULL runs silently for a long while on a table
+            # this size; heartbeat every 60s so the running flag is
+            # provably alive (see _maintenance_run_fresh). Without it,
+            # a thread killed by a redeploy leaves a flag that reports
+            # running:true forever.
+            hb_stop = threading.Event()
+            def _heartbeat():
+                while not hb_stop.wait(60):
+                    try:
+                        with db.tx() as c2:
+                            db.put(c2, 'db:vacuum-full:heartbeat', time.time())
+                    except:
+                        pass
+            threading.Thread(target=_heartbeat, daemon=True).start()
+
+            try:
+                log_msg("Background thread started")
+                # Use a raw connection for VACUUM (can't run in a
+                # transaction block). Credentials come from the app's
+                # own parsed engine URL — the source this process
+                # already connects with — not a re-read, scheme-edited
+                # copy of the env string.
+                import psycopg
+                log_msg("Connecting to DB")
+
+                # VACUUM cannot run inside a transaction block, so we
+                # need autocommit mode.
+                conn = psycopg.connect(autocommit=True,
+                                       **_maintenance_connect_kwargs(db.engine.url))
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT pg_total_relation_size('events');")
+                        before_bytes = cur.fetchone()[0]
+                        log_msg(f"events size before: {before_bytes} bytes")
+                        log_msg("Running VACUUM (FULL, ANALYZE) events...")
+                        cur.execute("VACUUM (FULL, ANALYZE) events;")
+                        log_msg("VACUUM FULL complete")
+                        cur.execute("SELECT pg_total_relation_size('events');")
+                        after_bytes = cur.fetchone()[0]
+                        log_msg(f"events size after: {after_bytes} bytes")
+                finally:
+                    conn.close()
+
+                log_msg("DB vacuum-full complete")
+                with db.tx() as c2:
+                    db.put(c2, 'db:vacuum-full:last_result',
+                           {'ok': True, 'before_bytes': before_bytes,
+                            'after_bytes': after_bytes,
+                            'completed_at': time.time()})
+            except Exception as e:
+                err = str(e)[:1000]
+                log_msg(f"FATAL: {err}")
+                try:
+                    with db.tx() as c2:
+                        db.put(c2, 'db:vacuum-full:last_error', err)
+                except:
+                    pass
+            finally:
+                hb_stop.set()
+                log_msg("Thread finishing, clearing running flag")
+                try:
+                    with db.tx() as c2:
+                        db.put(c2, 'db:vacuum-full:running', False)
+                except:
+                    pass
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {'ok': True, 'started': True, 'message': 'DB vacuum-full started in background. Check /api/admin/db-vacuum-full-log for progress.'}
+
+    @app.get('/api/admin/db-vacuum-full-log')
+    def get_db_vacuum_full_log():
+        """Cron-token-gated endpoint to see VACUUM FULL progress.
+
+        `running` is the EFFECTIVE state: the stored flag counts only
+        while the worker's heartbeat is fresh, so a thread a redeploy
+        killed stops reporting running:true — `running_flag` keeps the
+        raw stored value for diagnosis. Mirrors db-maintenance-log.
+        """
+        try:
+            with db.tx() as c:
+                log = db.get(c, 'db:vacuum-full:log', [])
+                running = db.get(c, 'db:vacuum-full:running', False)
+                started_at = db.get(c, 'db:vacuum-full:started_at', None)
+                heartbeat = db.get(c, 'db:vacuum-full:heartbeat', None)
+                last_result = db.get(c, 'db:vacuum-full:last_result', None)
+                last_error = db.get(c, 'db:vacuum-full:last_error', None)
             return {'ok': True,
                     'running': _maintenance_run_fresh(running, started_at,
                                                       heartbeat, time.time()),
