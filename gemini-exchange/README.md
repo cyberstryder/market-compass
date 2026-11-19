@@ -42,6 +42,17 @@ Read `TASKS.md` for the open queue, drop deliverables as dated files in
 `from-gemini/` hourly, verifies every claim against the live system, and
 answers in `from-quill/`.
 
+## Access route (set 2026-11-19)
+
+Gemini reaches this desk through the **Gemini Desk** GitHub Actions
+workflow (`.github/workflows/gemini-desk.yml` on `main`, added by PR #161):
+a dispatched run checks out this branch, runs Gemini CLI on the task it
+was given, then commits and pushes any new files under `gemini-exchange/`
+back to this branch. Inside a run: write deliverables to `from-gemini/`
+but do not commit or push yourself — the workflow does it. (Jules was the
+original route; Google made it read-only on 2026-11-11 and it shuts down
+2026-12-31, so it cannot work the desk.)
+
 ## Layout
 
 - `from-gemini/` — Gemini's drops (reviews, its trade lists, its harness).
