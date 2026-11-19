@@ -42,6 +42,23 @@ forward shadow registration
   the same episode ledger (payload config = 'unlimited'), reported
   alongside per root, and the verdict clock/limbs apply to it
   independently per root.
+- Amendment (2026-11-18, Josh — "unpause both as shadows"): a THIRD
+  configuration, 'mgc_extended' — the identical HUD on MGC ONLY with
+  the entry cutoff extended to 15:45 ET (EXT_CUTOFF), the one cell
+  that passed all five limbs of the cutoff-extension test
+  (files/futures-orb-cutoff-extension-2026-11-16.md: n=209, net
+  +$2,106.84, PF 1.237, placebo 99.5, stress +$1,902.84). Frozen in
+  files/futures-sweep-mgc-extended-forward-shadow-registration-
+  2026-11-18.md. It differs from as_written ONLY in the machine's
+  cutoff (a per-state field) and its root set; it alerts to the
+  futures channel like the as-written book (labeled MGC EXTENDED),
+  is scored in the same ledger (payload config = 'mgc_extended'),
+  carries its own first-session record and verdict clock
+  (>= 12 weeks AND >= 50 forward trades; net > 0, PF > 1.0,
+  stress > 0), and — like everything in this module — places no
+  orders and sends nothing anywhere. Parity gate: the machine at
+  cutoff 945 reproduces the extension harness's MGC@945 trade list
+  exactly (test_futures_sweep.py).
 - Scoring: the gauntlet's accounting — entry fill = signal close
   +/- 1 tick adverse; stop fill = level -/+ 2 ticks adverse; target
   and flatten fills at the level / close exactly; $0.62 per contract
@@ -99,6 +116,12 @@ CUTOFF = 690                   # 11:30 ET: last entry bar starts < 690;
 FEED_HI = 720                  # buckets fed up to 12:00 ET (the first
                                # bucket past the cutoff triggers the
                                # fallback flatten when 11:30 is missing)
+EXT_CUTOFF = 945               # 15:45 ET: the MGC extended
+                               # configuration's entry cutoff (the
+                               # 945 bar is bracket-then-flatten)
+EXT_FEED_HI = 975              # buckets fed up to 16:15 ET for the
+                               # extended configuration (fallback
+                               # trigger past the 15:45 cutoff)
 
 # The frozen book: root -> (tick, tick value) as encoded in the
 # gauntlet panel parquets (panel columns govern). Alias = root + '.c.0'.
@@ -109,10 +132,39 @@ PANEL = {
 }
 ROOTS = ['MES', 'MNQ', 'MYM', 'MGC', 'MCL', 'M2K', 'M6E', 'M6A']
 
-# The amendment's two configurations of the same detector:
-# (config name, one_per_day). 'as_written' is the alerting book;
-# 'unlimited' is scored silently in the same ledger.
+# The configurations of the same detector. CONFIGS keeps the
+# original (name, one_per_day) pairs of the two book-wide
+# configurations; CONFIG_DEFS is the full registry — each def carries
+# its entry cutoff and its root set (None = the whole book).
+# 'as_written' and 'mgc_extended' alert; 'unlimited' is scored
+# silently in the same ledger.
 CONFIGS = (('as_written', True), ('unlimited', False))
+CONFIG_DEFS = (
+    {'name': 'as_written', 'one_per_day': True, 'cutoff': CUTOFF,
+     'roots': None},
+    {'name': 'unlimited', 'one_per_day': False, 'cutoff': CUTOFF,
+     'roots': None},
+    {'name': 'mgc_extended', 'one_per_day': True, 'cutoff': EXT_CUTOFF,
+     'roots': ('MGC',)},
+)
+CONFIG_NAMES = [d['name'] for d in CONFIG_DEFS]
+ALERTING_CONFIGS = ('as_written', 'mgc_extended')
+
+
+def _config_def(name):
+    for d in CONFIG_DEFS:
+        if d['name'] == name:
+            return d
+    return CONFIG_DEFS[0]
+
+
+def _configs_for(root):
+    return [d for d in CONFIG_DEFS
+            if d['roots'] is None or root in d['roots']]
+
+
+def _cutoff_label(cutoff):
+    return '%d:%02d ET' % (cutoff // 60, cutoff % 60)
 
 
 def alias_for(root):
@@ -136,11 +188,11 @@ def stress_of(net, reason, tick, mult):
 # as-written book; False = the amendment's unlimited configuration
 # (the same detector with the daily limit removed).
 
-def new_state(root, one_per_day=True):
+def new_state(root, one_per_day=True, cutoff=CUTOFF):
     tick, tickval = PANEL[root]
     return {
         'root': root, 'tick': tick, 'tickval': tickval,
-        'one_per_day': one_per_day,
+        'one_per_day': one_per_day, 'cutoff': cutoff,
         'fed_any': False, 'cur_date': None, 'bar_index': -1,
         'or_high': None, 'or_low': None,
         'swept_high': False, 'swept_low': False,
@@ -199,6 +251,7 @@ def on_bar(st, date, minute, o, h, l, c):
     bar with TARGET checked before STOP, bracket-then-flatten on the
     cutoff bar, fallback at the last <= cutoff close."""
     events = []
+    cutoff = st.get('cutoff') or CUTOFF
     if st['cur_date'] != date:
         # A new session's first bar resolves any position the prior
         # session left open (its fallback flatten), then resets.
@@ -208,7 +261,7 @@ def on_bar(st, date, minute, o, h, l, c):
     st['bar_index'] += 1
     i = st['bar_index']
 
-    if minute > CUTOFF:
+    if minute > cutoff:
         # The walk never evaluates bars past the cutoff; the first
         # such bar settles an open position at the fallback close.
         if st['pos'] is not None:
@@ -243,7 +296,7 @@ def on_bar(st, date, minute, o, h, l, c):
                 st['trough'] = l if st['trough'] is None \
                     else min(st['trough'], l)
         pos = st['pos']
-        if pos is None and minute < CUTOFF \
+        if pos is None and minute < cutoff \
                 and st['or_high'] is not None \
                 and (not st['one_per_day'] or not st['trade_taken']):
             rng_range = st['or_high'] - st['or_low']
@@ -302,7 +355,7 @@ def on_bar(st, date, minute, o, h, l, c):
                 elif l <= pos['stop']:
                     _close(st, pos, date, i,
                            pos['stop'] - 2 * st['tick'], 'stop', events)
-                elif minute == CUTOFF:
+                elif minute == cutoff:
                     _close(st, pos, date, i, c, 'flatten', events)
             else:
                 if l <= pos['target']:
@@ -311,7 +364,7 @@ def on_bar(st, date, minute, o, h, l, c):
                 elif h >= pos['stop']:
                     _close(st, pos, date, i,
                            pos['stop'] + 2 * st['tick'], 'stop', events)
-                elif minute == CUTOFF:
+                elif minute == cutoff:
                     _close(st, pos, date, i, c, 'flatten', events)
 
     st['prev_high'], st['prev_low'] = h, l
@@ -330,13 +383,13 @@ def liquidate_window_end(st):
     return events[0] if events else None
 
 
-def run_bars(bars, root, one_per_day=True):
+def run_bars(bars, root, one_per_day=True, cutoff=CUTOFF):
     """Batch driver over an ascending bar sequence of dicts with
     date/minute/o/h/l/c — the parity harness shape (the panel day
     lists, bars starting 09:30 through the afternoon; the machine
     itself enforces the window). Returns (trades, events): trades
     are the close events in harness trade-tuple shape."""
-    st = new_state(root, one_per_day)
+    st = new_state(root, one_per_day, cutoff)
     trades, events = [], []
     for b in bars:
         evs = on_bar(st, b['date'], b['minute'], b['o'], b['h'],
@@ -365,16 +418,18 @@ def bucket_start_ts(date_str, minute):
                             tzinfo=NY).timestamp()
 
 
-def aggregate_buckets(bars):
+def aggregate_buckets(bars, feed_hi=FEED_HI):
     """bars: ascending 1-minute dicts {ts,o,h,l,c,v} (poll_bars
     shape). Returns ascending 5-min bucket dicts {date, minute, o,
-    h, l, c, start_ts} for ET start minutes 570..FEED_HI."""
+    h, l, c, start_ts} for ET start minutes 570..feed_hi (the
+    default FEED_HI; a root running the extended configuration
+    passes EXT_FEED_HI so its afternoon buckets exist)."""
     buckets = {}
     for b in bars:
         dt = datetime.fromtimestamp(b['ts'], NY)
         mins = dt.hour * 60 + dt.minute
         bmin = (mins // 5) * 5
-        if not (OR_LO <= bmin <= FEED_HI):
+        if not (OR_LO <= bmin <= feed_hi):
             continue
         key = (dt.date().isoformat(), bmin)
         cur = buckets.get(key)
@@ -434,9 +489,19 @@ def _side_label(side):
     return 'LONG' if side == 1 else 'SHORT'
 
 
+def _shadow_tag(payload):
+    """The header tag distinguishing the alerting configurations:
+    the as-written book has no tag; the extended configuration
+    carries its name so its MGC messages cannot be read as the
+    as-written book's."""
+    return ' — MGC EXTENDED' if payload.get('config') == 'mgc_extended' \
+        else ''
+
+
 def format_entry_message(payload):
     lines = [
-        '🧪 **FUTURES SWEEP SHADOW** — shadow forward test · display only',
+        '🧪 **FUTURES SWEEP SHADOW%s** — shadow forward test · '
+        'display only' % _shadow_tag(payload),
         '🎯 **ENTRY %s** · %s · %s' % (
             _side_label(payload.get('side')), payload.get('symbol', '?'),
             payload.get('date', '?')),
@@ -444,8 +509,9 @@ def format_entry_message(payload):
             _fmt_num(payload.get('entry_fill')),
             _fmt_num(payload.get('entry_close')),
             _fmt_num(payload.get('stop')), _fmt_num(payload.get('target'))),
-        'OR range `$%s – $%s` · 1 contract · 11:30 ET cutoff (frozen)' % (
-            _fmt_num(payload.get('or_low')), _fmt_num(payload.get('or_high'))),
+        'OR range `$%s – $%s` · 1 contract · %s cutoff (frozen)' % (
+            _fmt_num(payload.get('or_low')), _fmt_num(payload.get('or_high')),
+            payload.get('cutoff_label', '11:30 ET')),
         '_Shadow measurement only — no order was placed or sent anywhere._',
     ]
     return {'content': '\n'.join(lines)[:1900],
@@ -459,7 +525,8 @@ def format_close_message(payload):
     icon = '🎯' if payload.get('reason') == 'target' else \
         '🛑' if payload.get('reason') == 'stop' else '⏰'
     lines = [
-        '🧪 **FUTURES SWEEP SHADOW** — shadow forward test · display only',
+        '🧪 **FUTURES SWEEP SHADOW%s** — shadow forward test · '
+        'display only' % _shadow_tag(payload),
         '%s **%s** · %s · %s' % (
             icon, label, payload.get('symbol', '?'),
             payload.get('exit_date', '?')),
@@ -649,6 +716,7 @@ def _open_episode(db, c, root, cfg_name, ev, bar, now, sample):
         'created_at': now, 'updated_at': now,
         'signal': {'date': ev['date'], 'minute': ev['minute'],
                    'bar_ts': bar['start_ts'],
+                   'cutoff': _config_def(cfg_name)['cutoff'],
                    'entry_close': ev['entry_close'],
                    'entry_fill': ev['entry_fill'], 'stop': ev['stop'],
                    'target': ev['target'], 'or_high': ev['or_high'],
@@ -675,8 +743,10 @@ def _alert_payloads_for_event(p, ev, bar):
     """Alert payloads for one machine event on episode p: ENTRY on
     the entry event; TP HIT / SL HIT / CUTOFF on the close event
     (the registration's four alert types)."""
+    cfg_name = p.get('config', 'as_written')
     base = {'episode_id': p['id'], 'symbol': p['symbol'],
-            'bar_ts': bar['start_ts']}
+            'bar_ts': bar['start_ts'], 'config': cfg_name,
+            'cutoff_label': _cutoff_label(_config_def(cfg_name)['cutoff'])}
     if ev['type'] == 'entry':
         return [{**base, 'type': 'entry', 'side': ev['side'],
                  'entry_close': ev['entry_close'],
@@ -698,14 +768,15 @@ def _apply_event(db, c, root, cfg_name, ev, bar, now, sample,
     """Book one machine event: episode create/update + lifecycle
     event + alert payloads (queued by the caller on this same
     transaction). open_eps maps (root, config) -> its open episode
-    payload. Only the as-written book produces alert payloads; the
-    unlimited configuration is booked silently (amendment)."""
+    payload. The alerting configurations (ALERTING_CONFIGS) produce
+    alert payloads; the unlimited configuration is booked silently
+    (amendment)."""
     key = (root, cfg_name)
     if ev['type'] == 'entry':
         p, created = _open_episode(db, c, root, cfg_name, ev, bar,
                                    now, sample)
         open_eps[key] = p
-        if created and cfg_name == 'as_written':
+        if created and cfg_name in ALERTING_CONFIGS:
             alerts_out.extend(_alert_payloads_for_event(p, ev, bar))
         return p
     p = open_eps.get(key)
@@ -739,7 +810,7 @@ def _apply_event(db, c, root, cfg_name, ev, bar, now, sample,
                 'config': cfg_name,
                 'net': ev['net'], 'stress_net': ev['stress_net']})
         _save(db, c, p, now, status='closed')
-        if cfg_name == 'as_written':
+        if cfg_name in ALERTING_CONFIGS:
             alerts_out.extend(_alert_payloads_for_event(p, ev, bar))
         if open_eps.get(key) is p:
             del open_eps[key]
@@ -751,13 +822,15 @@ def _write_state(db, c, now, extra=None):
     """Recompute the summary from the episode table: counts, per-root
     headline + stress stats (book_stats over the same forward
     trades) reported per configuration (as_written alongside
-    unlimited, per the amendment), pooled totals per configuration,
-    and the verdict clock (weeks since the first eligible session;
-    verdict at >= 12 weeks AND >= 50 trades per root per
-    configuration — factual reporting only, no verdict logic)."""
+    unlimited, per the amendment; mgc_extended alongside them since
+    the 2026-11-18 amendment — nonzero only on MGC), pooled totals
+    per configuration, and the verdict clocks (weeks since each
+    configuration's first eligible session; verdict at >= 12 weeks
+    AND >= 50 trades per root per configuration — factual reporting
+    only, no verdict logic)."""
     rows = c.execute(select(episodes.c.payload)).scalars().all()
     counts = {'created': 0, 'open': 0, 'closed': 0}
-    cfg_names = [name for name, _ in CONFIGS]
+    cfg_names = list(CONFIG_NAMES)
     per_root = {}
     for p in rows:
         counts['created'] += 1
@@ -797,6 +870,11 @@ def _write_state(db, c, now, extra=None):
     if first_session:
         weeks = round((_date.today() - _date.fromisoformat(first_session)).days
                       / 7.0, 1)
+    ext_first = old.get('mgc_extended_first_session')
+    ext_weeks = None
+    if ext_first:
+        ext_weeks = round(
+            (_date.today() - _date.fromisoformat(ext_first)).days / 7.0, 1)
     state = {'version': VERSION, 'at': now, 'counts': counts,
              'configs': cfg_names,
              'per_root': roots_out, 'pooled': pooled,
@@ -805,6 +883,8 @@ def _write_state(db, c, now, extra=None):
              'bootstrap_at': old.get('bootstrap_at'),
              'first_session': first_session,
              'weeks_since_first_session': weeks,
+             'mgc_extended_first_session': ext_first,
+             'mgc_extended_weeks_since_first_session': ext_weeks,
              'gap_polls': old.get('gap_polls', 0),
              **(extra or {})}
     db.put(c, STATE_KEY, state)
@@ -813,11 +893,12 @@ def _write_state(db, c, now, extra=None):
 
 def scan(db, c, cfg, now):
     """One live pass over the frozen book: poll each root's newly
-    arrived 1-minute bars, aggregate the completed 5-minute morning
-    buckets, feed them into the root's persisted machines (both
-    configurations), and book the events as episodes + shadow
-    alerts (alerts for the as-written book only). Runs inside the
-    caller's (engine unit) transaction."""
+    arrived 1-minute bars, aggregate the completed 5-minute buckets,
+    feed them into the root's persisted machines (the root's
+    configurations — two book-wide, plus mgc_extended on MGC), and
+    book the events as episodes + shadow alerts (alerts for the
+    alerting configurations only). Runs inside the caller's (engine
+    unit) transaction."""
     if not getattr(cfg, 'futures_sweep', True):
         return {'ran': False, 'reason': 'disabled'}
     alerts_on = bool(getattr(cfg, 'futures_sweep_alerts', True))
@@ -828,18 +909,21 @@ def scan(db, c, cfg, now):
         db.put(c, STATE_KEY, state)
     alerts_out = []
     open_eps = {}
-    fed = entries = closes = 0
-    entries_u = closes_u = 0
+    fed = 0
+    tally = {name: {'entries': 0, 'closes': 0} for name in CONFIG_NAMES}
     for root in ROOTS:
-        # One poll per root feeds both configurations' machines
-        # (same bars, same buckets; the machines differ only in the
-        # one_per_day flag). Their cursors advance in lockstep.
+        # One poll per root feeds the root's configurations'
+        # machines (same bars, same buckets; the machines differ in
+        # the one_per_day flag and the entry cutoff). Their cursors
+        # advance in lockstep.
         machines = []
-        for cfg_name, one_pd in CONFIGS:
+        for d in _configs_for(root):
+            cfg_name = d['name']
             mkey = _machine_key(root, cfg_name)
             m = db.get(c, mkey)
             if m is None:
-                m = {'state': new_state(root, one_pd),
+                m = {'state': new_state(root, d['one_per_day'],
+                                        d['cutoff']),
                      'fed_bucket_ts': None, 'poll_after': None,
                      'bootstrapped_at': now}
             machines.append((cfg_name, mkey, m))
@@ -848,14 +932,17 @@ def scan(db, c, cfg, now):
         if gap:
             state['gap_polls'] = state.get('gap_polls', 0) + 1
             db.put(c, STATE_KEY, state)
-        buckets = aggregate_buckets(bars)
+        feed_hi = max(d['cutoff'] for d in _configs_for(root)) + 30
+        buckets = aggregate_buckets(bars, feed_hi)
         if any(m.get('poll_after') is None for _, _, m in machines):
             # Bootstrap watermark (stock_sweeps / SH-SPY pattern):
             # episodes form only from bars that complete AFTER the
             # shadow is live — the cursor starts at the newest polled
             # bar and history is never fed. The first session whose
             # 09:30 ET bar the shadow itself feeds becomes the first
-            # eligible session.
+            # eligible session. (A newly added configuration's machine
+            # bootstraps the same way on its first pass; the root's
+            # other machines keep their cursors.)
             done = [b for b in buckets if b['start_ts'] + 300 <= now]
             for cfg_name, mkey, m in machines:
                 if m.get('poll_after') is None:
@@ -881,21 +968,22 @@ def scan(db, c, cfg, now):
             for cfg_name, mkey, m in machines:
                 if b['start_ts'] <= (m.get('fed_bucket_ts') or 0):
                     continue
+                if cfg_name == 'mgc_extended' and b['minute'] == OR_LO \
+                        and not state.get('mgc_extended_first_session'):
+                    # The extended configuration's own first eligible
+                    # session: the first session whose 09:30 ET bar
+                    # its machine itself feeds (bootstrap watermark).
+                    state['mgc_extended_first_session'] = b['date']
+                    db.put(c, STATE_KEY, state)
                 evs = on_bar(m['state'], b['date'], b['minute'],
                              b['o'], b['h'], b['l'], b['c'])
                 m['fed_bucket_ts'] = b['start_ts']
                 fed += 1
                 for ev in evs:
                     if ev['type'] == 'entry':
-                        if cfg_name == 'as_written':
-                            entries += 1
-                        else:
-                            entries_u += 1
+                        tally[cfg_name]['entries'] += 1
                     if ev['type'] == 'close':
-                        if cfg_name == 'as_written':
-                            closes += 1
-                        else:
-                            closes_u += 1
+                        tally[cfg_name]['closes'] += 1
                     _apply_event(db, c, root, cfg_name, ev, b, now,
                                  sample, open_eps, alerts_out)
         for cfg_name, mkey, m in machines:
@@ -914,8 +1002,12 @@ def scan(db, c, cfg, now):
     summary = _write_state(db, c, now)
     counts = summary['counts']
     return {'ran': True, 'roots': len(ROOTS), 'fed': fed,
-            'entries': entries, 'closes': closes,
-            'entries_unlimited': entries_u, 'closes_unlimited': closes_u,
+            'entries': tally['as_written']['entries'],
+            'closes': tally['as_written']['closes'],
+            'entries_unlimited': tally['unlimited']['entries'],
+            'closes_unlimited': tally['unlimited']['closes'],
+            'entries_mgc_extended': tally['mgc_extended']['entries'],
+            'closes_mgc_extended': tally['mgc_extended']['closes'],
             'open_episodes': counts['open'],
             'first_session': summary.get('first_session')}
 

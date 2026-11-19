@@ -1580,7 +1580,7 @@ def _pct1(frac):
 
 _FUTURES_SWEEP_ROOTS = ['MES', 'MNQ', 'MYM', 'MGC', 'MCL', 'M2K',
                         'M6E', 'M6A']
-_FUTURES_SWEEP_CONFIGS = ('as_written', 'unlimited')
+_FUTURES_SWEEP_CONFIGS = ('as_written', 'unlimited', 'mgc_extended')
 # First eligible session for both 2026-11-16 forward shadows, per
 # their frozen registrations (first full session after the builds are
 # production-verified; no backfill).
@@ -1610,9 +1610,14 @@ def _tracking_futures_sweep(db, c, now):
     """Futures Sweep forward shadow (registration frozen 2026-11-16):
     Josh's opening-range sweep & reclaim HUD on the 8 micro roots,
     tracked in two configurations — as-written (one trade/day, the
-    alerting book) and unlimited (re-entries, scored silently). Reads
-    the module's own state row; before the module deploys, the clean
-    empty state (every root zeroed, accrual not yet started)."""
+    alerting book) and unlimited (re-entries, scored silently) — plus,
+    since the 2026-11-18 amendment, a third configuration
+    (mgc_extended: MGC only, entry cutoff extended to 15:45 ET) whose
+    per-root bucket rides along in every root entry (nonzero only on
+    MGC) and whose own clock/stats headline the mgc_extended section
+    below. Reads the module's own state row; before the module
+    deploys, the clean empty state (every root zeroed, accrual not
+    yet started)."""
     st = _shadow_state(db, c, 'futures_sweep:state')
     per_root = st.get('per_root') or {}
     roots = []
@@ -1639,6 +1644,20 @@ def _tracking_futures_sweep(db, c, now):
         # >= 12 weeks AND >= 50 forward trades: net > 0, PF > 1.0,
         # stress net > 0. A PASS earns a proposal only.
         "verdict": {"min_weeks": 12, "min_trades_per_root": 50},
+        # Third configuration (registration frozen 2026-11-18):
+        # MGC only, entry cutoff 15:45 ET. Its clock starts at its
+        # own first fed session (the first full session after the
+        # 2026-11-18 build deploys), recorded in the module state;
+        # pooled stats ARE the MGC stats (single-root book). Verdict
+        # at >= 12 weeks AND >= 50 forward trades: net > 0, PF > 1.0,
+        # stress net > 0. A PASS earns a proposal only.
+        "mgc_extended": {
+            "first_session": st.get('mgc_extended_first_session'),
+            "weeks": st.get('mgc_extended_weeks_since_first_session'),
+            "stats": _sweep_cfg_stats(
+                (st.get('pooled') or {}).get('mgc_extended')),
+            "verdict": {"min_weeks": 12, "min_trades": 50},
+        },
     }
 
 

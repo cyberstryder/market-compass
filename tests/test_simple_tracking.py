@@ -111,6 +111,14 @@ def test_tracking_shadow_states(db):
     assert mnq['unlimited']['net'] == -20.0
     mes = [x for x in fs['roots'] if x['root'] == 'MES'][0]
     assert mes['as_written']['n'] == 0  # unseeded roots zero out
+    # The mgc_extended section (2026-11-18): present and zeroed when
+    # the module state predates it; per-root buckets ride along.
+    assert mnq['mgc_extended']['n'] == 0
+    ext = fs['mgc_extended']
+    assert ext['first_session'] is None and ext['weeks'] is None
+    assert ext['stats'] == {'n': 0, 'net': 0.0, 'pf': None,
+                            'stress_net': 0.0}
+    assert ext['verdict'] == {'min_weeks': 12, 'min_trades': 50}
     ss = out['tracking']['stock_sweeps']
     assert ss['available'] is True and ss['book_n'] == 2
     assert ss['underlying']['net'] == 55.0
