@@ -21,8 +21,8 @@ URL = 'https://discord.com/api/webhooks/123456789/abcdef'
 NOW = 1793300000.0
 
 PAPER_FOOTER = '_Paper trade — watch only_'
-LIVE_ENTRY_FOOTER = '🔴 **LIVE** — order queued to TradersPost'
-LIVE_EXIT_FOOTER = '🔴 **LIVE** — closed via TradersPost'
+LIVE_ENTRY_FOOTER = '📊 **TRACKING** — measurement only · no order was placed or sent anywhere'
+LIVE_EXIT_FOOTER = '📊 **TRACKING** — measurement only · no order was placed or sent anywhere'
 
 ENTRY = {'detector': 'survivor_s2', 'strategy': 'survivor_s2_asia_fade',
          'symbol': 'MCL.v.0', 'side': 'LONG', 'entry': 100.0,

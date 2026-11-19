@@ -276,10 +276,12 @@ ICT_SETUP_NAMES = {
     'yt-morning-drive': 'Morning-Drive Fade',
     'yt-icc': 'ICC',
     'yt-rumers-box': 'Rumers Box',
-    'survivor_s1_rvwap_fade': 'Survivor S1 · MNQ RTH-VWAP Fade (live)',
-    'survivor_s2_asia_low_fade': 'Survivor S2 · MCL Asia-Low Fade (live)',
-    'survivor_s3_london_mr60': 'Survivor S3 · MGC London MR60 (live)',
-    'survivor_s4_ny_mr60_fade': 'Survivor S4 · MGC NY MR60 Fade (live)',
+    # 2026-11-19: the '(live)' suffixes are gone — Josh retired the
+    # live book; the survivors are tracking books like everything else.
+    'survivor_s1_rvwap_fade': 'Survivor S1 · MNQ RTH-VWAP Fade',
+    'survivor_s2_asia_low_fade': 'Survivor S2 · MCL Asia-Low Fade',
+    'survivor_s3_london_mr60': 'Survivor S3 · MGC London MR60',
+    'survivor_s4_ny_mr60_fade': 'Survivor S4 · MGC NY MR60 Fade',
 }
 FUTURES_EXIT_REASONS = {
     'stop': 'Stopped out',
@@ -287,6 +289,26 @@ FUTURES_EXIT_REASONS = {
     'session_flatten': 'Session flatten (15:45 CT)',
     'underlying_invalidation': 'Underlying invalidated',
 }
+
+
+def _is_session_flatten(flatten_at):
+    """True when a 'session_flatten' exit is the 15:45 CT session
+    deadline rather than the position's own timed (horizon) exit.
+
+    engine.exits records 'session_flatten' for whichever flatten_at
+    deadline fires; a position with no flatten_at of its own used
+    the session deadline by construction (the exits() default), so
+    None reads True. A flatten_at at any other CT time is the
+    position's timed exit and must not be labeled with the session's
+    15:45 CT (2026-11-17: an S3 exit ~16 min after entry was labeled
+    'Session flatten (15:45 CT)'). Mirrors ict_push._is_session_flatten.
+    """
+    if not flatten_at:
+        return True
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    t = datetime.fromtimestamp(flatten_at, ZoneInfo('America/Chicago'))
+    return (t.hour, t.minute) == (15, 45)
 
 
 def futures_message(row, identity, now):
@@ -326,7 +348,13 @@ def futures_message(row, identity, now):
             setup_line = 'Setup: ' + setup
         else:
             reason = p.get('exit_reason') or p.get('reason') or ''
-            label = FUTURES_EXIT_REASONS.get(reason, clean(reason).replace('_', ' ') or 'Closed')
+            if reason == 'session_flatten' and not _is_session_flatten(
+                    p.get('flatten_at')):
+                # The position's own timed (horizon) exit — not the
+                # 15:45 CT session flatten the map entry names.
+                label = 'Timed exit'
+            else:
+                label = FUTURES_EXIT_REASONS.get(reason, clean(reason).replace('_', ' ') or 'Closed')
             if 'stop' in reason:
                 mark = '❌ '
             elif 'target' in reason:

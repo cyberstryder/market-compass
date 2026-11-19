@@ -250,10 +250,10 @@ def test_refusal_message_is_loud():
          'entry': 4044.1, 'reason': 'no_stop_attached',
          'time_str': 'Wed 07:31 CT'})
     content = msg['content']
-    assert 'LIVE SEND REFUSED' in content
+    assert 'SEND REFUSED' in content and 'LIVE' not in content
     assert 'no_stop_attached' in content
     assert 'NOT sent to TradersPost' in content
-    assert '4044.10' in content and '🔴' in content
+    assert '4044.10' in content and 'TRACKING' in content
 
 
 def test_refusal_delivers_end_to_end(db, cfg):
@@ -283,7 +283,7 @@ def test_refusal_delivers_end_to_end(db, cfg):
     assert ict_push.deliver_one(db, fake, cfg.ict_push_webhook,
                                 now=NOW) is True
     assert len(fake.posts) == 1
-    assert 'LIVE SEND REFUSED' in fake.posts[0][1]['json']['content']
+    assert 'SEND REFUSED' in fake.posts[0][1]['json']['content']
 
 
 # ---------------------------------------------------------------------

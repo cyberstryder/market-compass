@@ -118,6 +118,16 @@ class Config:
     crosstrade_key: str = field(default_factory=lambda: env("CROSSTRADE_KEY",""))
     crosstrade_account: str = field(default_factory=lambda: env("CROSSTRADE_ACCOUNT",""))
     traderspost_enabled: bool = field(default_factory=lambda: env("TRADERSPOST_ENABLED","false")=="true")
+    # Master TradersPost SEND gate (2026-11-19, Josh: nothing goes
+    # live ever again — every book is tracking / measurement only).
+    # Default OFF, including when the env var is absent entirely:
+    # compass/traderspost.py's send functions return before any
+    # network call unless TRADERSPOST_SENDS_ENABLED=true is set
+    # explicitly. The gate sits ABOVE traderspost_enabled and the
+    # per-strategy SURVIVOR_LIVE_STRATEGIES gate (both unchanged
+    # underneath it): detection, booking, queueing and exits are
+    # unaffected — only the transmission is gated.
+    traderspost_sends_enabled: bool = field(default_factory=lambda: env("TRADERSPOST_SENDS_ENABLED","false")=="true")
     traderspost_webhook_url: str = field(default_factory=lambda: env("TRADERSPOST_WEBHOOK_URL",""))
     traderspost_webhook_url_2: str = field(default_factory=lambda: env("TRADERSPOST_WEBHOOK_URL_2",""))
     # Per-strategy live-send gate for the Claude survivors (2026-11-09,

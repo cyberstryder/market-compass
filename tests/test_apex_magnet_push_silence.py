@@ -298,7 +298,11 @@ def test_live_survivor_alert_path_unaffected(db):
     client = Client()
     assert ict_push.deliver_one(db, client, URL, now=NOW) is True
     assert client.calls[0] == ict_push.format_message(rows[0]['payload'])
-    assert 'LIVE' in client.calls[0]['content']
+    # The send-set footer: since 2026-11-19 the survivors are a
+    # tracking book, so the delivered alert carries the TRACKING
+    # footer (it previously pinned the LIVE footer).
+    assert 'TRACKING' in client.calls[0]['content']
+    assert 'LIVE' not in client.calls[0]['content']
 
 
 def test_formatter_untouched_by_gate():

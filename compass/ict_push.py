@@ -51,13 +51,23 @@ WEBHOOK_RE = r'https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+'
 # non-survivor payloads never carry 'fill_state' and render exactly
 # as before.
 FILL_FOOTERS = {
-    'confirmed': '🔴 **LIVE** — closed via TradersPost · fill confirmed at broker',
-    'pending': '🔴 **LIVE** — closed via TradersPost · fill not yet verified',
-    'entry_rejected': '🔴 **LIVE** — entry rejected at broker · NOT FILLED',
-    'entry_no_order': '🔴 **LIVE** — no broker order for entry · NOT FILLED',
-    'exit_rejected': '🔴 **LIVE** — exit rejected at broker · close UNCONFIRMED',
-    'exit_no_order': '🔴 **LIVE** — no broker order for exit · close UNCONFIRMED',
+    'confirmed': '📊 **TRACKING** — closed · fill confirmed at broker',
+    'pending': '📊 **TRACKING** — closed · fill not yet verified',
+    'entry_rejected': '📊 **TRACKING** — entry rejected at broker · NOT FILLED',
+    'entry_no_order': '📊 **TRACKING** — no broker order for entry · NOT FILLED',
+    'exit_rejected': '📊 **TRACKING** — exit rejected at broker · close UNCONFIRMED',
+    'exit_no_order': '📊 **TRACKING** — no broker order for exit · close UNCONFIRMED',
 }
+
+# Tracking footer (2026-11-19): Josh retired the live book — every
+# book is tracking / measurement only, and TradersPost sends are
+# gated OFF in the engine, so no alert may claim a trade is live or
+# was sent anywhere. The send-set branch of the formatters renders
+# this line instead of the old LIVE footers; the wording matches the
+# shadow books' register (futures_sweep / stock_sweeps / mym_tom:
+# "measurement only — no order was placed or sent anywhere").
+TRACKING_FOOTER = ('📊 **TRACKING** — measurement only · '
+                   'no order was placed or sent anywhere')
 
 
 def _fill_state(db, c, trade):
@@ -179,11 +189,13 @@ def _fmt_price(v):
 
 
 def format_message(payload):
-    """Discord-safe alert for an ICT entry (paper or live)."""
+    """Discord-safe alert for an ICT entry (paper or tracking)."""
     side_emoji = '🟢' if payload.get('side') == 'LONG' else '🔴'
-    # The alert fires at booking; for a live send the TradersPost
-    # dispatch completes after the tick commits — hence "queued".
-    footer = ('🔴 **LIVE** — order queued to TradersPost'
+    # The 'live' payload flag marks the send-set books (survivors /
+    # ICT live set). Since 2026-11-19 those books are tracking only
+    # and sends are gated off — the footer says so, in the shadow
+    # books' register. Nothing is queued to TradersPost anymore.
+    footer = (TRACKING_FOOTER
               if payload.get('live') else '_Paper trade — watch only_')
     if payload.get('stop') is None and payload.get('target') is None:
         # Horizon trade: no bracket exists on the record, so there
@@ -216,6 +228,24 @@ def format_message(payload):
             'allowed_mentions': {'parse': []}}
 
 
+def _is_session_flatten(flatten_at):
+    """True when a 'session_flatten' exit is the 15:45 CT session
+    deadline rather than the position's own timed (horizon) exit.
+
+    engine.exits records 'session_flatten' for whichever deadline
+    fires; a position with no flatten_at of its own used the session
+    deadline by construction (the exits() default), so None reads
+    True. A flatten_at at any other CT time is the position's timed
+    exit. Mirrors the label logic in alert_format.futures_message.
+    """
+    if not flatten_at:
+        return True
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    t = datetime.fromtimestamp(flatten_at, ZoneInfo('America/Chicago'))
+    return (t.hour, t.minute) == (15, 45)
+
+
 def maybe_queue_exit(db, c, cfg, trade):
     """Queue a Discord alert for a closed ICT trade.
 
@@ -231,12 +261,20 @@ def maybe_queue_exit(db, c, cfg, trade):
     
     reason = trade.get('exit_reason', 'unknown')
     pnl = trade.get('pnl', 0)
-    
-    # Map exit reasons to display
+
+    # Map exit reasons to display. 'session_flatten' is recorded for
+    # ANY flatten_at deadline — the 15:45 CT session end AND a
+    # position's own timed (horizon) exit — so the label splits on
+    # the position's own deadline: a timed exit must not read as the
+    # session flatten (2026-11-17: an S3 exit ~16 min after entry was
+    # labeled 'Session flatten (15:45 CT)').
     if 'target' in reason:
         emoji, result = '🎯', 'TARGET HIT'
     elif 'stop' in reason:
         emoji, result = '🛑', 'STOPPED OUT'
+    elif reason == 'session_flatten' and not _is_session_flatten(
+            trade.get('flatten_at')):
+        emoji, result = '⏰', 'TIMED EXIT'
     elif 'flatten' in reason:
         emoji, result = '⏰', 'FLATTENED'
     else:
@@ -342,9 +380,9 @@ def maybe_queue_send_refusal(db, c, cfg, trade, reason):
 
 
 def format_refusal_message(payload):
-    """Discord-safe alert for a refused live send (loud by design)."""
+    """Discord-safe alert for a refused send (loud by design)."""
     lines = [
-        '🚨 **LIVE SEND REFUSED** — ICT %s %s %s' % (
+        '🚨 **SEND REFUSED** — ICT %s %s %s' % (
             payload.get('detector', 'unknown').replace('_', ' ').title(),
             payload.get('side', '?'),
             payload.get('symbol', '?')
@@ -353,10 +391,10 @@ def format_refusal_message(payload):
             payload.get('entry', 0),
             payload.get('reason', 'unknown'),
         ),
-        'Paper position booked; no live order placed. · %s' % (
+        'Tracking position booked; no order placed. · %s' % (
             payload.get('time_str', ''),
         ),
-        '🔴 **LIVE** — refused by the send-path safety invariant',
+        '📊 **TRACKING** — refused by the send-path safety invariant',
     ]
     content = '\n'.join(lines)
     return {'content': content[:1900], 'username': 'ICT Signals',
@@ -364,12 +402,12 @@ def format_refusal_message(payload):
 
 
 def format_exit_message(payload):
-    """Discord-safe alert for an ICT exit (paper or live)."""
-    footer = ('🔴 **LIVE** — closed via TradersPost'
+    """Discord-safe alert for an ICT exit (paper or tracking)."""
+    footer = (TRACKING_FOOTER
               if payload.get('live') else '_Paper trade — watch only_')
-    # Fill-verdict label (2026-11-03): a live survivor exit queued
+    # Fill-verdict label (2026-11-03): a send-set survivor exit queued
     # with a fill_state renders its verdict footer instead of the
-    # generic LIVE one. Rows queued before this change carry no
+    # generic tracking one. Rows queued before this change carry no
     # fill_state and keep the generic footer.
     if payload.get('live') and payload.get('fill_state') in FILL_FOOTERS:
         footer = FILL_FOOTERS[payload['fill_state']]

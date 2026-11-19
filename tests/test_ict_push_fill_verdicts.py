@@ -33,7 +33,7 @@ URL = 'https://discord.com/api/webhooks/123456789/abcdef'
 NOW = 1793300000.0
 
 PAPER_FOOTER = '_Paper trade — watch only_'
-LIVE_EXIT_FOOTER = '🔴 **LIVE** — closed via TradersPost'
+LIVE_EXIT_FOOTER = '📊 **TRACKING** — measurement only · no order was placed or sent anywhere'
 
 EXIT = {'type': 'exit', 'detector': 'survivor_s2', 'strategy': '',
         'symbol': 'MCL.v.0', 'side': 'LONG', 'entry': 100.0,

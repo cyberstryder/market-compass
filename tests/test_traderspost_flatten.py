@@ -41,6 +41,7 @@ def test_flatten_payload_cancels_resting_orders(monkeypatch):
     monkeypatch.setattr(urllib.request, 'urlopen', fake_urlopen)
     cfg = types.SimpleNamespace(
         traderspost_enabled=True,
+        traderspost_sends_enabled=True,
         traderspost_webhook_url='https://example.invalid/hook',
         traderspost_webhook_url_2='')
     ok, _msg = traderspost.send_close_signal(cfg, FakeDB(), 'MES.c.0')

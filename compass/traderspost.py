@@ -3,6 +3,14 @@
 Sends ICT detector signals to TradersPost as orders via webhook.
 TradersPost routes to Tradovate (sim or live) with bracket orders.
 
+MASTER GATE (2026-11-19): Josh decided nothing goes live ever again —
+every book is tracking / measurement only. Transmission is OFF by
+default (TRADERSPOST_SENDS_ENABLED, see sends_master_enabled): the
+send functions return before any network call, so the bridge queues
+and records outcomes exactly as before but never posts. The gate
+covers survivor entries, ICT detector entries, and exits/flattens —
+this module's _post_all is the only network egress to TradersPost.
+
 Since 2026-10-18 the live book mirrors paper exactly: ONE position of
 2 contracts at the detector's target per signal (the 2/2/1 scale-out
 was removed, fb54017). There are no follow-up legs.
@@ -113,6 +121,28 @@ CLAIM_PREFIX = 'traderspost_send:'
 def is_enabled(cfg):
     """Check if TradersPost bridge is enabled."""
     return bool(getattr(cfg, 'traderspost_enabled', False))
+
+
+# ---------------------------------------------------------------------------
+# Master send gate (2026-11-19, Josh: nothing goes live ever again —
+# every book is tracking / measurement only). Unless the operator has
+# explicitly set TRADERSPOST_SENDS_ENABLED=true, the send functions
+# below return BEFORE any claim or network call: signals still book
+# and queue exactly as before, but nothing is transmitted. The gate
+# covers every caller of this module (survivor entries, ICT detector
+# entries, and exits/flattens) because _post_all is the only network
+# egress and both send functions check the gate first. The default is
+# OFF for any cfg without the field, so an unset env can never send.
+# ---------------------------------------------------------------------------
+
+SENDS_GATE_MESSAGE = ('TradersPost sends gated OFF '
+                      '(TRADERSPOST_SENDS_ENABLED not enabled — '
+                      'tracking only, nothing transmits)')
+
+
+def sends_master_enabled(cfg):
+    """True only when transmission has been explicitly enabled."""
+    return bool(getattr(cfg, 'traderspost_sends_enabled', False))
 
 
 def _webhook_urls(cfg):
@@ -567,6 +597,9 @@ def send_close_signal(cfg, db, symbol, ref=None):
     call with the same ref never posts twice. Without ref the close
     posts unclaimed (legacy callers).
     """
+    if not sends_master_enabled(cfg):
+        return (False, SENDS_GATE_MESSAGE)
+
     if not is_enabled(cfg):
         return (False, 'TradersPost disabled')
 
@@ -627,6 +660,9 @@ def send_signal(cfg, db, trade):
     detector re-firing the same signal — returns the recorded outcome
     instead of posting a second live order.
     """
+    if not sends_master_enabled(cfg):
+        return (False, SENDS_GATE_MESSAGE)
+
     if not is_enabled(cfg):
         return (False, 'TradersPost disabled')
 
@@ -763,6 +799,16 @@ def dispatch_pending(cfg, db, limit=50):
     pending = [r for r in rows.values()
                if isinstance(r, dict) and r.get('status') == 'queued']
     pending.sort(key=lambda r: r.get('queued_at') or 0)
+    if pending and not sends_master_enabled(cfg):
+        # Master gate OFF (2026-11-19): the rows below are still
+        # processed so their outcomes are recorded on the trades, but
+        # each send call returns at the gate — nothing transmits.
+        # One audit note per dispatch pass keeps the state visible
+        # without a health write per signal.
+        _audit(db, 'skipped',
+               'TradersPost sends gated OFF (tracking only): '
+               '%d queued signal(s) not transmitted' % len(pending[:limit]),
+               at=time.time())
     done = 0
     for row in pending[:limit]:
         ok, msg = False, ''

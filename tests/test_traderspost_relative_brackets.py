@@ -36,6 +36,7 @@ def db(tmp_path):
 def cfg():
     return types.SimpleNamespace(
         traderspost_enabled=True,
+        traderspost_sends_enabled=True,
         traderspost_webhook_url='https://example.invalid/hook-primary',
         traderspost_webhook_url_2='')
 
