@@ -302,6 +302,27 @@ futures_sweep_push_outbox=Table('futures_sweep_push_outbox_v1',meta,
     Column('delivery',JSON,nullable=False))
 Index('futures_sweep_push_pending',futures_sweep_push_outbox.c.status,futures_sweep_push_outbox.c.created)
 
+# MYM Turn-of-Month forward shadow episodes (compass/mym_tom.py;
+# 2026-11-18, Josh): the 2026-11-10 Session Rules gauntlet's one
+# passing cell (MYM TOM) shadow-fired on live 1-minute bars under
+# the frozen registration. Declared here for the same reason as
+# futures_sweep_episodes above: boot-time create_all must see the
+# table before the engine lazily imports the owning module.
+mym_tom_episodes=Table('mym_tom_episodes',meta,
+    Column('id',String(64),primary_key=True),Column('underlying',String(100),nullable=False),
+    Column('status',String(24),nullable=False),Column('created',Float,nullable=False),
+    Column('updated',Float,nullable=False),Column('payload',JSON,nullable=False))
+Index('mym_tom_active',mym_tom_episodes.c.status,mym_tom_episodes.c.created)
+
+# MYM TOM shadow-alert outbox (2026-11-18 registration, display
+# only): the shadow's own narrow queue to the futures Discord
+# channel, following the futures_sweep_push precedent above.
+mym_tom_push_outbox=Table('mym_tom_push_outbox_v1',meta,
+    Column('id',String(64),primary_key=True),Column('status',String(24),nullable=False),
+    Column('created',Float,nullable=False),Column('payload',JSON,nullable=False),
+    Column('delivery',JSON,nullable=False))
+Index('mym_tom_push_pending',mym_tom_push_outbox.c.status,mym_tom_push_outbox.c.created)
+
 spy_checks=Table('spy_plan_checks_v1',meta,
     Column('id',String(64),primary_key=True),Column('version',String(50),nullable=False),
     Column('source_key',String(150),nullable=False),Column('day',String(10),nullable=False),

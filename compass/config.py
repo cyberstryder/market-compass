@@ -277,6 +277,15 @@ class Config:
     # scoring is byte-identical with this flag on or off, and only
     # the as-written book alerts.
     futures_sweep_alerts: bool = field(default_factory=lambda: env("FUTURES_SWEEP_ALERTS_ENABLED","true")=="true")
+    # MYM Turn-of-Month forward shadow (2026-11-18, Josh): paper /
+    # measurement only — shadow-fires the frozen MYM TOM cell (the
+    # 2026-11-10 Session Rules gauntlet's one passing cell) on live
+    # 1-minute bars as an engine pre-ICT unit; see compass/mym_tom.py.
+    mym_tom: bool = field(default_factory=lambda: env("MYM_TOM_ENABLED","true")=="true")
+    # MYM TOM display-only shadow alerts to the futures Discord
+    # channel (2026-11-18 registration): rendering only — scoring is
+    # byte-identical with this flag on or off.
+    mym_tom_alerts: bool = field(default_factory=lambda: env("MYM_TOM_ALERTS_ENABLED","true")=="true")
     # Overnight Morning-Change (OMC) forward scorer (2026-11-03, Josh):
     # paper/measurement only — scores the frozen overnight/morning
     # registration from the chain_eod + chain_open archives in its own

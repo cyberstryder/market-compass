@@ -1661,6 +1661,37 @@ def _tracking_futures_sweep(db, c, now):
     }
 
 
+def _tracking_mym_tom(db, c, now):
+    """MYM Turn-of-Month forward shadow (registration frozen
+    2026-11-18): the 2026-11-10 Session Rules gauntlet's one passing
+    cell — long 1 MYM over the last trading day and first three
+    trading days of each month, session open to the 15:00 exit, house
+    fills. Reads the module's own state row; before the module
+    deploys, the clean empty state (zeroed, accrual not started)."""
+    st = _shadow_state(db, c, 'mym_tom:state')
+    stats = st.get('stats') or {}
+    counts = st.get('counts') or {}
+    return {
+        "available": bool(st),
+        "first_session": st.get('first_session'),
+        # No fixed expected date: the first eligible session is the
+        # first TOM session after the shadow's production deploy
+        # (registration), recorded in first_session once observed.
+        "expected_first_session": None,
+        "weeks": st.get('weeks_since_first_session'),
+        "counts": {"created": counts.get('created', 0),
+                   "open": counts.get('open', 0),
+                   "closed": counts.get('closed', 0)},
+        "n": stats.get("n", 0), "net": stats.get("net", 0.0),
+        "pf": stats.get("pf"), "stress_net": stats.get("stress_net", 0.0),
+        # Verdict clock (frozen): first read at >= 12 forward trades;
+        # verdict at >= 50 forward trades AND >= 12 weeks: net > 0,
+        # PF > 1.0, stress net > 0. A PASS earns a proposal only.
+        "verdict": {"min_trades": 50, "min_weeks": 12,
+                    "first_read_trades": 12},
+    }
+
+
 def _tracking_stock_sweeps(db, c, now):
     """Stock Sweeps forward shadow (registration frozen 2026-11-16):
     the opening-range sweep & reclaim on the 23 names that passed the
@@ -1870,6 +1901,7 @@ def tracking(db, c, now):
     blanks the page."""
     out = {}
     for key, fn in (("futures_sweep", _tracking_futures_sweep),
+                    ("mym_tom", _tracking_mym_tom),
                     ("stock_sweeps", _tracking_stock_sweeps),
                     ("scanner", _tracking_scanner),
                     ("iceberg", _tracking_iceberg)):
