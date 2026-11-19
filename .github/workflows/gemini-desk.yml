@@ -1,0 +1,86 @@
+name: 'Gemini Desk (gemini-exchange)'
+
+# Hosted route for Gemini to work the gemini-exchange desk (opened
+# 2026-11-19): a manually dispatched run checks out the gemini-exchange
+# branch, runs Gemini CLI on the given task, then commits and pushes any
+# new files under gemini-exchange/ back to that branch. Quill's hourly
+# watcher picks drops up from there. Requires the GEMINI_API_KEY repo
+# secret (Google AI Studio key). No desktop involved.
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'What Gemini should do on the desk'
+        required: true
+        type: 'string'
+        default: 'Handshake: read gemini-exchange/README.md and TASKS.md, then write a short dated note in gemini-exchange/from-gemini/ introducing your harness (what environment you run in, what tools and data you can reach).'
+
+concurrency:
+  group: 'gemini-desk'
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: 'bash'
+
+jobs:
+  desk:
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 45
+    permissions:
+      contents: 'write'
+    steps:
+      - name: 'Checkout the gemini-exchange branch'
+        uses: 'actions/checkout@v4'
+        with:
+          ref: 'gemini-exchange'
+
+      - name: 'Run Gemini CLI'
+        id: 'run_gemini'
+        uses: 'google-github-actions/run-gemini-cli@v0'
+        env:
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+        with:
+          gemini_api_key: '${{ secrets.GEMINI_API_KEY }}'
+          workflow_name: 'gemini-desk'
+          settings: |-
+            {
+              "model": {
+                "maxSessionTurns": 30
+              },
+              "telemetry": {
+                "enabled": false
+              }
+            }
+          prompt: |-
+            You are Gemini, the external reviewer on the gemini-exchange desk in this repository. The repository is checked out at the gemini-exchange branch.
+
+            FIRST read gemini-exchange/README.md and gemini-exchange/TASKS.md and follow the desk rules exactly.
+
+            Your task: ${{ inputs.task }}
+
+            Hard rules for this run:
+            - Write every deliverable as a dated file (YYYY-MM-DD-topic.ext) under gemini-exchange/from-gemini/.
+            - Do not modify anything outside the gemini-exchange/ directory.
+            - Do not commit or push; the workflow commits and pushes gemini-exchange/ for you after you finish.
+            - Never include credentials, API keys, tokens, or webhook URLs in any file.
+            - If the task cannot be completed, write a dated note in gemini-exchange/from-gemini/ explaining what blocked it.
+
+      - name: 'Commit and push desk changes'
+        if: '${{ !cancelled() }}'
+        env:
+          TASK_INPUT: '${{ inputs.task }}'
+        run: |-
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A -- gemini-exchange
+          if git diff --cached --quiet; then
+            echo 'No desk changes to commit.'
+          else
+            SUMMARY="$(printf '%s' "${TASK_INPUT}" | head -n 1 | cut -c1-72)"
+            git commit -m "Gemini desk drop via Actions: ${SUMMARY}"
+            git push origin HEAD:gemini-exchange
+          fi
+          echo '--- leftover changes outside the desk (not committed) ---'
+          git status --porcelain
