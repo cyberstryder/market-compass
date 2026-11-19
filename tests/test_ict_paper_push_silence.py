@@ -35,8 +35,8 @@ from compass.store import Store, discord_jobs, events, push_outbox
 URL = 'https://discord.com/api/webhooks/123456789/abcdef'
 NOW = 1793300000.0
 
-LIVE_ENTRY_FOOTER = '🔴 **LIVE** — order queued to TradersPost'
-CONFIRMED_FOOTER = '🔴 **LIVE** — closed via TradersPost · fill confirmed at broker'
+LIVE_ENTRY_FOOTER = '📊 **TRACKING** — measurement only · no order was placed or sent anywhere'
+CONFIRMED_FOOTER = '📊 **TRACKING** — closed · fill confirmed at broker'
 PAPER_FOOTER = '_Paper trade — watch only_'
 
 

@@ -39,9 +39,8 @@ URL = 'https://discord.com/api/webhooks/123456789/abcdef'
 S2_NOW = 1793787945.0
 S3_NOW = 1793798999.0
 
-LIVE_ENTRY_FOOTER = '🔴 **LIVE** — order queued to TradersPost'
-PENDING_EXIT_FOOTER = ('🔴 **LIVE** — closed via TradersPost · '
-                       'fill not yet verified')
+LIVE_ENTRY_FOOTER = '📊 **TRACKING** — measurement only · no order was placed or sent anywhere'
+PENDING_EXIT_FOOTER = '📊 **TRACKING** — closed · fill not yet verified'
 
 
 def cfg(unified=False):
