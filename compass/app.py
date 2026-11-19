@@ -240,6 +240,13 @@ def create_app(cfg=None):
                 # drainer runs here.
                 from .futures_sweep import run_push as run_futures_sweep_push
                 spawn(lambda: run_futures_sweep_push(db,cfg),'run_futures_sweep_push')
+            if cfg.mym_tom:
+                # MYM Turn-of-Month forward shadow (2026-11-18): the
+                # scorer itself is an engine pre-ICT unit
+                # (compass/engine.py); only its display-only alert
+                # drainer runs here.
+                from .mym_tom import run_push as run_mym_tom_push
+                spawn(lambda: run_mym_tom_push(db,cfg),'run_mym_tom_push')
             if cfg.overnight_omc:
                 from .overnight_omc import OvernightOMC
                 spawn(lambda: OvernightOMC(db,cfg).run(),'OvernightOMC')
