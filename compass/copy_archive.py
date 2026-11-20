@@ -46,7 +46,11 @@ RETENTION = {
     'flow': 180,
     'option_trade': 180,
     'exposure': 90,
-    'bar': 365,
+    # Bars/audit retention cut 365d -> 180d by Josh's approval 2026-11-19
+    # (deeper prune ahead of the disk-release VACUUM FULL). Quotes were
+    # already 7d here since 2026-10-21; chains 30d, vendor 90d, flow 180d
+    # unchanged. Mapping stays 365d (not part of the approved change).
+    'bar': 180,
     'mapping': 365,
     'alert_delivery': 30,
 }
@@ -82,7 +86,9 @@ def _retention_days(kind):
     if kind in RETENTION:
         return RETENTION[kind]
     if kind in AUDIT_KINDS:
-        return 365
+        # Audit trail: 365d -> 180d, Josh's approval 2026-11-19 (see
+        # RETENTION note above).
+        return 180
     return None
 
 
