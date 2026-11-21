@@ -259,8 +259,8 @@ def _smoothers(db, c, now):
         "Weekly option picks on big liquid stocks.",
         "Every Monday morning: one call or put per stock, held for the week.",
         "Win = the stock reached its target by Friday; the win rate counts "
-        "every delivered pick that resolved WIN or LOSS. Paper P&L = the "
-        "paper option estimate (bought at ask, sold at bid, minus fees) over "
+        "every delivered pick that resolved WIN or LOSS. Tracked P&L = the "
+        "tracked option estimate (bought at ask, sold at bid, minus fees) over "
         "the measured subset: resolved picks with usable entry and exit "
         "quotes. Resolved picks without a usable exit quote (including "
         "unresolved weeks) are tallied as 'excluded', never silently "
@@ -360,7 +360,7 @@ def _futures(db, c, now):
             continue
         seen.add(tag)
         st = with_gaps(tag, per_method.get(tag, []))
-        drill.append(_drill(name, "Micro futures trades TradersPost took while live sends were on (paused since 2026-11-10). Paper-only signals are not shown here.",
+        drill.append(_drill(name, "Micro futures trades TradersPost took while sends ran (Oct–Nov 2026). Tracked-only signals are not shown here.",
                             st))
     # 2026-10-14: Stats include ALL detectors (filter removed).
     # All trades across all detectors count toward totals.
@@ -378,9 +378,9 @@ def _futures(db, c, now):
             for t in v), 2)
     return (_block(
         "futures", "Futures Micros",
-        "The futures record from when live sends ran: only trades TradersPost took on Tradeify are shown; paper-only signals stay in the background. Live sends are paused (since 2026-11-10) — the futures candidate is now the Futures Sweep shadow, tracked under What we're tracking below.",
+        "The historical futures record from when sends ran: only trades TradersPost took on Tradeify are shown; tracked-only signals stay in the background. Sends are off for good — gated off in code since 2026-11-19, under the one-category decision that everything is tracking. Current futures tracking — the Futures Sweep books and the MYM turn-of-month book — is under What we're tracking below.",
         "Intraday, whenever a method's setup triggers. Everything closes by 3:45 PM CT.",
-        "Win = the paper trade closed with a profit, in micro dollars after fees.",
+        "Win = the trade closed with a profit, in micro dollars after fees.",
         stats, drill), by_day)
 
 
@@ -439,8 +439,8 @@ def _flow_pulse(db, c, now):
     return (_block(
         "flow_pulse", "Flow Pulse",
         "Unusually large directional option flow ($1M+ in 30 minutes).",
-        "Whenever big money prints. Each pulse paper-tracks one suggested contract for two weeks.",
-        "Win = the paper contract was worth more at the two-week exit than at entry, after fees.",
+        "Whenever big money prints. Each pulse tracks one suggested contract for two weeks.",
+        "Win = the tracked contract was worth more at the two-week exit than at entry, after fees.",
         stats, drill), by_day)
 
 
@@ -501,7 +501,7 @@ def _tape(db, c, now):
         "High-conviction option flow from TraderMatrix (score 95+).",
         "Whenever unusual flow prints intraday. Tracked silently via pick checker.",
         "Win = price hit the target before the invalidation level, within five sessions. "
-        "Paper-traded at 100 shares for dollar P&L.",
+        "Tracked at 100 shares for dollar P&L.",
         stats, drill), by_day)
 
 
@@ -572,7 +572,7 @@ def _swings(db, c, now):
             "Outright long calls (DTE 5-14, delta 0.30-0.70) on "
             "RSI(2) dips in uptrends, scored on premium. %d episodes "
             "created · %d opened · %d closed · %d open · %d data "
-            "gaps. A Connors-wide shadow (full eligible universe, "
+            "gaps. A Connors-wide tracking book (full eligible universe, "
             "underlying-only, no premium) is scored weekly in "
             "arrears alongside. A FAIL closes the family." % (
                 cnn.get('created', 0), cnn.get('opened', 0),
@@ -604,14 +604,14 @@ def _swings(db, c, now):
             "2026-11-01; its history is preserved in the last drill.")
     how = ("C2 rebalances weekly (12-1 cross-sectional momentum); "
            "Connors buys short-dated calls on RSI(2) dips in "
-           "uptrends. Both are paper/measurement scorers — verdicts "
+           "uptrends. Both are measurement scorers — verdicts "
            "need 50 scored premium trades over two consecutive "
            "4-week windows.")
     return (_block(
         "swings", "Swings",
         desc,
         how,
-        "Win = target hit before stop/invalidation. Paper-tracked, 1 contract.",
+        "Win = target hit before stop/invalidation. Tracked, 1 contract.",
         stats, drill), by_day)
 
 
@@ -879,14 +879,14 @@ def _0dte(db, c, now):
     pubs = _funnel_publications(db, c, now)
     stats["publications"] = pubs
     drill = [_drill("Published trades (setup funnel)",
-                    "Trades the whole-list funnel actually published (paper, 1 contract): entries post to #0dte (same-day expiry) or #ideas (multi-day); exits are scored on the premium stop/target or the session flatten.",
+                    "Trades the whole-list funnel actually published (tracked, 1 contract): entries post to #0dte (same-day expiry) or #ideas (multi-day); exits are scored on the premium stop/target or the session flatten.",
                     {"tracked": pubs["closed"], "wins": pubs["wins"],
                      "win_rate": (round(100.0 * pubs["wins"] / pubs["closed"], 1)
                                   if pubs["closed"] else None),
                      "pnl": pubs["net"], "open": pubs["open"],
                      "published": pubs["published"]}),
              _drill("0DTE scanner",
-                    "Same-day-expiry setups on the liquid watchlist. Paper buys 1 contract at the ask; exits at +50%/-50% or 2:55pm CT. "
+                    "Same-day-expiry setups on the liquid watchlist. Tracked at 1 contract, bought at the ask; exits at +50%/-50% or 2:55pm CT. "
                     "Scorecard reset 2026-10-21: only trades carrying a Compass evidence snapshot count; earlier trades remain in the trade-by-trade history.",
                     _stats(per_kind.get("scanner", []))),
              _drill("Stock scalp (all)",
@@ -903,22 +903,23 @@ def _0dte(db, c, now):
                 sym = underlying[6:]
                 drill.append(_drill(
                     f"Scalp {sym}",
-                    f"Gap/spike fade paper trades on {sym}. 100 shares, net of costs.",
+                    f"Gap/spike fade tracked trades on {sym}. 100 shares, net of costs.",
                     _stats(trades)))
             else:
                 drill.append(_drill(
                     f"0DTE {underlying}",
-                    f"Scanner paper trades on {underlying}. 1 contract at ask; +50%/-50% or 2:55pm CT.",
+                    f"Scanner tracked trades on {underlying}. 1 contract at ask; +50%/-50% or 2:55pm CT.",
                     _stats(trades)))
     return (_block(
         "0dte", "0DTE",
         "Short-dated scanner book (DTE 0-7), flattened the same session.",
         "Whole-list scanner under one gate set (spread, movement, caps — "
         "the premium cap was removed 2026-11-12): every name is "
-        "shadow-scored; a name books only after it graduates and is "
-        "seated. Published trades come from the setup funnel (first "
+        "tracked and scored; a name joins the published book only "
+        "after at least 20 scored premium trades at PF ≥ 1.2, flagged "
+        "to Josh. Published trades come from the setup funnel (first "
         "drill below). The SPY morning plan was retired 2026-10-25.",
-        "Win = the 1-contract paper trade exited above its entry, after fees. "
+        "Win = the 1-contract tracked trade exited above its entry, after fees. "
         "Same-session only — flat by 2:55pm CT.",
         stats, drill), by_day)
 
@@ -1007,7 +1008,7 @@ def _detail_smoothers_this_week(db, c, now):
         wl = week_row
     return {"type": "smoothers", "name": "current-week",
             "title": "This Week's Picks — Week of %s" % wl,
-            "sub": "%d picks, live status. Newest signals first." % len(items),
+            "sub": "%d picks, current status. Newest signals first." % len(items),
             "items": items}
 
 
@@ -1182,7 +1183,7 @@ def _detail_futures(db, c, now, name):
     items.sort(key=lambda i: i.pop("_sort"), reverse=True)
     return {"type": "futures", "name": name,
             "title": "%s — trade by trade" % name,
-            "sub": "Every paper trade this detector has taken, newest first. Micros, flat by 3:45pm CT. 2/2/1 legs grouped.",
+            "sub": "Every tracked trade this detector has taken, newest first. Micros, flat by 3:45pm CT. 2/2/1 legs grouped.",
             "items": items[:100]}
 
 
@@ -1246,7 +1247,7 @@ def _detail_flow(db, c, now, name):
                  ["Opposing premium", _big(opp)],
                  ["Prints", str(p.get("print_count") or "—")],
                  ["Suggested contract", contract_txt],
-                 ["Paper track", track_txt]]
+                 ["Track", track_txt]]
         sub = _ts(fired)
         if prem:
             sub += " · %s directional" % _big(prem)
@@ -1263,7 +1264,7 @@ def _detail_flow(db, c, now, name):
     items.sort(key=lambda i: i.pop("_sort"), reverse=True)
     return {"type": "flow_pulse", "name": name,
             "title": "%s — pulse by pulse" % name,
-            "sub": "Every big-money pulse caught on the %s side, newest first. Each opens a two-week paper track when a contract can be suggested." % direction,
+            "sub": "Every big-money pulse caught on the %s side, newest first. Each opens a two-week track when a contract can be suggested." % direction,
             "items": items[:100]}
 
 
@@ -1361,10 +1362,10 @@ def _detail_0dte(db, c, now, name):
         items.sort(key=lambda i: i.pop("_sort"), reverse=True)
         if filter_sym:
             title = f"Scalp {filter_sym} — trade by trade"
-            sub = f"{filter_sym} gap fade and spike fade paper trades, newest first."
+            sub = f"{filter_sym} gap fade and spike fade tracked trades, newest first."
         else:
             title = "Stock scalp — trade by trade"
-            sub = "Gap fade and spike fade paper trades on all symbols, newest first."
+            sub = "Gap fade and spike fade tracked trades on all symbols, newest first."
     elif name.startswith("0DTE ") and name != "0DTE scanner":
         # Per-underlying scanner drill-down (e.g., "0DTE MU", "0DTE AAPL")
         underlying = name[5:]  # Strip "0DTE " prefix
@@ -1411,7 +1412,7 @@ def _detail_0dte(db, c, now, name):
             })
         items.sort(key=lambda i: i.pop("_sort"), reverse=True)
         title = f"0DTE {underlying} — trade by trade"
-        sub = f"Scanner paper trades on {underlying}, newest first."
+        sub = f"Scanner tracked trades on {underlying}, newest first."
     elif name == "SPY morning plan":
         from .day_digest import _plan_outcome
         try:

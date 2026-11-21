@@ -14,7 +14,7 @@
   <header class="intro">
     <h1>Trading, in <em>plain English.</em></h1>
     <p>The whole operation boiled down to one page: what each system watches, how it's doing, and where the money went — day by day. No jargon wall, no 40 panels.</p>
-    <span class="live-note"><i></i> Paper results — no real money, no broker fills · <a href="/detailed" class="detlink">detailed view →</a></span>
+    <span class="live-note"><i></i> Tracked results — measurement only, no orders are sent · <a href="/detailed" class="detlink">detailed view →</a></span>
   </header>
 
   <!-- TODAY AT A GLANCE -->
@@ -48,7 +48,7 @@
           <div><dt>Then</dt><dd>Real-time alert — 30-min entry window</dd></div>
         </dl>
         <span class="cta">Drill down — ticker by ticker ↓</span>
-        <div class="result"><span id="res-smoothers">Loading…</span><span class="pill live">Live</span></div>
+        <div class="result"><span id="res-smoothers">Loading…</span><span class="pill live">Tracking</span></div>
       </article>
 
       <article class="card pick" data-drill="futures" tabindex="0" role="button" aria-pressed="false" aria-label="Drill into Futures, method by method">
@@ -59,11 +59,11 @@
         <p><b>Trades tiny futures contracts (MNQ, MES, gold, silver) using intraday price patterns.</b> Everything is forced flat by 3:45pm CT — nothing held overnight.</p>
         <dl class="rows">
           <div><dt>Watches</dt><dd>Micros only — never full-size contracts</dd></div>
-          <div><dt>Fires when</dt><dd>The opening range is swept and reclaimed (the Futures Sweep shadow, 8 micro roots)</dd></div>
-          <div><dt>Then</dt><dd>Shadow-scored with alerts — no orders sent; proof before real money</dd></div>
+          <div><dt>Fires when</dt><dd>The opening range is swept and reclaimed (the Futures Sweep tracking book, 8 micro roots)</dd></div>
+          <div><dt>Then</dt><dd>Tracked and scored, with alerts — no orders sent, measurement only</dd></div>
         </dl>
         <span class="cta">Drill down — method by method ↓</span>
-        <div class="result"><span id="res-futures">Loading…</span><span class="pill test">Paper / proving</span></div>
+        <div class="result"><span id="res-futures">Loading…</span><span class="pill test">Tracking</span></div>
       </article>
 
       <article class="card pick" data-drill="zeroDte" tabindex="0" role="button" aria-pressed="false" aria-label="Drill into 0DTE, name by name">
@@ -75,10 +75,10 @@
         <dl class="rows">
           <div><dt>Watches</dt><dd>The whole 162-name list, all day</dd></div>
           <div><dt>Fires when</dt><dd>A scanner setup passes the funnel's gates</dd></div>
-          <div><dt>Then</dt><dd>The funnel publishes a paper trade — entries and exits both posted</dd></div>
+          <div><dt>Then</dt><dd>The funnel publishes a tracked trade — entries and exits both posted</dd></div>
         </dl>
         <span class="cta">Drill down — name by name ↓</span>
-        <div class="result"><span id="res-0dte">Loading…</span><span class="pill test" id="pill-0dte">Paper / proving</span></div>
+        <div class="result"><span id="res-0dte">Loading…</span><span class="pill test" id="pill-0dte">Tracking</span></div>
       </article>
 
       <article class="card pick" data-drill="swings" tabindex="0" role="button" aria-pressed="false" aria-label="Drill into Swings, idea by idea">
@@ -90,10 +90,10 @@
         <dl class="rows">
           <div><dt>Watches</dt><dd>The 162-name list (C2 weekly) and uptrend dips (Connors)</dd></div>
           <div><dt>Fires when</dt><dd>C2 rebalances each week; Connors fires on an RSI(2) dip in an uptrend</dd></div>
-          <div><dt>Then</dt><dd>Paper-scored on premium; a Connors-wide shadow is scored weekly alongside</dd></div>
+          <div><dt>Then</dt><dd>Scored on premium; a Connors-wide tracking book is scored weekly alongside</dd></div>
         </dl>
         <span class="cta">Drill down — idea by idea ↓</span>
-        <div class="result"><span id="res-swings">Loading…</span><span class="pill test">Paper / proving</span></div>
+        <div class="result"><span id="res-swings">Loading…</span><span class="pill test">Tracking</span></div>
       </article>
 
       <article class="card pick" data-drill="flowPulse" tabindex="0" role="button" aria-pressed="false" aria-label="Drill into Flow Pulse, by direction">
@@ -101,14 +101,14 @@
           <span class="dot d-flow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z" stroke-linejoin="round"/></svg></span>
           <div><h3>Flow Pulse</h3><span class="aka">Following the big money</span></div>
         </div>
-        <p><b>Spots when someone drops $1M+ on one directional options bet in 30 minutes.</b> If the bet is lopsided enough (score ≥90, 2× the other side), it flags it and paper-tracks the outcome for 2 weeks.</p>
+        <p><b>Spots when someone drops $1M+ on one directional options bet in 30 minutes.</b> If the bet is lopsided enough (score ≥90, 2× the other side), it flags it and tracks the outcome for 2 weeks.</p>
         <dl class="rows">
           <div><dt>Watches</dt><dd>Unusual options flow, all tickers</dd></div>
           <div><dt>Fires when</dt><dd>≥$1M premium, one direction, ≤45 days out</dd></div>
-          <div><dt>Then</dt><dd>Paper track opens — win or lose, it's logged</dd></div>
+          <div><dt>Then</dt><dd>A two-week track opens — win or lose, it's logged</dd></div>
         </dl>
         <span class="cta">Drill down — by direction ↓</span>
-        <div class="result"><span id="res-flow">Loading…</span><span class="pill test">Paper tracking</span></div>
+        <div class="result"><span id="res-flow">Loading…</span><span class="pill test">Tracking</span></div>
       </article>
 
       <article class="card digest-card">
@@ -145,7 +145,7 @@
     <div class="sec-head">
       <div>
         <h2 id="board-h">Scoreboard — is each one working?</h2>
-        <p>One row per tracker. "Proving" means it's paper-trading until the record earns real money.</p>
+        <p>One row per tracker. Every tracker is measurement only — no orders are sent, and the record is the verdict.</p>
       </div>
     </div>
     <div class="board">
@@ -163,7 +163,7 @@
     <div class="sec-head">
       <div>
         <h2 id="tracking-h">What we're tracking</h2>
-        <p>The books behind the scoreboard: the Futures Sweep and Stock Sweeps forward shadows now accruing, which scanner cells kept their paper seats after the October validation, what got moved to shadow — and the iceberg watch for hidden institutional options flow.</p>
+        <p>The books behind the scoreboard: the Futures Sweep and Stock Sweeps tracking books now accruing, which scanner cells are in the published book after the October validation and which are tracked-only — and the iceberg watch for hidden institutional options flow.</p>
       </div>
     </div>
     <div id="trackingBody"><p class="track-note">Loading…</p></div>
@@ -199,7 +199,7 @@
   </section>
 
   <footer>
-    Paper results only — no real money, no broker fills. Numbers update as each tracker logs its activity.
+    Tracked results only — measurement only, no orders are sent. Numbers update as each tracker logs its activity.
   </footer>
 </div>
 

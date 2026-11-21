@@ -116,9 +116,9 @@ function renderCards(){
   set('futures',   'All time <b class="' + signCls(fu.pnl) + '">' + money(fu.pnl) + '</b>');
   if(zd.tracked > 0){
     set('0dte', 'All time <b class="' + signCls(zd.pnl) + '">' + money(zd.pnl) + '</b>');
-    document.getElementById('pill-0dte').textContent = 'Paper / proving';
+    document.getElementById('pill-0dte').textContent = 'Tracking';
   } else {
-    set('0dte', '<b>' + num(zd.plans) + '</b> plans · <b>' + num(zd.alerts) + '</b> alerts · paper P&amp;L starts with the next signal');
+    set('0dte', '<b>' + num(zd.plans) + '</b> plans · <b>' + num(zd.alerts) + '</b> alerts · tracked P&amp;L starts with the next signal');
   }
   if(fl2.tracked > 0){
     set('flow', 'All time <b class="' + signCls(fl2.pnl) + '">' + money(fl2.pnl) + '</b>');
@@ -133,20 +133,20 @@ function renderCards(){
 /* ---------------- drill-down ---------------- */
 var DRILL = {
   smoothers: { title:'Weeklies, ticker by ticker',
-    sub:'One card per ticker the Weeklies book has touched. Real paper P&L per name — bought at the ask, sold at the bid, fees in.',
-    pill:'Live', pillCls:'live', hit:false, deeper:'View weeks ›' },
+    sub:'One card per ticker the Weeklies book has touched. Tracked P&L per name — bought at the ask, sold at the bid, fees in.',
+    pill:'Tracking', pillCls:'live', hit:false, deeper:'View weeks ›' },
   futures: { title:'Futures, method by method',
-    sub:'The record of the futures book from when live sends ran, method by method. Live sends are paused — the Futures Sweep shadow is tracked under What we\u2019re tracking below.',
-    pill:'Paper / proving', pillCls:'test', hit:false, deeper:'View trades ›' },
+    sub:'The record of the futures book from when sends ran, method by method. Sends are off for good — current futures tracking (the Futures Sweep books and MYM turn-of-month) is under What we\u2019re tracking below.',
+    pill:'Tracking', pillCls:'test', hit:false, deeper:'View trades ›' },
   zeroDte: { title:'0DTE, name by name',
-    sub:'The whole 162-name list through the setup funnel: published paper trades first, then the legacy scanner scorecard. Paper trades 1 contract at the ask — exits at the premium stop/target or the session flatten.',
-    pill:'Paper / proving', pillCls:'test', hit:false, deeper:'View entries ›' },
+    sub:'The whole 162-name list through the setup funnel: published tracked trades first, then the legacy scanner scorecard. Tracked at 1 contract at the ask — exits at the premium stop/target or the session flatten.',
+    pill:'Tracking', pillCls:'test', hit:false, deeper:'View entries ›' },
   flowPulse: { title:'Flow Pulse, by direction',
-    sub:'Split by which way the big money bet. Tap a direction to see the actual pulses — each opens a two-week paper track when a contract can be suggested.',
-    pill:'Paper tracking', pillCls:'test', hit:false, deeper:'View pulses ›' },
+    sub:'Split by which way the big money bet. Tap a direction to see the actual pulses — each opens a two-week track when a contract can be suggested.',
+    pill:'Tracking', pillCls:'test', hit:false, deeper:'View pulses ›' },
   swings: { title:'Swings, program by program',
-    sub:'The live program: C2 weekly momentum and Connors RSI(2) short-dated calls, forward-scored on premium — plus the retired idea generator\u2019s preserved history.',
-    pill:'Paper / proving', pillCls:'test', hit:false, deeper:'View ideas ›' }
+    sub:'The current program: C2 weekly momentum and Connors RSI(2) short-dated calls, forward-scored on premium — plus the retired idea generator\u2019s preserved history.',
+    pill:'Tracking', pillCls:'test', hit:false, deeper:'View ideas ›' }
 };
 var drillType = null; /* mockup id of the level-2 view being shown */
 
@@ -225,7 +225,7 @@ function selectDrill(id, scroll, showList){
            '<b>' + num(w) + '</b> wins · ' + pct(st.win_rate),
            '<b>' + money(st.pnl) + '</b> net'];
     if(st.open) sum.push('<b>' + num(st.open) + '</b> still open');
-    if(st.data_gaps) sum.push('<b>' + num(st.data_gaps) + '</b> excluded — no live data (' + money(st.data_gap_pnl) + ')');
+    if(st.data_gaps) sum.push('<b>' + num(st.data_gaps) + '</b> excluded — no data recorded (' + money(st.data_gap_pnl) + ')');
     if(st.undelivered) sum.push('<b>' + num(st.undelivered) + '</b> excluded — alert not delivered (' + money(st.undelivered_pnl) + ')');
     if(id === 'zeroDte'){
       var pb = st.publications || {};
@@ -307,10 +307,10 @@ async function openDetail(id, itemName){
 
 /* ---------------- scoreboard ---------------- */
 var BOARD = [
-  { id:'smoothers', api:'smoothers',  status:'Live',           pill:'live' },
-  { id:'futures',   api:'futures',    status:'Paper / proving',pill:'test' },
-  { id:'zeroDte',   api:'0dte',       status:'Paper / proving',pill:'test' },
-  { id:'flowPulse', api:'flow_pulse', status:'Paper tracking', pill:'test' }
+  { id:'smoothers', api:'smoothers',  status:'Tracking',      pill:'live' },
+  { id:'futures',   api:'futures',    status:'Tracking',      pill:'test' },
+  { id:'zeroDte',   api:'0dte',       status:'Tracking',      pill:'test' },
+  { id:'flowPulse', api:'flow_pulse', status:'Tracking',      pill:'test' }
 ];
 
 function renderBoard(){
@@ -384,11 +384,11 @@ function renderTracking(){
   /* ---- futures sweep forward shadow (replaced the survivors-era
          live-combo book 2026-11-16) ---- */
   var fs = T.futures_sweep;
-  html += '<div class="track-block"><h3 class="track-h3">Futures Sweep shadow — the new futures candidate, forward-scored</h3>';
+  html += '<div class="track-block"><h3 class="track-h3">Futures Sweep tracking — opening-range sweep &amp; reclaim, forward-scored</h3>';
   if(fs){
     var fsRoots = (fs.roots || []).map(function(x){ return x.root; }).join(' · ');
     if(!fs.available){
-      html += '<p class="track-note">Forward shadow armed — first eligible session <b>Tue Nov 17, 2026</b>; no forward trades yet. The opening-range sweep &amp; reclaim on 8 micro roots (' + esc(fsRoots) + '), tracked two ways: <b>as-written</b> (one trade a day — the alerting book, posts to #futures) and <b>unlimited</b> (re-entries allowed, scored silently). Measurement only — no orders are sent.</p>';
+      html += '<p class="track-note">Tracking armed — first eligible session <b>Tue Nov 17, 2026</b>; no forward trades yet. The opening-range sweep &amp; reclaim on 8 micro roots (' + esc(fsRoots) + '), tracked two ways: <b>as-written</b> (one trade a day — the alerting book, posts to #futures) and <b>unlimited</b> (re-entries allowed, scored silently). Measurement only — no orders are sent.</p>';
     } else {
       var fc = fs.counts || {};
       html += '<p class="track-line">Accruing since <b>' + esc(fs.first_session || '—') + '</b>'
@@ -413,18 +413,18 @@ function renderTracking(){
       });
       html += '</tbody></table></div>';
     }
-    html += '<p class="track-note">Verdict per root, per book: at <b>≥12 weeks AND ≥50 forward trades</b> — net &gt; 0, PF &gt; 1.0, stress net &gt; 0. A pass earns a live-seat proposal only; nothing here sends orders.</p>';
+    html += '<p class="track-note">Verdict per root, per book: at <b>≥12 weeks AND ≥50 forward trades</b> — net &gt; 0, PF &gt; 1.0, stress net &gt; 0. A pass is a works verdict only; nothing here sends orders.</p>';
   } else {
-    html += '<p class="track-note">Futures Sweep shadow unavailable right now.</p>';
+    html += '<p class="track-note">Futures Sweep tracking unavailable right now.</p>';
   }
   html += '</div>';
 
   /* ---- stock sweeps forward shadow ---- */
   var ss = T.stock_sweeps;
-  html += '<div class="track-block"><h3 class="track-h3">Stock Sweeps shadow — opening-range sweeps on the 23 names that passed</h3>';
+  html += '<div class="track-block"><h3 class="track-h3">Stock Sweeps tracking — opening-range sweeps on the 23 names that passed</h3>';
   if(ss){
     if(!ss.available){
-      html += '<p class="track-note">Forward shadow armed — first eligible session <b>Tue Nov 17, 2026</b>; no forward trades yet. The same sweep &amp; reclaim on <b>' + num(ss.book_n) + ' stocks</b> (' + esc((ss.book || []).join(' · ')) + '), alerts to #0dte, scored on the underlying with the nearest-expiry premium leg measured alongside. Measurement only.</p>';
+      html += '<p class="track-note">Tracking armed — first eligible session <b>Tue Nov 17, 2026</b>; no forward trades yet. The same sweep &amp; reclaim on <b>' + num(ss.book_n) + ' stocks</b> (' + esc((ss.book || []).join(' · ')) + '), alerts to #0dte, scored on the underlying with the nearest-expiry premium leg measured alongside. Measurement only.</p>';
     } else {
       var sc2 = ss.counts || {}, su = ss.underlying || {}, sp = ss.premium || {};
       html += '<p class="track-line">Accruing since <b>' + esc(ss.first_session || '—') + '</b>'
@@ -447,33 +447,33 @@ function renderTracking(){
         html += '</tbody></table></div>';
       }
     }
-    html += '<p class="track-note">Verdict after <b>two consecutive 4-week windows</b>: pooled underlying net &gt; 0 AND PF &gt; 1.0 AND pooled premium net &gt; 0 in both. First read after 4 weeks; a pass earns a proposal only.</p>';
+    html += '<p class="track-note">Verdict after <b>two consecutive 4-week windows</b>: pooled underlying net &gt; 0 AND PF &gt; 1.0 AND pooled premium net &gt; 0 in both. First read after 4 weeks; a pass is a works verdict only.</p>';
   } else {
-    html += '<p class="track-note">Stock Sweeps shadow unavailable right now.</p>';
+    html += '<p class="track-note">Stock Sweeps tracking unavailable right now.</p>';
   }
   html += '</div>';
 
   /* ---- 0DTE scanner: seats + shadow ---- */
   var sc = T.scanner;
-  html += '<div class="track-block"><h3 class="track-h3">0DTE scanner — who kept a paper seat, who went to shadow</h3>';
+  html += '<div class="track-block"><h3 class="track-h3">0DTE scanner — who is in the published book, who is tracked-only</h3>';
   if(sc){
     var seatBits = [];
     Object.keys(sc.paper_seats || {}).forEach(function(fam){
       seatBits.push('<b>' + esc(famLabel(fam)) + ' — ' + esc((sc.paper_seats[fam] || []).join(' · ')) + '</b>');
     });
-    html += '<p class="track-line">' + (sc.available ? 'Paper seats: ' : 'Paper seats decided Oct 25 (split deploying): ')
+    html += '<p class="track-line">' + (sc.available ? 'In the book: ' : 'Book decided Oct 25 (split deploying): ')
       + (seatBits.length ? seatBits.join('; ') : 'none') + '. '
-      + 'Every other scanner cell is shadow-scored — alerts and evidence recorded, outcomes scored on fresh quotes, nothing booked.</p>';
+      + 'Every other scanner cell is tracked-only — alerts and evidence recorded, outcomes scored on fresh quotes, nothing booked.</p>';
     var seated = sc.seated || [];
     var anySeated = seated.some(function(x){ return (x.trades || 0) > 0 || (x.open || 0) > 0; });
     if(anySeated){
       html += '<div class="board static"><table><thead><tr>'
-        + '<th>Seated cell</th><th class="num">Trades</th><th class="num">Win rate</th>'
+        + '<th>Booked cell</th><th class="num">Trades</th><th class="num">Win rate</th>'
         + '<th class="num">PF</th><th class="num">Net</th><th class="num">Open</th>'
         + '</tr></thead><tbody>';
       seated.forEach(function(x){
         html += '<tr>'
-          + '<td data-l="Seated cell"><b>' + esc(x.family_label) + ' × ' + esc(x.underlying) + '</b></td>'
+          + '<td data-l="Booked cell"><b>' + esc(x.family_label) + ' × ' + esc(x.underlying) + '</b></td>'
           + '<td class="num" data-l="Trades">' + num(x.trades) + '</td>'
           + '<td class="num" data-l="Win rate">' + rateFmt(x.win_rate) + '</td>'
           + '<td class="num" data-l="PF">' + pfFmt(x.pf) + '</td>'
@@ -483,47 +483,47 @@ function renderTracking(){
       });
       html += '</tbody></table></div>';
     } else {
-      html += '<p class="track-note">No seated paper trades yet — the seats start booking with the next session\'s qualifying alerts.</p>';
+      html += '<p class="track-note">No booked trades yet — the book starts with the next session\'s qualifying alerts.</p>';
     }
     var sh = sc.shadow;
     if(sh){
       var tot = sh.totals || {};
       if((tot.alerts || 0) > 0){
-        html += '<p class="track-line">Shadow scorecard: <b>' + num(tot.alerts) + '</b> alerts tracked across <b>'
+        html += '<p class="track-line">Tracked-only scorecard: <b>' + num(tot.alerts) + '</b> alerts tracked across <b>'
           + num(sh.cells_tracking) + '</b> cells · <b>' + num(tot.scored) + '</b> scored · <b>' + num(tot.open)
           + '</b> still open' + (tot.data_gaps ? ' · ' + num(tot.data_gaps) + ' data gaps (excluded)' : '') + '.</p>';
         if(sh.cells && sh.cells.length){
           var bar = sh.bar || { min_scored:20, min_pf:1.2 };
           html += '<div class="board static"><table><thead><tr>'
-            + '<th>Shadow cell</th><th class="num">Alerts</th><th class="num">Scored</th>'
-            + '<th class="num">PF</th><th>Graduation — ' + num(bar.min_scored) + ' scored · PF ≥ ' + pfFmt(bar.min_pf) + '</th>'
+            + '<th>Tracked-only cell</th><th class="num">Alerts</th><th class="num">Scored</th>'
+            + '<th class="num">PF</th><th>Book bar — ' + num(bar.min_scored) + ' scored · PF ≥ ' + pfFmt(bar.min_pf) + '</th>'
             + '</tr></thead><tbody>';
           sh.cells.forEach(function(x){
             var grad;
-            if(x.ready) grad = '<span class="pill live">Ready for a seat decision</span>';
+            if(x.ready) grad = '<span class="pill live">Cleared the bar — flagged for Josh</span>';
             else {
               grad = num(x.scored) + '/' + num(bar.min_scored) + ' scored';
               if((x.scored_needed || 0) === 0 && !x.pf_met) grad += ' · PF below the bar';
-              else if((x.scored_needed || 0) === 0) grad += ' · family not promoted';
+              else if((x.scored_needed || 0) === 0) grad += ' · family not in the book';
             }
             html += '<tr>'
-              + '<td data-l="Shadow cell"><b>' + esc(x.family_label) + ' × ' + esc(x.underlying) + '</b></td>'
+              + '<td data-l="Tracked-only cell"><b>' + esc(x.family_label) + ' × ' + esc(x.underlying) + '</b></td>'
               + '<td class="num" data-l="Alerts">' + num(x.alerts) + '</td>'
               + '<td class="num" data-l="Scored">' + num(x.scored) + '</td>'
               + '<td class="num" data-l="PF">' + pfFmt(x.pf) + '</td>'
-              + '<td data-l="Graduation">' + grad + '</td>'
+              + '<td data-l="Book bar">' + grad + '</td>'
               + '</tr>';
           });
           html += '</tbody></table></div>';
         }
         if(sh.ready && sh.ready.length){
-          html += '<p class="track-note">Cleared the graduation bar: <b>' + esc(sh.ready.join(', ')) + '</b> — flagged for a seat decision; promotion is never automatic.</p>';
+          html += '<p class="track-note">Cleared the book bar: <b>' + esc(sh.ready.join(', ')) + '</b> — flagged for Josh; joining the book is never automatic.</p>';
         }
       } else {
-        html += '<p class="track-note">No shadow alerts yet — shadow tracking starts with the next session: every non-seated alert is recorded here and scored on fresh quotes instead of booked.</p>';
+        html += '<p class="track-note">No tracked-only alerts yet — tracked-only scoring starts with the next session: every alert outside the book is recorded here and scored on fresh quotes instead of booked.</p>';
       }
     } else if(sc.available){
-      html += '<p class="track-note">Shadow scorecard has not reported yet — it starts with the next session\'s alerts.</p>';
+      html += '<p class="track-note">Tracked-only scorecard has not reported yet — it starts with the next session\'s alerts.</p>';
     }
   } else {
     html += '<p class="track-note">Scanner split unavailable right now.</p>';
