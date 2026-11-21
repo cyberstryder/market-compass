@@ -454,7 +454,9 @@ function renderTracking(){
         + ' · <b>' + num(mc.created) + '</b> episodes · <b>' + num(mc.open) + '</b> open · <b>' + num(mc.closed) + '</b> closed.</p>'
         + '<p class="track-line"><b>' + num(mt.n) + '</b> scored trades · <b class="' + signCls(mt.net) + '">' + money(mt.net) + '</b> · PF ' + pfFmt(mt.pf)
         + ' · stress net <b class="' + signCls(mt.stress_net) + '">' + money(mt.stress_net) + '</b>.</p>';
-      html += '<p class="track-note">Verdict at <b>≥' + num(mMinT) + ' forward trades AND ≥' + num(mMinW) + ' weeks</b> — net &gt; 0, PF &gt; 1.0, stress net &gt; 0. Progress: <b>' + num(mt.n) + '</b> of ' + num(mMinT) + ' trades'
+      html += '<p class="track-note">'
+        + ((mt.n || 0) === 0 ? 'No trades yet — the book only trades the month turn (first window: the <b>Nov → Dec 2026 turn</b>). ' : '')
+        + 'Verdict at <b>≥' + num(mMinT) + ' forward trades AND ≥' + num(mMinW) + ' weeks</b> — net &gt; 0, PF &gt; 1.0, stress net &gt; 0. Progress: <b>' + num(mt.n) + '</b> of ' + num(mMinT) + ' trades'
         + (mt.weeks != null ? ' · <b>' + num(mt.weeks) + '</b> of ' + num(mMinW) + ' weeks' : '')
         + ((mt.n || 0) < mFirst ? ' · first read at ' + num(mFirst) + ' trades' : '')
         + '. A pass is a works verdict only.</p>';
