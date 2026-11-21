@@ -491,11 +491,11 @@ def test_detail_flow_pulses(db):
     assert it['title'] == 'MRK bearish'
     assert '$1.7M' in it['sub']
     assert any(r[0] == 'Suggested contract' and '95P' in r[1] for r in it['rows'])
-    assert any(r[0] == 'Paper track' and r[1] == 'Track open' for r in it['rows'])
+    assert any(r[0] == 'Track' and r[1] == 'Track open' for r in it['rows'])
     with db.tx() as c:
         d2 = simple.detail(db, c, now, 'flow_pulse', 'Bullish flow')
     assert len(d2['items']) == 1
-    assert any(r[0] == 'Paper track' and r[1] == 'No track opened' for r in d2['items'][0]['rows'])
+    assert any(r[0] == 'Track' and r[1] == 'No track opened' for r in d2['items'][0]['rows'])
 
 
 def test_flow_pulse_drill_includes_pulse_counts(db):
