@@ -54,6 +54,17 @@ def test_tracking_empty_db(db):
     assert ss['underlying'] == {'n': 0, 'net': 0.0, 'pf': None,
                                 'win_rate': None}
     assert ss['per_symbol'] == []
+    # MYM Turn-of-Month shadow: clean empty state — no state row,
+    # zeroed stats, the frozen verdict clock (first read at 12
+    # trades; verdict at 50 trades AND 12 weeks).
+    mt = tr['mym_tom']
+    assert mt['available'] is False
+    assert mt['first_session'] is None and mt['weeks'] is None
+    assert mt['n'] == 0 and mt['net'] == 0.0 and mt['pf'] is None
+    assert mt['stress_net'] == 0.0
+    assert mt['counts'] == {'created': 0, 'open': 0, 'closed': 0}
+    assert mt['verdict'] == {'min_trades': 50, 'min_weeks': 12,
+                             'first_read_trades': 12}
     # Scanner: the book renders honestly with no data — no seats by
     # default under the whole-list book; the shadow side is either
     # not-yet-landed (None) or a zeroed scorecard.
@@ -123,6 +134,60 @@ def test_tracking_shadow_states(db):
     assert ss['available'] is True and ss['book_n'] == 2
     assert ss['underlying']['net'] == 55.0
     assert ss['per_symbol'] == [{'symbol': 'AMD', 'n': 2, 'net': 55.0}]
+
+
+def test_tracking_mym_tom_and_mgc_extended_states(db):
+    """Seeded MYM TOM state and the futures sweep's mgc_extended
+    section flow through to the payload with the modules' exact
+    figures — the page renders these fields verbatim, so a shaping
+    slip here becomes wrong numbers on the page."""
+    with db.tx() as c:
+        db.put(c, 'mym_tom:state', {
+            'counts': {'created': 2, 'open': 0, 'closed': 2},
+            'first_session': '2026-11-30',
+            'weeks_since_first_session': 0.4,
+            'stats': {'n': 2, 'net': -35.5, 'pf': 0.4,
+                      'stress_net': -41.0}})
+        db.put(c, 'futures_sweep:state', {
+            'counts': {'created': 3, 'open': 0, 'closed': 3},
+            'first_session': '2026-11-17',
+            'weeks_since_first_session': 0.6,
+            'mgc_extended_first_session': '2026-11-19',
+            'mgc_extended_weeks_since_first_session': 0.3,
+            'per_root': {'MGC': {
+                'as_written': {'n': 1, 'net': -30.0, 'pf': 0.5,
+                               'stress_net': -35.0},
+                'unlimited': {'n': 1, 'net': -30.0, 'pf': 0.5,
+                              'stress_net': -35.0},
+                'mgc_extended': {'n': 2, 'net': -91.48, 'pf': 0.0,
+                                 'stress_net': -99.48}}},
+            'pooled': {
+                'as_written': {'n': 1, 'net': -30.0, 'pf': 0.5,
+                               'stress_net': -35.0},
+                'unlimited': {'n': 1, 'net': -30.0, 'pf': 0.5,
+                              'stress_net': -35.0},
+                'mgc_extended': {'n': 2, 'net': -91.48, 'pf': 0.0,
+                                 'stress_net': -99.48}}})
+        out = simple.summary(db, c, NOW)
+    mt = out['tracking']['mym_tom']
+    assert mt['available'] is True
+    assert mt['first_session'] == '2026-11-30' and mt['weeks'] == 0.4
+    assert mt['counts'] == {'created': 2, 'open': 0, 'closed': 2}
+    assert mt['n'] == 2 and mt['net'] == -35.5 and mt['pf'] == 0.4
+    assert mt['stress_net'] == -41.0
+    fs = out['tracking']['futures_sweep']
+    mgc = [x for x in fs['roots'] if x['root'] == 'MGC'][0]
+    assert mgc['mgc_extended'] == {'n': 2, 'net': -91.48, 'pf': 0.0,
+                                   'stress_net': -99.48}
+    ext = fs['mgc_extended']
+    assert ext['first_session'] == '2026-11-19' and ext['weeks'] == 0.3
+    assert ext['stats'] == {'n': 2, 'net': -91.48, 'pf': 0.0,
+                            'stress_net': -99.48}
+    assert ext['verdict'] == {'min_weeks': 12, 'min_trades': 50}
+    # Non-MGC roots carry a zeroed mgc_extended bucket (the book is
+    # MGC only) — the page must not invent extended rows elsewhere.
+    mes = [x for x in fs['roots'] if x['root'] == 'MES'][0]
+    assert mes['mgc_extended']['n'] == 0
 
 
 def test_funnel_publications(db):
@@ -308,3 +373,10 @@ def test_public_page_tracking_wiring():
     assert 'What we\'re tracking' in html
     assert 'renderTracking' in js
     assert 'tracking' in js
+    # MYM Turn-of-Month block + the Futures Sweep MGC-extended rows
+    # render from the tracking payload (2026-11-21).
+    assert 'mym_tom' in js
+    assert 'MYM Turn-of-Month tracking' in js
+    assert 'mgc_extended' in js
+    assert 'Extended window' in js
+    assert '15:45 ET' in js
