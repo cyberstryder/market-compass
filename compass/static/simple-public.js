@@ -388,7 +388,7 @@ function renderTracking(){
   if(fs){
     var fsRoots = (fs.roots || []).map(function(x){ return x.root; }).join(' · ');
     if(!fs.available){
-      html += '<p class="track-note">Tracking armed — first eligible session <b>Tue Nov 17, 2026</b>; no forward trades yet. The opening-range sweep &amp; reclaim on 8 micro roots (' + esc(fsRoots) + '), tracked two ways: <b>as-written</b> (one trade a day — the alerting book, posts to #futures) and <b>unlimited</b> (re-entries allowed, scored silently). Measurement only — no orders are sent.</p>';
+      html += '<p class="track-note">Tracking armed — first eligible session <b>Tue Nov 17, 2026</b>; no forward trades yet. The opening-range sweep &amp; reclaim on 8 micro roots (' + esc(fsRoots) + '), tracked two ways: <b>as-written</b> (one trade a day — the alerting book, posts to #futures) and <b>unlimited</b> (re-entries allowed, scored silently), plus a third book on MGC only — the <b>extended window</b> (entries until 15:45 ET instead of 11:30 ET). Measurement only — no orders are sent.</p>';
     } else {
       var fc = fs.counts || {};
       html += '<p class="track-line">Accruing since <b>' + esc(fs.first_session || '—') + '</b>'
@@ -399,7 +399,11 @@ function renderTracking(){
         + '<th class="num">Net</th><th class="num">PF</th><th class="num">Stress net</th>'
         + '</tr></thead><tbody>';
       (fs.roots || []).forEach(function(x){
-        [['as_written','As-written'], ['unlimited','Unlimited']].forEach(function(pair){
+        var pairs = [['as_written','As-written'], ['unlimited','Unlimited']];
+        /* the extended-window book trades MGC only — its row rides
+           on the MGC root (every other root's bucket stays zero) */
+        if(x.root === 'MGC') pairs.push(['mgc_extended','Extended window']);
+        pairs.forEach(function(pair){
           var s = x[pair[0]] || {};
           html += '<tr>'
             + '<td data-l="Root"><b>' + esc(x.root) + '</b></td>'
@@ -412,10 +416,53 @@ function renderTracking(){
         });
       });
       html += '</tbody></table></div>';
+      var ext = fs.mgc_extended;
+      if(ext){
+        var es = ext.stats || {}, ev = ext.verdict || {};
+        var eMinT = ev.min_trades || 50, eMinW = ev.min_weeks || 12;
+        html += '<p class="track-line">MGC extended window — the same sweep &amp; reclaim on <b>MGC only</b>, entries allowed until the <b>15:45 ET</b> cutoff instead of 11:30 ET: '
+          + (ext.first_session ? 'accruing since <b>' + esc(ext.first_session) + '</b>' : 'armed — no forward trades yet')
+          + ' · <b>' + num(es.n) + '</b> trades · <b class="' + signCls(es.net) + '">' + money(es.net) + '</b>'
+          + ' · PF ' + pfFmt(es.pf)
+          + ' · stress net <b class="' + signCls(es.stress_net) + '">' + money(es.stress_net) + '</b>'
+          + ' · verdict progress: <b>' + num(es.n) + '</b> of ' + num(eMinT) + ' trades'
+          + (ext.weeks != null ? ' · <b>' + num(ext.weeks) + '</b> of ' + num(eMinW) + ' weeks' : '')
+          + ' (verdict at ≥' + num(eMinW) + ' weeks AND ≥' + num(eMinT) + ' trades — net &gt; 0, PF &gt; 1.0, stress net &gt; 0).</p>';
+      }
     }
     html += '<p class="track-note">Verdict per root, per book: at <b>≥12 weeks AND ≥50 forward trades</b> — net &gt; 0, PF &gt; 1.0, stress net &gt; 0. A pass is a works verdict only; nothing here sends orders.</p>';
   } else {
     html += '<p class="track-note">Futures Sweep tracking unavailable right now.</p>';
+  }
+  html += '</div>';
+
+  /* ---- MYM turn-of-month tracking ---- */
+  var mt = T.mym_tom;
+  html += '<div class="track-block"><h3 class="track-h3">MYM Turn-of-Month tracking — long MYM across the month turn, forward-scored</h3>';
+  if(mt){
+    var mv = mt.verdict || {};
+    var mMinT = mv.min_trades || 50, mMinW = mv.min_weeks || 12,
+        mFirst = mv.first_read_trades || 12;
+    var mc = mt.counts || {};
+    html += '<p class="track-line">Long <b>1 MYM</b> from the session open to the 15:00 CT exit on the <b>last trading day of the month and the first three of the next</b> — about 4 trades a month. Measurement only — no orders are sent.</p>';
+    var mStarted = !!mt.first_session || (mt.n || 0) > 0 || (mc.open || 0) > 0;
+    if(!mStarted){
+      html += '<p class="track-note">Tracking armed — no forward trades yet; the first eligible window is the <b>Nov → Dec 2026 turn</b>. Verdict at <b>≥' + num(mMinT) + ' forward trades AND ≥' + num(mMinW) + ' weeks</b> (net &gt; 0, PF &gt; 1.0, stress net &gt; 0); first read at ' + num(mFirst) + ' trades.</p>';
+    } else {
+      html += '<p class="track-line">Accruing since <b>' + esc(mt.first_session || '—') + '</b>'
+        + (mt.weeks != null ? ' · week <b>' + num(mt.weeks) + '</b> of ' + num(mMinW) + '+' : '')
+        + ' · <b>' + num(mc.created) + '</b> episodes · <b>' + num(mc.open) + '</b> open · <b>' + num(mc.closed) + '</b> closed.</p>'
+        + '<p class="track-line"><b>' + num(mt.n) + '</b> scored trades · <b class="' + signCls(mt.net) + '">' + money(mt.net) + '</b> · PF ' + pfFmt(mt.pf)
+        + ' · stress net <b class="' + signCls(mt.stress_net) + '">' + money(mt.stress_net) + '</b>.</p>';
+      html += '<p class="track-note">'
+        + ((mt.n || 0) === 0 ? 'No trades yet — the book only trades the month turn (first window: the <b>Nov → Dec 2026 turn</b>). ' : '')
+        + 'Verdict at <b>≥' + num(mMinT) + ' forward trades AND ≥' + num(mMinW) + ' weeks</b> — net &gt; 0, PF &gt; 1.0, stress net &gt; 0. Progress: <b>' + num(mt.n) + '</b> of ' + num(mMinT) + ' trades'
+        + (mt.weeks != null ? ' · <b>' + num(mt.weeks) + '</b> of ' + num(mMinW) + ' weeks' : '')
+        + ((mt.n || 0) < mFirst ? ' · first read at ' + num(mFirst) + ' trades' : '')
+        + '. A pass is a works verdict only.</p>';
+    }
+  } else {
+    html += '<p class="track-note">MYM Turn-of-Month tracking unavailable right now.</p>';
   }
   html += '</div>';
 
