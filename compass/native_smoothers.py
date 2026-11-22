@@ -261,6 +261,7 @@ def schedule(db,data,now):
                     from .smoothers_history import get_ticker_stats
                     signal['historical_stats']=get_ticker_stats(db, config['ticker'], monday.isoformat(), state['config'].get('owned_since', float('inf')))
                 except Exception:
+                    logging.getLogger('uvicorn.error').exception('native_smoothers historical_stats attach failed for %s week %s; storing empty stats',config['ticker'],monday.isoformat())
                     signal['historical_stats']={}
                 with db.tx() as c:
                     signal['rolling_at_entry']=rolling_record(db,c,config['ticker'],monday.isoformat(),state['config'].get('owned_since',float('inf')))
@@ -308,6 +309,15 @@ def schedule(db,data,now):
         state['summary_messages']=len(previews)
         state.update(state='partial' if state['errors'] else 'complete',finished=now,signals=len(ranked))
         db.put(c,key,state)
+    # A board whose every payload carries an empty historical record is never
+    # legitimate for this universe (frozen source history; every board since
+    # 2026-10-05 populated) — flag it on the standard health surface instead
+    # of letting it pass silently (2026-11-16 record gap).
+    if ranked and not any((p.get('historical_stats') or {}).get('total') for p in ranked):
+        try:
+            db.health(VERSION+'_historical_stats','error',f'Week {monday.isoformat()} board generated with 0 populated historical_stats across {len(ranked)} signals; per-ticker records empty board-wide')
+        except Exception:
+            logging.getLogger('uvicorn.error').exception('native_smoothers historical_stats health write failed')
 
 
 def wednesday_session(sessions):
