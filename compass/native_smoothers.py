@@ -843,6 +843,44 @@ def rescore_week_cells(db,week,now):
     return report
 
 
+def backfill_week_historical_stats(db,week,now):
+    """Repair pass for the 2026-11-16 record gap: recompute
+    historical_stats for one week's stored payloads with the same
+    get_ticker_stats and the week's own frozen generation inputs
+    (the week state's config owned_since), and fill ONLY payloads
+    whose stored record is empty (total missing/0) — a populated
+    record is never overwritten. The recompute is deterministic
+    (frozen source-records table), so a filled value equals what
+    generation should have stored. Idempotent: a second run fills
+    0. Returns the before/after accounting; the same report is
+    appended as a smoothers_history_backfill event."""
+    from .smoothers_history import get_ticker_stats,clear_cache
+    with db.tx() as c:
+        state=db.get(c,VERSION+':week:'+week,{})
+        rows=list(c.execute(select(weekly.c.payload).where(weekly.c.week==week)).scalars())
+    owned_since=(state.get('config') or {}).get('owned_since',float('inf'))
+    def populated(p):
+        return bool((p.get('historical_stats') or {}).get('total'))
+    before=sum(1 for p in rows if populated(p))
+    # get_ticker_stats caches per (ticker, week); clear first so a
+    # long-lived process never serves a zeros entry cached under an
+    # earlier failure.
+    clear_cache()
+    filled=0
+    for p in rows:
+        if populated(p):continue
+        stats=get_ticker_stats(db,p['ticker'],week,owned_since)
+        if not stats.get('total'):continue
+        p['historical_stats']=stats
+        with db.tx() as c:save(db,c,p)
+        filled+=1
+    report={'week':week,'at':now,'cohort':len(rows),'populated_before':before,
+            'filled':filled,'populated_after':before+filled}
+    with db.tx() as c:
+        db.append(c,'smoothers_history_backfill',VERSION,week,now,report)
+    return report
+
+
 def monitor(db,data,now):
     monday=monday_for(now).isoformat()
     with db.tx() as c:
