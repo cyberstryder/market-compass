@@ -334,3 +334,67 @@ def test_translate_flows_through_buffer():
     # And on the stored trade item.
     sym, stamp, item = buf.trades[0]
     assert item["src"] == "alpaca"
+
+
+# --- providers.py connection gate (2026-11-22 outage) -----------------------
+# Wed 2026-11-18 a collector deploy restarted the process at 18:20:57Z with
+# an empty option_symbols selection; alpaca_option_connection() waited for a
+# non-empty selection with no bound, so the websocket was never opened and
+# the stream's own SPY/QQQ fallback ladder (inside consume()) was
+# unreachable. The wait is now bounded (~30s); these tests pin both paths.
+
+class _HealthDB:
+    def __init__(self):
+        self.calls = []
+
+    def health(self, name, status, detail):
+        self.calls.append((name, status, detail))
+
+
+def _run_gate(monkeypatch, symbols):
+    import asyncio
+    import compass.alpaca_option_stream as aos
+    import compass.providers as providers
+    from contextlib import asynccontextmanager
+
+    consumed = []
+
+    async def fake_consume(ws, collector):
+        consumed.append(True)
+
+    @asynccontextmanager
+    async def fake_connect(*args, **kwargs):
+        yield object()
+
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(aos, "consume", fake_consume)
+    monkeypatch.setattr(providers.websockets, "connect", fake_connect)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    collectors = providers.Collectors.__new__(providers.Collectors)
+    collectors.option_symbols = set(symbols)
+    collectors.db = _HealthDB()
+    asyncio.run(collectors.alpaca_option_connection())
+    return collectors.db.calls, consumed, sleeps
+
+
+def test_gate_connects_anyway_when_selection_stays_empty(monkeypatch):
+    calls, consumed, sleeps = _run_gate(monkeypatch, set())
+    assert consumed == [True]
+    waiting = [c for c in calls if c[1] == "waiting"]
+    connecting = [c for c in calls if c[1] == "connecting"]
+    # Bounded wait: at most ~30s of 5s waiting cycles, then it connects.
+    assert 0 < len(waiting) <= 6
+    assert sum(sleeps) <= 30
+    assert len(connecting) == 1
+
+
+def test_gate_connects_immediately_when_selection_populated(monkeypatch):
+    calls, consumed, sleeps = _run_gate(monkeypatch, {"O:SPY251204C00745000"})
+    assert consumed == [True]
+    assert [c for c in calls if c[1] == "waiting"] == []
+    assert sleeps == []
