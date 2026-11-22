@@ -978,9 +978,19 @@ class Collectors:
         downstream with source-tagged rows; Massive remains the primary until
         the comparison proves parity.
         """
-        while not self.option_symbols:
+        # Bounded wait (2026-11-22): consume()'s subscriptions() task
+        # already copes with an empty selection — after 30s it engages a
+        # dynamic SPY/QQQ fallback ladder. Waiting here forever for a
+        # non-empty set made that fallback unreachable: when the socket
+        # died on 2026-11-18 the reconnect parked in this loop while the
+        # selection was empty, and the stream never came back. Wait up
+        # to ~30s for the selector, then connect anyway and let the
+        # in-stream ladder carry coverage until selection repopulates.
+        waited=0
+        while not self.option_symbols and waited<30:
             await asyncio.to_thread(self.db.health,"alpaca_option_stream","waiting","Waiting for verified chain to select contracts")
             await asyncio.sleep(5)
+            waited+=5
         await asyncio.to_thread(self.db.health,"alpaca_option_stream","connecting","Opening Alpaca OPRA stream")
         from .alpaca_option_stream import consume as alpaca_consume, ALPACA_OPRA_WS
         from .option_stream import OptionStreamError
