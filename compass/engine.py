@@ -1534,7 +1534,9 @@ class Engine:
         # gap fade premarket, spike fade 9:45-11am ET. Generalized
         # 2026-10-11 to a fixed list of volatile names. Alerts feed the
         # 0DTE paper book via options_0dte category. Gated by
-        # MU_SCALP_ENABLED (default true).
+        # MU_SCALP_ENABLED (default false — book CLOSED 2026-11-22,
+        # see config.py; the segment below no longer runs in
+        # production, historical trade:mu- records remain readable).
         #
         # 2026-10-23 FIX: this block (and the ict_trail runner that sat
         # above it until its 2026-10-30 deletion) ran AFTER the ICT
