@@ -20,7 +20,8 @@ from sqlalchemy import inspect, select
 import compass.app  # noqa: F401  (registers every table in store meta)
 from compass.active_observations import inventory
 from compass.config import Config
-from compass.stock_sweeps import (BOOK, aggregate_buckets,
+from compass.stock_sweeps import (BOOK, _apply_event, _underlying_leg,
+                                  aggregate_buckets,
                                   bucket_start_ts, episodes,
                                   first_quote_at_or_after, new_state,
                                   on_bar, premium_net, run_bars, scan,
@@ -287,7 +288,9 @@ def test_live_lifecycle(db):
         outbox = c.execute(select(
             stock_sweeps_push_outbox.c.payload)).scalars().all()
     assert len(rows) == len(FIXTURE['trades'])
-    got_nets = sorted(p['underlying']['net'] for p in rows)
+    got_nets = sorted(p['underlying_leg']['net'] for p in rows)
+    # The symbol field is never clobbered by the leg result.
+    assert all(p['underlying'] == 'AMD' for p in rows)
     want_nets = sorted(t['net'] for t in FIXTURE['trades'])
     assert got_nets == want_nets
     # Every episode's premium measurement resolved against the seeded
@@ -308,6 +311,58 @@ def test_live_lifecycle(db):
     types = sorted(p['type'] for p in outbox)
     assert types.count('entry') == len(FIXTURE['trades'])
     assert types.count('close') == len(FIXTURE['trades'])
+
+
+def test_apply_event_close_keeps_underlying_symbol(db):
+    """Regression (2026-11-22 /api/state 500): closing the underlying
+    leg must store its result under 'underlying_leg' and leave the
+    'underlying' symbol string intact while the row stays open."""
+    bar = {'start_ts': bucket_start_ts('2025-10-27', 540)}
+    entry_ev = {'type': 'entry', 'date': '2025-10-27', 'minute': 540,
+                'side': 1, 'entry_px': 250.0, 'stop': 248.0,
+                'or_mid': 249.0, 'or_high': 251.0, 'or_low': 247.0}
+    close_ev = {'type': 'close', 'side': 1, 'reason': 'target',
+                'entry_px': 250.0, 'exit_px': 255.0,
+                'exit_date': '2025-10-27', 'gross': 500.0, 'net': 490.0,
+                'orders': 2, 'tp1_done': True, 'tp1_gross': 250.0,
+                'runner_gross': 250.0}
+    open_eps, alerts = {}, []
+    with db.tx() as c:
+        p = _apply_event(db, c, 'AMD', entry_ev, bar, 1000.0, True,
+                         open_eps, alerts)
+        assert p['underlying'] == 'AMD'
+        assert p['underlying_leg'] is None
+        p = _apply_event(db, c, 'AMD', close_ev, bar, 1001.0, True,
+                         open_eps, alerts)
+    assert p['underlying'] == 'AMD'
+    assert p['underlying_leg']['net'] == 490.0
+    assert p['underlying_leg']['exit_date'] == '2025-10-27'
+    assert p['stage'] == 'closed' and p['status'] == 'open'
+    assert _underlying_leg(p) is p['underlying_leg']
+
+
+def test_inventory_survives_legacy_dict_underlying(db):
+    """Regression (2026-11-22 /api/state 500): a legacy open episode
+    whose 'underlying' field already carries the leg-result dict
+    (stage closed, premium leg still open) must not raise in
+    inventory() — the dict is skipped, the contract still pins."""
+    payload = {'id': 'ep-legacy', 'symbol': 'AMD', 'status': 'open',
+               'stage': 'closed',
+               'underlying': {'entry_px': 250.0, 'exit_px': 255.0,
+                              'exit_date': '2025-10-27',
+                              'reason': 'target', 'gross': 500.0,
+                              'net': 490.0, 'orders': 2,
+                              'tp1_done': True},
+               'contract': {'symbol': 'AMD261103C00250000'}}
+    with db.tx() as c:
+        c.execute(db.insert(episodes).values(
+            id='ep-legacy', underlying='AMD', status='open',
+            created=1.0, updated=1.0, payload=payload))
+        inv = inventory(db, c, 100.0)
+    assert 'AMD261103C00250000' in inv['options']
+    assert all(isinstance(s, str) for s in inv['stocks'])
+    # The scorecard reader still resolves the legacy leg result.
+    assert _underlying_leg(payload)['net'] == 490.0
 
 
 def test_inventory_pins_open_episode_contract(db):

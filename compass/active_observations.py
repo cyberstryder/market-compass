@@ -19,14 +19,18 @@ def inventory(db,c,now,include_followups=True):
     # pin for their whole open life, like open positions (scorecard §4.1).
     # connors_ssc_episodes (2026-11-03): same pinning for the Connors
     # SSC premium scorer's open episodes.
+    # Only string symbols may enter the lists: a non-string value (e.g.
+    # a legacy Stock Sweeps episode whose 'underlying' field carries a
+    # leg-result dict) is unhashable and 500s the /api/state build at
+    # the INDEX_UNDERLYINGS set test below (2026-11-22 incident).
     for table in (ideas,swings,spy_options,arms,c2_episodes,connors_ssc_episodes,overnight_omc_episodes,sh_spy_options_episodes,stock_sweeps_episodes):
         for p in c.execute(select(table.c.payload).where(table.c.status=='open').order_by(table.c.created)).scalars():
-            if p.get('contract'):options.append(p['contract']['symbol'])
-            if p.get('underlying'):stocks.append(p['underlying'])
+            if p.get('contract') and isinstance(p['contract'].get('symbol'),str):options.append(p['contract']['symbol'])
+            if isinstance(p.get('underlying'),str) and p['underlying']:stocks.append(p['underlying'])
     for p in c.execute(select(trials.c.payload).where(trials.c.status=='open').order_by(trials.c.started)).scalars():
-        if p.get('asset')=='option':options.append(p['symbol'])
-        elif p.get('asset')=='stock':stocks.append(p['symbol'])
-        if p.get('underlying'):stocks.append(p['underlying'])
+        if p.get('asset')=='option' and isinstance(p.get('symbol'),str):options.append(p['symbol'])
+        elif p.get('asset')=='stock' and isinstance(p.get('symbol'),str):stocks.append(p['symbol'])
+        if isinstance(p.get('underlying'),str) and p['underlying']:stocks.append(p['underlying'])
     # Pin daily research around entry and endpoint windows, even without a paper trade.
     from .smoothers_daily import quote_demand
     stocks.extend(quote_demand(db,c,now))
@@ -37,18 +41,18 @@ def inventory(db,c,now,include_followups=True):
             elif '@' not in s:stocks.append(s)
     for p in db.prefix(c,'position:').values():
         if p.get('status')!='open':continue
-        if p.get('asset')=='option':options.append(p['symbol'])
-        if p.get('underlying'):stocks.append(p['underlying'])
+        if p.get('asset')=='option' and isinstance(p.get('symbol'),str):options.append(p['symbol'])
+        if isinstance(p.get('underlying'),str) and p['underlying']:stocks.append(p['underlying'])
     # 0DTE paper trades live under trade:0dte-, not position:, so the loops
     # above never pinned them: their contracts rode last in the request queue
     # under the subscription cap and could sit uncovered while open.
     for t in db.prefix(c,'trade:0dte-').values():
-        if isinstance(t,dict) and t.get('status')=='open' and t.get('symbol'):
+        if isinstance(t,dict) and t.get('status')=='open' and isinstance(t.get('symbol'),str) and t['symbol']:
             options.append(t['symbol'])
-            if t.get('underlying'):stocks.append(t['underlying'])
+            if isinstance(t.get('underlying'),str) and t['underlying']:stocks.append(t['underlying'])
     from .universe import INDEX_UNDERLYINGS
-    return dict(options=list(dict.fromkeys(options)),
-                stocks=list(dict.fromkeys(s for s in stocks if s not in INDEX_UNDERLYINGS)))
+    return dict(options=list(dict.fromkeys(o for o in options if isinstance(o,str))),
+                stocks=list(dict.fromkeys(s for s in stocks if isinstance(s,str) and s not in INDEX_UNDERLYINGS)))
 
 
 def select_contracts(active,previous,requested,background,limit,pending=()):

@@ -789,7 +789,7 @@ def _open_episode(db, c, sym, ev, bar, now, sample):
         'legs': {'tp1': {'qty': TP1_QTY, 'filled': False, 'fill': None,
                          'gross': 0.0, 'date': None, 'bar_ts': None},
                  'runner': {'qty': QTY - TP1_QTY, 'gross': 0.0}},
-        'underlying': None, 'pnl': None, 'outcome': None,
+        'underlying_leg': None, 'pnl': None, 'outcome': None,
         'contract': None, 'entry': None,
         'premium': {'tp1_bid': None, 'exit_bid': None, 'net': None,
                     'data_gap': None},
@@ -868,7 +868,7 @@ def _apply_event(db, c, sym, ev, bar, now, sample, open_eps, alerts_out):
     if ev['type'] == 'close':
         p['legs']['tp1']['gross'] = ev['tp1_gross']
         p['legs']['runner']['gross'] = ev['runner_gross']
-        p['underlying'] = {
+        p['underlying_leg'] = {
             'entry_px': ev['entry_px'], 'exit_px': ev['exit_px'],
             'exit_date': ev['exit_date'], 'reason': ev['reason'],
             'gross': ev['gross'], 'net': ev['net'], 'orders': ev['orders'],
@@ -901,6 +901,19 @@ def _finalize(db, c, p, now):
     elif p['premium_status'] == 'data_gap':
         p['status'] = 'data_gap'
         _save(db, c, p, now, status='data_gap')
+
+
+def _underlying_leg(p):
+    """The underlying-leg result dict for an episode payload. Stored
+    under 'underlying_leg' since the 2026-11-22 fix; legacy rows carry
+    it in 'underlying', where it clobbered the symbol string (the
+    /api/state 500 root cause). Returns None when the leg has not
+    closed yet."""
+    leg = p.get('underlying_leg')
+    if isinstance(leg, dict):
+        return leg
+    leg = p.get('underlying')
+    return leg if isinstance(leg, dict) else None
 
 
 def _premium_gap(db, c, p, now, reason, at_stage):
@@ -1019,7 +1032,7 @@ def _price_exits(db, c, now):
                     bool(leg['filled']))
                 p['premium_status'] = 'closed'
                 _event(db, c, p, 'premium_closed', now,
-                       {'date': p['underlying']['exit_date'],
+                       {'date': _underlying_leg(p)['exit_date'],
                         'net': prem['net']})
                 _save(db, c, p, now)
                 _finalize(db, c, p, now)
@@ -1046,11 +1059,12 @@ def _write_state(db, c, now, extra=None):
             counts['premium_data_gap'] += 1
         elif p['stage'] == 'closed':
             counts['premium_pending'] += 1
-        if p.get('underlying'):
-            und_nets.append(p['underlying']['net'])
+        leg_result = _underlying_leg(p)
+        if leg_result:
+            und_nets.append(leg_result['net'])
             s = per_symbol.setdefault(p['symbol'], {'n': 0, 'net': 0.0})
             s['n'] += 1
-            s['net'] += p['underlying']['net']
+            s['net'] += leg_result['net']
         if p['premium_status'] == 'closed' and p['premium']['net'] is not None:
             prem_nets.append(p['premium']['net'])
 
@@ -1074,8 +1088,9 @@ def _write_state(db, c, now, extra=None):
             if k < 0:
                 continue
             w = by_window.setdefault(k, {'underlying': [], 'premium': []})
-            if p.get('underlying'):
-                w['underlying'].append(p['underlying']['net'])
+            leg_result = _underlying_leg(p)
+            if leg_result:
+                w['underlying'].append(leg_result['net'])
             if p['premium_status'] == 'closed' \
                     and p['premium']['net'] is not None:
                 w['premium'].append(p['premium']['net'])
