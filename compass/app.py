@@ -78,6 +78,7 @@ CRON_TOKEN_PATHS = {
     "/api/admin/daily-backfill",
     "/api/admin/smoothers-rescore",
     "/api/admin/smoothers-history-backfill",
+    "/api/admin/smoothers-board",
 }
 # Kept for callers/tests that import the old name.
 CRON_TOKEN_ENDPOINTS = {(m, p) for p in CRON_TOKEN_PATHS for m in ("GET", "POST")}
@@ -387,7 +388,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/chain-open-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/db-vacuum-full","/api/admin/db-vacuum-full-log","/api/admin/events-export","/api/admin/ice-shadow-export","/api/admin/survivor-fill-verdict","/api/admin/daily-backfill","/api/admin/smoothers-rescore","/api/admin/smoothers-history-backfill","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/chain-open-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/db-vacuum-full","/api/admin/db-vacuum-full-log","/api/admin/events-export","/api/admin/ice-shadow-export","/api/admin/survivor-fill-verdict","/api/admin/daily-backfill","/api/admin/smoothers-rescore","/api/admin/smoothers-history-backfill","/api/admin/smoothers-board","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -1384,6 +1385,44 @@ a{color:#888}</style></head><body>
                 {'ok': False, 'error': 'Backfill failed. Check server logs.'},
                 status_code=500)
         return {'ok': True, **report}
+
+    @app.get('/api/admin/smoothers-board')
+    def smoothers_board(week: str = Query('', max_length=10)):
+        """Fast board read for the Monday Weeklies PDF pull (2026-11-23).
+        Cron-token gated (CRON_TOKEN_PATHS). GET
+        /api/admin/smoothers-board?week=YYYY-MM-DD returns
+        {week, state, rows} for one week of the native smoothers board:
+        state is the week's job state (waiting/running/complete/missed —
+        the same value /api/native/report's smoothers section carries as
+        job.state) and rows are the exact row objects
+        /api/native/smoothers/history returns at limit=500, from the same
+        data path (native_reports.smoothers) — no forked row building.
+        Read-only: no writes, no state mutation. week defaults to the
+        current week's Monday (America/Chicago). The session-gated
+        history endpoint stays the dashboard's path; this one exists so
+        the board pull takes seconds instead of a signed-in browser
+        round-trip."""
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        from . import native_reports as _nr
+        if not week:
+            today = datetime.now(ZoneInfo('America/Chicago')).date()
+            week = (today - timedelta(days=today.weekday())).isoformat()
+        try:
+            with db.tx() as c:
+                result = _nr.smoothers(db, c, time.time(), 500, week, '')
+        except ValueError as e:
+            return JSONResponse({'ok': False, 'error': str(e)},
+                                status_code=422)
+        except Exception:
+            logging.getLogger('uvicorn.error').exception(
+                'smoothers board read failed')
+            return JSONResponse(
+                {'ok': False, 'error': 'Board read failed. Check server logs.'},
+                status_code=500)
+        return {'week': result['week'],
+                'state': (result.get('job') or {}).get('state'),
+                'rows': result['rows']}
 
     @app.get('/api/admin/archive-coverage')
     def get_archive_coverage():
