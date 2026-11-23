@@ -77,6 +77,7 @@ CRON_TOKEN_PATHS = {
     "/api/admin/survivor-fill-verdict",
     "/api/admin/daily-backfill",
     "/api/admin/smoothers-rescore",
+    "/api/admin/smoothers-history-backfill",
 }
 # Kept for callers/tests that import the old name.
 CRON_TOKEN_ENDPOINTS = {(m, p) for p in CRON_TOKEN_PATHS for m in ("GET", "POST")}
@@ -386,7 +387,7 @@ def create_app(cfg=None):
             supplied=request.headers.get("authorization","")
             if not hmac.compare_digest(supplied.encode(),("Bearer "+cfg.cron_token).encode()):
                 return JSONResponse({"detail":"Invalid or missing cron token"},status_code=401)
-        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/chain-open-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/db-vacuum-full","/api/admin/db-vacuum-full-log","/api/admin/events-export","/api/admin/ice-shadow-export","/api/admin/survivor-fill-verdict","/api/admin/daily-backfill","/api/admin/smoothers-rescore","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
+        public=path in {"/","/health","/login","/simple","/api/simple","/api/simple/calendar","/api/simple/detail","/api/pick-check/auto","/api/admin/simple-archive-chunk","/api/admin/copy-archive-chunk","/api/admin/archive-trigger","/api/admin/archive-log","/api/admin/archive-coverage","/api/admin/archive-verify-samples","/api/admin/archive-prune-chunk","/api/admin/archive-prune-rearm","/api/admin/archive-prune-status","/api/admin/backtest-scalp","/api/admin/backtest-futures","/api/admin/chain-eod-snapshot","/api/admin/chain-open-snapshot","/api/admin/db-maintenance","/api/admin/db-maintenance-log","/api/admin/db-vacuum-full","/api/admin/db-vacuum-full-log","/api/admin/events-export","/api/admin/ice-shadow-export","/api/admin/survivor-fill-verdict","/api/admin/daily-backfill","/api/admin/smoothers-rescore","/api/admin/smoothers-history-backfill","/api/alpaca-stream-status","/api/option-stream-parity","/api/tradermatrix-intel","/api/tradermatrix-intel/refresh","/api/tradermatrix-intel/web-scrape","/api/traderspost-skips","/api/brake-shadow","/api/live-combo-scorecard","/api/iceberg-scorecard","/api/iceberg-status","/api/ice-shadow-status","/api/scanner-shadow-scorecard"} or path.startswith("/static/")
         # These exact routes enforce independent scoped credentials in their handlers.
         integration=(path=="/hooks/native/morning" or bool(re.fullmatch(r"/hooks/native/morning/[^/]+",path)) or path=="/api/integrations/context" or bool(re.fullmatch(r"/hooks/projects/futures/[^/]+/(mnq|mgc)",path)))
         # 2026-10-23: worker roles (collector/engine) serve ONLY /health.
@@ -1343,6 +1344,44 @@ a{color:#888}</style></head><body>
                 'smoothers rescore failed')
             return JSONResponse(
                 {'ok': False, 'error': 'Rescore failed. Check server logs.'},
+                status_code=500)
+        return {'ok': True, **report}
+
+    @app.post('/api/admin/smoothers-history-backfill')
+    async def smoothers_history_backfill(request: Request):
+        """Repair the 2026-11-16 Weeklies record gap. Cron-token
+        gated (CRON_TOKEN_PATHS). POST {week: 'YYYY-MM-DD'}:
+        compass.native_smoothers.backfill_week_historical_stats
+        recomputes historical_stats for the named week's stored
+        payloads (same get_ticker_stats, the week's frozen
+        owned_since) and fills ONLY payloads whose stored record is
+        empty — a populated record is never overwritten. Returns
+        the before/after accounting (cohort, populated_before,
+        filled, populated_after; also appended as a
+        smoothers_history_backfill event). Idempotent: a second
+        call fills 0."""
+        from . import native_smoothers as _ns
+        try:
+            data = await request.json()
+        except Exception:
+            return JSONResponse({'ok': False, 'error': 'Body must be JSON'},
+                                status_code=400)
+        if not isinstance(data, dict):
+            return JSONResponse(
+                {'ok': False, 'error': 'Body must be a JSON object'},
+                status_code=400)
+        week = str(data.get('week') or '')
+        if not week:
+            return JSONResponse({'ok': False, 'error': 'week is required'},
+                                status_code=400)
+        try:
+            report = await asyncio.to_thread(
+                _ns.backfill_week_historical_stats, db, week, time.time())
+        except Exception:
+            logging.getLogger('uvicorn.error').exception(
+                'smoothers history backfill failed')
+            return JSONResponse(
+                {'ok': False, 'error': 'Backfill failed. Check server logs.'},
                 status_code=500)
         return {'ok': True, **report}
 

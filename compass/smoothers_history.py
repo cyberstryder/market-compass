@@ -1,4 +1,5 @@
 """Historical ticker stats for Smoothers conviction data in alerts."""
+import logging
 from sqlalchemy import select
 from .store import meta
 from .projects import records
@@ -88,6 +89,9 @@ def get_ticker_stats(db, ticker, week, owned_since=float('inf')):
         return stats
         
     except Exception:
+        # A failed read must not be indistinguishable from a genuinely empty
+        # history (2026-11-16: a board-wide failure stored zeros silently).
+        logging.getLogger('uvicorn.error').exception('smoothers_history get_ticker_stats failed for %s week %s; returning empty stats',ticker,week)
         return stats
 
 def clear_cache():
