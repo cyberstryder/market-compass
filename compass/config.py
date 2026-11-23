@@ -171,7 +171,16 @@ class Config:
     vix_regime_enabled: bool = field(default_factory=lambda: env("VIX_REGIME_ENABLED","true")=="true")
     vix_low_threshold: float = field(default_factory=lambda: float(env("VIX_LOW_THRESHOLD","15.0")))
     vix_high_threshold: float = field(default_factory=lambda: float(env("VIX_HIGH_THRESHOLD","25.0")))
-    mu_scalp: bool = field(default_factory=lambda: env("MU_SCALP_ENABLED","true")=="true")
+    # Stock scalp book CLOSED 2026-11-22 (Josh): final tracked record
+    # 592 trades, 208 wins (35%), -$39,271.29 (MU alone 135 trades /
+    # -$19,539) — the trigger fired plenty (132 gap signals in 60 days);
+    # the average trade lost. Default OFF, including when the env var
+    # is absent entirely (it is unset in Railway): the engine's scalp
+    # segment no longer runs, so no new gap/spike fade trades are
+    # generated or tracked. Historical trade:mu- records are untouched
+    # and still read by the /api/simple drill. Re-enable only by
+    # explicitly setting MU_SCALP_ENABLED=true.
+    mu_scalp: bool = field(default_factory=lambda: env("MU_SCALP_ENABLED","false")=="true")
     ict_tier_a_b: bool = field(default_factory=lambda: env("ICT_TIER_A_B_ENABLED","false")=="true")
     ict_golden_zone: bool = field(default_factory=lambda: env("ICT_GOLDEN_ZONE_ENABLED","true")=="true")
     ict_gz_ema_fast: int = field(default_factory=lambda: int(env("ICT_GZ_EMA_FAST","9")))
