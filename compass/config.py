@@ -281,8 +281,9 @@ class Config:
     # with a nearest-expiry premium measurement; see
     # compass/stock_sweeps.py.
     stock_sweeps: bool = field(default_factory=lambda: env("STOCK_SWEEPS_ENABLED","true")=="true")
-    # Stock Sweeps display-only shadow alerts to the 0DTE Discord
-    # channel (2026-11-16 registration): rendering only — scoring is
+    # Stock Sweeps display-only shadow alerts to the #compass Discord
+    # channel (research route; 2026-11-16 registration, moved off the
+    # 0DTE channel 2026-11-25): rendering only — scoring is
     # byte-identical with this flag on or off.
     stock_sweeps_alerts: bool = field(default_factory=lambda: env("STOCK_SWEEPS_ALERTS_ENABLED","true")=="true")
     # Futures Sweep (ORB HUD) forward shadow (2026-11-16, Josh):
@@ -315,17 +316,21 @@ class Config:
     # expression from live SPY 1-minute bars and live OPRA quotes in
     # its own premium cell; see compass/sh_spy_options.py.
     sh_spy_options: bool = field(default_factory=lambda: env("SH_SPY_OPTIONS_ENABLED","true")=="true")
-    # SH-SPY display-only shadow alerts to the 0DTE Discord channel
-    # (registration §6 amendment, Josh 2026-11-04): rendering only —
+    # SH-SPY display-only shadow alerts to the #compass Discord
+    # channel (research route; registration §6 amendment, Josh
+    # 2026-11-04; moved off the 0DTE channel 2026-11-25): rendering
+    # only —
     # scoring is byte-identical with this flag on or off.
     sh_spy_alerts: bool = field(default_factory=lambda: env("SH_SPY_ALERTS_ENABLED","true")=="true")
-    # Connors SSC display-only shadow alerts to the 0DTE Discord
-    # channel (2026-11-13 addendum to the translation registration,
-    # Josh): rendering only — scoring is byte-identical with this
+    # Connors SSC display-only shadow alerts to the #compass Discord
+    # channel (research route; 2026-11-13 addendum to the translation
+    # registration, Josh; moved off the 0DTE channel 2026-11-25):
+    # rendering only — scoring is byte-identical with this
     # flag on or off; see compass/connors_ssc.py.
     connors_alerts: bool = field(default_factory=lambda: env("CONNORS_ALERTS_ENABLED","true")=="true")
-    # C2 swings display-only shadow alerts to the 0DTE Discord
-    # channel (2026-11-13 addendum to the swings registration, Josh):
+    # C2 swings display-only shadow alerts to the #compass Discord
+    # channel (research route; 2026-11-13 addendum to the swings
+    # registration, Josh; moved off the 0DTE channel 2026-11-25):
     # one basket message per rebalance plus per-episode closes;
     # rendering only — scoring is byte-identical with this flag on
     # or off; see compass/swings_c2.py.

@@ -2,8 +2,11 @@
 
 Paper / measurement scope ONLY: no orders, no broker contact, no
 TradersPost or Alpaca wiring. The one outward surface is the
-registration's §6 display-only shadow alerts to the 0DTE Discord
-channel (own flag, default ON; see the push section below).
+registration's §6 display-only shadow alerts to the #compass
+Discord channel (research route; own flag, default ON; see the
+push section below). They posted to the 0DTE channel until
+2026-11-25, when Josh moved every shadow book to #compass so
+#0dte carries the 0DTE scanner funnel alone.
 
 Frozen registration:
 files/structure-hunter-spy-options-registration-2026-11-04.md
@@ -60,7 +63,7 @@ Alerts (§6 of the registration, Josh 2026-11-04 13:05 CT): episode
 OPEN (premium priced) and CLOSE (premium scored) alerts, labeled
 SH-SPY SHADOW, queued into this module's own outbox
 (sh_spy_push_outbox_v1) AFTER the episode transaction commits and
-drained by this module's own loop to the options_0dte route's
+drained by this module's own loop to the research route's
 configured destination. They never enter the general alert
 pipeline, are never classified under the silenced scanner class,
 and the scanner/ICT silence gates are untouched. Scoring is
@@ -834,7 +837,7 @@ def first_quote_at_or_after(db, c, chain, contract_symbol, since_ts):
 # ════════════════════════════════════════════════════════════════
 # Display-only shadow alerts (registration §6). Own outbox + own
 # drainer, following the house per-channel outbox precedent
-# (ict_push). Destination = the options_0dte route's configured
+# (ict_push). Destination = the research route's configured
 # webhook, resolved through alert_routes.destination exactly as the
 # routing layer resolves it (dedicated webhook or shared fallback).
 # These alerts never enter the general alert pipeline.
@@ -940,10 +943,16 @@ def queue_alert(db, cfg, payload):
 
 
 def push_destination(cfg):
-    """The options_0dte route destination (url, mode) via the routing
-    layer's own resolver; url None when the route is unconfigured."""
+    """The research route destination (url, mode) via the routing
+    layer's own resolver; url None when the route is unconfigured.
+    (2026-11-25, Josh: the shadow books post to #compass; the
+    options_0dte route belongs to the 0DTE scanner funnel alone.
+    The destination is resolved here at drain time and outbox rows
+    persist no route, so rows still queued when this shipped
+    follow the move automatically — none are stranded and none
+    keep posting to #0dte.)"""
     from .alert_routes import destination
-    url, mode = destination(cfg, 'options_0dte')
+    url, mode = destination(cfg, 'research')
     return (url if url else None), mode
 
 
@@ -1016,8 +1025,8 @@ def deliver_one_push(db, client, url, now=None, max_attempts=MAX_PUSH_ATTEMPTS):
 
 
 async def run_push(db, cfg):
-    """Drainer loop for the §6 shadow alerts (own outbox, 0DTE route
-    destination). Never raises out of the loop."""
+    """Drainer loop for the §6 shadow alerts (own outbox, research
+    route destination). Never raises out of the loop."""
     with httpx.Client(timeout=10, follow_redirects=False) as client:
         while True:
             try:
@@ -1028,7 +1037,7 @@ async def run_push(db, cfg):
                         await asyncio.to_thread(deliver_one_push, db, client, url)
                     else:
                         db.health(PUSH_KIND, 'not_configured',
-                                  'options_0dte route has no webhook; '
+                                  'research route has no webhook; '
                                   'shadow alerts stay queued')
             except asyncio.CancelledError:
                 raise

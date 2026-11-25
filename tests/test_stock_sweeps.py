@@ -23,7 +23,8 @@ from compass.config import Config
 from compass.stock_sweeps import (BOOK, _apply_event, _underlying_leg,
                                   aggregate_buckets,
                                   bucket_start_ts, episodes,
-                                  first_quote_at_or_after, new_state,
+                                  first_quote_at_or_after,
+                                  format_close_message, new_state,
                                   on_bar, premium_net, run_bars, scan,
                                   select_contract)
 from compass.store import Store, stock_sweeps_push_outbox
@@ -311,6 +312,54 @@ def test_live_lifecycle(db):
     types = sorted(p['type'] for p in outbox)
     assert types.count('entry') == len(FIXTURE['trades'])
     assert types.count('close') == len(FIXTURE['trades'])
+    # Close alerts carry the episode's premium-leg result (routing
+    # fix addendum, 2026-11-25): scan() runs the premium pricing
+    # steps before queueing, and the seeded chain resolves every
+    # episode's premium in the same pass — so each queued CLOSE
+    # payload carries the same premium net the episode scored.
+    by_id = {p['id']: p for p in rows}
+    for p in outbox:
+        if p['type'] != 'close':
+            continue
+        assert p['premium_status'] == 'closed'
+        assert p['premium_net'] == by_id[p['episode_id']]['premium']['net']
+
+
+# ---------------------------------------------------------------------------
+# Close-message premium leg (2026-11-25): the shadow CLOSE post shows
+# the premium leg next to the underlying leg, from the book's own
+# premium scoring — a pending or data-gapped premium is labeled,
+# never estimated; payloads queued before the field existed render
+# exactly as before.
+
+_CLOSE_BASE = {'type': 'close', 'symbol': 'AMD', 'side': 1,
+               'reason': 'stop', 'entry_px': 100.0, 'exit_px': 98.0,
+               'net': -200.0, 'tp1_gross': 0.0, 'runner_gross': -200.0,
+               'exit_date': '2025-11-03'}
+
+
+def test_close_message_shows_scored_premium_leg():
+    msg = format_close_message({**_CLOSE_BASE, 'premium_status': 'closed',
+                                'premium_net': -87.4})
+    assert 'Premium leg scored P&L **-$87.40**' in msg['content']
+    assert '(underlying, 100 sh)' in msg['content']
+    assert 'Shadow measurement only' in msg['content']
+
+
+def test_close_message_labels_premium_data_gap():
+    msg = format_close_message({**_CLOSE_BASE,
+                                'premium_status': 'data_gap'})
+    assert 'Premium leg: data gap' in msg['content']
+
+
+def test_close_message_labels_premium_pending():
+    msg = format_close_message({**_CLOSE_BASE, 'premium_status': 'open'})
+    assert 'Premium leg: measurement pending' in msg['content']
+
+
+def test_close_message_legacy_payload_unchanged():
+    msg = format_close_message(dict(_CLOSE_BASE))
+    assert 'Premium leg' not in msg['content']
 
 
 def test_apply_event_close_keeps_underlying_symbol(db):

@@ -4,8 +4,11 @@ Paper / measurement scope ONLY: no orders, no live sends. The one
 outward surface is the display-only shadow alerts added by the
 2026-11-13 addendum to the swings registration (Josh): ONE basket
 message per weekly rebalance plus per-episode CLOSE alerts to the
-0DTE Discord channel, following the SH-SPY §6 pattern (own outbox,
-own flag, default ON; see the push section below). This
+#compass Discord channel (research route), following the SH-SPY
+§6 pattern (own outbox, own flag, default ON; see the push
+section below). They posted to the 0DTE channel until 2026-11-25,
+when Josh moved every shadow book to #compass so #0dte carries
+the 0DTE scanner funnel alone. This
 module shadow-fires the C2 candidate exactly as frozen in the 2026-11-01
 swings generator gauntlet (files/swings-generator-gauntlet-2026-11-01.md)
 and scores its premium translation forward, per that report's §5/§6:
@@ -287,7 +290,7 @@ def snapshot_on_or_after(db, c, symbol, date_str):
 # Display-only shadow alerts (2026-11-13 addendum to the swings
 # registration, Josh). Own outbox + own drainer, following the SH-SPY
 # §6 precedent in sh_spy_options.py exactly: destination = the
-# options_0dte route's configured webhook, resolved through
+# research route's configured webhook, resolved through
 # alert_routes.destination. These alerts never enter the general
 # alert pipeline. Scoring is byte-identical with the alert flag on
 # or off (pinned by test); data_gap episodes never alert (no premium
@@ -389,10 +392,16 @@ def queue_alert(db, cfg, payload):
 
 
 def push_destination(cfg):
-    """The options_0dte route destination (url, mode) via the routing
-    layer's own resolver; url None when the route is unconfigured."""
+    """The research route destination (url, mode) via the routing
+    layer's own resolver; url None when the route is unconfigured.
+    (2026-11-25, Josh: the shadow books post to #compass; the
+    options_0dte route belongs to the 0DTE scanner funnel alone.
+    The destination is resolved here at drain time and outbox rows
+    persist no route, so rows still queued when this shipped
+    follow the move automatically — none are stranded and none
+    keep posting to #0dte.)"""
     from .alert_routes import destination
-    url, mode = destination(cfg, 'options_0dte')
+    url, mode = destination(cfg, 'research')
     return (url if url else None), mode
 
 
@@ -465,8 +474,8 @@ def deliver_one_push(db, client, url, now=None, max_attempts=MAX_PUSH_ATTEMPTS):
 
 
 async def run_push(db, cfg):
-    """Drainer loop for the addendum shadow alerts (own outbox, 0DTE
-    route destination). Never raises out of the loop."""
+    """Drainer loop for the addendum shadow alerts (own outbox,
+    research route destination). Never raises out of the loop."""
     with httpx.Client(timeout=10, follow_redirects=False) as client:
         while True:
             try:
@@ -477,7 +486,7 @@ async def run_push(db, cfg):
                         await asyncio.to_thread(deliver_one_push, db, client, url)
                     else:
                         db.health(PUSH_KIND, 'not_configured',
-                                  'options_0dte route has no webhook; '
+                                  'research route has no webhook; '
                                   'shadow alerts stay queued')
             except asyncio.CancelledError:
                 raise
