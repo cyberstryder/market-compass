@@ -229,7 +229,9 @@ shock_fade_episodes=Table('shock_fade_episodes',meta,
 Index('shock_fade_active',shock_fade_episodes.c.status,shock_fade_episodes.c.created)
 
 # SH-SPY shadow-alert outbox (registration §6, display only): the
-# scorer's own narrow queue to the 0DTE Discord channel, following
+# scorer's own narrow queue to the #compass Discord channel
+# (research route; the 0DTE channel until the 2026-11-25 routing
+# fix), following
 # the per-channel outbox precedent (ict_push_outbox_v1 above).
 sh_spy_push_outbox=Table('sh_spy_push_outbox_v1',meta,
     Column('id',String(64),primary_key=True),Column('status',String(24),nullable=False),
@@ -239,8 +241,10 @@ Index('sh_spy_push_pending',sh_spy_push_outbox.c.status,sh_spy_push_outbox.c.cre
 
 # Connors SSC shadow-alert outbox (2026-11-13 addendum to the
 # translation registration, display only): the scorer's own narrow
-# queue to the 0DTE Discord channel, following the sh_spy_push
-# precedent above. Declared here for the same create_all reason.
+# queue to the #compass Discord channel (research route; the
+# 0DTE channel until the 2026-11-25 routing fix), following the
+# sh_spy_push precedent above. Declared here for the same
+# create_all reason.
 connors_push_outbox=Table('connors_push_outbox_v1',meta,
     Column('id',String(64),primary_key=True),Column('status',String(24),nullable=False),
     Column('created',Float,nullable=False),Column('payload',JSON,nullable=False),
@@ -268,7 +272,9 @@ stock_sweeps_episodes=Table('stock_sweeps_episodes',meta,
 Index('stock_sweeps_active',stock_sweeps_episodes.c.status,stock_sweeps_episodes.c.created)
 
 # Stock Sweeps shadow-alert outbox (2026-11-16 registration, display
-# only): the shadow's own narrow queue to the 0DTE Discord channel,
+# only): the shadow's own narrow queue to the #compass Discord
+# channel (research route; the 0DTE channel until the 2026-11-25
+# routing fix),
 # following the connors_push precedent above. Declared here for the
 # same create_all reason.
 stock_sweeps_push_outbox=Table('stock_sweeps_push_outbox_v1',meta,

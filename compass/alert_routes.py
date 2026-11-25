@@ -8,7 +8,7 @@ from .alert_format import alert_identity
 ROUTES = {
     'spy_morning': ('morning-brief', 'SPY 0DTE morning plan, then the TradingView AI drawing prompt'),
     'futures': ('futures', 'Futures signals, observations and simulated management'),
-    'options_0dte': ('0dte', 'Compass same-day option simulations'),
+    'options_0dte': ('0dte', 'Compass 0DTE scanner funnel option simulations (DTE 0-7 book)'),
     'options_ideas': ('ideas', 'Intraday and multi-session option ideas'),
     'smoothers': ('smoothers', 'Weeklies-owned option lifecycle'),
     'intraday': ('intraday', 'Intraday stock / ETF setups, unusual flow and exposure breaks'),

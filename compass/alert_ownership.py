@@ -28,11 +28,29 @@ def contract(row):
                 type='CALL' if m[3]=='C' else 'PUT',strike=int(m[4])/1000)
 
 
+def _is_funnel(row, p):
+    """The 0DTE scanner funnel: the setup_study rows zero_dte_paper
+    books from. Entries carry the producer-stamped publication
+    category ('options_0dte', stamped by engine.options' study branch
+    and by the earnings-play scan, which feeds the same book); exits
+    (setup_result) carry the trial's strategy instead. Identified by
+    producer markers, never by contract DTE — the book is DTE 0-7 by
+    producer selection (cfg.option_0dte_max_dte), and keying the
+    category on DTE is what split the funnel across channels.
+    option_ideas.py rows never match: different source, no stamp."""
+    if row.get('source')!='setup_study':return False
+    pub=p.get('publication')
+    if isinstance(pub,dict) and pub.get('category')=='options_0dte':return True
+    strategy=str(p.get('strategy') or '')
+    return strategy.startswith('0dte-compass-scanner') or strategy=='0dte-underlying-orb-v2'
+
+
 def classification(row, o):
     p=row['payload']; at=p.get('opened_at') or p.get('started') or row['ts']
     dte=(datetime.fromisoformat(o['expiration']).date()-datetime.fromtimestamp(at,CT).date()).days
     horizon=p.get('holding_horizon') or ('swing' if p.get('track')=='swing' or row.get('source') in ('swing_ideas','smoothers') else 'intraday')
     if dte==0:horizon='intraday';category='spy_morning' if o['underlying']=='SPY' else 'options_0dte'
+    elif _is_funnel(row,p) and horizon!='swing':horizon='intraday';category='options_0dte'
     elif p.get('project')=='smoothers' or row.get('source')=='smoothers':category='smoothers';horizon='swing'
     elif horizon=='swing':category='swing'
     else:category='options_ideas'

@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 from sqlalchemy import select
 from compass.store import Store,discord_jobs
-from compass.alert_ownership import assess,read_trade,report,format_message,quote_error,CT,block_entry
+from compass.alert_ownership import assess,read_trade,report,format_message,quote_error,CT,block_entry,classification,contract
 # Module level so the native outbox table is registered on store.meta before
 # db.initialize() runs (in-function imports registered it too late).
 from compass.native_outbox import queue as native_queue,deliver_one as native_deliver_one,outbox as native_outbox
@@ -268,3 +268,76 @@ def test_smoothers_exit_week_close_unresolved():
         exit_underlying=None,quote={}))
     assert 'Week closed · outcome unresolved (missing observations)' in text
     assert 'Trade ID:' not in text
+
+
+# ── Discord routing fix (2026-11-25, Josh): the 0DTE scanner funnel
+# owns the options_0dte category for its whole book (DTE 0-7, the
+# producers' selection bound). The classifier previously split the
+# funnel by contract DTE — DTE>=1 funnel trades were classified
+# options_ideas and posted to #ideas as OPTIONS INTRADAY, while #0dte
+# filled with other books' shadow traffic. The funnel is identified
+# by its producer markers, never by DTE: entries carry the stamped
+# publication category, exits carry the trial strategy.
+
+FUNNEL_STAMP={'category':'options_0dte','status':'option_setup_new',
+    'contract':{'symbol':'QQQ260925C00500000','underlying':'QQQ','strike':500,
+                'type':'CALL','expiry':'2026-09-25'}}
+
+def funnel_row(i=1,symbol='O:QQQ260925C00500000',**payload):
+    base=dict(strategy='0dte-compass-scanner-v2:trend_pullback',
+              publication=dict(FUNNEL_STAMP))
+    base.update(payload)
+    return row(i,symbol=symbol,source='setup_study',**base)
+
+def _class(symbol,source='setup_study',**payload):
+    r=dict(id=1,symbol=symbol,source=source,ts=NOW,payload=payload)
+    return classification(r,contract(r))[0]
+
+@pytest.mark.parametrize('symbol,payload,expected',[
+ # Funnel entries across the book's DTE range (stamp + strategy).
+ ('O:QQQ260923C00500000',dict(strategy='0dte-compass-scanner-v2:x',publication=dict(FUNNEL_STAMP)),'options_0dte'),
+ ('O:QQQ260925C00500000',dict(strategy='0dte-compass-scanner-v2:x',publication=dict(FUNNEL_STAMP)),'options_0dte'),
+ ('O:QQQ260930C00500000',dict(strategy='0dte-compass-scanner-v2:x',publication=dict(FUNNEL_STAMP)),'options_0dte'),
+ # Funnel exit rows carry no publication stamp — the trial strategy is the marker.
+ ('O:QQQ260925C00500000',dict(strategy='0dte-compass-scanner-v2:x',status='setup_result'),'options_0dte'),
+ ('O:QQQ260925C00500000',dict(strategy='0dte-underlying-orb-v2',status='setup_result'),'options_0dte'),
+ # Earnings plays feed the same funnel (producer-stamped, own strategy).
+ ('O:QQQ260924C00500000',dict(strategy='earnings-play-v1',publication=dict(FUNNEL_STAMP)),'options_0dte'),
+ # SPY same-day stays the morning plan's category.
+ ('O:SPY260923C00600000',dict(strategy='0dte-compass-scanner-v2:x',publication=dict(FUNNEL_STAMP)),'spy_morning'),
+ # A swing-track trial that passed through engine.options keeps 'swing'
+ # even though the producer stamped it like a funnel entry.
+ ('O:QQQ261003C00500000',dict(strategy='0dte-underlying-orb-v2',track='swing',publication=dict(FUNNEL_STAMP)),'swing'),
+ # Genuine intraday ideas (option_ideas.py) are untouched at any DTE.
+ ('O:QQQ260928C00500000',dict(status='option_idea_new',alert_category='options_ideas'),'options_ideas'),
+])
+def test_funnel_classification_matrix(symbol,payload,expected):
+    source='option_ideas' if payload.get('alert_category')=='options_ideas' else 'setup_study'
+    assert _class(symbol,source=source,**payload)==expected
+
+def test_funnel_dte2_entry_publishes_as_options_0dte(db):
+    with db.tx() as c:
+        r=funnel_row();a=assess(db,c,r,NOW)
+        assert a['action']=='publish' and a['category']=='options_0dte'
+        text=format_message(dict(r,payload=a['payload']))
+        assert text.startswith('OPTIONS 0DTE | ENTRY')
+
+def test_funnel_exit_keeps_options_0dte(db):
+    with db.tx() as c:
+        a=assess(db,c,funnel_row(),NOW)
+        end=assess(db,c,changed(funnel_row(),2,status='setup_result',outcome='win',pnl=42),NOW)
+        assert end['trade_id']==a['trade_id'] and end['event']=='EXIT'
+        assert end['category']=='options_0dte'
+
+def test_funnel_and_ideas_are_separate_dedupe_scopes(db):
+    # Same underlying + direction, different books: the funnel trade
+    # must not suppress (or be suppressed by) an ideas trade.
+    with db.tx() as c:
+        a=assess(db,c,funnel_row(),NOW)
+        ideas_row=row(2,symbol='O:QQQ260928C00500000',source='option_ideas',
+                      alert_category='options_ideas')
+        ideas_row['payload']['status']='option_idea_new'
+        b=assess(db,c,ideas_row,NOW)
+        assert a['action']=='publish' and b['action']=='publish'
+        assert a['category']=='options_0dte' and b['category']=='options_ideas'
+        assert a['trade_id']!=b['trade_id']

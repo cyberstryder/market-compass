@@ -2,8 +2,10 @@
 
 Paper / measurement scope ONLY: no orders, no live sends, nothing to
 any broker. The one outward surface is display-only shadow alerts to
-the 0DTE Discord channel (own outbox, own drainer, the connors_ssc /
-SH-SPY §6 pattern).
+the #compass Discord channel (research route; own outbox, own
+drainer, the connors_ssc / SH-SPY §6 pattern). They posted to the
+0DTE channel until 2026-11-25, when Josh moved every shadow book to
+#compass so #0dte carries the 0DTE scanner funnel alone.
 
 This module shadow-fires Josh's Stock_Sweeps.txt ("Opening Range
 Sweep & Reclaim [Unified Options v4.3]") on the 23 symbols that
@@ -533,7 +535,7 @@ def premium_net(entry_ask, tp1_bid, exit_bid, tp1_done):
 
 # ---------------------------------------------------------------------------
 # Display-only shadow alerts (own outbox + own drainer, the
-# connors_ssc / SH-SPY §6 precedent): destination = the options_0dte
+# connors_ssc / SH-SPY §6 precedent): destination = the research
 # route's configured webhook via alert_routes.destination. These
 # alerts never enter the general alert pipeline. Scoring is
 # byte-identical with the alert flag on or off.
@@ -608,8 +610,22 @@ def format_close_message(payload):
         'Scored P&L **%s** (underlying, 100 sh) · TP1 leg %s · runner leg %s' % (
             _money(payload.get('net')), _money(payload.get('tp1_gross')),
             _money(payload.get('runner_gross'))),
-        '_Shadow measurement only — not a bookable trade; nothing was booked or sent anywhere._',
     ]
+    # Premium leg (2026-11-25): the episode's own premium scoring,
+    # attached at queue time by _attach_premium — the same result
+    # that feeds the tracking premium stats. A premium still being
+    # measured or lost to a data gap is labeled, never estimated;
+    # payloads queued before this field existed render as before.
+    premium_status = payload.get('premium_status')
+    if premium_status == 'closed' and payload.get('premium_net') is not None:
+        lines.append('Premium leg scored P&L **%s** (options model, '
+                     '2 contracts)' % _money(payload.get('premium_net')))
+    elif premium_status == 'data_gap':
+        lines.append('Premium leg: data gap — unmeasured')
+    elif premium_status:
+        lines.append('Premium leg: measurement pending')
+    lines.append('_Shadow measurement only — not a bookable trade; '
+                 'nothing was booked or sent anywhere._')
     return {'content': '\n'.join(lines)[:1900],
             'username': 'Stock Sweeps Shadow',
             'allowed_mentions': {'parse': []}}
@@ -654,10 +670,16 @@ def queue_alert(db, cfg, payload):
 
 
 def push_destination(cfg):
-    """The options_0dte route destination (url, mode) via the routing
-    layer's own resolver; url None when the route is unconfigured."""
+    """The research route destination (url, mode) via the routing
+    layer's own resolver; url None when the route is unconfigured.
+    (2026-11-25, Josh: the shadow books post to #compass; the
+    options_0dte route belongs to the 0DTE scanner funnel alone.
+    The destination is resolved here at drain time and outbox rows
+    persist no route, so rows still queued when this shipped
+    follow the move automatically — none are stranded and none
+    keep posting to #0dte.)"""
     from .alert_routes import destination
-    url, mode = destination(cfg, 'options_0dte')
+    url, mode = destination(cfg, 'research')
     return (url if url else None), mode
 
 
@@ -728,8 +750,8 @@ def deliver_one_push(db, client, url, now=None, max_attempts=MAX_PUSH_ATTEMPTS):
 
 
 async def run_push(db, cfg):
-    """Drainer loop for the shadow alerts (own outbox, 0DTE route
-    destination). Never raises out of the loop."""
+    """Drainer loop for the shadow alerts (own outbox, research
+    route destination). Never raises out of the loop."""
     with httpx.Client(timeout=10, follow_redirects=False) as client:
         while True:
             try:
@@ -740,7 +762,7 @@ async def run_push(db, cfg):
                         await asyncio.to_thread(deliver_one_push, db, client, url)
                     else:
                         db.health(PUSH_KIND, 'not_configured',
-                                  'options_0dte route has no webhook; '
+                                  'research route has no webhook; '
                                   'shadow alerts stay queued')
             except asyncio.CancelledError:
                 raise
@@ -1114,6 +1136,25 @@ def _write_state(db, c, now, extra=None):
     return state
 
 
+def _attach_premium(c, payload):
+    """Attach the episode's premium-leg result to a CLOSE alert
+    payload at queue time (2026-11-25). scan() runs the premium
+    pricing steps before queueing, so a premium resolved in this
+    pass is already on the episode row in this transaction and is
+    copied verbatim — the same premium_net that feeds the tracking
+    premium stats. A premium still pending or data-gapped is
+    labeled by its status only; the number is never estimated, and
+    a later resolution does not rewrite the queued post."""
+    row = c.execute(select(episodes.c.payload).where(
+        episodes.c.id == payload.get('episode_id'))).scalars().first()
+    if row is None:
+        return payload
+    payload['premium_status'] = row.get('premium_status')
+    if row.get('premium_status') == 'closed':
+        payload['premium_net'] = (row.get('premium') or {}).get('net')
+    return payload
+
+
 def scan(db, c, cfg, now):
     """One live pass over the frozen book: feed each symbol's newly
     completed 15-minute buckets into its persisted machine, book the
@@ -1173,6 +1214,8 @@ def scan(db, c, cfg, now):
     _price_exits(db, c, now)
     if alerts_on:
         for payload in alerts_out:
+            if payload.get('type') == 'close':
+                _attach_premium(c, payload)
             _queue_alert_row(c, db, payload)
     summary = _write_state(db, c, now)
     counts = summary['counts']
