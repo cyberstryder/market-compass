@@ -744,6 +744,16 @@ def _funnel_publications(db, c, now, days=30, limit=10):
     }
 
 
+def _ruler_stats(rows):
+    """_stats plus profit factor (gross wins / gross losses), for the
+    dual-ruler block. PF is None when there are no measured losses."""
+    s = _stats(rows)
+    gross_win = sum(p for _, p in rows if p is not None and p > 0)
+    gross_loss = sum(-p for _, p in rows if p is not None and p < 0)
+    s["pf"] = round(gross_win / gross_loss, 3) if gross_loss > 0 else None
+    return s
+
+
 def _0dte(db, c, now):
     from .store import events
     p = events.c.payload
@@ -806,6 +816,8 @@ def _0dte(db, c, now):
     per_kind = defaultdict(list)
     per_rule = defaultdict(list)
     per_underlying = defaultdict(list)
+    dual_bracket = []
+    dual_published = []
     data_gap_count = 0
     data_gap_pnl = 0.0
     pre_evidence_count = 0
@@ -837,6 +849,19 @@ def _0dte(db, c, now):
             pnl = _num(t.get("pnl"))
             won = pnl is not None and pnl > 0
             per_kind[t.get("kind") or "?"].append((won, pnl))
+            if t.get("kind") == "scanner" and _num(t.get("pub_target")) is not None:
+                # Dual-ruler population (2026-11-25): measured funnel
+                # trades that booked with published levels (same
+                # data_gap / evidence-epoch gates as the scorecard
+                # above). The bracket arm reads the primary outcome;
+                # the published arm reads the shadow outcome once it
+                # has resolved as a measured (non-gap) exit.
+                dual_bracket.append((won, pnl))
+                if (t.get("pub_exit_reason") is not None
+                        and not t.get("pub_data_gap")):
+                    pub_pnl = _num(t.get("pub_pnl"))
+                    if pub_pnl is not None:
+                        dual_published.append((pub_pnl > 0, pub_pnl))
             # Track scanner trades by underlying (MU, AAPL, TSLA, etc.)
             if t.get("kind") == "scanner":
                 underlying = t.get("underlying") or "?"
@@ -873,6 +898,14 @@ def _0dte(db, c, now):
     # the per-trade entry stamp reachable over HTTPS — the weekly check
     # had the sample banked since 2026-10-26 but no read path to it.
     stats["gex_vex_divergence"] = _gex_vex_split(paper)
+    # Dual-ruler read (2026-11-25): the funnel subset that booked with
+    # published levels, scored under the generic +/-50% bracket and
+    # under each setup's own published stop/target/deadline side by
+    # side. Measurement only — the seat rule keeps reading the bracket
+    # ruler (per-underlying drills above), never this block.
+    if dual_bracket:
+        stats["dual_ruler"] = {"bracket": _ruler_stats(dual_bracket),
+                               "published": _ruler_stats(dual_published)}
     # The current book's published trades (setup-study funnel). The
     # SPY morning plan drills that used to lead this list were retired
     # with the plan itself (2026-10-25) and are gone from the lead.
