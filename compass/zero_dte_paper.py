@@ -337,6 +337,25 @@ def _open_scanner(db, c, now, flatten_at, cfg=None):
             planned = None
         entry = _num(q.get("ask")) + SLIPPAGE
         dte = odte_book.contract_dte(contract.get("expiry"), now)
+        # Dual-ruler scoring (2026-11-25): the setup's published premium
+        # stop/target and exit deadline, captured for the parallel
+        # shadow outcome _update_open maintains (pub_* keys on the
+        # record). Two producer namings: the setup-study trial payload
+        # carries the simulation.bracket premium levels as 'stop' /
+        # 'target' with the session-close 'flatten_at'; idea-style
+        # payloads carry 'premium_stop' / 'premium_target' /
+        # 'exit_deadline'. Same precedence alert_ownership's
+        # format_message renders with. Levels absent -> bracket-only
+        # scoring, exactly as before.
+        pub_stop = _num(payload.get("premium_stop"))
+        if pub_stop is None:
+            pub_stop = _num(payload.get("stop"))
+        pub_target = _num(payload.get("premium_target"))
+        if pub_target is None:
+            pub_target = _num(payload.get("target"))
+        pub_deadline = _num(payload.get("exit_deadline"))
+        if pub_deadline is None:
+            pub_deadline = _num(payload.get("flatten_at"))
         rec = {
             "id": key, "kind": "scanner", "symbol": symbol,
             "family": family,
@@ -367,6 +386,12 @@ def _open_scanner(db, c, now, flatten_at, cfg=None):
             rec["evidence"] = _build_evidence(db, c, contract.get("underlying"), now)
         except Exception:
             rec["evidence"] = None
+        if (pub_stop is not None and pub_target is not None
+                and 0 < pub_stop < pub_target):
+            rec["pub_stop"] = pub_stop
+            rec["pub_target"] = pub_target
+            if pub_deadline is not None:
+                rec["pub_deadline"] = pub_deadline
         if _open(db, c, key, rec):
             opened += 1
     return opened
@@ -407,6 +432,66 @@ STALE_EXIT_AGE = 120  # exit marks older than this are data gaps, not measuremen
 FORCE_CLOSE_AFTER_FLATTEN = 900  # quoteless trades close as data gaps this long past flatten
 
 
+def _update_pub_shadow(db, c, key, t, q, now):
+    """Resolve the published-ruler shadow outcome on one funnel trade.
+
+    Same observed quote stream, same exit pricing (bid - SLIPPAGE) and
+    same fee as the primary bracket outcome; the ONLY differences are
+    the trigger levels (the setup's published premium stop/target
+    instead of +/-50%) and the exit deadline (the published one,
+    falling back to the session flatten). A deadline that passes with
+    no fresh quote prices at the last observed bid — the primary's gap
+    convention — and the blind mark is flagged pub_data_gap so the
+    stats exclude it, exactly as data_gap excludes the primary's blind
+    closes. Records pub_exit / pub_exit_reason / pub_exited_at /
+    pub_pnl on the trade record; never touches the primary outcome
+    fields. Runs while the primary trade is open AND after it closes:
+    a published deadline after the 2:55 flatten (the usual case) can
+    only resolve once the bracket trade is already closed."""
+    pub_stop = _num(t.get("pub_stop"))
+    pub_target = _num(t.get("pub_target"))
+    if pub_stop is None or pub_target is None:
+        return
+    flatten_at = _num(t.get("flatten_at"))
+    pub_deadline = _num(t.get("pub_deadline"))
+    deadline = pub_deadline if pub_deadline is not None else flatten_at
+    bid = _num((q or {}).get("bid"))
+    reason = None
+    if deadline and now >= deadline:
+        reason = ("published deadline" if pub_deadline is not None
+                  else "session flatten")
+    elif bid:
+        if bid >= pub_target:
+            reason = "published target"
+        elif bid <= pub_stop:
+            reason = "published stop"
+    if not reason:
+        return
+    basis = bid if bid else _num(t.get("last_bid"))
+    basis_ts = (_num((q or {}).get("ts")) if bid
+                else _num(t.get("last_quote_ts")))
+    pub_exit = round(basis - SLIPPAGE, 2) if basis else None
+    if pub_exit is not None and pub_exit <= 0:
+        pub_exit = None
+    if pub_exit is None:
+        # No price at all: bound the wait like the primary's quoteless
+        # force-close, then record an unmeasured outcome.
+        if not (deadline and now >= deadline + FORCE_CLOSE_AFTER_FLATTEN):
+            return
+        t.update(pub_exit=None, pub_exit_reason=reason, pub_exited_at=now,
+                 pub_pnl=None, pub_data_gap=True)
+        db.put(c, key, t)
+        return
+    entry = _num(t.get("entry")) or 0
+    pub_pnl = round((pub_exit - entry) * 100 - 2 * FEE, 2) if entry else None
+    quote_age = now - (basis_ts or 0)
+    saw_after_entry = (_num(t.get("last_quote_ts")) or 0) > (_num(t.get("entered_at")) or 0)
+    t.update(pub_exit=pub_exit, pub_exit_reason=reason, pub_exited_at=now,
+             pub_pnl=pub_pnl,
+             pub_data_gap=quote_age > STALE_EXIT_AGE or not saw_after_entry)
+    db.put(c, key, t)
+
+
 def _update_open(db, c, now):
     try:
         trades = db.prefix(c, "trade:0dte-")
@@ -414,7 +499,19 @@ def _update_open(db, c, now):
         return 0
     closed = 0
     for key, t in trades.items():
-        if not isinstance(t, dict) or t.get("status") != "open":
+        if not isinstance(t, dict):
+            continue
+        is_open = t.get("status") == "open"
+        # Dual-ruler shadow: a scanner trade booked with published
+        # levels keeps a pending shadow outcome until it resolves —
+        # possibly past the primary close (see _update_pub_shadow).
+        # SPY plan trades never carry the levels and are gated out by
+        # kind regardless.
+        pub_pending = (t.get("kind") == "scanner"
+                       and _num(t.get("pub_stop")) is not None
+                       and _num(t.get("pub_target")) is not None
+                       and t.get("pub_exit_reason") is None)
+        if not is_open and not pub_pending:
             continue
         # Track the freshest quote seen for this contract (<=300s old). The
         # stamp distinguishes a measured exit from a blind one at close time.
@@ -423,6 +520,10 @@ def _update_open(db, c, now):
             t["last_quote_ts"] = _num(q.get("ts"))
             t["last_bid"] = _num(q.get("bid"))
             db.put(c, key, t)
+        if pub_pending:
+            _update_pub_shadow(db, c, key, t, q, now)
+        if not is_open:
+            continue
         reason = None
         flatten_at = _num(t.get("flatten_at"))
         if flatten_at and now >= flatten_at:
