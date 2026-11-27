@@ -336,6 +336,269 @@ def test_translate_flows_through_buffer():
     assert item["src"] == "alpaca"
 
 
+# --- subscribe-path fix (2026-11-27) ------------------------------------
+# Diagnosis (opra-cap-check 2026-11-23): the reconcile sent subscribes
+# before unsubscribes (transient cap overshoot -> Alpaca refused whole
+# 20-symbol batches with a 405), sent additions alphabetically instead
+# of in the selection's priority order, and then marked the whole
+# wanted set subscribed locally regardless of refusals. The tests below
+# pin the fixed behavior against the real consume().
+
+_FIX_A = "O:AAA261121C00100000"
+_FIX_B = "O:BBB261121C00100000"
+_FIX_A_WIRE = "AAA261121C00100000"
+_FIX_B_WIRE = "BBB261121C00100000"
+
+
+def test_subscription_diff_ordered_keeps_priority():
+    from compass.alpaca_option_stream import (
+        subscription_diff_ordered, wanted_in_priority_order)
+    added, removed = subscription_diff_ordered(
+        ["O:MMM261121C00100000", "O:AAA261121C00100000",
+         "O:ZZZ261121C00100000"],
+        {"O:AAA261121C00100000", "O:QQQ261121C00100000"})
+    # Priority order (MMM before ZZZ), NOT alphabetical (ZZZ last here
+    # only because it is last in priority; MMM precedes it despite
+    # sorting after AAA).
+    assert added == ["MMM261121C00100000", "ZZZ261121C00100000"]
+    assert removed == ["QQQ261121C00100000"]
+
+    class WithOrder:
+        option_symbols = {"O:B", "O:A", "O:C"}
+        option_symbols_ordered = ["O:C", "O:A"]
+
+    # Ordered symbols first in their order; the rest sorted after.
+    assert wanted_in_priority_order(WithOrder()) == ["O:C", "O:A", "O:B"]
+
+    class Bare:
+        option_symbols = {"O:B", "O:A"}
+
+    # No ordered list: plain sorted order (the pre-fix behavior).
+    assert wanted_in_priority_order(Bare()) == ["O:A", "O:B"]
+
+
+class _FixDB:
+    def __init__(self):
+        self.health_calls = []
+
+    def health(self, *a, **k):
+        self.health_calls.append((a, k))
+
+
+class _FixWS:
+    """Fake Alpaca WS; can refuse subscribes with a 405 error message,
+    exactly as Alpaca does when a subscribe would exceed the cap."""
+
+    def __init__(self):
+        import asyncio
+        self.sent = []
+        self.incoming = asyncio.Queue()
+        self.refusals_left = 0
+
+    async def send(self, data):
+        import msgpack
+        msg = msgpack.unpackb(data, raw=False)
+        self.sent.append(msg)
+        if msg.get("action") == "subscribe" and self.refusals_left > 0:
+            self.refusals_left -= 1
+            self.incoming.put_nowait(msgpack.packb(
+                [{"T": "error", "code": 405,
+                  "msg": "symbol limit exceeded"}]))
+
+    async def recv(self):
+        return await self.incoming.get()
+
+
+class _FixCollector:
+    class cfg:
+        alpaca_opra_key = "k"
+        alpaca_opra_secret = "s"
+
+    def __init__(self, symbols, ordered=None):
+        self.option_symbols = set(symbols)
+        if ordered is not None:
+            self.option_symbols_ordered = list(ordered)
+        self.db = _FixDB()
+        self.quote_calls = 0
+
+    def quote_batch(self, src, rows):
+        self.quote_calls += 1
+
+    def option_trade_batch(self, rows):
+        pass
+
+
+async def _fix_start(ws, collector):
+    import asyncio
+
+    import msgpack
+    from compass.alpaca_option_stream import consume
+    task = asyncio.create_task(consume(ws, collector))
+    await ws.incoming.put(msgpack.packb([{"T": "success", "msg": "connected"}]))
+    await ws.incoming.put(
+        msgpack.packb([{"T": "success", "msg": "authenticated"}]))
+    return task
+
+
+async def _fix_wait(predicate, timeout=8.0):
+    import asyncio
+    waited = 0.0
+    while not predicate():
+        if waited >= timeout:
+            raise AssertionError("timed out waiting for stream condition")
+        await asyncio.sleep(0.05)
+        waited += 0.05
+
+
+async def _fix_stop(task):
+    import asyncio
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+def _subscribes_for(ws, wire):
+    return [m for m in ws.sent
+            if m.get("action") == "subscribe" and wire in m.get("trades", [])]
+
+
+def test_reconcile_sends_removals_before_additions(monkeypatch):
+    import asyncio
+
+    import compass.alpaca_option_stream as aos
+    monkeypatch.setattr(aos, "REFUSAL_SETTLE_SECONDS", 0.02)
+
+    async def main():
+        ws = _FixWS()
+        collector = _FixCollector({_FIX_A})
+        task = await _fix_start(ws, collector)
+        try:
+            await _fix_wait(lambda: _subscribes_for(ws, _FIX_A_WIRE))
+            marker = len(ws.sent)
+            collector.option_symbols = {_FIX_B}
+            collector.option_symbols_ordered = [_FIX_B]
+            await _fix_wait(lambda: _subscribes_for(ws, _FIX_B_WIRE))
+            later = ws.sent[marker:]
+            actions = [m["action"] for m in later]
+            # The removal of A is the FIRST wire message of the
+            # reconcile and precedes the subscribe for B. Pre-fix the
+            # subscribe went first (the cap-overshoot order).
+            assert actions[0] == "unsubscribe"
+            assert _FIX_A_WIRE in later[0]["trades"]
+            assert actions.index("unsubscribe") < actions.index("subscribe")
+        finally:
+            await _fix_stop(task)
+
+    asyncio.run(main())
+
+
+def test_additions_follow_priority_order(monkeypatch):
+    import asyncio
+
+    import compass.alpaca_option_stream as aos
+    monkeypatch.setattr(aos, "REFUSAL_SETTLE_SECONDS", 0.02)
+
+    priority = ["O:MMM261121C00100000", "O:AAA261121C00100000",
+                "O:ZZZ261121C00100000"]
+
+    async def main():
+        ws = _FixWS()
+        collector = _FixCollector(set(priority), ordered=priority)
+        task = await _fix_start(ws, collector)
+        try:
+            await _fix_wait(lambda: any(
+                m.get("action") == "subscribe" for m in ws.sent))
+            subs = [m for m in ws.sent if m.get("action") == "subscribe"]
+            # One batch, in selection priority order — alphabetical
+            # would be AAA, MMM, ZZZ.
+            assert subs[0]["trades"] == [
+                "MMM261121C00100000", "AAA261121C00100000",
+                "ZZZ261121C00100000"]
+            assert subs[0]["quotes"] == subs[0]["trades"]
+        finally:
+            await _fix_stop(task)
+
+    asyncio.run(main())
+
+
+def test_refused_batch_not_subscribed_and_retried(monkeypatch):
+    import asyncio
+
+    import msgpack
+
+    import compass.alpaca_option_stream as aos
+    monkeypatch.setattr(aos, "REFUSAL_SETTLE_SECONDS", 0.02)
+    monkeypatch.setattr(aos, "RETRY_BACKOFF_BASE_SECONDS", 0.0)
+
+    async def main():
+        ws = _FixWS()
+        ws.refusals_left = 10 ** 9  # refuse every subscribe for now
+        collector = _FixCollector({_FIX_A})
+        task = await _fix_start(ws, collector)
+        try:
+            await _fix_wait(lambda: _subscribes_for(ws, _FIX_A_WIRE))
+            # Re-emission on a later reconcile proves the refused batch
+            # was NOT marked subscribed locally (pre-fix it was marked
+            # unconditionally and never re-sent).
+            await _fix_wait(
+                lambda: len(_subscribes_for(ws, _FIX_A_WIRE)) >= 2)
+            # While un-subscribed locally, the buffer gate drops the
+            # symbol's quotes: nothing reaches persistence.
+            await ws.incoming.put(msgpack.packb(
+                [{"T": "q", "S": _FIX_A_WIRE, "bp": 2.4, "ap": 2.6,
+                  "t": "2026-11-21T14:30:00Z"}]))
+            await asyncio.sleep(0.6)
+            assert collector.quote_calls == 0
+            # Refusals stop: the queued retry lands and confirms.
+            ws.refusals_left = 0
+            sent_before = len(_subscribes_for(ws, _FIX_A_WIRE))
+            await _fix_wait(
+                lambda: len(_subscribes_for(ws, _FIX_A_WIRE)) > sent_before)
+            await asyncio.sleep(0.4)
+            await ws.incoming.put(msgpack.packb(
+                [{"T": "q", "S": _FIX_A_WIRE, "bp": 2.5, "ap": 2.7,
+                  "t": "2026-11-21T14:31:00Z"}]))
+            await _fix_wait(lambda: collector.quote_calls >= 1)
+        finally:
+            await _fix_stop(task)
+
+    asyncio.run(main())
+
+
+def test_successful_reconcile_marks_subscribed_no_resend(monkeypatch):
+    import asyncio
+
+    import msgpack
+
+    import compass.alpaca_option_stream as aos
+    monkeypatch.setattr(aos, "REFUSAL_SETTLE_SECONDS", 0.02)
+
+    async def main():
+        ws = _FixWS()
+        collector = _FixCollector({_FIX_A, _FIX_B})
+        task = await _fix_start(ws, collector)
+        try:
+            await _fix_wait(lambda: _subscribes_for(ws, _FIX_A_WIRE)
+                            and _subscribes_for(ws, _FIX_B_WIRE))
+            await asyncio.sleep(0.4)  # let the reconcile finish marking
+            marker = len(ws.sent)
+            await asyncio.sleep(1.6)  # ~3 reconcile cycles
+            # Everything marked subscribed: no re-sends, no removals.
+            assert [m for m in ws.sent[marker:]
+                    if m.get("action") in ("subscribe", "unsubscribe")] == []
+            # And the local set gates quotes IN for both symbols.
+            await ws.incoming.put(msgpack.packb(
+                [{"T": "q", "S": _FIX_A_WIRE, "bp": 2.4, "ap": 2.6,
+                  "t": "2026-11-21T14:30:00Z"}]))
+            await _fix_wait(lambda: collector.quote_calls >= 1)
+        finally:
+            await _fix_stop(task)
+
+    asyncio.run(main())
+
+
 # --- providers.py connection gate (2026-11-22 outage) -----------------------
 # Wed 2026-11-18 a collector deploy restarted the process at 18:20:57Z with
 # an empty option_symbols selection; alpaca_option_connection() waited for a
