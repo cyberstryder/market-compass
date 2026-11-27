@@ -17,6 +17,16 @@ This is the FALLBACK, not the primary. The PRIMARY is compass/option_stream.py
   30s, the stream subscribes to a generated SPY/QQQ ladder for the
   current expiry (fallback_symbols). The earlier hard-coded list
   expired 2026-10-19 and would have subscribed dead contracts forever.
+- SUBSCRIBE ORDER (2026-11-27): reconciles send removals before
+  additions, additions follow the selection's priority order
+  (option_symbols_ordered, not alphabetical), and a batch Alpaca
+  refuses (405 over-limit) is NOT marked subscribed locally — it is
+  queued and retried with bounded backoff. Pre-fix, subscribes went
+  first (transient cap overshoot -> whole-batch 405 refusals) and the
+  local set was set to the wanted set unconditionally, so refused
+  contracts stayed dark until they left and re-entered the selection
+  (opra-cap-check 2026-11-23: confirmed counts oscillated ~845-919
+  against 900 wanted).
 
 Runs side-by-side with the Massive stream during the migration evaluation.
 Every translated item carries 'src': 'alpaca' so downstream persistence can
@@ -71,6 +81,63 @@ def subscription_diff(wanted, have):
     wire = {to_alpaca_symbol(s) for s in wanted}
     have_wire = {to_alpaca_symbol(s) for s in have}
     return sorted(wire - have_wire), sorted(have_wire - wire)
+
+
+# Post-auth error codes that mean Alpaca refused a subscribe message
+# wholesale (documented 405 semantics: the request would put the account
+# over its package symbol limit, so the prior subscription set is kept
+# and NONE of the message's symbols are subscribed). Only refusals are
+# counted for the retry path; other post-auth errors keep the historical
+# record-and-continue behavior.
+REFUSAL_ERROR_CODES = {405}
+
+# After each subscribe batch, wait this long for a refusal to arrive
+# before judging the batch confirmed. Doubles as the inter-batch delay
+# (the pre-fix code slept 0.1s between batches).
+REFUSAL_SETTLE_SECONDS = 0.15
+
+# A refused symbol is retried on a later reconcile once its backoff
+# elapses: 1s, 2s, 4s, ... capped at 30s. Bounded so a persistently
+# over-cap wanted set cannot turn into a hot retry loop, prompt enough
+# that a transient refusal (the recenter overshoot this fix removes)
+# heals within a second or two.
+RETRY_BACKOFF_BASE_SECONDS = 1.0
+RETRY_BACKOFF_CAP_SECONDS = 30.0
+
+
+def wanted_in_priority_order(collector):
+    """The wanted set in the selection's priority order (internal form).
+
+    Mirrors option_stream.massive_wanted: the collector's
+    option_symbols_ordered carries select_contracts' priority order
+    (pinned actives first). Symbols it does not cover fall back to
+    sorted order, so the result always covers option_symbols exactly;
+    a collector without the ordered list gets plain sorted order (the
+    pre-2026-11-27 behavior)."""
+    wanted = set(getattr(collector, "option_symbols", None) or set())
+    ordered = [s for s in (getattr(collector, "option_symbols_ordered", None)
+                           or []) if s in wanted]
+    rest = sorted(wanted - set(ordered))
+    return ordered + rest
+
+
+def subscription_diff_ordered(wanted_ordered, have):
+    """(added, removed) wire-form symbols; additions keep priority order.
+
+    `wanted_ordered` is internal-form symbols in priority order, `have`
+    the internal-form set believed subscribed. Removals are sorted
+    (their send order carries no priority meaning)."""
+    have_wire = {to_alpaca_symbol(s) for s in have}
+    seen = set()
+    added = []
+    for sym in wanted_ordered:
+        wire = to_alpaca_symbol(sym)
+        if wire not in have_wire and wire not in seen:
+            seen.add(wire)
+            added.append(wire)
+    wanted_wire = {to_alpaca_symbol(s) for s in wanted_ordered}
+    removed = sorted(have_wire - wanted_wire)
+    return added, removed
 
 
 def _occ(root, expiry, right, strike):
@@ -180,7 +247,8 @@ async def consume(ws, collector, buffer=None):
     trace = SubscriptionTrace(time.time(), "alpaca")
     # Diagnostics for the status endpoint: what we're actually receiving.
     diag = {"last_raw_type": None, "last_raw_len": 0, "last_msgpack_error": None,
-            "msgpack_failures": 0, "messages_received": 0, "last_message_at": None}
+            "msgpack_failures": 0, "messages_received": 0, "last_message_at": None,
+            "refusal_count": 0, "last_refusal": None}
 
     async def read():
         while True:
@@ -258,6 +326,21 @@ async def consume(ws, collector, buffer=None):
                     # whole stream down for one bad symbol is how a feed
                     # stays dark; record it in diag (visible in the
                     # health row) and keep streaming.
+                    if msg.get("code") in REFUSAL_ERROR_CODES:
+                        # Over-limit refusal: Alpaca rejected a whole
+                        # subscribe batch and kept the prior set.
+                        # Counted so subscriptions() can tell which of
+                        # its batches was refused and queue it for
+                        # retry instead of marking it subscribed
+                        # (2026-11-27 fix; pre-fix the refusal was
+                        # invisible to the subscribe path and the
+                        # batch's symbols stayed dark until they left
+                        # and re-entered the wanted set).
+                        diag["refusal_count"] = \
+                            diag.get("refusal_count", 0) + 1
+                        diag["last_refusal"] = {
+                            "at": now, "code": msg.get("code"),
+                            "msg": str(msg.get("msg", "error"))[:200]}
                     continue
                 item = translate(msg)
                 if item is None:
@@ -277,8 +360,16 @@ async def consume(ws, collector, buffer=None):
         # of 20 symbols to stay under undocumented per-message limits.
         SUBSCRIBE_BATCH_SIZE = 20
         empty_cycles = 0
+        # Wire symbols Alpaca refused, and when each may be retried.
+        # A refused batch is never marked subscribed locally (pre-fix the
+        # cycle ended with subscribed := wanted unconditionally, so a
+        # refused batch's contracts stayed dark until they left and
+        # re-entered the wanted set — opra-cap-check 2026-11-23).
+        retry_after = {}
+        retry_failures = {}
         while True:
-            wanted = set(collector.option_symbols)
+            wanted_ordered = wanted_in_priority_order(collector)
+            wanted = set(wanted_ordered)
             # If wanted is empty, the symbol selector hasn't populated yet
             # (e.g., collector just restarted, or chain fetch failing).
             # After 60 empty cycles (30s), fall back to a dynamic SPY/QQQ
@@ -296,6 +387,7 @@ async def consume(ws, collector, buffer=None):
                     # (or the next day's expiry) is picked up, unlike
                     # the old one-shot static list.
                     wanted = set(fallback_symbols(collector.db))
+                    wanted_ordered = sorted(wanted)
                     if not wanted:
                         await asyncio.sleep(0.5)
                         continue
@@ -303,43 +395,100 @@ async def consume(ws, collector, buffer=None):
                     await asyncio.sleep(0.5)
                     continue
             empty_cycles = 0
-            added, removed = subscription_diff(wanted, subscribed)
-            if added or removed:
-                if added:
+            added, removed = subscription_diff_ordered(wanted_ordered,
+                                                       subscribed)
+            # Forget retry state for symbols no longer wanted.
+            for stale in [s for s in retry_after
+                          if to_internal_symbol(s) not in wanted]:
+                retry_after.pop(stale, None)
+                retry_failures.pop(stale, None)
+            attempted = confirmed = refused = 0
+            if removed:
+                # Removals FIRST (2026-11-27): the pre-fix order sent
+                # subscribes before unsubscribes, so during every
+                # recenter the server-side count overshot the package
+                # cap by the full added count and Alpaca refused whole
+                # 20-symbol batches (405).
+                # Alpaca holds server-side subscriptions until told;
+                # the old code never unsubscribed, so the server-side
+                # set drifted from ours and stale symbols kept flowing.
+                for i in range(0, len(removed), SUBSCRIBE_BATCH_SIZE):
+                    batch = removed[i:i + SUBSCRIBE_BATCH_SIZE]
+                    await ws.send(msgpack.packb({"action": "unsubscribe",
+                                                 "trades": batch, "quotes": batch}))
+                    if i + SUBSCRIBE_BATCH_SIZE < len(removed):
+                        await asyncio.sleep(0.1)
+                subscribed.difference_update(
+                    to_internal_symbol(s) for s in removed)
+            if added:
+                now_mono = time.monotonic()
+                ready = [s for s in added
+                         if retry_after.get(s, 0.0) <= now_mono]
+                attempted = len(ready)
+                if ready:
                     trace.request("subscribe",
-                                  {to_internal_symbol(s) for s in added},
+                                  {to_internal_symbol(s) for s in ready},
                                   time.time())
-                    for i in range(0, len(added), SUBSCRIBE_BATCH_SIZE):
-                        batch = added[i:i + SUBSCRIBE_BATCH_SIZE]
+                    ok_symbols = []
+                    refused_symbols = []
+                    for i in range(0, len(ready), SUBSCRIBE_BATCH_SIZE):
+                        batch = ready[i:i + SUBSCRIBE_BATCH_SIZE]
+                        refusals_before = diag.get("refusal_count", 0)
                         await ws.send(msgpack.packb({"action": "subscribe",
                                                      "trades": batch, "quotes": batch}))
-                        # Small delay between batches to avoid rate limiting
-                        if i + SUBSCRIBE_BATCH_SIZE < len(added):
-                            await asyncio.sleep(0.1)
+                        # Mark subscribed at send (the pre-fix timing):
+                        # the buffer gate keys on this set, and Alpaca
+                        # only sends data for symbols it actually
+                        # subscribed, so nothing can arrive for a batch
+                        # that was refused. A refusal landing in the
+                        # settle window un-marks the batch below.
+                        subscribed.update(
+                            to_internal_symbol(s) for s in batch)
+                        # Let a refusal for THIS batch land before
+                        # judging it; the settle doubles as the
+                        # inter-batch delay (pre-fix: 0.1s).
+                        await asyncio.sleep(REFUSAL_SETTLE_SECONDS)
+                        if diag.get("refusal_count", 0) > refusals_before:
+                            refused_symbols.extend(batch)
+                            subscribed.difference_update(
+                                to_internal_symbol(s) for s in batch)
+                        else:
+                            ok_symbols.extend(batch)
                     trace.sent("subscribe",
-                               {to_internal_symbol(s) for s in added},
+                               {to_internal_symbol(s) for s in ready},
                                time.time())
-                if removed:
-                    # Alpaca holds server-side subscriptions until told;
-                    # the old code never unsubscribed, so the server-side
-                    # set drifted from ours and stale symbols kept flowing.
-                    for i in range(0, len(removed), SUBSCRIBE_BATCH_SIZE):
-                        batch = removed[i:i + SUBSCRIBE_BATCH_SIZE]
-                        await ws.send(msgpack.packb({"action": "unsubscribe",
-                                                     "trades": batch, "quotes": batch}))
-                        if i + SUBSCRIBE_BATCH_SIZE < len(removed):
-                            await asyncio.sleep(0.1)
+                    if ok_symbols:
+                        subscribed.update(
+                            to_internal_symbol(s) for s in ok_symbols)
+                        for s in ok_symbols:
+                            retry_after.pop(s, None)
+                            retry_failures.pop(s, None)
+                    if refused_symbols:
+                        for s in refused_symbols:
+                            failures = retry_failures.get(s, 0) + 1
+                            retry_failures[s] = failures
+                            delay = min(
+                                RETRY_BACKOFF_CAP_SECONDS,
+                                RETRY_BACKOFF_BASE_SECONDS
+                                * (2 ** (failures - 1)))
+                            retry_after[s] = time.monotonic() + delay
+                    confirmed = len(ok_symbols)
+                    refused = len(refused_symbols)
+            if added or removed:
                 diag["last_subscribe_sent"] = {
                     "at": time.time(),
-                    "added": len(added),
+                    "added": attempted,
                     "removed": len(removed),
                     "count": len(wanted),
                     "sample": sorted(to_alpaca_symbol(s) for s in wanted)[:3],
-                    "batches": (len(added) + SUBSCRIBE_BATCH_SIZE - 1) // SUBSCRIBE_BATCH_SIZE,
-                    "deploy_marker": "DIFF_SUB_V3_20261019",
+                    "batches": (attempted + SUBSCRIBE_BATCH_SIZE - 1) // SUBSCRIBE_BATCH_SIZE,
+                    "confirmed": confirmed,
+                    "refused": refused,
+                    "retry_queued": sum(
+                        1 for s in added
+                        if retry_after.get(s, 0.0) > time.monotonic()),
+                    "deploy_marker": "DIFF_SUB_V4_20261127",
                 }
-            subscribed.clear()
-            subscribed.update(wanted)
             buffer.prune(wanted)
             trace.prune(wanted)
             await asyncio.sleep(0.5)
