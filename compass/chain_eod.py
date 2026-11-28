@@ -95,9 +95,18 @@ def shape_contract(o):
     return out
 
 
-def filter_contracts(contracts, close, date_str, dte_max=DTE_MAX, band=BAND):
+def filter_contracts(contracts, close, date_str, dte_max=DTE_MAX, band=BAND,
+                     keep=frozenset()):
     """Keep contracts expiring in [date_str, date_str + dte_max] with strikes
-    within +/-band of the underlying close. Returns archive-shaped rows."""
+    within +/-band of the underlying close. Returns archive-shaped rows.
+
+    ``keep`` is an exemption set of OCC symbols (the Weeklies board's
+    selected contracts for this symbol — see board_contracts): a contract
+    whose symbol is in ``keep`` is retained even when its strike or expiry
+    falls outside the band/DTE window, because the board's own scorer
+    prices exactly those contracts from this archive. The sanity checks
+    (symbol present, strike positive) still apply to exempt contracts,
+    and every non-exempt contract is filtered exactly as before."""
     end = (_date.fromisoformat(date_str)
            + timedelta(days=dte_max)).isoformat()
     lo, hi = close * (1 - band), close * (1 + band)
@@ -107,12 +116,40 @@ def filter_contracts(contracts, close, date_str, dte_max=DTE_MAX, band=BAND):
         strike = number(o.get('strike'))
         if not o.get('symbol') or strike is None or strike <= 0:
             continue
+        if o['symbol'] in keep:
+            out.append(shape_contract(o))
+            continue
         if not (date_str <= expiry <= end):
             continue
         if not (lo <= strike <= hi):
             continue
         out.append(shape_contract(o))
     out.sort(key=lambda r: (r['expiry'], r['strike'], r['type'] or ''))
+    return out
+
+
+def board_contracts(c, date_str):
+    """The Weeklies board contracts for the week containing ``date_str``,
+    grouped by underlying: {ticker: {OCC symbol, ...}}. Read from the
+    native smoothers weekly table — the same rows the
+    /api/admin/smoothers-board endpoint serves (native_reports.smoothers
+    reads this table), so the snapshot keeps exactly the contracts the
+    board selected. Returns {} when the week's board does not exist yet.
+    The import is lazy: native_smoothers imports this module."""
+    from sqlalchemy import select
+    from .native_smoothers import weekly
+    d = _date.fromisoformat(date_str)
+    week = (d - timedelta(days=d.weekday())).isoformat()
+    out = {}
+    rows = c.execute(select(weekly.c.payload)
+                     .where(weekly.c.week == week)).scalars()
+    for p in rows:
+        if not isinstance(p, dict):
+            continue
+        occ = (p.get('contract') or {}).get('symbol')
+        ticker = p.get('ticker')
+        if occ and ticker:
+            out.setdefault(ticker, set()).add(occ)
     return out
 
 
@@ -189,7 +226,7 @@ def read_manifest(db, date_str, kind=KIND):
 
 
 async def _snapshot_symbol(db, fetch, symbol, date_str, expiry_start,
-                           expiry_end, now, kind=KIND):
+                           expiry_end, now, kind=KIND, keep=frozenset()):
     """Fetch + shape + store one symbol. Returns the manifest entry.
     Never raises: a failure is an entry with status 'error'."""
     try:
@@ -200,7 +237,8 @@ async def _snapshot_symbol(db, fetch, symbol, date_str, expiry_start,
                     'at': time.time()}
         contracts, complete, source = await fetch(symbol, expiry_start,
                                                   expiry_end)
-        rows = filter_contracts(contracts, close, date_str)
+        rows = filter_contracts(contracts, close, date_str, keep=keep)
+        kept = sum(1 for r in rows if r['symbol'] in keep)
         payload = {'date': date_str, 'symbol': symbol, 'source': source,
                    'complete': complete, 'asof': now,
                    'snapshot_kind': kind,
@@ -212,6 +250,7 @@ async def _snapshot_symbol(db, fetch, symbol, date_str, expiry_start,
                                  key=event_key(date_str, symbol, kind))
         return {'status': 'ok', 'source': source, 'complete': complete,
                 'contracts': len(rows), 'fetched': len(contracts),
+                'board_kept': kept,
                 'bytes': nbytes, 'inserted': bool(inserted), 'at': time.time()}
     except Exception as e:
         LOG.warning('chain_eod %s %s failed: %s', date_str, symbol,
@@ -220,11 +259,20 @@ async def _snapshot_symbol(db, fetch, symbol, date_str, expiry_start,
                 'detail': str(e)[:200], 'at': time.time()}
 
 
+RETRY_DELAY_SECONDS = 5.0
+
+
 async def run_snapshot(db, cfg, now=None, date_str=None, symbols=None,
-                       fetch=None, collectors=None, kind=KIND):
+                       fetch=None, collectors=None, kind=KIND,
+                       retry_delay=RETRY_DELAY_SECONDS):
     """Run one day's snapshot. Idempotent per date: symbols already 'ok' in
     the manifest (or already present as events) are not re-stored; failed
-    symbols are retried. Returns the manifest with totals."""
+    symbols are retried on a later re-trigger. Within a run, symbols whose
+    attempt ends in error get ONE retry pass after ``retry_delay`` seconds
+    (2026-11-27: the per-symbol FeedError set rotates run to run, and a
+    same-run retry recovers most of it instead of leaving the day's
+    archive with holes until someone re-triggers). Returns the manifest
+    with totals."""
     now = time.time() if now is None else now
     date_str = date_str or day(now)
     expiry_start = date_str
@@ -271,20 +319,48 @@ async def run_snapshot(db, cfg, now=None, date_str=None, symbols=None,
             db.put(c, manifest_key(date_str, kind), m)
         todo = [s for s in symbols
                 if m['symbols'].get(s, {}).get('status') != 'ok']
+        # Weeklies board force-keep (2026-11-27): the board's selected
+        # contracts for this symbol are retained in the snapshot even
+        # outside the band/DTE filter, so the board scorer never loses a
+        # pick to a >10% mid-week move. EOD archive only — chain_open's
+        # morning snapshot keeps the plain filter. A board read failure
+        # degrades to no exemptions; it never fails the snapshot.
+        keep_by_symbol = {}
+        if kind == KIND:
+            try:
+                with db.tx() as c:
+                    keep_by_symbol = board_contracts(c, date_str)
+            except Exception:
+                LOG.warning('chain_eod %s: board contract lookup failed; '
+                            'snapshotting without exemptions', date_str)
         sem = asyncio.Semaphore(CONCURRENCY)
         lock = asyncio.Lock()
 
-        async def one(symbol):
+        async def one(symbol, retried=False):
             async with sem:
-                entry = await _snapshot_symbol(db, fetch, symbol, date_str,
-                                               expiry_start, expiry_end, now,
-                                               kind=kind)
+                entry = await _snapshot_symbol(
+                    db, fetch, symbol, date_str, expiry_start, expiry_end,
+                    now, kind=kind,
+                    keep=frozenset(keep_by_symbol.get(symbol, ())))
+            if retried:
+                entry = {**entry, 'retried': True}
             async with lock:
                 with db.tx() as c:
                     m2 = _manifest(db, c, date_str, kind)
                     m2['symbols'][symbol] = entry
                     db.put(c, manifest_key(date_str, kind), m2)
-        await asyncio.gather(*(one(s) for s in todo))
+            return entry
+
+        entries = await asyncio.gather(*(one(s) for s in todo))
+        # One retry pass for this run's errored symbols (see docstring):
+        # exactly the symbols attempted above whose entry is an error,
+        # exactly once; ok symbols are never re-attempted.
+        errored = [s for s, e in zip(todo, entries)
+                   if e.get('status') == 'error']
+        if errored:
+            if retry_delay:
+                await asyncio.sleep(retry_delay)
+            await asyncio.gather(*(one(s, retried=True) for s in errored))
         with db.tx() as c:
             m = _manifest(db, c, date_str, kind)
             m['running'] = False

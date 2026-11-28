@@ -167,7 +167,7 @@ def test_run_snapshot_isolates_failures_and_is_idempotent(db):
     cfg = SimpleNamespace(watch_symbols=('AAA', 'BBB', 'BAD'))
     fetch = make_fetch(fail=('BAD',))
     m = asyncio.run(run_snapshot(db, cfg, now=NOW, date_str=DATE,
-                                 fetch=fetch))
+                                 fetch=fetch, retry_delay=0))
     assert m['totals'] == {'ok': 2, 'error': 1, 'contracts': 2, 'bytes': m['totals']['bytes']}
     assert m['symbols']['BAD']['status'] == 'error'
     assert 'provider boom' in m['symbols']['BAD']['detail']
@@ -176,10 +176,12 @@ def test_run_snapshot_isolates_failures_and_is_idempotent(db):
 
     # Re-run the same date: ok symbols are not re-fetched or re-stored,
     # the failed symbol is retried (and recorded again), nothing duplicates.
+    # Within a run the failed symbol is attempted twice — the main pass
+    # plus the one errored-symbol retry pass (2026-11-27).
     fetch2 = make_fetch(fail=('BAD',))
     m2 = asyncio.run(run_snapshot(db, cfg, now=NOW, date_str=DATE,
-                                  fetch=fetch2))
-    assert fetch2.calls == ['BAD']
+                                  fetch=fetch2, retry_delay=0))
+    assert fetch2.calls == ['BAD', 'BAD']
     assert count_events(db) == 2
     assert m2['totals']['ok'] == 2 and m2['totals']['error'] == 1
 
@@ -197,7 +199,7 @@ def test_run_snapshot_records_missing_close_as_error(db):
     cfg = SimpleNamespace(watch_symbols=('GHOST',))
     fetch = make_fetch()
     m = asyncio.run(run_snapshot(db, cfg, now=NOW, date_str=DATE,
-                                 fetch=fetch))
+                                 fetch=fetch, retry_delay=0))
     assert m['symbols']['GHOST']['error'] == 'no_underlying_close'
     assert fetch.calls == []  # never fetched without a band reference
     assert count_events(db) == 0
@@ -334,6 +336,102 @@ def test_store_release_lease_only_by_owner(db):
         assert db.lease(c, 'x:run', 'owner-b', seconds=30) is False
         assert db.release_lease(c, 'x:run', 'owner-a') is True
         assert db.lease(c, 'x:run', 'owner-b', seconds=30) is True
+
+
+# ---------- board force-keep + errored-symbol retry (2026-11-27) ----------
+
+def test_filter_keep_exemption_holds_board_contracts_only():
+    contracts = [
+        provider_contract('IN', strike=100.0),
+        provider_contract('BOARD_HI', strike=130.0),       # out of band
+        provider_contract('OTHER_HI', strike=130.0),       # out of band
+        provider_contract('BOARD_DTE', strike=100.0,
+                          expiry='2026-12-26'),            # +61 DTE
+        provider_contract('BOARD_NOSTRIKE', strike=None),  # sanity still on
+    ]
+    keep = frozenset({'BOARD_HI', 'BOARD_DTE', 'BOARD_NOSTRIKE'})
+    rows = filter_contracts(contracts, close=100.0, date_str=DATE, keep=keep)
+    assert [r['symbol'] for r in rows] == ['IN', 'BOARD_HI', 'BOARD_DTE']
+    # Without the exemption the same set filters exactly as before.
+    rows_plain = filter_contracts(contracts, close=100.0, date_str=DATE)
+    assert [r['symbol'] for r in rows_plain] == ['IN']
+    # In-band behavior is byte-identical with an empty exemption set.
+    assert filter_contracts(contracts, close=100.0, date_str=DATE,
+                            keep=frozenset()) == rows_plain
+
+
+def _seed_board(db, week, rows):
+    from compass.native_smoothers import weekly
+    with db.tx() as c:
+        for pid, ticker, occ in rows:
+            c.execute(weekly.insert().values(
+                id=pid, week=week, ticker=ticker, status='OPEN',
+                payload={'id': pid, 'week': week, 'ticker': ticker,
+                         'contract': {'symbol': occ}}))
+
+
+def test_board_contracts_reads_the_served_board_rows(db):
+    _seed_board(db, DATE, [('p1', 'AAA', 'AAA260102C00100000'),
+                           ('p2', 'AAA', 'AAA260102P00100000'),
+                           ('p3', 'BBB', 'BBB260102C00200000')])
+    _seed_board(db, '2026-10-19', [('p9', 'ZZZ', 'ZZZ260102C00100000')])
+    with db.tx() as c:
+        out = chain_eod.board_contracts(c, DATE)
+        # A Wednesday of the same week resolves to the same Monday board.
+        out_wed = chain_eod.board_contracts(c, '2026-10-28')
+        empty = chain_eod.board_contracts(c, '2026-11-09')
+    assert out == {'AAA': {'AAA260102C00100000', 'AAA260102P00100000'},
+                   'BBB': {'BBB260102C00200000'}}
+    assert out_wed == out
+    assert empty == {}
+
+
+def test_run_snapshot_keeps_board_contract_outside_band(db):
+    seed_close(db, 'AAA')
+    _seed_board(db, DATE, [('p1', 'AAA', 'AAA270102C00130000')])
+    board = provider_contract('AAA270102C00130000', strike=130.0,
+                              expiry='2027-01-02')
+    in_band = provider_contract()
+
+    async def fetch(symbol, expiry_start, expiry_end):
+        return ([board, in_band], True, 'massive')
+
+    cfg = SimpleNamespace(watch_symbols=('AAA',))
+    m = asyncio.run(run_snapshot(db, cfg, now=NOW, date_str=DATE,
+                                 fetch=fetch, retry_delay=0))
+    entry = m['symbols']['AAA']
+    assert entry['status'] == 'ok' and entry['contracts'] == 2
+    assert entry['board_kept'] == 1
+    with db.tx() as c:
+        payload = c.execute(select(events.c.payload)
+                            .where(events.c.kind == 'chain_eod')).scalar_one()
+    assert [r['symbol'] for r in payload['contracts']] == [
+        'AAA260102C00100000', 'AAA270102C00130000']
+
+
+def test_run_snapshot_retries_errored_symbols_once_and_recovers(db):
+    for s in ('AAA', 'FLAKY', 'BAD'):
+        seed_close(db, s)
+    attempts = {}
+
+    async def fetch(symbol, expiry_start, expiry_end):
+        attempts[symbol] = attempts.get(symbol, 0) + 1
+        if symbol == 'BAD' or (symbol == 'FLAKY' and attempts[symbol] == 1):
+            raise RuntimeError('provider boom')
+        return ([provider_contract()], True, 'massive')
+
+    cfg = SimpleNamespace(watch_symbols=('AAA', 'FLAKY', 'BAD'))
+    m = asyncio.run(run_snapshot(db, cfg, now=NOW, date_str=DATE,
+                                 fetch=fetch, retry_delay=0))
+    # Exactly one retry for each errored symbol; ok symbols never retried.
+    assert attempts == {'AAA': 1, 'FLAKY': 2, 'BAD': 2}
+    assert m['symbols']['FLAKY']['status'] == 'ok'
+    assert m['symbols']['FLAKY']['retried'] is True
+    assert m['symbols']['BAD']['status'] == 'error'
+    assert m['symbols']['BAD']['retried'] is True
+    assert 'retried' not in m['symbols']['AAA']
+    assert m['totals']['ok'] == 2 and m['totals']['error'] == 1
+    assert count_events(db) == 2
 
 
 # ---------- registry ----------
