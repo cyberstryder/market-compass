@@ -881,6 +881,47 @@ def backfill_week_historical_stats(db,week,now):
     return report
 
 
+def backfill_coverage(data,p,sessions):
+    """One bounded re-pull of a coverage-missing pick's underlying bars at
+    week-end finalization (2026-11-27). The monitor consumes Alpaca SIP
+    history through data.bar_batch — a historical API — so minutes that
+    were missing in-week can be re-requested once, at closure, from the
+    same source, instead of leaving the pick UNRESOLVED on a gap that no
+    longer exists. On a complete record: clear the coverage flags,
+    refresh last_seen_at/last_underlying, and mark the target touch
+    (status WIN + touch fields) when one occurred; the caller then
+    finalizes the pick on the completed record. On any remaining gap or
+    provider error the pick is left untouched and False is returned, so
+    the closure keeps it UNRESOLVED. Called exactly once per
+    coverage-missing pick: finalization closes the pick in the same
+    pass, so it is never attempted twice."""
+    start=p['model_entry_time'];end=sessions[-1]['close']
+    try:
+        bars=data.bar_batch([p['ticker']],'1Min',start,end).get(p['ticker'],pd.DataFrame())
+    except Exception:
+        return False
+    if bars.empty:return False
+    bars=bars[bars.index>=pd.Timestamp(start,unit='s',tz='UTC')]
+    bars=bars[bars.index+pd.Timedelta(minutes=1)<=pd.Timestamp(end,unit='s',tz='UTC')]
+    bars=bars[[any(s['open']<=ts.timestamp()<s['close'] for s in sessions) for ts in bars.index]]
+    if bars.empty:return False
+    expected=set()
+    for session in sessions:
+        expected.update(range(int(max(start,session['open'])//60)*60,int(min(end,session['close'])//60)*60,60))
+    missing=expected-{int(t.timestamp()) for t in bars.index}
+    if missing:return False
+    p['coverage_missing']=False
+    p['coverage_missing_since']=None
+    p['target_error']=None
+    p.update(last_seen_at=bars.index[-1].timestamp(),last_underlying=float(bars['close'].iloc[-1]))
+    hits=bars[bars['high']>=p['target_price']] if p['direction']=='CALL' else bars[bars['low']<=p['target_price']]
+    if not hits.empty:
+        hit=hits.iloc[0]
+        p.update(status='WIN',resolution_time=hits.index[0].timestamp(),exit_underlying=p['target_price'],
+            touch_bar={k:float(hit[k]) for k in ('open','high','low','close')},touch_detected_at=time.time())
+    return True
+
+
 def monitor(db,data,now):
     monday=monday_for(now).isoformat()
     with db.tx() as c:
@@ -1022,6 +1063,14 @@ def monitor(db,data,now):
             try:
                 if score_cohort_exit(db,p,closing[0],wed,now):cohort_weeks.add(p['week'])
             except Exception:logging.getLogger('uvicorn.error').exception('native_smoothers cohort exit scoring failed for %s',p.get('id'))
+        # Coverage backfill (2026-11-27): a pick the in-week monitor
+        # could not certify gets ONE re-pull of its underlying bars
+        # before finalizing (see backfill_coverage). A completed record
+        # resolves on the evidence — WIN when the backfill finds the
+        # touch, LOSS via final_seen below; a still-gapped record keeps
+        # coverage_missing and finalizes UNRESOLVED as before.
+        if p.get('coverage_missing'):
+            backfill_coverage(data,p,closing)
         # Capture at resolution time, never substitute an old hourly premium:
         # the same quote capture the target-touch path uses, so a LOSS or
         # UNRESOLVED week is measurable (or visibly unmeasurable) instead of
@@ -1030,16 +1079,19 @@ def monitor(db,data,now):
         except Exception as e:p['exit_quote']={'status':'unavailable','reason':type(e).__name__}
         # An observed target is not an option fill or option profit.
         final_seen=(p.get('last_seen_at') or 0)==closing[-1]['close']-60
-        p.update(status='UNRESOLVED' if p.get('coverage_missing') or not final_seen else 'LOSS',resolution_time=closing[-1]['close']+300,
-                 exit_underlying=p.get('last_underlying') if final_seen else None,closed_detected_at=now,
+        if p.get('status')!='WIN':
+            p.update(status='UNRESOLVED' if p.get('coverage_missing') or not final_seen else 'LOSS',resolution_time=closing[-1]['close']+300,
+                     exit_underlying=p.get('last_underlying') if final_seen else None)
+        p.update(closed_detected_at=now,
                  closure_basis='Completed final regular-session minute close; option return unverified')
         with db.tx() as c:
             current=c.execute(select(weekly.c.payload).where(weekly.c.id==p['id']).with_for_update()).scalar_one()
             if current['status']!='OPEN':continue
-            current.update({k:p[k] for k in ('status','resolution_time','exit_underlying','closed_detected_at','closure_basis','exit_quote') if k in p})
+            current.update({k:p[k] for k in ('status','resolution_time','exit_underlying','closed_detected_at','closure_basis','exit_quote','coverage_missing','coverage_missing_since','target_error','last_seen_at','last_underlying','touch_bar','touch_detected_at') if k in p})
             p=current
             save(db,c,p)
-            queue_signal(db,c,p,'close',messages.close(p),now,p['resolution_time'])
+            if p['status']=='WIN':queue_signal(db,c,p,'target',messages.target(p),now,p['resolution_time']+60)
+            else:queue_signal(db,c,p,'close',messages.close(p),now,p['resolution_time'])
     for cell_week in overdue_weeks:
         with db.tx() as c:
             week_rows=list(c.execute(select(weekly.c.payload).where(weekly.c.week==cell_week)).scalars())
